@@ -12,8 +12,8 @@ are scoped or reviewed.
 ### Fixed
 
 - Rust analysis: a test-local identifier that contains an error lexeme in
-  operand position (`error_count`) no longer confirms a changed `?` error
-  path as `exposed`. The operand twin stays `weakly_exposed` with
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
   `observation_unverified`, matching the #4748 message twin. Trailing error
   observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
   confirm. (#5255)

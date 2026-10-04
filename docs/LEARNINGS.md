@@ -7,9 +7,10 @@ sessions. It is intentionally short and actionable.
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
 and a test-local zero, not an error path. `assertion_observes_error` must not
-treat a leading or middle `error`/`err` segment in a compound identifier as
-an error observer. Trailing tokens still count (`Err`, `unwrap_err`,
-`last_error`, `ParseError`). Diagnostic stripping from #4748 is unchanged.
+treat a leading, middle, or undelimited `error`/`err` segment in a compound
+identifier as an error observer (`error_count`, `nonerror`). Trailing tokens
+still count (`Err`, `unwrap_err`, `last_error`, `ParseError`). Diagnostic
+stripping from #4748 is unchanged.
 
 Pin the operand twin beside the message twin: `error_path_operand_error_lexeme`
 must stay `weakly_exposed`, matching `error_path_diagnostic_error`. Existing

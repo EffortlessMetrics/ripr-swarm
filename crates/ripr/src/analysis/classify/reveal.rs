@@ -558,7 +558,7 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
 /// Deliberately lenient on trailing error tokens: it only decides whether a
 /// token overlap may count as observing a changed error path, never whether
 /// the oracle is strong. A leading or middle error lexeme in a compound
-/// identifier (`error_count`) is not an observer (#5255). Sibling ErrorPath
+/// identifier (`error_count`, `nonerror`) is not an observer (#5255). Sibling ErrorPath
 /// confirmation sites do not scan identifier lexemes: diagnostic stripping,
 /// guarded owner-result matches, and exact-variant pins are independent of
 /// this gate.
@@ -576,15 +576,16 @@ fn assertion_observes_error(assertion: &OracleFact) -> bool {
         .any(identifier_names_error_observer)
 }
 
-/// Trailing `err`/`error` (or a panic token) names an error observer.
-/// Any-segment matching would credit `error_count` as if it observed the
-/// changed failure.
+/// Trailing `err`/`error` on a real token boundary (or a panic token) names
+/// an error observer. `ends_with("error")` would credit `nonerror`;
+/// any-segment matching would credit `error_count`.
 fn identifier_names_error_observer(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
     if lower.contains("panic") {
         return true;
     }
-    lower.rsplit('_').next() == Some("err") || lower.ends_with("error")
+    let last = lower.rsplit('_').next();
+    last == Some("err") || last == Some("error") || token.ends_with("Error")
 }
 
 /// Probe-side matching inputs shared by every assertion of one probe
@@ -2617,8 +2618,8 @@ mod tests {
     }
 
     /// A test-local identifier that merely contains an error lexeme
-    /// (`error_count`) is not an error observer. #4748 excluded diagnostics;
-    /// this residual is operand position (#5255).
+    /// (`error_count`, `nonerror`) is not an error observer. #4748 excluded
+    /// diagnostics; this residual is operand position (#5255).
     #[test]
     fn error_path_operand_error_lexeme_does_not_confirm_observation() -> Result<(), String> {
         let probe = probe(ProbeFamily::ErrorPath, "let n = rdr.read(&mut buf)?;");
@@ -2626,6 +2627,7 @@ mod tests {
             "assert_eq!((rdr.len(), error_count), (10, 0));",
             "assert_eq!(rdr.len(), error_count);",
             "assert_eq!(rdr.len(), err_count);",
+            "assert_eq!((rdr.len(), nonerror), (10, 0));",
         ] {
             let classification = crate::analysis::extract::classify_assertion(text);
             let test = test_with_assertions(
