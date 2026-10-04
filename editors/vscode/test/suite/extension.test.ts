@@ -3922,11 +3922,38 @@ suite('Extension Smoke', () => {
 
       assert.strictEqual(context.client.requests.length, 1);
       assert.strictEqual(context.runRiprCalls.length, 1);
+      const args = context.runRiprCalls[0].args;
+      assert.strictEqual(args[args.indexOf('--base') + 1], 'origin/main');
       assert.deepStrictEqual(JSON.parse(context.clipboardWrites[0]), {
         fallback: true
       });
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('copyContext CLI fallback omits --base when ripr.baseRef is blank', async () => {
+    for (const baseRef of ['', '   ']) {
+      const context = createControllerTestContext({
+        baseRef,
+        lspResult: null,
+        cliResult: '{"fallback":true}\n'
+      });
+      try {
+        await context.controller.start();
+        await context.controller.copyContext({
+          uri: workspaceFileUri('src/lib.rs').toString(),
+          line: 9,
+          seam_id: 'abc123'
+        });
+
+        assert.strictEqual(context.runRiprCalls.length, 1);
+        const args = context.runRiprCalls[0].args;
+        assert.ok(!args.includes('--base'), `baseRef ${JSON.stringify(baseRef)} sent ${args.join(' ')}`);
+        assert.strictEqual(args[0], 'context');
+      } finally {
+        await context.dispose();
+      }
     }
   });
 
@@ -4808,6 +4835,7 @@ interface ControllerTestOptions {
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
+  baseRef?: string;
   lspResult?: unknown;
   lspError?: Error;
   cliResult?: string;
@@ -5221,7 +5249,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
         serverVersion: '',
         downloadBaseUrl: '',
         checkMode: 'draft',
-        baseRef: 'origin/main',
+        baseRef: options.baseRef ?? 'origin/main',
         includeUnchangedTests: options.includeUnchangedTests ?? true,
         seamDiagnostics: options.seamDiagnostics,
         diagnosticProfile: options.diagnosticProfile,
