@@ -2081,7 +2081,7 @@ mod tests {
                 "f3c9e4d21a0b7c88",
             ])),
             Err(CommandError::Failure(
-                "agent start root target/ripr/missing-agent-start-root is not a directory"
+                "agent start root target/ripr/missing-agent-start-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2097,7 +2097,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent status root target/ripr/missing-agent-status-root is not a directory"
+                "agent status root target/ripr/missing-agent-status-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2113,7 +2113,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
+                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2131,7 +2131,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent packet root target/ripr/missing-agent-packet-root is not a directory"
+                "agent packet root target/ripr/missing-agent-packet-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2278,7 +2278,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent brief root target/ripr/missing-agent-brief-root is not a directory"
+                "agent brief root target/ripr/missing-agent-brief-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
