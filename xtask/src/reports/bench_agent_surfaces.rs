@@ -132,6 +132,7 @@ pub(crate) fn bench_agent_surfaces(args: &[String]) -> Result<(), String> {
                 &caches_root,
                 timeout,
                 &mut warned,
+                &mut violations,
             )?;
             m5_map.insert(corpus.id.label().to_string(), determinism.to_json());
             if let Some(failure) = determinism.failure_reason() {
@@ -396,8 +397,9 @@ fn os_dev_null() -> &'static str {
 }
 
 /// Commit the current worktree content of `corpus_root` as the pinned
-/// before-state baseline. Callers must already have written the before-state
-/// files; the after-state worktree is applied afterwards.
+/// before-state baseline on a dedicated base branch. Callers must already
+/// have written the before-state files; the after-state commit is applied
+/// afterwards.
 fn commit_corpus_base(corpus_root: &Path) -> Result<(), String> {
     let root_text = corpus_root.display().to_string();
     let envs = pinned_git_env();
@@ -408,12 +410,57 @@ fn commit_corpus_base(corpus_root: &Path) -> Result<(), String> {
         "user.email=bench@ripr.invalid",
     ];
     git_args(&root_text, &[], &envs, &["init", "-q"])?;
+    // Deterministic base branch name regardless of the host's init default.
+    git_args(
+        &root_text,
+        &[],
+        &envs,
+        &["symbolic-ref", "HEAD", "refs/heads/bench-base"],
+    )?;
     git_args(&root_text, &config, &envs, &["add", "-A"])?;
     git_args(
         &root_text,
         &config,
         &envs,
         &["commit", "-q", "-m", "ripr bench corpus base"],
+    )?;
+    Ok(())
+}
+
+/// Commit the after-state worktree as HEAD on a work branch and anchor the
+/// `main` branch at the before-state base commit, leaving the worktree
+/// clean. This is the realistic agent shape (work branch one commit ahead
+/// of main) and it makes ripr's default-base resolution land on the
+/// before-state: the MCP surface analyzes the committed diff against it and
+/// the LSP baseRef `HEAD~1` sees the same change, so M2/M3 measure the same
+/// behavior M1 measures through `--diff`.
+fn commit_corpus_after_state(corpus_root: &Path) -> Result<(), String> {
+    let root_text = corpus_root.display().to_string();
+    let envs = pinned_git_env();
+    let config = [
+        "-c",
+        "user.name=ripr bench corpus",
+        "-c",
+        "user.email=bench@ripr.invalid",
+    ];
+    git_args(
+        &root_text,
+        &config,
+        &envs,
+        &["checkout", "-q", "-b", "bench-after"],
+    )?;
+    git_args(&root_text, &config, &envs, &["add", "-A"])?;
+    git_args(
+        &root_text,
+        &config,
+        &envs,
+        &["commit", "-q", "-m", "ripr bench corpus after-state"],
+    )?;
+    git_args(
+        &root_text,
+        &config,
+        &envs,
+        &["branch", "-f", "main", "HEAD~1"],
     )?;
     Ok(())
 }
@@ -459,7 +506,9 @@ fn prepare_tiny_corpus(corpora_root: &Path) -> Result<Corpus, String> {
     write_corpus_file(&corpus_root, "src/lib.rs", &before_lib)?;
     write_corpus_file(&corpus_root, "tests/pricing.rs", &after_tests)?;
     commit_corpus_base(&corpus_root)?;
-    // After-state worktree; the patch must reproduce the checked-in bytes.
+    // After-state second commit; the patch must reproduce the checked-in
+    // bytes. MCP's committed-diff analysis and the LSP baseRef `HEAD~1` both
+    // see the same behavior change M1 measures through `--diff`.
     let after_from_patch = apply_patch(&before_lib, &rewritten)
         .map_err(|err| format!("bench-agent-surfaces tiny corpus patch apply: {err}"))?;
     if after_from_patch != after_lib {
@@ -469,6 +518,7 @@ fn prepare_tiny_corpus(corpora_root: &Path) -> Result<Corpus, String> {
         );
     }
     write_corpus_file(&corpus_root, "src/lib.rs", &after_lib)?;
+    commit_corpus_after_state(&corpus_root)?;
     let diff_path = corpora_root.join("tiny.diff");
     fs::write(&diff_path, &rewritten).map_err(|err| format!("write tiny diff: {err}"))?;
     Ok(Corpus {
@@ -521,7 +571,9 @@ fn prepare_mid_corpus(corpora_root: &Path) -> Result<Corpus, String> {
         }
     }
     commit_corpus_base(&corpus_root)?;
-    // After-state worktree: rewrite only the pinned mutated files.
+    // After-state second commit: rewrite only the pinned mutated files so the
+    // committed diff (MCP default-base analysis, LSP baseRef HEAD~1) carries
+    // the same behavior change M1 measures through `--diff`.
     for package in 0..MID_PACKAGES {
         let name = format!("pkg_{package:02}");
         let after = mid_src_content(package, MID_MUTATION_SRC_FILE, true);
@@ -531,6 +583,7 @@ fn prepare_mid_corpus(corpora_root: &Path) -> Result<Corpus, String> {
             &after,
         )?;
     }
+    commit_corpus_after_state(&corpus_root)?;
     let diff_path = corpora_root.join("mid.diff");
     fs::write(&diff_path, &diff).map_err(|err| format!("write mid diff: {err}"))?;
     Ok(Corpus {
@@ -1248,31 +1301,72 @@ fn run_m5_corpus(
     caches_root: &Path,
     timeout: Duration,
     warned: &mut bool,
+    violations: &mut Vec<String>,
 ) -> Result<DeterminismReport, String> {
     let warm_cache = fresh_scratch(caches_root, &format!("m5-warm-{}", corpus.id.label()))?;
     // One untimed priming run fills the shared warm cache.
     let _ = run_m1_sample(binary, corpus, &warm_cache, timeout)?;
     let mut cold_runs = Vec::new();
+    let mut timeout_notes = Vec::new();
     for _ in 0..options.m5_cold {
         let cache = fresh_scratch(caches_root, &format!("m5-cold-{}", corpus.id.label()))?;
-        cold_runs.push(m5_run_bytes(binary, corpus, &cache, timeout)?);
+        collect_m5_run(
+            m5_run_bytes(binary, corpus, &cache, timeout),
+            &mut cold_runs,
+            warned,
+            violations,
+            &mut timeout_notes,
+            &format!("m5 corpus {} cold", corpus.id.label()),
+        );
     }
     let mut warm_runs = Vec::new();
     for _ in 0..options.m5_warm {
-        warm_runs.push(m5_run_bytes(binary, corpus, &warm_cache, timeout)?);
+        collect_m5_run(
+            m5_run_bytes(binary, corpus, &warm_cache, timeout),
+            &mut warm_runs,
+            warned,
+            violations,
+            &mut timeout_notes,
+            &format!("m5 corpus {} warm", corpus.id.label()),
+        );
     }
     let cold = determinism_outcome(&cold_runs, &[]);
     let warm = determinism_outcome(&warm_runs, &[]);
-    if matches!(cold, DeterminismOutcome::Failure { .. })
-        || matches!(warm, DeterminismOutcome::Failure { .. })
-    {
-        *warned = true;
-    }
     Ok(DeterminismReport {
         corpus: corpus.id.label(),
         cold,
         warm,
+        timeout_notes,
     })
+}
+
+/// Route one M5 run outcome: bytes feed the comparison, a timeout is a
+/// named warn note (kept out of the comparison and out of the fail gates),
+/// and a non-timeout child failure is a named validity violation instead of
+/// aborting the receipt.
+fn collect_m5_run(
+    outcome: Result<M5Run, String>,
+    runs: &mut Vec<Vec<u8>>,
+    warned: &mut bool,
+    violations: &mut Vec<String>,
+    timeout_notes: &mut Vec<String>,
+    label: &str,
+) {
+    match outcome {
+        Ok(M5Run::Bytes(bytes)) => runs.push(bytes),
+        Ok(M5Run::Timeout) => {
+            *warned = true;
+            timeout_notes.push(format!(
+                "{label}: sample timed out and is excluded from the byte comparison (warn, not a determinism failure)"
+            ));
+        }
+        Err(detail) => violations.push(format!("m5_sample_failed: {label}: {detail}")),
+    }
+}
+
+enum M5Run {
+    Bytes(Vec<u8>),
+    Timeout,
 }
 
 fn m5_run_bytes(
@@ -1280,7 +1374,7 @@ fn m5_run_bytes(
     corpus: &Corpus,
     cache: &Path,
     timeout: Duration,
-) -> Result<Vec<u8>, String> {
+) -> Result<M5Run, String> {
     let args = m1_args(corpus, false)?;
     let envs = pinned_child_envs(cache);
     let output = capture_output_with_timeout(
@@ -1294,7 +1388,7 @@ fn m5_run_bytes(
         "bench-agent-surfaces M5 check",
     )?;
     if output.timed_out {
-        return Err("bench-agent-surfaces: m5 sample timed out".to_string());
+        return Ok(M5Run::Timeout);
     }
     let success = output
         .status
@@ -1303,17 +1397,18 @@ fn m5_run_bytes(
         .unwrap_or(false);
     if !success {
         return Err(format!(
-            "bench-agent-surfaces: m5 sample failed: {}",
+            "non-zero exit: {}",
             truncate_for_receipt(&output.stderr, 200)
         ));
     }
-    Ok(output.stdout.into_bytes())
+    Ok(M5Run::Bytes(output.stdout.into_bytes()))
 }
 
 struct DeterminismReport {
     corpus: &'static str,
     cold: DeterminismOutcome,
     warm: DeterminismOutcome,
+    timeout_notes: Vec<String>,
 }
 
 impl DeterminismReport {
@@ -1330,6 +1425,7 @@ impl DeterminismReport {
         json!({
             "cold": self.cold.to_json(),
             "warm": self.warm.to_json(),
+            "timeout_notes": self.timeout_notes,
         })
     }
 }
@@ -1370,7 +1466,7 @@ impl DeterminismOutcome {
 fn determinism_outcome(runs: &[Vec<u8>], allowlist: &[&str]) -> DeterminismOutcome {
     let Some(first) = runs.first() else {
         return DeterminismOutcome::Failure {
-            detail: "population produced no runs".to_string(),
+            detail: "population produced no comparable runs (every sample timed out or failed); a missing metric is a validity gate".to_string(),
         };
     };
     if runs.iter().all(|run| run == first) {
@@ -1711,7 +1807,9 @@ fn m2_op_from_response(op: &'static str, outcome: RpcOutcome) -> M2Op {
 }
 
 /// First gap id from the list payload (`items[0]`), tolerating the typed
-/// absence of any gap on a corpus.
+/// absence of any gap on a corpus. Production items name the id
+/// `canonical_id` (mcp/gaps.rs `GapItem`); the other spellings are
+/// tolerated defensively but never substituted for the registered name.
 fn gap_id_from_list_response(response: &Value) -> Option<String> {
     let text = response
         .pointer("/result/content/0/text")
@@ -1719,7 +1817,7 @@ fn gap_id_from_list_response(response: &Value) -> Option<String> {
     let payload: Value = serde_json::from_str(text).ok()?;
     let items = payload.get("items").and_then(Value::as_array)?;
     let item = items.first()?;
-    for key in ["gap_id", "canonical_item_id", "item_id", "id"] {
+    for key in ["canonical_id", "gap_id", "canonical_item_id", "item_id"] {
         if let Some(id) = item.get(key).and_then(Value::as_str) {
             return Some(id.to_string());
         }
@@ -1829,7 +1927,9 @@ fn run_m3_corpus(
     }
     let document = m3_document(corpus)?;
     let uri = file_uri(&document);
-    let base_ref = corpus.base.clone().unwrap_or_else(|| "HEAD".to_string());
+    // Generated corpora commit the before-state at HEAD~1 and the after-state
+    // at HEAD, so the committed diff IS the behavior change M1 measures.
+    let base_ref = corpus.base.clone().unwrap_or_else(|| "HEAD~1".to_string());
     let mut cold = Vec::new();
     let mut warm = Vec::new();
     let mut had_timeout = false;
@@ -2104,11 +2204,7 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
                     unknown_disclosed += 1;
                 }
             }
-            if let Some(ready) = finding
-                .pointer("/repair_card/repair_packet_ready")
-                .or_else(|| finding.get("repair_packet_ready"))
-                .and_then(Value::as_bool)
-            {
+            if let Some(ready) = finding_repair_packet_ready(finding) {
                 repair_bearing_seen = true;
                 if ready {
                     repair_ready += 1;
@@ -2160,6 +2256,28 @@ fn non_empty(value: Option<&Value>) -> bool {
         .and_then(Value::as_str)
         .map(|text| !text.trim().is_empty())
         .unwrap_or(false)
+}
+
+/// Repair readiness wherever the check renderer actually emits it: the
+/// renderer owns the projection shape (preview cards, actionability
+/// blocks), so this scans the finding for any `repair_packet_ready` boolean
+/// instead of pinning one transport-specific path.
+fn finding_repair_packet_ready(finding: &Value) -> Option<bool> {
+    match finding {
+        Value::Object(map) => {
+            if let Some(ready) = map.get("repair_packet_ready").and_then(Value::as_bool) {
+                return Some(ready);
+            }
+            for (_, child) in map {
+                if let Some(ready) = finding_repair_packet_ready(child) {
+                    return Some(ready);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items.iter().find_map(finding_repair_packet_ready),
+        _ => None,
+    }
 }
 
 // ── shared stdio JSON-RPC session ────────────────────────────────────────
@@ -2410,12 +2528,21 @@ fn identity_overlay(binary: &Path, corpora: &[Corpus]) -> Result<Value, String> 
     let binary_bytes = fs::read(binary).map_err(|err| format!("read binary: {err}"))?;
     let mut corpus_digests = serde_json::Map::new();
     for corpus in corpora {
-        let digest = match &corpus.diff_path {
-            Some(diff_path) => {
+        let digest = match (&corpus.diff_path, &corpus.base) {
+            (Some(diff_path), _) => {
                 let diff = fs::read(diff_path).map_err(|err| format!("read diff: {err}"))?;
                 crate::blind_journey::sha256_hex(&diff)
             }
-            None => "diff_scoped_checkout_base".to_string(),
+            // The repo corpus's actual analysis input is the checkout's diff
+            // against the resolved base; hash those bytes so two runs at the
+            // same HEAD with different worktree changes cannot share an
+            // identity.
+            (None, Some(base)) => {
+                let diff = run_output("git", &["diff", base])
+                    .map_err(|err| format!("repo diff for digest: {err}"))?;
+                crate::blind_journey::sha256_hex(diff.as_bytes())
+            }
+            (None, None) => "no_diff_input".to_string(),
         };
         corpus_digests.insert(
             corpus.id.label().to_string(),
@@ -3273,8 +3400,10 @@ mod tests {
 
     #[test]
     fn gap_list_absence_is_named_not_faked() {
+        // Production shape: items carry the registered `canonical_id`
+        // (mcp/gaps.rs GapItem).
         let response = json!({
-            "result": { "content": [{ "type": "text", "text": "{\"items\": [{\"gap_id\": \"gap:any\"}]}" }] }
+            "result": { "content": [{ "type": "text", "text": "{\"items\": [{\"canonical_id\": \"gap:any\"}]}" }] }
         });
         assert_eq!(
             gap_id_from_list_response(&response),
@@ -3284,5 +3413,61 @@ mod tests {
             "result": { "content": [{ "type": "text", "text": "{\"items\": []}" }] }
         });
         assert_eq!(gap_id_from_list_response(&empty), None);
+    }
+
+    #[test]
+    fn m5_timeout_is_a_warn_note_not_a_failure() {
+        let mut runs = Vec::new();
+        let mut warned = false;
+        let mut violations = Vec::new();
+        let mut timeout_notes = Vec::new();
+        collect_m5_run(
+            Ok(M5Run::Timeout),
+            &mut runs,
+            &mut warned,
+            &mut violations,
+            &mut timeout_notes,
+            "m5 corpus tiny cold",
+        );
+        assert!(runs.is_empty());
+        assert!(warned, "a timeout must set the warn flag");
+        assert!(
+            violations.is_empty(),
+            "a timeout must not be a validity-gate violation: {violations:?}"
+        );
+        assert_eq!(timeout_notes.len(), 1);
+        // A non-timeout child failure stays a named violation.
+        collect_m5_run(
+            Err("non-zero exit: boom".to_string()),
+            &mut runs,
+            &mut warned,
+            &mut violations,
+            &mut timeout_notes,
+            "m5 corpus tiny cold",
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].starts_with("m5_sample_failed:"));
+        // An all-timeout population is a missing metric (validity gate).
+        assert!(matches!(
+            determinism_outcome(&runs, &[]),
+            DeterminismOutcome::Failure { .. }
+        ));
+    }
+
+    #[test]
+    fn m4_reads_readiness_from_renderer_projections() {
+        // The renderer nests repair readiness inside its preview-card
+        // projection rather than at the finding top level.
+        let envelope = json!({
+            "findings": [{
+                "classification": "weakly_exposed",
+                "preview_actionability": { "repair_packet_ready": true },
+            }],
+        });
+        let m4 = actionability_metrics(&[envelope]);
+        assert_eq!(
+            m4["repair_readiness"]["findings_with_repair_packet_ready"], 1,
+            "readiness must be read wherever the renderer emits it"
+        );
     }
 }

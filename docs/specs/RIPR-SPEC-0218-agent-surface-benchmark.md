@@ -152,10 +152,12 @@ identity:
   `RIPR_BENCH_AGENT_SURFACES_TIMEOUT_MS` environment override exists
   for that scale and the recorded run names the value it used.
 
-The derived/generated corpora are committed with a pinned git identity
-at their before-state and measured with the after-state worktree, so the
-MCP and LSP surfaces — which require a usable git workspace root — see
-the same behavior change the CLI sees through `--diff`. Every child run
+The derived/generated corpora carry two pinned-identity commits — the
+before-state as the base commit and the after-state as HEAD, worktree
+clean — so every surface measures the same behavior change: the CLI
+through `--diff`, the MCP server through its committed-diff analysis
+against the resolved default base (HEAD~1), and the LSP through
+baseRef `HEAD~1`. Every child run
 gets `RIPR_CACHE_DIR` pinned explicitly and
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT` pinned to the product default, so caller
 environment cannot silently change the measured quantity.
