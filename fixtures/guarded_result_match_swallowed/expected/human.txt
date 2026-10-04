@@ -16,7 +16,7 @@ Start here:
   Not credited: `assert_eq!` in logs_failures_without_discriminating at tests/messages.rs:9: the assertion is inside a `match` arm
   Changed behavior: return Err(ParseError::InvalidData)
   Missing discriminator (1 of 3): ParseError::InvalidData
-  Related test (1 of 2): tests/messages.rs:4 logs_failures_without_discriminating
+  Related test (1 of 2): tests/messages.rs:4 logs_failures_without_discriminating (assertion not credited: ripr could not establish that it runs as the standard macro)
   Next step: ripr did not credit the `assert_eq!` in logs_failures_without_discriminating at
     tests/messages.rs:9; the "not credited" note says why. If that assertion does run as the
     standard macro, this is a static limit, not a missing test: confirm with a real mutation run.

@@ -16,7 +16,7 @@ Start here:
   Not credited: `assert_eq!` in pins_the_sibling_variant_of_the_changed_owner at tests/protocol.rs:6: the assertion is inside a `match` arm
   Changed behavior: return Err(ParseError::InvalidData)
   Missing discriminator (1 of 2): ParseError::InvalidData
-  Related test: tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner
+  Related test: tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner (no assertion pins `ParseError::InvalidData`)
   Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner
