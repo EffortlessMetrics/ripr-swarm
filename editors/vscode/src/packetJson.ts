@@ -74,10 +74,11 @@ export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
 ];
 
 /**
- * A test-runner verify command names test paths and node ids inside the
- * package, as the LSP's `command_payload_is_safe` requires: `../` would run
- * tests outside the producer's package-local scope, and an option token could
- * load a config, plugin or module beyond the one test the packet points at.
+ * A test-runner verify command names package-relative test paths and node ids,
+ * as the LSP's `command_payload_is_safe` requires: an option token could load
+ * a config, plugin or module beyond the one test the packet points at, and an
+ * absolute, home or parent path (`/`, `C:`, `~`, `..`) could run tests outside
+ * the producer's package-local scope.
  */
 export function testRunnerCommandLeavesScope(normalized: string): boolean {
   const prefix = TEST_RUNNER_VERIFY_COMMAND_PREFIXES.find((candidate) =>
@@ -87,7 +88,11 @@ export function testRunnerCommandLeavesScope(normalized: string): boolean {
     return false;
   }
   return normalized.includes('../')
-    || normalized.slice(prefix.length).split(' ').some((word) => word.startsWith('-'));
+    || normalized.includes('..\\')
+    || normalized.slice(prefix.length).split(' ').some((word) => {
+      const bare = word.replace(/^['"]/, '');
+      return /^[-/\\~]/.test(bare) || /^[A-Za-z]:/.test(bare) || bare === '..';
+    });
 }
 
 /**

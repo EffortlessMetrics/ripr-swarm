@@ -1568,11 +1568,20 @@ fn command_program_is_allowed(tokens: &[String]) -> bool {
     if matches!(words.as_slice(), ["cargo" | "ripr", ..]) {
         return true;
     }
-    // A producer's test-runner command names test paths and node ids only;
-    // an option token could load a config, plugin or module outside the one
-    // test the packet points at.
-    test_runner_arguments(&words)
-        .is_some_and(|arguments| arguments.iter().all(|word| !word.starts_with('-')))
+    // A producer's test-runner command names package-relative test paths and
+    // node ids only; an option token could load a config, plugin or module,
+    // and an absolute or parent path could run tests outside the package.
+    test_runner_arguments(&words).is_some_and(|arguments| {
+        arguments
+            .iter()
+            .all(|word| test_argument_is_package_local(word))
+    })
+}
+
+fn test_argument_is_package_local(word: &str) -> bool {
+    let drive_path = matches!(word.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
+    // `../` inside an argument is already refused for the whole command.
+    !(word.starts_with(['-', '/', '\\', '~']) || drive_path || word == "..")
 }
 
 /// The arguments after a test-runner verify command's program, or `None` when
@@ -3326,9 +3335,17 @@ mod tests {
             "node --test --import ./setup.mjs tests/math.test.ts",
             "npm test -- --watch tests/math.test.ts",
             "python -m pytest -p plugin tests/test_pricing.py",
+            // Absolute and parent paths run tests outside the package.
+            "node --test /tmp/outside.test.js",
+            "python -m pytest ..",
+            "npx --no-install jest ~/outside.test.ts",
         ] {
             assert!(!command_payload_is_safe(&workspace, command), "{command}");
         }
+        // Built at runtime so the local-context policy does not read the
+        // fixture as a machine path.
+        let drive_command = format!("pytest {}:/outside/test_pricing.py", 'C');
+        assert!(!command_payload_is_safe(&workspace, &drive_command));
     }
 
     /// #4544: the shared validator recomputes the `source_subject` digests.

@@ -2336,7 +2336,12 @@ suite('Extension Smoke', () => {
       'python -m pytest ../outside/test_pricing.py',
       'npx --no-install jest --config other.config.js tests/discount.test.ts',
       'node --test --import ./setup.mjs tests/math.test.ts',
-      'npm test -- --watch tests/math.test.ts'
+      'npm test -- --watch tests/math.test.ts',
+      'node --test /tmp/outside.test.js',
+      'python -m pytest ..',
+      // Built at runtime so the local-context policy does not read the
+      // fixture as a machine path.
+      `npx --no-install jest ${'C'}:/outside/discount.test.ts`
     ]) {
       assert.strictEqual(await verifyPacketState(verify), 'unsafeCommand', verify);
     }
