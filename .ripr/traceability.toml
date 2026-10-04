@@ -2689,6 +2689,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unaliased_dotted_python_imports_use_bound_root_for_activation",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::class_and_aliased_activation_controls_do_not_credit_python_tests",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::active_python_oracle_keeps_credit_beside_a_disabled_test",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_exact_python_oracle_cannot_lend_credit_to_an_active_smoke_test",

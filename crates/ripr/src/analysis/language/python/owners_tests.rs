@@ -462,7 +462,18 @@ fn test_imports(file: &Path, module_imports: &[PythonImport], body: &[Stmt]) -> 
 /// module/class must not retroactively change the decorator's identity.
 fn apply_definition_import(file: &Path, stmt: &Stmt, imports: &mut Vec<PythonImport>) {
     if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
-        for import in collect_imports_from_statements(file, std::slice::from_ref(stmt)) {
+        for mut import in collect_imports_from_statements(file, std::slice::from_ref(stmt)) {
+            // `import unittest.mock` binds `unittest`, unlike
+            // `import unittest.mock as helper`. Keep this declaration-only
+            // binding model separate from owner/module path identities.
+            if import.source_module.is_empty()
+                && import.alias == import.imported
+                && let Some((root, _)) = import.imported.split_once('.')
+            {
+                let root = root.to_string();
+                import.alias.clone_from(&root);
+                import.imported = root;
+            }
             imports.retain(|earlier| earlier.alias != import.alias);
             imports.push(import);
         }

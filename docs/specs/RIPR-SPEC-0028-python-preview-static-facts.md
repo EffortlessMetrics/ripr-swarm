@@ -97,7 +97,9 @@ Imported decorator aliases use the last explicit binding in the declaration-time
 module/class scope, before test-body imports or later imports can shadow them.
 A canonical-looking name explicitly imported from another module is not a
 framework control. Unresolved canonical spellings remain conservative; arbitrary
-assignment rebinding is not evaluated. Method body lookup keeps
+assignment rebinding is not evaluated.
+Unaliased dotted imports bind their root (`import unittest.mock` binds
+`unittest`); explicit aliases bind the alias. Method body lookup keeps
 its separate module/global scope; class-local imports are not method globals.
 When no independent eligible test supplies a relation, report
 `decorator_indirection` with the test activation reason and emit no repair

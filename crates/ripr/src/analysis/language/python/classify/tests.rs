@@ -134,6 +134,49 @@ fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<
 }
 
 #[test]
+fn unaliased_dotted_python_imports_use_bound_root_for_activation() -> Result<(), String> {
+    for (declaration, controlled) in [
+        (
+            "import project_marks as unittest\nimport unittest.mock",
+            true,
+        ),
+        (
+            "import unittest.mock\nimport project_marks as unittest",
+            false,
+        ),
+        (
+            "import project_marks as unittest\nimport unittest.mock as helper",
+            false,
+        ),
+        (
+            "import unittest.mock as helper\nimport project_marks as unittest",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import score\n{declaration}\n@unittest.skip('control')\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(
+            finding.class,
+            if controlled {
+                ExposureClass::StaticUnknown
+            } else {
+                ExposureClass::Exposed
+            },
+            "{tests}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn active_python_oracle_keeps_credit_beside_a_disabled_test() -> Result<(), String> {
     let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0) == 8\n";
     let finding = classify_case(
