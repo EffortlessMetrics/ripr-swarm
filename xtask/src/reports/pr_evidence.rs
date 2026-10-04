@@ -1280,7 +1280,10 @@ mod tests {
         #[cfg(windows)]
         {
             use std::os::windows::process::ExitStatusExt;
-            ExitStatus::from_raw(code as u32)
+            // Test-only synthetic status; `code` is nonnegative here, and
+            // `cast_unsigned` is the lint-clean spelling of the same widening
+            // (clippy 1.95 cast_sign_loss flagged the bare `as` cast).
+            ExitStatus::from_raw(code.cast_unsigned())
         }
     }
 
