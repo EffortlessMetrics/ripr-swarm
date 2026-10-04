@@ -21,6 +21,7 @@ use super::facts::rust_source_text;
 use super::rust_index::RustIndex;
 use crate::domain::Finding;
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -123,14 +124,49 @@ struct CapturedFile<'a> {
     lines: Vec<LineSpan>,
     facts_match: bool,
     used_lexical_fallback: bool,
+    /// Units counted up to the last admitted span start, so spans visited
+    /// in byte order on one line continue the count instead of rescanning
+    /// the line prefix.
+    cursor: Cell<Option<LineCursor>>,
 }
 
-/// Line-relative UTF-8/16/32 endpoints for one admitted span.
-///
-/// Coordinates are counted over the span's own line on demand rather than
-/// indexed for every captured scalar: a per-scalar index cost 16 bytes per
-/// source character for every loaded workspace file, while only admitted
-/// exact spans ever read it. `None` when an endpoint is not a scalar boundary.
+#[derive(Clone, Copy)]
+struct LineCursor {
+    line_start: usize,
+    byte: usize,
+    utf16: u32,
+    utf32: u32,
+}
+
+impl CapturedFile<'_> {
+    /// UTF-16 and UTF-32 units from `line_start` to `expr_start`. Coordinates
+    /// are counted over the span's own line on demand rather than indexed for
+    /// every captured scalar: a per-scalar index cost 16 bytes per source
+    /// character, while only admitted exact spans ever read it. `None` when
+    /// `expr_start` is not a scalar boundary.
+    fn prefix_units(&self, line_start: usize, expr_start: usize) -> Option<(u32, u32)> {
+        let (from, mut utf16, mut utf32) = match self.cursor.get() {
+            Some(cursor) if cursor.line_start == line_start && cursor.byte <= expr_start => {
+                (cursor.byte, cursor.utf16, cursor.utf32)
+            }
+            _ => (line_start, 0, 0),
+        };
+        for ch in self.source.get(from..expr_start)?.chars() {
+            utf16 = utf16.saturating_add(ch.len_utf16() as u32);
+            utf32 = utf32.saturating_add(1);
+        }
+        self.cursor.set(Some(LineCursor {
+            line_start,
+            byte: expr_start,
+            utf16,
+            utf32,
+        }));
+        Some((utf16, utf32))
+    }
+}
+
+/// Independent line-relative span oracle for the cursor-based production path.
+#[cfg(test)]
 fn line_span(
     source: &str,
     line_start: usize,
@@ -157,17 +193,27 @@ pub(crate) fn origins_for_rust_findings(
         .map(PathBuf::as_path)
         .collect();
     let captured = captured_file_index(context.loaded_files, context.index, &wanted);
-    let mut origins = RustDiagnosticOrigins::default();
-    for (finding, relative) in findings.iter().zip(&relative_paths) {
-        let origin = match relative {
-            Some(relative) => origin_for_finding(
-                finding,
-                parser_span_for_finding(finding, context.parser_spans),
-                captured.get(relative),
-            ),
+    let spans: Vec<Option<ParserByteSpan>> = findings
+        .iter()
+        .map(|finding| parser_span_for_finding(finding, context.parser_spans))
+        .collect();
+    // Visit spans in file and byte order so each line's prefix count
+    // continues from the previous span; record in the original order.
+    let mut visit: Vec<usize> = (0..findings.len()).collect();
+    visit.sort_by_key(|&i| (&relative_paths[i], spans[i].map(|span| span.start_byte)));
+    let mut computed = vec![None; findings.len()];
+    for i in visit {
+        computed[i] = Some(match &relative_paths[i] {
+            Some(relative) => origin_for_finding(&findings[i], spans[i], captured.get(relative)),
             None => missing_input_origin(),
-        };
-        origins.insert(finding.id.clone(), origin);
+        });
+    }
+    let mut origins = RustDiagnosticOrigins::default();
+    for (finding, origin) in findings.iter().zip(computed) {
+        origins.insert(
+            finding.id.clone(),
+            origin.unwrap_or_else(missing_input_origin),
+        );
     }
     origins
 }
@@ -194,6 +240,7 @@ fn captured_file_index<'a>(
                 lines: lsp_lines(text),
                 facts_match: facts.is_some_and(|facts| facts.source == text),
                 used_lexical_fallback: facts.is_some_and(|facts| facts.used_lexical_fallback),
+                cursor: Cell::new(None),
                 source,
             },
         );
@@ -295,11 +342,18 @@ fn exact_origin(
     if finding.probe.location.line.saturating_sub(1) != line_index {
         return None;
     }
+    let expression = source.get(start..end)?;
+    let (utf16_start, utf32_start) = captured.prefix_units(line_span.start, start)?;
+    let utf8_start = u32::try_from(start - line_span.start).ok()?;
+    let span = |start: u32, encoding| EncodedSpan {
+        start,
+        end: start.saturating_add(capped_width(expression, encoding)),
+    };
     Some(EncodedOrigin {
         line: line_index as u32,
-        utf8: self::line_span(source, line_span.start, start, end, Encoding::Utf8)?,
-        utf16: self::line_span(source, line_span.start, start, end, Encoding::Utf16)?,
-        utf32: self::line_span(source, line_span.start, start, end, Encoding::Utf32)?,
+        utf8: span(utf8_start, Encoding::Utf8),
+        utf16: span(utf16_start, Encoding::Utf16),
+        utf32: span(utf32_start, Encoding::Utf32),
         kind: OriginKind::Exact,
     })
 }
@@ -319,6 +373,7 @@ enum Encoding {
     Utf32,
 }
 
+#[cfg(test)]
 fn encoding_width(text: &str, encoding: Encoding) -> u32 {
     match encoding {
         Encoding::Utf8 => text.len() as u32,
@@ -956,6 +1011,44 @@ mod tests {
             return Err("wanted file must be captured".to_string());
         }
         assert_eq!(captured.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn prefix_cursor_matches_a_full_rescan_in_any_visit_order() -> Result<(), String> {
+        let source = "fn f() {}\n\t日本🎉e\u{0301} a < b && c > d || 𝔁 == é\n".to_owned();
+        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+        let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
+        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        let file = captured
+            .get(Path::new("src/lib.rs"))
+            .ok_or_else(|| "captured file missing".to_string())?;
+        let line_start = file.lines.get(1).ok_or("missing second line")?.start;
+        let starts: Vec<usize> = ["a <", "c >", "𝔁", "é"]
+            .iter()
+            .map(|needle| require_find(&source, needle, needle))
+            .collect::<Result<_, _>>()?;
+        let mut orders = vec![starts.clone()];
+        orders.push(starts.iter().rev().copied().collect());
+        orders.push(vec![starts[1], starts[0], starts[3], starts[2]]);
+        for order in orders {
+            for &start in &order {
+                let (utf16, utf32) = file
+                    .prefix_units(line_start, start)
+                    .ok_or("prefix must count from a scalar boundary")?;
+                assert_eq!(
+                    utf16,
+                    encoding_width(&source[line_start..start], Encoding::Utf16)
+                );
+                assert_eq!(
+                    utf32,
+                    encoding_width(&source[line_start..start], Encoding::Utf32)
+                );
+            }
+        }
+        // A start inside a scalar stays refused after the cursor has advanced.
+        let inside = starts[2] + 1;
+        assert!(file.prefix_units(line_start, inside).is_none());
         Ok(())
     }
 
