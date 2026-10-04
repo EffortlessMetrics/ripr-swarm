@@ -2052,7 +2052,10 @@ const METADATA: &[CommandMetadata] = &[
         primary_inputs: &["repo-exposure summary JSON or gap decision ledger"],
         outputs: CommandOutputs {
             default: Some("target/ripr/reports/ripr-plus.json"),
-            optional: &["target/ripr/reports/ripr-plus.md"],
+            optional: &[
+                "target/ripr/reports/ripr-plus.md",
+                "target/ripr/reports/ripr-plus.last-good.json",
+            ],
         },
         state_target: None,
         json_support: true,
