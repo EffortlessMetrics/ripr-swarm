@@ -958,7 +958,7 @@ mod tests {
         assert!(none.admits(b"include!(\"x.rs\");"));
         assert!(none.admits(b"#[path = \"a.rs\"] mod a;"));
         assert!(!none.admits(b"#![doc = include_str!(\"../README.md\")]"));
-        let cargo_bin = b"Command::new(env!(\"CARGO_BIN_EXE_tool\")).output()";
+        let cargo_bin = b"let tool = env!(\"CARGO_BIN_EXE_tool\");";
         assert!(!none.admits(cargo_bin));
         let binary = AdmissionQuery {
             binary_owner: true,
