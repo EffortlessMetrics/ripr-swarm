@@ -15,6 +15,12 @@ are scoped or reviewed.
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
   was still a discovery dead end (#5266 residual).
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
+  the default base and HEAD each resolve to the same commit after analysis (for
+  example `origin/HEAD` tracking the checked-out branch in a clone of a feature
+  branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
+  skips it. The empty result alone is not a clean pass, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
 - `ripr check`: the uncommitted-changes note no longer offers `--worktree`
   as the remedy for untracked files, which the flag never sees. The tracked
   wording now says "staged and unstaged tracked edits" (matching
@@ -114,6 +120,13 @@ are scoped or reviewed.
   `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
   client palette alias, which the server dispatcher rejects. Palette advice in
   human-readable recovery prose is unchanged (#5274).
+
+- MCP durable attempt and receipt reads use the CLI's live Git HEAD
+  applicability. Admitted ordinary descendants keep continuation; historical
+  or unreadable HEADs suppress continuation and report stale or limited
+  actionable receipt status. Retained evidence and recorded finish admission
+  remain unchanged. Durable reads run off the async executor; supported stdio
+  request admission remains serialized through reply flush (#5399).
 
 ### Changed
 
@@ -288,6 +301,15 @@ are scoped or reviewed.
   explicit and never assigned an inferred package (#5043).
 
 ### Added
+
+- `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
+  into a test that compiles and fails at its own labelled `todo!()` until
+  you write the expected value; `--write` places it in the existing inline
+  test module, a new one, or the producer-admitted integration file.
+  Inputs come from the changed comparison; the expected value is never
+  invented. `ripr check` prints the command under "Write a test for it:"
+  for Rust predicate, return-value, error-path and match-arm gaps, and
+  unsupported shapes refuse with a typed reason (#5355, #5357).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
