@@ -121,6 +121,26 @@ fn declared_binding_reads_only_a_let_declaration() {
 }
 
 #[test]
+fn retarget_relation_matches_an_initializer_containing_backticks() {
+    let relation = "binding_predicate_relation: changed binding `cut` initializer `input.find('`')` -> `input.rfind('`')` flows into predicate operand at line 13";
+    assert!(is_anchor_relation(
+        relation,
+        "    let cut = input.rfind('`');",
+        "cut"
+    ));
+    assert!(!is_anchor_relation(
+        relation,
+        "    let cut = input.find('`');",
+        "cut"
+    ));
+    assert!(!is_anchor_relation(
+        relation,
+        "    let cut = input.rfind('`');",
+        "end"
+    ));
+}
+
+#[test]
 fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
     let relation = "binding_predicate_relation: changed binding `end` initializer `a.find(d)` -> `a.rfind(d)` flows into predicate operand at line 13";
     let anchor_line = "    let end = a.rfind(d);";

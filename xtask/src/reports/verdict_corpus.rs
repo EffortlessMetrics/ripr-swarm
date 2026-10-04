@@ -341,32 +341,25 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
     plain.then_some(name)
 }
 
-/// The new initializer a `binding_predicate_relation` evidence line names:
-/// the last backticked span before `flows into`.
-fn relation_initializer(evidence: &str) -> Option<&str> {
-    let (head, _) = evidence.split_once(" flows into ")?;
-    let rest = head.strip_suffix('`')?;
-    let (_, init) = rest.rsplit_once('`')?;
-    Some(init)
-}
-
 /// Whether `evidence` is ripr's retarget relation for the `let` on the
 /// anchor line: same binding, and the relation's new initializer is the
 /// anchor statement's initializer, so a same-named `let` elsewhere in the
-/// diff is not followed.
+/// diff is not followed. The relation does not escape backticks, so the
+/// initializer is matched from the anchor statement's side (each text after
+/// an `=`) rather than parsed out of the evidence.
 fn is_anchor_relation(evidence: &str, anchor_line: &str, binding: &str) -> bool {
     let prefix = format!("binding_predicate_relation: changed binding `{binding}` initializer ");
-    if !evidence.starts_with(&prefix) {
-        return false;
-    }
-    let Some(init) = relation_initializer(evidence) else {
+    let Some(rest) = evidence.strip_prefix(&prefix) else {
         return false;
     };
     let statement = anchor_line.trim().trim_end_matches(';').trim_end();
-    !init.is_empty()
-        && statement
-            .strip_suffix(init)
-            .is_some_and(|head| head.trim_end().ends_with('='))
+    statement.match_indices('=').any(|(at, _)| {
+        let init = statement[at + 1..].trim_start();
+        !init.is_empty()
+            && rest
+                .split_once(&format!("-> `{init}` flows into "))
+                .is_some_and(|(old, _)| old.starts_with('`') && old.ends_with("` "))
+    })
 }
 
 /// Findings that speak for the anchored line on the candidate side. Base-side
