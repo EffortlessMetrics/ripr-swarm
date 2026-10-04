@@ -6,7 +6,7 @@ use crate::config::{CONFIG_FILE_NAME, generated_init_config};
 use crate::output;
 use std::path::{Path, PathBuf};
 
-use super::init_workflow::generated_github_actions_workflow;
+use super::init_workflow::{generated_github_actions_workflow, workflow_install_version};
 
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -23,6 +23,19 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     let plan = init_plan(&options)?;
     if let Some(warning) = unanalyzed_root_warning(&options.root) {
         eprintln!("{warning}");
+    }
+    // #5208: an unreleased generator cannot pin itself — that version does
+    // not exist on crates.io, so the install step would fail. The workflow
+    // pins the latest release instead; say so loudly, on stderr like the
+    // root warning, in both dry-run and real runs.
+    if options.ci.is_some() {
+        let generator = env!("CARGO_PKG_VERSION");
+        let pinned = workflow_install_version(generator);
+        if pinned != generator {
+            eprintln!(
+                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, refresh with `ripr init --ci github --force` and review the diff before committing."
+            );
+        }
     }
     if options.dry_run {
         print_init_dry_run(&plan);
@@ -93,7 +106,7 @@ struct InitTarget {
 fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if !options.root.is_dir() {
         return Err(format!(
-            "init root {} is not a directory",
+            "init root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
     }
@@ -348,7 +361,9 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(format!("unknown init --ci provider {value:?}")),
+        _ => Err(format!(
+            "unknown init --ci provider {value:?}. Accepted: github."
+        )),
     }
 }
 
@@ -439,8 +454,8 @@ mod tests {
             "the workflow must pin bash for every job:\n{workflow}"
         );
         assert!(
-            workflow.contains("gate_args=("),
-            "bash-only syntax the pin protects"
+            workflow.contains("<<< \"$operation\""),
+            "bash-only syntax (a here-string) the pin protects"
         );
     }
 
@@ -461,7 +476,7 @@ mod tests {
     fn generated_workflow_reruns_when_pull_request_labels_change() -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
         assert!(
-            workflow.contains("\"$GITHUB_EVENT_PATH\" > target/ci/labels.json"),
+            include_str!("ci_packet.rs").contains("event.pointer(\"/pull_request/labels\")"),
             "labels are no longer read from the event payload; revisit #4726"
         );
         let on_block: Vec<&str> = workflow
@@ -498,11 +513,14 @@ mod tests {
     /// could run an older ripr that lacks the commands this workflow calls,
     /// or change behavior silently on a later release. Both install routes,
     /// the prebuilt release download and the `cargo install` fallback, pin
-    /// the generating binary's own version; the fallback keeps `--locked`.
+    /// an exact version; the fallback keeps `--locked`. #5208: released
+    /// generators pin themselves; unreleased generators pin the latest
+    /// release (their own version would neither download nor install),
+    /// with a stderr warning at the `init` call site.
     #[test]
-    fn generated_workflow_pins_the_generating_ripr_version() {
+    fn generated_workflow_pins_a_resolvable_ripr_version() {
         let workflow = generated_github_actions_workflow();
-        let version = env!("CARGO_PKG_VERSION");
+        let version = workflow_install_version(env!("CARGO_PKG_VERSION"));
         let download = format!("          version={version}\n");
         assert!(workflow.contains(&download), "missing {download}");
         let pinned = format!("cargo install ripr --version {version} --locked");

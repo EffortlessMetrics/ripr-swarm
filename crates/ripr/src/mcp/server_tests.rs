@@ -1,5 +1,58 @@
 use super::*;
 
+#[tokio::test(flavor = "current_thread")]
+async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -> Result<(), String>
+{
+    let server = Arc::new(
+        McpServer::new(
+            WorkspaceStatus::resolve_with_root(None).0,
+            Some(std::env::temp_dir()),
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    // Inject only the durable reader, through the production dispatcher and
+    // its session-lock selection. Status uses this same server. This does not
+    // claim a stock stdio cancellation journey.
+    let reader_server = server.clone();
+    let worker = tokio::spawn(async move {
+        reader_server
+            .repair_read_document_with("repair-attempt:delayed", false, move || {
+                let _ = started_tx.send(());
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .map_err(|error| {
+                        workspace::AttemptFailure::new(
+                            workspace::CODE_ANALYSIS_FAILED,
+                            format!("delayed reader was not released: {error}"),
+                            "test reader release",
+                        )
+                    })?;
+                Ok(serde_json::json!({ "read": "completed" }))
+            })
+            .await
+    });
+    let started = tokio::time::timeout(std::time::Duration::from_secs(1), started_rx).await;
+    let live =
+        tokio::time::timeout(std::time::Duration::from_millis(250), server.status_tool()).await;
+    let completed_early = worker.is_finished();
+    let _ = release_tx.send(());
+    let observed = worker.await.map_err(|error| error.to_string())?;
+    assert!(
+        !completed_early,
+        "the delayed reader ran synchronously or timed out before release"
+    );
+    started
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    live.map_err(|error| format!("async status blocked behind durable read: {error}"))?
+        .map_err(|error| error.to_string())?;
+    let observed = observed.map_err(|failure| failure.detail)?;
+    assert_eq!(observed["read"], "completed");
+    Ok(())
+}
+
 #[test]
 fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
@@ -34,6 +87,49 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         != Some(true)
     {
         return Err("SDK status tool lost read-only annotation".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn sdk_session_mutating_tools_pin_user_world_readonly_scope() -> Result<(), String> {
+    // #5192 decision: readOnlyHint covers the user's world (no source
+    // edits, no launched processes, no verification/mutation execution).
+    // Session-scoped in-memory state (the committed snapshot, the
+    // deterministic replayed transaction) does not revoke it. Refresh
+    // additionally pins idempotentHint:false because repeat calls advance
+    // the committed snapshot; prepare_repair pins idempotentHint:true
+    // because replays return the identical document.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    for (name, idempotent) in [
+        (protocol::REFRESH_TOOL_NAME, false),
+        (protocol::PREPARE_REPAIR_TOOL_NAME, true),
+    ] {
+        let tool = server
+            .tools
+            .tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .ok_or_else(|| format!("{name} tool missing"))?;
+        let document = serde_json::to_value(tool).map_err(|error| error.to_string())?;
+        let annotations = document
+            .pointer("/annotations")
+            .ok_or_else(|| format!("{name} tool lost annotations"))?;
+        if annotations
+            .pointer("/readOnlyHint")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            return Err(format!("{name} tool lost user-world read-only annotation"));
+        }
+        if annotations
+            .pointer("/idempotentHint")
+            .and_then(serde_json::Value::as_bool)
+            != Some(idempotent)
+        {
+            return Err(format!("{name} tool changed idempotency disclosure"));
+        }
     }
     Ok(())
 }
@@ -112,9 +208,9 @@ async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), Stri
         .map_err(|error| error.to_string())?;
     for arguments in [
         serde_json::json!({}),
-        serde_json::json!({"gap_id": ""}),
-        serde_json::json!({"gap_id": 7}),
-        serde_json::json!({"gap_id": "gap:x", "verbose": true}),
+        serde_json::json!({"canonical_id": ""}),
+        serde_json::json!({"canonical_id": 7}),
+        serde_json::json!({"canonical_id": "gap:x", "verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         match server.get_gap_tool(arguments).await {
@@ -135,10 +231,100 @@ async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), Stri
 }
 
 #[tokio::test]
+async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), String> {
+    // #5209: the tool input spells the identity the outputs emit
+    // (`canonical_id`), not the old `gap_id` name. A pre-refresh server
+    // answers past-dispatch calls with typed `no_snapshot`, which proves
+    // the dispatch edge accepted the spelling.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:x"}))
+        .map_err(|error| error.to_string())?;
+    let response = server
+        .get_gap_tool(arguments)
+        .await
+        .map_err(|error| format!("dispatch must accept canonical_id: {error}"))?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => {
+            return Err(format!(
+                "canonical_id call must reach the typed failure, got {other:?}"
+            ));
+        }
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    if value
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
+        != Some(workspace::CODE_NO_SNAPSHOT)
+    {
+        return Err(format!("canonical_id call lost no_snapshot: {value}"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_gap_rejects_the_retired_gap_id_name() -> Result<(), String> {
+    // #5209 removal side: guessing the old `gap_id` spelling fails at the
+    // dispatch edge with invalid params, the same commit that accepts
+    // `canonical_id` above.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:x"}))
+        .map_err(|error| error.to_string())?;
+    let result = server.get_gap_tool(arguments).await;
+    if !matches!(
+        result,
+        Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
+    ) {
+        return Err("get_gap must reject gap_id with invalid params".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn gap_resource_templates_spell_the_identity_canonical_id() -> Result<(), String> {
+    // #5209: one identity, one name — the resource templates use the same
+    // `canonical_id` spelling the evidence documents emit.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let templates =
+        serde_json::to_value(&server.resource_templates).map_err(|error| error.to_string())?;
+    let templates = templates
+        .pointer("/resourceTemplates")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "SDK resource templates missing".to_string())?;
+    let uris = templates
+        .iter()
+        .filter_map(|template| {
+            template
+                .pointer("/uriTemplate")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    for expected in [
+        "ripr://gap/{canonical_id}",
+        "ripr://repair-card/{canonical_id}",
+    ] {
+        if !uris.contains(&expected) {
+            return Err(format!("resource templates lost {expected}: {uris:?}"));
+        }
+    }
+    for uri in &uris {
+        if uri.contains("canonical_item_id") {
+            return Err(format!(
+                "retired template variable still advertised: {uris:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
-    let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:any"}))
+    let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:any"}))
         .map_err(|error| error.to_string())?;
     let response = server
         .prepare_repair_tool(arguments)
@@ -259,7 +445,7 @@ async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
 async fn repair_card_fails_closed_before_refresh() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
-    let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:test:1"}))
+    let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:test:1"}))
         .map_err(|error| error.to_string())?;
     let response = server
         .get_repair_card_tool(arguments)
@@ -303,22 +489,27 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
         (
             "prepare",
             serde_json::json!({}),
-            "prepare_repair rejects a missing gap_id",
+            "prepare_repair rejects a missing canonical_id",
         ),
         (
             "prepare",
-            serde_json::json!({"gap_id": ""}),
-            "prepare_repair rejects an empty gap_id",
+            serde_json::json!({"canonical_id": ""}),
+            "prepare_repair rejects an empty canonical_id",
         ),
         (
             "prepare",
-            serde_json::json!({"gap_id": 7}),
-            "prepare_repair rejects a non-string gap_id",
+            serde_json::json!({"canonical_id": 7}),
+            "prepare_repair rejects a non-string canonical_id",
         ),
         (
             "prepare",
-            serde_json::json!({"gap_id": "gap:x", "verbose": true}),
+            serde_json::json!({"canonical_id": "gap:x", "verbose": true}),
             "prepare_repair rejects unknown arguments",
+        ),
+        (
+            "prepare",
+            serde_json::json!({"gap_id": "gap:x"}),
+            "prepare_repair rejects the retired gap_id name",
         ),
         (
             "attempt",
@@ -363,22 +554,27 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
         (
             "card",
             serde_json::json!({}),
-            "get_repair_card rejects a missing gap_id",
+            "get_repair_card rejects a missing canonical_id",
         ),
         (
             "card",
-            serde_json::json!({"gap_id": ""}),
-            "get_repair_card rejects an empty gap_id",
+            serde_json::json!({"canonical_id": ""}),
+            "get_repair_card rejects an empty canonical_id",
         ),
         (
             "card",
-            serde_json::json!({"gap_id": 7}),
-            "get_repair_card rejects a non-string gap_id",
+            serde_json::json!({"canonical_id": 7}),
+            "get_repair_card rejects a non-string canonical_id",
         ),
         (
             "card",
-            serde_json::json!({"gap_id": "gap:x", "verbose": true}),
+            serde_json::json!({"canonical_id": "gap:x", "verbose": true}),
             "get_repair_card rejects unknown arguments",
+        ),
+        (
+            "card",
+            serde_json::json!({"gap_id": "gap:x"}),
+            "get_repair_card rejects the retired gap_id name",
         ),
     ] {
         let arguments: Option<serde_json::Map<String, Value>> =
