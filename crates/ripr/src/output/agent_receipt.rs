@@ -97,6 +97,31 @@ impl AgentReceiptReading {
     }
 }
 
+/// The verdict fields a receipt issued from one verify document for one seam
+/// must carry: the seam's recorded change plus the lifecycle state and
+/// guidance kind the renderer derives from it. Readers bind a stored
+/// receipt's verdict to its verify document through this expectation instead
+/// of trusting the receipt's verdict strings on their own (#5256).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ExpectedReceiptVerdict {
+    pub(crate) change: String,
+    pub(crate) receipt_state: String,
+    pub(crate) guidance_kind: String,
+}
+
+pub(crate) fn expected_receipt_verdict(
+    verify: &Value,
+    seam_id: &str,
+) -> Result<ExpectedReceiptVerdict, String> {
+    let seam = find_receipt_seam(verify, seam_id)?;
+    let guidance = receipt_guidance(&seam.change);
+    Ok(ExpectedReceiptVerdict {
+        receipt_state: receipt_lifecycle_state_from_movement(Some(seam.change.as_str())),
+        guidance_kind: guidance.kind.to_string(),
+        change: seam.change,
+    })
+}
+
 pub(crate) use crate::app::analysis_outcome_artifact::AnalysisOutcomeUnavailableStatus as AgentReceiptUnavailableStatus;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

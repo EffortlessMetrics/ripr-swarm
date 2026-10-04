@@ -1500,19 +1500,22 @@ mod tests {
             .map_err(|error| format!("write fixture {}: {error}", path.display()))
     }
 
-    fn receipt_fixture_snapshot(class: &str) -> Result<String, String> {
+    fn receipt_fixture_snapshot(root: &Path, class: &str) -> Result<String, String> {
         // Static evidence inputs, not an analyzer run. Production comparison
         // and rendering below determine movement and every receipt status.
-        serde_json::to_string_pretty(&json!({
-            "seams": [{
-                "seam_id": RECEIPT_FIXTURE_SEAM,
-                "kind": "predicate_boundary",
-                "file": "src/lib.rs",
-                "line": 1,
-                "grip_class": class,
-            }]
-        }))
-        .map_err(|error| format!("serialize fixture snapshot: {error}"))
+        // The envelope is evidence-grade: terminal readers bind the verify
+        // document to the retained before snapshot's validated content
+        // digest, so bare seam rows no longer qualify.
+        crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root,
+            json!([crate::testing::verify_fixture::snapshot_seam(
+                RECEIPT_FIXTURE_SEAM,
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                class,
+            )]),
+        )
     }
 
     fn receipt_fixture_analysis(
@@ -1620,8 +1623,8 @@ mod tests {
         let baseline_path = workflow.join("baseline.receipt-fixture.json");
         let verify_path = workflow.join("verify.receipt-fixture.json");
         let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
-        let before = receipt_fixture_snapshot(case.before)?;
-        let after = receipt_fixture_snapshot(case.after)?;
+        let before = receipt_fixture_snapshot(root, case.before)?;
+        let after = receipt_fixture_snapshot(root, case.after)?;
         write_receipt_fixture(&before_path, before.as_bytes())?;
         let packet = serde_json::to_string_pretty(&json!({
             "seam_id": RECEIPT_FIXTURE_SEAM,
@@ -1672,14 +1675,24 @@ mod tests {
             retained_before_path.display().to_string(),
             after_path.display().to_string(),
         )?;
+        // The binding carries validated content digests, not raw file hashes:
+        // terminal readers recompute the before commitment from the retained
+        // bytes through the artifact validator.
+        let retained_before_text =
+            std::fs::read_to_string(&retained_before_path).map_err(|error| error.to_string())?;
+        let before_identity = crate::agent::artifact::validate_repo_exposure_artifact(
+            root,
+            &retained_before_text,
+            "fixture before",
+        )?;
+        let after_identity =
+            crate::agent::artifact::validate_repo_exposure_artifact(root, &after, "fixture after")?;
         let verify = render_agent_verify_json_with_currentness(
             &report,
             None,
             &AgentVerifyArtifactBinding {
-                before_content_sha256: crate::agent::provenance::sha256_file(
-                    &retained_before_path,
-                )?,
-                after_content_sha256: crate::agent::provenance::sha256_file(&after_path)?,
+                before_content_sha256: before_identity.content_sha256,
+                after_content_sha256: after_identity.content_sha256,
             },
         )?;
         write_receipt_fixture(&verify_path, verify.as_bytes())?;
