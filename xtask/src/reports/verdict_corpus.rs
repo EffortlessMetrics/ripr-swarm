@@ -355,10 +355,14 @@ fn is_anchor_relation(evidence: &str, anchor_line: &str, binding: &str) -> bool 
     let statement = anchor_line.trim().trim_end_matches(';').trim_end();
     statement.match_indices('=').any(|(at, _)| {
         let init = statement[at + 1..].trim_start();
+        // The producer writes `` `OLD` -> `NEW` `` when the probe carries a
+        // distinct old initializer and `` `NEW` `` alone otherwise.
+        let tail = format!("`{init}` flows into ");
         !init.is_empty()
-            && rest
-                .split_once(&format!("-> `{init}` flows into "))
-                .is_some_and(|(old, _)| old.starts_with('`') && old.ends_with("` "))
+            && (rest.starts_with(&tail)
+                || rest
+                    .split_once(&format!("-> {tail}"))
+                    .is_some_and(|(old, _)| old.starts_with('`') && old.ends_with("` ")))
     })
 }
 

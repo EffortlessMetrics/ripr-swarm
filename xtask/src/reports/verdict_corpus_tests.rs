@@ -138,6 +138,18 @@ fn retarget_relation_matches_an_initializer_containing_backticks() {
         "    let cut = input.rfind('`');",
         "end"
     ));
+    // Without a distinct old initializer the relation names the new one alone.
+    let single = "binding_predicate_relation: changed binding `cut` initializer `input.rfind('`')` flows into predicate operand at line 13";
+    assert!(is_anchor_relation(
+        single,
+        "    let cut = input.rfind('`');",
+        "cut"
+    ));
+    assert!(!is_anchor_relation(
+        single,
+        "    let cut = input.find('`');",
+        "cut"
+    ));
 }
 
 #[test]
