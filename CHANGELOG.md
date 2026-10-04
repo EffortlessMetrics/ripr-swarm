@@ -29,8 +29,10 @@ are scoped or reviewed.
   host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
   ripgrep and 114s to 27s on regex, with byte-identical pilot artifacts. An
   explicit `--timeout-ms` remains a hard limit. A warm `ripr check` scans
-  workspace files for shadowed assertion macros on all cores, cutting a
-  one-line check of ripr-swarm from 7.5s to 5.6s with identical output.
+  workspace files for shadowed assertion macros on all cores and stops once
+  one file already leaves every trusted macro unestablished, cutting a
+  one-line check of ripr-swarm from 7.5s to 4.2s (8.0s to 4.4s on two
+  cores) with identical output.
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
