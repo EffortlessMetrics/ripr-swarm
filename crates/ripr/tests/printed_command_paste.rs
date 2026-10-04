@@ -990,9 +990,8 @@ fn judge_call(
 }
 
 fn required(shell: Shell) -> bool {
-    std::env::var_os("GITHUB_ACTIONS").is_some()
-        || std::env::var("RIPR_PASTE_REQUIRE")
-            .is_ok_and(|list| list.split(',').any(|name| name.trim() == shell.name()))
+    std::env::var("RIPR_PASTE_REQUIRE")
+        .is_ok_and(|list| list.split(',').any(|name| name.trim() == shell.name()))
 }
 
 fn canary_hits(fixture: &Fixture) -> Vec<String> {
@@ -1090,7 +1089,6 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
             continue;
         };
         ran.push(shell);
-        let mut gap_ran_in_shell = false;
         let cases: Vec<Case> = commands
             .iter()
             .enumerate()
@@ -1116,91 +1114,106 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                 })
             })
             .collect();
-        let outcomes: Vec<Outcome> =
-            paste_shell::run_cases(shell, &executable, &scratch, &recorders, &cases)?;
-        for (case, outcome) in cases.iter().zip(&outcomes) {
-            let printed = &commands[case.id];
-            let label = format!(
-                "[{}] {} <- {}\n    {}",
-                shell.name(),
-                match printed.origin {
-                    Origin::Foreign => "foreign",
-                    Origin::Portable => "portable",
-                },
-                printed.source,
-                case.command
-            );
-            let mut case_problems: Vec<String> = Vec::new();
-            if let Some(error) = &outcome.shell_error {
-                case_problems.push(format!("shell error: {error}"));
-            }
-            if outcome.calls.len() != 1 {
-                case_problems.push(format!(
-                    "reached the program {} times, expected exactly once: {:?}",
-                    outcome.calls.len(),
-                    outcome
-                        .calls
-                        .iter()
-                        .map(|call| &call.args)
-                        .collect::<Vec<_>>()
-                ));
-            } else {
-                let call = &outcome.calls[0];
-                case_problems.extend(judge_call(
-                    printed,
-                    call,
-                    &fixture,
-                    &collected.known_ids,
-                    &subcommands,
-                ));
-                match baseline.get(&case.id) {
-                    Some((first, args)) if args != &call.args => case_problems.push(format!(
-                        "argv differs from {}: {:?} vs {:?}",
-                        first.name(),
-                        call.args,
-                        args
-                    )),
-                    Some(_) => {}
-                    None => {
-                        baseline.insert(case.id, (shell, call.args.clone()));
-                    }
-                }
-            }
-            if case_problems.is_empty() {
+        // PowerShell runs a batch in one process, so a canary cannot be traced
+        // to its command. Known-gap cases get a batch of their own, and only
+        // that batch may leave a canary behind.
+        let (gap_cases, other_cases): (Vec<Case>, Vec<Case>) = if shell.is_powershell() {
+            cases
+                .into_iter()
+                .partition(|case| known_gap(&commands[case.id], shell).is_some())
+        } else {
+            (Vec::new(), cases)
+        };
+        for (cases, excused) in [(other_cases, false), (gap_cases, true)] {
+            if cases.is_empty() {
                 continue;
             }
-            let report = format!("{label}\n    {}", case_problems.join("\n    "));
-            match known_gap(printed, shell) {
-                Some(index) => {
-                    gap_hits[index] += 1;
-                    gap_ran_in_shell = true;
-                    known.push(format!(
-                        "{} ({})",
-                        report.lines().next().unwrap_or_default(),
-                        KNOWN_GAPS[index].reason
+            let outcomes: Vec<Outcome> =
+                paste_shell::run_cases(shell, &executable, &scratch, &recorders, &cases)?;
+            for (case, outcome) in cases.iter().zip(&outcomes) {
+                let printed = &commands[case.id];
+                let label = format!(
+                    "[{}] {} <- {}\n    {}",
+                    shell.name(),
+                    match printed.origin {
+                        Origin::Foreign => "foreign",
+                        Origin::Portable => "portable",
+                    },
+                    printed.source,
+                    case.command
+                );
+                let mut case_problems: Vec<String> = Vec::new();
+                if let Some(error) = &outcome.shell_error {
+                    case_problems.push(format!("shell error: {error}"));
+                }
+                if outcome.calls.len() != 1 {
+                    case_problems.push(format!(
+                        "reached the program {} times, expected exactly once: {:?}",
+                        outcome.calls.len(),
+                        outcome
+                            .calls
+                            .iter()
+                            .map(|call| &call.args)
+                            .collect::<Vec<_>>()
                     ));
+                } else {
+                    let call = &outcome.calls[0];
+                    case_problems.extend(judge_call(
+                        printed,
+                        call,
+                        &fixture,
+                        &collected.known_ids,
+                        &subcommands,
+                    ));
+                    match baseline.get(&case.id) {
+                        Some((first, args)) if args != &call.args => case_problems.push(format!(
+                            "argv differs from {}: {:?} vs {:?}",
+                            first.name(),
+                            call.args,
+                            args
+                        )),
+                        Some(_) => {}
+                        None => {
+                            baseline.insert(case.id, (shell, call.args.clone()));
+                        }
+                    }
                 }
-                None => problems.push(report),
-            }
-        }
-        for hit in canary_hits(&fixture) {
-            // A Bash command with no PowerShell form that PowerShell splits at
-            // a `;` in the path runs its tail, which is the injection the
-            // known PowerShell gaps allow. Any other hit is a new failure.
-            if !(shell.is_powershell() && gap_ran_in_shell) {
-                problems.push(format!("[{}] {hit}", shell.name()));
-            }
-            // Clear it so one injection is reported against the shell that ran
-            // it, not every shell after.
-            for dir in [&fixture.foreign, &fixture.base, &fixture.root] {
-                for name in CANARIES {
-                    let _ = std::fs::remove_file(dir.join(name));
+                if case_problems.is_empty() {
+                    continue;
                 }
-                if dir == &fixture.foreign
-                    && let Ok(entries) = std::fs::read_dir(dir)
-                {
-                    for entry in entries.flatten() {
-                        let _ = std::fs::remove_file(entry.path());
+                let report = format!("{label}\n    {}", case_problems.join("\n    "));
+                match known_gap(printed, shell) {
+                    Some(index) => {
+                        gap_hits[index] += 1;
+                        known.push(format!(
+                            "{} ({})",
+                            report.lines().next().unwrap_or_default(),
+                            KNOWN_GAPS[index].reason
+                        ));
+                    }
+                    None => problems.push(report),
+                }
+            }
+            for hit in canary_hits(&fixture) {
+                // A Bash command with no PowerShell form that PowerShell splits at
+                // a `;` in the path runs its tail, which is the injection the
+                // known PowerShell gaps allow. Those cases run in their own
+                // batch, so a hit from any other command is a new failure.
+                if !excused {
+                    problems.push(format!("[{}] {hit}", shell.name()));
+                }
+                // Clear it so one injection is reported against the shell that ran
+                // it, not every shell after.
+                for dir in [&fixture.foreign, &fixture.base, &fixture.root] {
+                    for name in CANARIES {
+                        let _ = std::fs::remove_file(dir.join(name));
+                    }
+                    if dir == &fixture.foreign
+                        && let Ok(entries) = std::fs::read_dir(dir)
+                    {
+                        for entry in entries.flatten() {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
                     }
                 }
             }

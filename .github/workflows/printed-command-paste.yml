@@ -37,10 +37,12 @@ concurrency:
 #   macos-latest    bash 3.2, sh, zsh, PowerShell 7
 #   windows-latest  Git Bash, PowerShell 7, Windows PowerShell 5.1
 #
-# A shell the platform should have but does not fails the job under GitHub
-# Actions: a lane that silently drops a shell proves nothing about it. Known
-# gaps are listed, with the surface and the reason, in KNOWN_GAPS in the test;
-# a listed gap that stops reproducing fails the job until its row is deleted.
+# A shell named in the matrix `shells` that is missing fails the job, because
+# a lane that silently drops a shell proves nothing about it. Elsewhere (the
+# required Rust lane runs this test too) a missing shell is reported and
+# skipped. Known gaps are listed, with the surface and the reason, in
+# KNOWN_GAPS in the test; a listed gap that stops reproducing fails the job
+# until its row is deleted.
 #
 # Triggers: a nightly standing signal, pull requests that touch the code that
 # prints commands or the harness itself, and manual dispatch. The cost is one
@@ -54,7 +56,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            shells: bash,sh,zsh,pwsh
+          - os: macos-latest
+            shells: bash,sh,zsh,pwsh
+          - os: windows-latest
+            shells: bash,pwsh,powershell
 
     steps:
       - uses: actions/checkout@v6
@@ -78,6 +86,7 @@ jobs:
       - name: Paste every printed command into every shell
         shell: bash
         env:
+          RIPR_PASTE_REQUIRE: ${{ matrix.shells }}
           RIPR_PASTE_REPORT: ${{ runner.temp }}/printed-commands.jsonl
         run: cargo test -p ripr --test printed_command_paste -- --nocapture
 
