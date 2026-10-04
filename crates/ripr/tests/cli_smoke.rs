@@ -11298,13 +11298,23 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workspace.join("ripr.toml").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
-    // The steps use the generating version's CLI, so the install is pinned
-    // to it rather than taking the newest crates.io release.
-    assert!(workflow.contains(&format!(
+    // #5208: the test binary reports the unreleased package version, so it
+    // must not pin itself (that version does not exist on crates.io). It
+    // pins an exact released version instead and warns on stderr. Exact
+    // released/dev renderings are pinned by unit tests without rebuilding.
+    assert!(!workflow.contains(&format!(
         "run: cargo install ripr --version {} --locked\n",
         env!("CARGO_PKG_VERSION")
     )));
+    assert!(workflow.contains("run: cargo install ripr --version "));
     assert!(!workflow.contains("cargo install ripr --locked"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("is not released")
+            && stderr.contains("pins the latest release")
+            && stderr.contains("ripr init --ci github --force"),
+        "missing unreleased-generator warning: {stderr}"
+    );
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
