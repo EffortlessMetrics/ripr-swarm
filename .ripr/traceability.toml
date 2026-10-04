@@ -9,6 +9,17 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/facts/index_tests.rs::moved_large_payload_has_one_backing_through_both_ordered_views",
+  "crates/ripr/src/analysis/facts/index_tests.rs::union_mutation_visits_shared_flat_only_and_file_only_once",
+  "crates/ripr/src/analysis/facts/index_tests.rs::compaction_keeps_independent_membership_and_duplicate_occurrences",
+  "crates/ripr/src/analysis/facts/index_tests.rs::whole_index_wire_stays_expanded_and_cloning_does_not_pin_a_generation",
+  "crates/ripr/src/analysis/facts/index_tests.rs::invalid_membership_fails_finalization_before_compaction",
+  "crates/ripr/src/analysis/facts/index_tests.rs::finalization_observes_deadline_at_return_after_compaction_and_membership_refresh",
+  "crates/ripr/src/analysis/facts/index_tests.rs::shared_harness_demotion_splits_only_disagreeing_containing_paths",
+  "crates/ripr/src/analysis/facts/index_tests.rs::flat_slot_identity_survives_reordering_compaction_and_repeated_membership",
+  "crates/ripr/src/analysis/facts/index_tests.rs::fact_view_equality_compares_values_and_order_across_storage_layouts",
+  "crates/ripr/src/analysis/facts/index_tests.rs::file_view_equality_compares_complete_metadata_and_local_membership",
+  "crates/ripr/src/analysis/facts/index_tests.rs::unresolved_property_macros_survive_file_view_wire_and_owned_round_trip",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_test_total_retains_six_eight_nine_matches_without_changing_packed_prefix",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_test_total_uses_existing_post_dedup_oracle_row_unit",
   "crates/ripr/src/output/json/mod.rs::tests::finding_matched_total_preserves_legacy_serde_and_retained_count_floor",
@@ -93,6 +104,7 @@ fixtures = [
   "fixtures/weak_error_oracle_assert_matches"
 ]
 code = [
+  "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/facts/build.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/domain",
@@ -1238,6 +1250,7 @@ id = "RIPR-SPEC-0012"
 name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
+  "crates/ripr/src/analysis/facts/index_tests.rs::finalization_observes_deadline_at_return_after_compaction_and_membership_refresh",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::unqualified_helper_calls_have_no_module_candidates",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::qualified_helper_filter_matches_unbounded_relations",
   "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_clears_and_restores_an_outer_request",
@@ -1303,6 +1316,7 @@ fixtures = [
   "fixtures/boundary_gap/expected/pr-guidance"
 ]
 code = [
+  "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/generated_rust_corpus.rs",
   "crates/ripr/src/output/review_comments_receipt.rs",
   "xtask/src/reports/review_comments.rs",
@@ -2669,6 +2683,7 @@ tests = [
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_ignores_volatile_test_timing",
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_rejects_omitted_dependency_module",
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_rejects_digest_drift_and_escaping_paths",
+  "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_manifest_preserves_relocation_and_refuses_outside_links",
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_click_output_change_as_repairable_cli_gap",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_probe_shape_reads_a_returned_comparison_as_its_boundary",
@@ -3242,6 +3257,42 @@ id = "RIPR-SPEC-0035"
 name = "Evidence quality benchmark corpus"
 spec = "docs/specs/RIPR-SPEC-0035-evidence-quality-benchmark-corpus.md"
 tests = [
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_requires_every_native_input_fence",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_rejects_partial_or_stale_workspace_inputs",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_requires_typed_matcher_basis",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_rejects_missing_or_inconsistent_matcher_inputs",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_rejects_missing_or_corrupt_local_dependencies",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/evidence_graph.rs::benchmark_semantic_graph_production_report_rejects_required_leaf_damage",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_optional_and_complete",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_rejects_missing_or_corrupt_files",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_rejects_malformed_declarations",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_production_report_rejects_damage",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_legacy_absent_is_unreviewed",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_polarity_is_separate_from_discrimination",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_requires_independent_basis_and_exact_removal",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_missing_repeated_and_wrong_pairing",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_zero_subjects_instrument_and_stale_inputs",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_wrong_failure_and_incomplete_output",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_artifact_drift_and_escaping_paths",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_unavailable_corpus_has_no_zero_count",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_command_discloses_absent_corpus",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_production_reader_discloses_rejected_and_unreviewed",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_stale_reviewed_subject",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_rejects_unbound_or_swapped_native_capture",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_local_custody_never_falls_back",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_local_custody_enforces_resolved_containment",
+  "xtask/src/fixture_contracts/retained_files/tests.rs::retained_file_verifies_ordinary_and_relocated_roots",
+  "xtask/src/fixture_contracts/retained_files/tests.rs::retained_file_accepts_contained_links_and_root_alias",
+  "xtask/src/fixture_contracts/retained_files/tests.rs::retained_file_rejects_outside_file_and_parent_links",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_production_command_discloses_custody_and_rejection",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_require_explicit_complete_views",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_conflicting_views",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_stale_static_capture",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_wrong_selected_producer",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_require_both_reviewed_roles",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_individually_valid_mismatched_subjects",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_real_corpus_identity_and_disclosure",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_production_command_keeps_separate_counts",
   "xtask/src/main.rs",
   "crates/ripr/src/analysis/rust_index.rs::tests::classifies_only_clear_custom_helpers_as_exact_value_oracles",
   "crates/ripr/src/analysis/rust_index.rs::tests::classifies_duplicative_equality_as_weak_oracle",
@@ -3296,6 +3347,16 @@ fixtures = [
   "fixtures/evidence-quality-benchmark/corpus.json",
 ]
 code = [
+  "xtask/src/fixture_contracts/benchmark_oracles.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/captures.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/controls.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/observed_static.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/retained_support.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/native_inputs.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/matcher_basis.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/fixture_contracts/mod.rs",
+  "xtask/src/fixture_contracts/retained_files.rs",
   "xtask/src/main.rs",
 ]
 outputs = [
@@ -7908,6 +7969,8 @@ name = "check worktree mode"
 spec = "docs/specs/RIPR-SPEC-0116-check-worktree-mode.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit",
+  "crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding",
+  "crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base",
   "crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure",
   "crates/ripr/tests/cli_smoke.rs::doctor_recommends_worktree_check_on_dirty_worktree",
   "crates/ripr/tests/cli_smoke.rs::doctor_without_git_names_the_fix_and_recommends_the_diff_route",
@@ -7940,7 +8003,12 @@ code = [
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/git.rs",
+  "crates/ripr/src/app/navigation.rs",
+  "crates/ripr/src/app/explain.rs",
+  "crates/ripr/src/app/context.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands/context.rs",
   "crates/ripr/src/cli/commands/doctor.rs",
   "crates/ripr/src/cli/help/core.rs",
   "crates/ripr/src/output/doctor.rs",
@@ -8674,6 +8742,9 @@ tests = [
   "crates/ripr/src/lsp/config.rs::tests::effective_settings_eq_ignores_layer_representation",
   "crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides",
   "crates/ripr/src/lsp/config.rs::tests::session_value_sources_disclose_per_field_origin",
+  "crates/ripr/src/lsp/config.rs::tests::malformed_initialization_option_does_not_claim_initialization_source",
+  "crates/ripr/src/lsp/config.rs::tests::valid_initialization_check_mode_still_claims_initialization_source",
+  "crates/ripr/src/lsp/config.rs::tests::malformed_initialization_option_discloses_repo_fallback_source",
   "crates/ripr/src/lsp/tests.rs::initialization_only_mode_discloses_transport_and_value_sources",
   "crates/ripr/src/lsp/tests.rs::pull_mode_is_pending_until_the_first_pull_resolves",
   "crates/ripr/src/lsp/tests.rs::framed_lsp_configuration_pull_applies_and_discloses_pull_state",
@@ -9176,6 +9247,8 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/facts/index_tests.rs::shared_harness_demotion_splits_only_disagreeing_containing_paths",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::equal_function_keys_keep_distinct_local_context_and_legacy_flat_roles",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_identity_keys_borrow_body_storage",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::borrowed_normalization_matches_owned_reference_with_duplicate_coordinates",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
@@ -9255,6 +9328,7 @@ fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/workspace/source_role.rs",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs",
   "crates/ripr/src/analysis/workspace/module_graph.rs",
@@ -11731,6 +11805,34 @@ tests = [
 code = [
   "crates/ripr/src/mcp/repair.rs",
   "crates/ripr/src/mcp/gaps.rs",
+  "crates/ripr/src/mcp/workspace.rs",
+  "crates/ripr/src/mcp/protocol.rs",
+  "crates/ripr/src/mcp/server.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0215"
+name = "MCP repair card projection"
+spec = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
+tests = [
+  "crates/ripr/src/mcp/repair_card.rs::tests::repair_card_resource_uri_parsing_is_strict",
+  "crates/ripr/src/mcp/repair_card.rs::tests::card_read_fails_closed_on_every_missing_producer_fact",
+  "crates/ripr/src/mcp/repair_card.rs::tests::stale_snapshot_and_in_flight_read_fail_closed",
+  "crates/ripr/src/mcp/repair_card.rs::tests::witness_bound_card_projects_the_shared_handoff_card",
+  "crates/ripr/src/mcp/repair_card.rs::tests::refusal_kinds_travel_under_their_pinned_wire_spellings",
+  "crates/ripr/src/mcp/repair_card.rs::tests::seam_binding_requires_the_gap_owner_match",
+  "crates/ripr/src/mcp/protocol.rs::tests",
+  "crates/ripr/src/mcp/server_tests.rs::repair_card_fails_closed_before_refresh",
+  "crates/ripr/src/mcp/server_tests.rs::repair_tools_reject_bad_arguments_at_the_dispatch_edge",
+  "crates/ripr/tests/mcp_sdk.rs",
+  "crates/ripr/tests/mcp_stdio.rs",
+]
+code = [
+  "crates/ripr/src/mcp/repair_card.rs",
   "crates/ripr/src/mcp/workspace.rs",
   "crates/ripr/src/mcp/protocol.rs",
   "crates/ripr/src/mcp/server.rs",
