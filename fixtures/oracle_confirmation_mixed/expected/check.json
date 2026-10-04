@@ -80,7 +80,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(store, expected);",
           "relation_reason": "same_test_file",
-          "relation_confidence": "medium"
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "assertion does not mention the changed expression"
         },
         {
           "name": "unrelated_exact_oracle",

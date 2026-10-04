@@ -80,14 +80,14 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
-    // `reveal` names this downgrade in the stage summary; the same token is
-    // how `ClassifiedProbeEvidence` recognizes it.
-    let observation_unverified = evidence
-        .ripr
-        .reveal
-        .discriminate
-        .summary
-        .contains("(observation_unverified)");
+    // `reveal` names these downgrades in the stage summary; the same tokens
+    // are how `ClassifiedProbeEvidence` recognizes them. Under
+    // `oracle_confirmation_mixed` only a weaker assertion names the changed
+    // expression, so the strong rows are as unconfirmed as under
+    // `observation_unverified`.
+    let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
+    let observation_unverified = discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains("(oracle_confirmation_mixed)");
     let mut related_tests = evidence.related_tests;
     if !exact_oracle_covers_direct_sink {
         annotate_related_test_misses(
@@ -141,7 +141,8 @@ pub(in crate::analysis) fn build_finding(
 /// oracle that does observe still misses when no input reaches the predicate
 /// boundary value, or when no assertion pins the exact error variant or field
 /// value the change alters, and an oracle whose text never names the changed
-/// expression (`observation_unverified`) is not confirmed to observe it.
+/// expression (`observation_unverified`, or the strong side of
+/// `oracle_confirmation_mixed`) is not confirmed to observe it.
 /// `exposed` and the unknown classes are left alone: ripr does not claim a
 /// miss it has not established.
 fn annotate_related_test_misses(
