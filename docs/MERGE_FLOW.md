@@ -42,26 +42,18 @@ repository owner. Protection is never weakened to clear a merge.
 - If a rebase drops or rewrites a hunk, keep `main`'s version of any file
   another PR has already fixed; do not carry an old copy of it.
 
-## Required check (`Ripr Rust Small Result`)
+## Required check only on Draft to Ready (#4986)
 
-Today, `.github/workflows/routed-rust.yml` runs for pull-request `opened`,
-`synchronize`, `reopened`, and `labeled`; a `full-ci` label refreshes the routed
-checks. Re-check auto-merge once the check finishes.
-
-**Pending #4990 (#4986).** That PR changes the trigger so the required check
-runs only on Draft to Ready. It is open and not on `main`, so confirm the
-trigger in `routed-rust.yml` before relying on either description. If it lands,
-the rule becomes:
+`Ripr Rust Small Result` runs only when a PR moves from Draft to Ready.
 
 - Open PRs as Draft and mark them Ready once the head is final.
 - A PR opened directly as Ready, or pushed to after it went Ready, has no
-  required check and cannot merge. Convert it to Draft and mark it Ready again.
-- Before toggling, check that no Ready-triggered `routed-rust.yml` run is still
-  queued or running on that head, because the toggle cancels it.
+  required check and cannot merge. Convert it to Draft and mark it Ready again,
+  but first check that no Ready-triggered `routed-rust.yml` run is still queued
+  or running on that head, because the toggle cancels it.
+- Re-check auto-merge after toggling.
 - Labels such as `full-ci` take effect at the next Ready transition.
 - Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
-
-Once #4990 merges, replace this section with the second list alone.
 
 ## Combined-tree check
 
