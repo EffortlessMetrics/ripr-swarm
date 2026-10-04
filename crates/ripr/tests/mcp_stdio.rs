@@ -501,7 +501,9 @@ fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<()
         .into_owned();
     // Match a JSON string, not a raw substring: `ripr://workspace/status`
     // contains `/workspace` when this checkout's canonical path is that.
-    if String::from_utf8_lossy(&output.stdout).contains(&format!("\"{canonical}\"")) {
+    // Serialize so Windows backslashes are escaped the same way stdout is.
+    let encoded_canonical = serde_json::to_string(&canonical).map_err(|error| error.to_string())?;
+    if String::from_utf8_lossy(&output.stdout).contains(&encoded_canonical) {
         return Err("MCP stdout leaked the canonical repository path".to_string());
     }
     if responses[5].get("result") != Some(&json!({})) {
