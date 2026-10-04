@@ -1971,8 +1971,7 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     }
     if !root.join("snapshots").is_dir() {
         violations.push(
-            "issue lifecycle intake fixture corpus is missing its snapshots directory"
-                .to_string(),
+            "issue lifecycle intake fixture corpus is missing its snapshots directory".to_string(),
         );
     }
     let spec_path = root.join("SPEC.md");
@@ -1980,8 +1979,7 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
         let body = read_text_lossy(&spec_path)?;
         if !body.contains("RIPR-SPEC-0222") {
             violations.push(
-                "issue lifecycle intake SPEC.md must name its RIPR-SPEC-0222 decision"
-                    .to_string(),
+                "issue lifecycle intake SPEC.md must name its RIPR-SPEC-0222 decision".to_string(),
             );
         }
         for heading in ["## Given", "## When", "## Then", "## Must Not"] {
@@ -1997,8 +1995,7 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
         return Ok(());
     }
     let body = read_text_lossy(&corpus_path)?;
-    let corpus = match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_corpus(&body)
-    {
+    let corpus = match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_corpus(&body) {
         Ok(corpus) => corpus,
         Err(error) => {
             violations.push(format!("issue lifecycle intake corpus is invalid: {error}"));
@@ -2011,8 +2008,7 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
         ));
     }
     for row in &corpus.rows {
-        if let Err(error) = crate::issue_lifecycle_intake::verify_intake_row_snapshot(row, root)
-        {
+        if let Err(error) = crate::issue_lifecycle_intake::verify_intake_row_snapshot(row, root) {
             violations.push(format!(
                 "issue lifecycle intake snapshot binding failed: {error}"
             ));
@@ -2039,8 +2035,7 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     let body = read_text_lossy(&controls_path)?;
     match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_control_corpus(&body) {
         Ok(controls) => {
-            for failure in crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls)
-            {
+            for failure in crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls) {
                 violations.push(format!(
                     "issue lifecycle intake control corpus assessment failed: {failure}"
                 ));
@@ -2058,7 +2053,9 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
             }
         }
         Err(error) => {
-            violations.push(format!("issue lifecycle intake controls are invalid: {error}"));
+            violations.push(format!(
+                "issue lifecycle intake controls are invalid: {error}"
+            ));
         }
     }
     let provenance_path = root.join("provenance.json");
@@ -2099,7 +2096,9 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
             }
         }
         Err(error) => {
-            violations.push(format!("issue lifecycle intake provenance is invalid: {error}"));
+            violations.push(format!(
+                "issue lifecycle intake provenance is invalid: {error}"
+            ));
         }
     }
     Ok(())

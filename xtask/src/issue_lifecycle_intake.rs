@@ -318,7 +318,9 @@ pub(crate) fn load_issue_lifecycle_intake_provenance(
         ));
     }
     if provenance.base_main.trim().is_empty() || provenance.captured_at.trim().is_empty() {
-        return Err("issue lifecycle intake provenance must record captured_at and base_main".to_string());
+        return Err(
+            "issue lifecycle intake provenance must record captured_at and base_main".to_string(),
+        );
     }
     Ok(provenance)
 }
@@ -351,7 +353,11 @@ pub(crate) fn verify_intake_row_snapshot(
         )
     })?;
     let computed = crate::blind_journey::sha256_hex(&snapshot_body);
-    if !identity_matches(&row.snapshot.issue_snapshot_id, "gh-issue-snapshot", &computed) {
+    if !identity_matches(
+        &row.snapshot.issue_snapshot_id,
+        "gh-issue-snapshot",
+        &computed,
+    ) {
         return Err(format!(
             "intake row `{}` snapshot digest drifted: recorded `{}`, recomputed `gh-issue-snapshot:sha256:{computed}`",
             row.id, row.snapshot.issue_snapshot_id
@@ -364,7 +370,11 @@ pub(crate) fn verify_intake_row_snapshot(
         )
     })?;
     let computed = crate::blind_journey::sha256_hex(&comments_body);
-    if !identity_matches(&row.snapshot.comments_snapshot_id, "gh-issue-comments", &computed) {
+    if !identity_matches(
+        &row.snapshot.comments_snapshot_id,
+        "gh-issue-comments",
+        &computed,
+    ) {
         return Err(format!(
             "intake row `{}` comments digest drifted: recorded `{}`, recomputed `gh-issue-comments:sha256:{computed}`",
             row.id, row.snapshot.comments_snapshot_id
@@ -668,11 +678,8 @@ pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), St
     let (corpus, controls, _provenance) = load_intake_corpus_dir(&root)?;
     let mut failures = assess_intake_corpus(&corpus);
     failures.extend(assess_intake_control_corpus(&controls));
-    let attempts: Vec<IssueLifecycleAttemptV1> = corpus
-        .rows
-        .iter()
-        .map(|row| row.attempt.clone())
-        .collect();
+    let attempts: Vec<IssueLifecycleAttemptV1> =
+        corpus.rows.iter().map(|row| row.attempt.clone()).collect();
     let assessed: Vec<IssueLifecycleRowAssessmentV1> = attempts
         .iter()
         .map(assess_issue_lifecycle_attempt)
@@ -700,11 +707,8 @@ pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), St
         ));
     }
     let corpus_identity = crate::reports::issue_lifecycle_corpus_identity(&attempts)?;
-    let scorecard = crate::reports::build_issue_lifecycle_scorecard(
-        &assessed,
-        corpus_identity,
-        &corpus_dir,
-    );
+    let scorecard =
+        crate::reports::build_issue_lifecycle_scorecard(&assessed, corpus_identity, &corpus_dir);
     let json_body = crate::reports::issue_lifecycle_scorecard_json(&scorecard)?;
     crate::write_report("issue-lifecycle-scorecard.json", &json_body)?;
     crate::write_report(
@@ -756,8 +760,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_committed_corpus_loads_with_six_categories(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_committed_corpus_loads_with_six_categories()
+    -> Result<(), String> {
         let (corpus, controls, provenance) = load_committed()?;
         if corpus.rows.len() != 6 {
             return Err(format!("expected six real rows, got {}", corpus.rows.len()));
@@ -770,10 +774,7 @@ mod tests {
         }
         for control in &controls.rows {
             if !control.row.attempt.synthetic {
-                return Err(format!(
-                    "control row `{}` must be synthetic",
-                    control.id
-                ));
+                return Err(format!("control row `{}` must be synthetic", control.id));
             }
         }
         for row in &corpus.rows {
@@ -785,8 +786,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_false_duplicate_candidate_corrected_by_root_review(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_false_duplicate_candidate_corrected_by_root_review()
+    -> Result<(), String> {
         let (_corpus, controls, _provenance) = load_committed()?;
         let control = controls
             .rows
@@ -813,7 +814,9 @@ mod tests {
             ));
         }
         if !control.row.false_candidates.contains(&candidate.identity) {
-            return Err("the corrected candidate must stay visible in false_candidates".to_string());
+            return Err(
+                "the corrected candidate must stay visible in false_candidates".to_string(),
+            );
         }
         if !control
             .row
@@ -832,8 +835,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_real_overlapping_pr_blocks_duplicate_pickup(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_real_overlapping_pr_blocks_duplicate_pickup()
+    -> Result<(), String> {
         let (_corpus, controls, _provenance) = load_committed()?;
         let control = controls
             .rows
@@ -847,14 +850,14 @@ mod tests {
             .open_candidates
             .iter()
             .any(|candidate| candidate.kind == IssueLifecycleIntakeCandidateKindV1::Duplicate);
-        let has_overlap = control
-            .row
-            .open_candidates
-            .iter()
-            .any(|candidate| candidate.kind == IssueLifecycleIntakeCandidateKindV1::OpenPrOverlap);
+        let has_overlap =
+            control.row.open_candidates.iter().any(|candidate| {
+                candidate.kind == IssueLifecycleIntakeCandidateKindV1::OpenPrOverlap
+            });
         if !has_duplicate || !has_overlap {
             return Err(
-                "the control must carry both a duplicate candidate and the overlapping PR".to_string(),
+                "the control must carry both a duplicate candidate and the overlapping PR"
+                    .to_string(),
             );
         }
         if control.row.attempt.disposition != IssueLifecycleDispositionV1::Blocked {
@@ -893,8 +896,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_architecture_ambiguity_stops_at_root_decision_required(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_architecture_ambiguity_stops_at_root_decision_required()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "root_decision_required")?;
         if row.attempt.disposition != IssueLifecycleDispositionV1::RootDecisionRequired {
@@ -914,9 +917,7 @@ mod tests {
             return Err("no contract artifact may be drafted before the root decision".to_string());
         }
         if row.attempt.contract_decision.root_disposition.is_some() {
-            return Err(
-                "the root decision must not be pre-recorded on the attempt".to_string(),
-            );
+            return Err("the root decision must not be pre-recorded on the attempt".to_string());
         }
         if row.root_disposition.rationale.is_empty() {
             return Err("the row must retain the root rationale".to_string());
@@ -925,8 +926,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_missing_evidence_yields_exact_questions(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_missing_evidence_yields_exact_questions() -> Result<(), String>
+    {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "needs_evidence")?;
         if row.attempt.disposition != IssueLifecycleDispositionV1::NeedsEvidence {
@@ -958,8 +959,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_partial_umbrella_retains_uncovered_acceptance(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_partial_umbrella_retains_uncovered_acceptance()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "partially_landed_umbrella")?;
         if row.attempt.disposition != IssueLifecycleDispositionV1::PartiallyLanded {
@@ -986,8 +987,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_duplicate_row_names_evidence_and_stays_first_class(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_duplicate_row_names_evidence_and_stays_first_class()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "duplicate_or_already_satisfied")?;
         if row.attempt.disposition != IssueLifecycleDispositionV1::Duplicate {
@@ -1021,8 +1022,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_relevant_movement_invalidates_row_unrelated_does_not(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_relevant_movement_invalidates_row_unrelated_does_not()
+    -> Result<(), String> {
         let (corpus, controls, _provenance) = load_committed()?;
         for row in corpus
             .rows
@@ -1044,12 +1045,15 @@ mod tests {
         }
         let overlap = row_by_category(&corpus, "overlapping_open_pr")?;
         if !movement_invalidates_row(overlap, "pr-5408") {
-            return Err("movement of the overlapping PR identity must invalidate the row".to_string());
+            return Err(
+                "movement of the overlapping PR identity must invalidate the row".to_string(),
+            );
         }
         let umbrella = row_by_category(&corpus, "partially_landed_umbrella")?;
         if !movement_invalidates_row(umbrella, "pr-5366") {
             return Err(
-                "movement of the merged child identity must invalidate the umbrella row".to_string(),
+                "movement of the merged child identity must invalidate the umbrella row"
+                    .to_string(),
             );
         }
         if movement_invalidates_row(umbrella, &format!("{}-unrelated", umbrella.current_main)) {
@@ -1059,8 +1063,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_no_active_toml_label_age_or_title_selects_work(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_no_active_toml_label_age_or_title_selects_work()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let projections: Vec<String> = corpus
             .rows
@@ -1071,12 +1075,12 @@ mod tests {
             })
             .collect::<Result<_, _>>()?;
         for (row, projection) in corpus.rows.iter().zip(projections.iter()) {
-            let snapshot_body = fs::read_to_string(
-                intake_root()
-                    .join(row.snapshot.snapshot_path.clone().ok_or_else(|| {
-                        format!("row `{}` has no snapshot path", row.id)
-                    })?),
-            )
+            let snapshot_body = fs::read_to_string(intake_root().join(
+                row.snapshot
+                    .snapshot_path
+                    .clone()
+                    .ok_or_else(|| format!("row `{}` has no snapshot path", row.id))?,
+            ))
             .map_err(|error| format!("read snapshot for selection-signal check: {error}"))?;
             let snapshot: serde_json::Value = serde_json::from_str(&snapshot_body)
                 .map_err(|error| format!("parse snapshot for selection-signal check: {error}"))?;
@@ -1113,8 +1117,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_cold_start_root_reconstructs_packet_without_chat(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_cold_start_root_reconstructs_packet_without_chat()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let first: Vec<String> = corpus
             .rows
@@ -1143,8 +1147,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_packet_bytes_complete_or_explicitly_not_measured(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_packet_bytes_complete_or_explicitly_not_measured()
+    -> Result<(), String> {
         let (corpus, controls, _provenance) = load_committed()?;
         let mut checked = 0usize;
         for row in corpus
@@ -1177,7 +1181,9 @@ mod tests {
             .rows
             .iter()
             .find(|control| control.control == "packet_bytes_not_measured_is_explicit")
-            .ok_or_else(|| "control corpus is missing the not-measured bytes control".to_string())?;
+            .ok_or_else(|| {
+                "control corpus is missing the not-measured bytes control".to_string()
+            })?;
         if control.row.packet_bytes.selected != IssueLifecycleIntakeBytesV1::NotMeasured {
             return Err("the control row must say not_measured explicitly".to_string());
         }
