@@ -517,6 +517,119 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
 }
 
 #[test]
+fn validator_holds_each_subject_origin_to_its_own_provenance() -> Result<(), String> {
+    // An upstream subject must still name its pinned repository.
+    let violations = tampered(|raw| {
+        raw["subjects"][0]["upstream"] = Value::Null;
+        raw["subjects"][0]["commit"] = Value::Null;
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("upstream is not an https URL")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("commit is not a 40-hex sha")),
+        "{violations:#?}"
+    );
+    // Relabeling an upstream excerpt as authored cannot hide its provenance:
+    // it still names its upstream repository.
+    let violations = tampered(|raw| {
+        raw["subjects"][0]["origin"] = json!("authored");
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("names an upstream, commit or shared corpus entry")),
+        "{violations:#?}"
+    );
+    // Authored code is this repository's code, under its license.
+    let violations = tampered(|raw| {
+        raw["subjects"][0]["origin"] = json!("authored");
+        raw["subjects"][0]["license"] = json!("MIT");
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("license is not `MIT OR Apache-2.0`")),
+        "{violations:#?}"
+    );
+    // An unknown origin is a parse error, not a silent default.
+    let unknown = tampered(|raw| {
+        raw["subjects"][0]["origin"] = json!("borrowed");
+    });
+    assert!(unknown.is_err(), "{unknown:?}");
+    Ok(())
+}
+
+#[test]
+fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let mut corpus = load_corpus(&dir)?;
+    let Some(first) = corpus.cases.first().cloned() else {
+        return Err("committed corpus has no cases".to_string());
+    };
+    // One discriminated case moves to an authored subject; every case is
+    // observed as a gap, so it is false actionable on the authored side only.
+    let mut authored_subject = corpus
+        .subjects
+        .iter()
+        .find(|s| s.subject_id == first.subject_id)
+        .cloned()
+        .ok_or("first case has no subject")?;
+    authored_subject.subject_id = "authored-probe".to_string();
+    authored_subject.origin = SubjectOrigin::Authored;
+    corpus.subjects.push(authored_subject);
+    corpus.cases[0].subject_id = "authored-probe".to_string();
+    assert_eq!(corpus.cases[0].truth.state, TruthState::Discriminated);
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "weakly_exposed",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect();
+    let report = build_report(&corpus, &checks)?;
+    let authored = report
+        .by_origin
+        .get("authored")
+        .ok_or("no authored rates")?;
+    let upstream = report
+        .by_origin
+        .get("upstream")
+        .ok_or("no upstream rates")?;
+    assert_eq!(authored.cases_total, 1);
+    assert_eq!(
+        (
+            authored.false_actionable_rate.numerator,
+            authored.false_actionable_rate.denominator
+        ),
+        (1, 1)
+    );
+    assert_eq!(upstream.cases_total, corpus.cases.len() - 1);
+    assert_eq!(
+        upstream.false_actionable_rate.numerator + authored.false_actionable_rate.numerator,
+        report.false_actionable_rate.numerator
+    );
+    assert_eq!(report.rows[0].origin, SubjectOrigin::Authored);
+    let markdown = render_report_markdown(&report);
+    assert!(
+        markdown.contains("| authored | 1 | 1/1 | 1/1 |"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
 fn relativize_probe_files_strips_only_the_run_root() {
     let mut check = json!({"findings": [
         {"source_currentness": "candidate_current", "probe": {"file": "/work/case/src/lib.rs", "line": 10}},

@@ -42,13 +42,42 @@ pub(crate) struct Corpus {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Subject {
     pub(crate) subject_id: String,
-    pub(crate) upstream: String,
-    pub(crate) commit: String,
+    #[serde(default)]
+    pub(crate) origin: SubjectOrigin,
+    #[serde(default)]
+    pub(crate) upstream: Option<String>,
+    #[serde(default)]
+    pub(crate) commit: Option<String>,
     pub(crate) version_label: String,
     pub(crate) license: String,
     pub(crate) shared_corpus: Option<SharedCorpusRef>,
     pub(crate) retained_files: Vec<RetainedFile>,
 }
+
+/// Where a subject's code comes from. An upstream subject is a byte-identical
+/// excerpt of a pinned public crate; an authored subject is a small crate
+/// written for this corpus to cover a cell the upstream cases leave empty.
+/// Both carry runtime truth. The report keeps their rates apart so authored
+/// cases, chosen to fill cells, never stand in for real-world rates.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubjectOrigin {
+    #[default]
+    Upstream,
+    Authored,
+}
+
+impl SubjectOrigin {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            SubjectOrigin::Upstream => "upstream",
+            SubjectOrigin::Authored => "authored",
+        }
+    }
+}
+
+/// Authored subjects are this repository's own code, under its license.
+pub(crate) const AUTHORED_LICENSE: &str = "MIT OR Apache-2.0";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -443,6 +472,7 @@ pub(crate) fn ratio(numerator: usize, denominator: usize) -> Ratio {
 pub(crate) struct CaseRow {
     pub(crate) case_id: String,
     pub(crate) subject_id: String,
+    pub(crate) origin: SubjectOrigin,
     pub(crate) anchor: String,
     pub(crate) behavior_family: String,
     pub(crate) test_shape: String,
@@ -475,8 +505,51 @@ pub(crate) struct Report {
     pub(crate) abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
+    /// The verdict rates again, per subject origin. Authored cases are chosen
+    /// to fill cells, so only the upstream rates describe real-world tests.
+    pub(crate) by_origin: BTreeMap<String, OriginRates>,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct OriginRates {
+    pub(crate) cases_total: usize,
+    pub(crate) by_observed_verdict: BTreeMap<String, usize>,
+    pub(crate) false_verdict_rate: Ratio,
+    pub(crate) false_actionable_rate: Ratio,
+    pub(crate) false_exposed_rate: Ratio,
+    pub(crate) false_silent_rate: Ratio,
+    pub(crate) ideal_rate: Ratio,
+}
+
+fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
+    let count = |outcome: Outcome| rows.iter().filter(|r| r.outcome == outcome).count();
+    let discriminated = rows
+        .iter()
+        .filter(|r| r.truth == TruthState::Discriminated)
+        .count();
+    let not_fully = rows.len() - discriminated;
+    let (false_actionable, false_exposed, false_silent) = (
+        count(Outcome::FalseActionable),
+        count(Outcome::FalseExposed),
+        count(Outcome::FalseSilent),
+    );
+    let mut by_observed = BTreeMap::new();
+    for row in rows {
+        *by_observed
+            .entry(row.observed_verdict.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+    OriginRates {
+        cases_total: rows.len(),
+        by_observed_verdict: by_observed,
+        false_verdict_rate: ratio(false_actionable + false_exposed + false_silent, rows.len()),
+        false_actionable_rate: ratio(false_actionable, discriminated),
+        false_exposed_rate: ratio(false_exposed, not_fully),
+        false_silent_rate: ratio(false_silent, not_fully),
+        ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
+    }
 }
 
 /// Per-case scoring. Contradictions are counted per candidate-current
@@ -485,6 +558,7 @@ pub(crate) struct Report {
 /// inconsistency. Summary-count codes are per check.
 pub(crate) fn case_row(
     case: &Case,
+    origin: SubjectOrigin,
     check: &Value,
 ) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
     let anchored = anchored_findings(check, &case.anchor);
@@ -524,6 +598,7 @@ pub(crate) fn case_row(
     let row = CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
+        origin,
         anchor: format!("{}:{}", case.anchor.file, case.anchor.line),
         behavior_family: case.behavior_family.clone(),
         test_shape: case.test_shape.clone(),
@@ -542,6 +617,11 @@ pub(crate) fn case_row(
 
 pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Result<Report, String> {
     let by_id: BTreeMap<&str, &Value> = checks.iter().map(|(id, v)| (id.as_str(), v)).collect();
+    let origins: BTreeMap<&str, SubjectOrigin> = corpus
+        .subjects
+        .iter()
+        .map(|s| (s.subject_id.as_str(), s.origin))
+        .collect();
     let mut rows = Vec::new();
     let mut findings_scored = 0;
     let mut findings_contradicted = 0;
@@ -550,7 +630,16 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
         let check = by_id
             .get(case.case_id.as_str())
             .ok_or_else(|| format!("no ripr result for case `{}`", case.case_id))?;
-        let (row, scored, contradicted, code_counts) = case_row(case, check);
+        let origin = origins
+            .get(case.subject_id.as_str())
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "case `{}` names unknown subject `{}`",
+                    case.case_id, case.subject_id
+                )
+            })?;
+        let (row, scored, contradicted, code_counts) = case_row(case, origin, check);
         findings_scored += scored;
         findings_contradicted += contradicted;
         for (code, n) in code_counts {
@@ -578,6 +667,13 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
             .entry(row.observed_verdict.as_str().to_string())
             .or_insert(0) += 1;
     }
+    let mut by_origin = BTreeMap::new();
+    for origin in [SubjectOrigin::Upstream, SubjectOrigin::Authored] {
+        let subset: Vec<&CaseRow> = rows.iter().filter(|r| r.origin == origin).collect();
+        if !subset.is_empty() {
+            by_origin.insert(origin.as_str().to_string(), origin_rates(&subset));
+        }
+    }
     Ok(Report {
         schema_version: REPORT_SCHEMA.to_string(),
         spec: corpus.spec.clone(),
@@ -594,6 +690,7 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
+        by_origin,
         rows,
         non_claims: corpus.non_claims.clone(),
     })
@@ -639,14 +736,34 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
             ratio.numerator, ratio.denominator, ratio.rate
         ));
     }
+    if report.by_origin.len() > 1 {
+        out.push_str(
+            "\nBy subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.\n\n",
+        );
+        out.push_str("| Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal |\n");
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for (origin, rates) in &report.by_origin {
+            let cell = |r: &Ratio| format!("{}/{}", r.numerator, r.denominator);
+            out.push_str(&format!(
+                "| {origin} | {} | {} | {} | {} | {} | {} |\n",
+                rates.cases_total,
+                cell(&rates.false_verdict_rate),
+                cell(&rates.false_actionable_rate),
+                cell(&rates.false_exposed_rate),
+                cell(&rates.false_silent_rate),
+                cell(&rates.ideal_rate),
+            ));
+        }
+    }
     out.push_str(
-        "\n| Case | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |\n",
+        "\n| Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |\n",
     );
-    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
     for row in &report.rows {
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             row.case_id,
+            row.origin.as_str(),
             row.truth.as_str(),
             row.ideal_verdict.as_str(),
             row.observed_verdict.as_str(),
@@ -784,11 +901,35 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
             "subject id `{id}` is not a single safe path segment; use letters, digits and dashes"
         ));
     }
-    if subject.commit.len() != 40 || !subject.commit.chars().all(|c| c.is_ascii_hexdigit()) {
-        violations.push(format!("subject `{id}` commit is not a 40-hex sha"));
-    }
-    if !subject.upstream.starts_with("https://") {
-        violations.push(format!("subject `{id}` upstream is not an https URL"));
+    match subject.origin {
+        SubjectOrigin::Upstream => {
+            let commit = subject.commit.as_deref().unwrap_or_default();
+            if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+                violations.push(format!("subject `{id}` commit is not a 40-hex sha"));
+            }
+            if !subject
+                .upstream
+                .as_deref()
+                .is_some_and(|url| url.starts_with("https://"))
+            {
+                violations.push(format!("subject `{id}` upstream is not an https URL"));
+            }
+        }
+        SubjectOrigin::Authored => {
+            if subject.upstream.is_some()
+                || subject.commit.is_some()
+                || subject.shared_corpus.is_some()
+            {
+                violations.push(format!(
+                    "authored subject `{id}` names an upstream, commit or shared corpus entry; authored code has none"
+                ));
+            }
+            if subject.license != AUTHORED_LICENSE {
+                violations.push(format!(
+                    "authored subject `{id}` license is not `{AUTHORED_LICENSE}`, this repository's license"
+                ));
+            }
+        }
     }
     if subject.license.trim().is_empty() || subject.version_label.trim().is_empty() {
         violations.push(format!("subject `{id}` has no license or version label"));
@@ -815,20 +956,29 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         listed.insert(file.path.clone());
         match fs::read(root.join(stored_path(&file.path))) {
             Ok(bytes) if sha256_hex(&bytes) == file.sha256 => {}
-            Ok(_) => violations.push(format!(
-                "subject `{id}` file `{}` does not match its pinned sha256; restore the upstream bytes from {} at {}, or re-pin the sha256 if the pin moved deliberately",
-                file.path, subject.upstream, subject.commit
-            )),
+            Ok(_) => violations.push(match subject.origin {
+                SubjectOrigin::Upstream => format!(
+                    "subject `{id}` file `{}` does not match its pinned sha256; restore the upstream bytes from {} at {}, or re-pin the sha256 if the pin moved deliberately",
+                    file.path,
+                    subject.upstream.as_deref().unwrap_or_default(),
+                    subject.commit.as_deref().unwrap_or_default()
+                ),
+                SubjectOrigin::Authored => format!(
+                    "authored subject `{id}` file `{}` does not match its pinned sha256; an edit to authored code needs its cases relabeled before the sha256 is re-pinned",
+                    file.path
+                ),
+            }),
             Err(err) => violations.push(format!(
                 "subject `{id}` file `{}` is unreadable: {err}",
                 file.path
             )),
         }
     }
-    if !subject
-        .retained_files
-        .iter()
-        .any(|f| f.path.contains("LICENSE"))
+    if subject.origin == SubjectOrigin::Upstream
+        && !subject
+            .retained_files
+            .iter()
+            .any(|f| f.path.contains("LICENSE"))
     {
         violations.push(format!("subject `{id}` retains no LICENSE file"));
     }
