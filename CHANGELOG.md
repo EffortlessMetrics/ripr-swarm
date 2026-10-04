@@ -18,6 +18,13 @@ are scoped or reviewed.
   to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
   not seam IDs.
 
+- `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
+  recovery messages bind a relative `--root` to the selected directory in the
+  commands they print, so `--root .` no longer yields a command that fails
+  when pasted from another directory. The card's `full packet:` line and the
+  identity refusal now carry `--root` at all; the card's typed command args and
+  detail routes stay portable (#3999).
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
