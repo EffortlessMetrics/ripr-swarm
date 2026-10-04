@@ -11,6 +11,8 @@ Linked issues:
 - #5344 (finding says "Related tests were found" while listing none)
 - #5329 (finding reports `reach: yes` with `related_tests_total: 0`)
 - #5356 (`ripr explain` repeats the human-full block)
+- #5508 (`observation_unconfirmed` read as an established miss)
+- #5498 (Perl findings list tests without a reason)
 
 Support-tier impact:
 
@@ -51,6 +53,18 @@ developer who disagreed had to re-derive the analysis.
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
   `exposed` findings and the unknown classes get no class-level miss.
+- `observation_unconfirmed` is an unknown, not an established miss: its sentence
+  says ripr could not confirm that the assertion observes the changed
+  behavior (#5508). Only `assertion_not_observing` claims the assertion
+  observes something else.
+- The Perl v1 producer (#5498) sets `observation_unconfirmed` on a row only
+  when the finding is a concrete `weakly_exposed` gap from a complete packet
+  with no blocking limit, the row is a reachable direct owner call, its linked
+  oracle is the strong exact, owner-targeted oracle that earned the weak
+  exposure, and the shared sink-alignment check establishes no alignment for
+  that row. Unequal sink text stays unconfirmed. Every other Perl row keeps no
+  miss: advisory relations, weak or missing oracles, partial or blocked
+  packets, and the finding-wide discriminator, which has no test identity.
 - `miss` is evidence only. No stage, class, confidence, stop reason, or next
   step reads it. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
@@ -88,7 +102,8 @@ developer who disagreed had to re-derive the analysis.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python, TypeScript, and Perl producers, which record no miss yet.
+- Python and TypeScript producers, which record no miss yet (#5491, #5495),
+  and richer Perl reasons that need row-owned facts (#5562).
 
 ## Acceptance Examples
 

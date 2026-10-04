@@ -31,8 +31,11 @@ pub(crate) fn related_test_miss_reason(
         RelatedTestMiss::WeakAssertion => {
             "assertion too weak to tell the old behavior from the new".to_string()
         }
+        // #5508: an unknown observation edge, not an established miss. Only
+        // `assertion_not_observing` claims the assertion observes something
+        // else.
         RelatedTestMiss::ObservationUnconfirmed => {
-            "assertion does not mention the changed expression".to_string()
+            "ripr could not confirm that this assertion observes the changed behavior".to_string()
         }
         // The analyzer assigns `missing_input` only for a predicate probe
         // with a boundary fact, and `missing_exact_assertion` only when no
@@ -146,7 +149,7 @@ mod tests {
             (
                 RelatedTestMiss::ObservationUnconfirmed,
                 None,
-                "assertion does not mention the changed expression",
+                "ripr could not confirm that this assertion observes the changed behavior",
             ),
         ];
         for (miss, reason, expected) in cases {
