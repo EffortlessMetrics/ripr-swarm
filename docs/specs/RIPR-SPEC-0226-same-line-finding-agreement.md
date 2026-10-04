@@ -88,6 +88,11 @@ to the family, which may differ.
    found, unless its own evidence names a family-specific reason (for example
    the `wrapper_seam_callee` limit, which applies only to `error_path` and
    `return_value`). The reason appears in that finding's text.
+
+   The related-test sets themselves are equal across these findings, except
+   for tests a family-specific rule adds or drops; each such difference is
+   named in the finding whose set differs. One finding listing `{T}` and
+   another listing `{U}` with no named rule is a contradiction.
 4. **Call observation agrees.** For a `call_deletion` finding and a
    `side_effect` finding on the same call expression, the side effect's
    confirmation carries to the deletion only when deleting the call provably
@@ -96,7 +101,9 @@ to the family, which may differ.
      receiver's pre-call state is provably known in that test (bound from a
      literal, `new()` or `default()` with no earlier write) and the asserted
      post-call state differs from it, so deleting the call fails the
-     assertion; an idempotent write (`insert` of a present key, `clear` of an
+     assertion; and no write between the call and the assertion (another
+     mutating call on, assignment to, or `&mut` borrow of the receiver) can
+     produce the asserted state on its own; an idempotent write (`insert` of a present key, `clear` of an
      empty collection) or an unknown pre-call state does not carry;
    - for a mock expectation, it carries an exact call count (`times(n)` with
      `n` at least 1); an expectation that allows zero calls does not carry.
@@ -119,9 +126,11 @@ to the family, which may differ.
    gates stay per finding. Alternative: no line-level summary anywhere.
 2. **Catch-all beside a typed finding.** When a lexical `static_unknown`
    finding shares the exact expression span of a typed finding with a
-   definite class, recommended: keep it in JSON and drop it from human
-   output, hover and annotations, because it adds no evidence the typed
-   finding lacks. Alternative: keep it everywhere.
+   definite class, recommended: keep it on every per-finding surface (JSON,
+   SARIF, annotations, diagnostics, gates, PR comments), as rule 5 requires,
+   and drop it only from human output and LSP hover, which are not
+   per-finding surfaces, because it adds no evidence the typed finding
+   lacks. Alternative: keep it everywhere.
 
 ## Required Evidence
 

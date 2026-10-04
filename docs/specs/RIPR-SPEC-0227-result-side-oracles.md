@@ -104,8 +104,10 @@ or `Err` (or `Some` or `None`):
 - `assert!(matches!(r, Err(_)))`, `assert!(matches!(r, Ok(_)))`;
 - `r.unwrap_err()` or `r.expect_err(..)` whose value is never compared;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
-- `#[should_panic]` without `expected`, around a body whose only panic source
-  on the owner result is `unwrap()` or `expect()`.
+- `#[should_panic]` without `expected`, only when unwrapping the owner result
+  with `unwrap()` or `expect()` is the sole possible panic source on the
+  test's execution path (no other `panic!`, assertion, indexing, unwrap or
+  call that may panic).
 
 `#[should_panic(expected = "..")]` with a message is not a result-side oracle;
 it belongs to message-bound authorities.

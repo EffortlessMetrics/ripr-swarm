@@ -88,8 +88,11 @@ defining them for assignments.
 
 A changed Rust statement `place = expr` or `place op= expr`, where `place` is a
 field path (`self.f`, `recv.f`, `recv.a.b`), produces a `field_construction`
-probe whose field is the last path segment and whose expression is the
-assignment's right-hand side and operator. It does not produce a
+probe whose field identity is the full projection path after the receiver
+(`count` for `self.count`, `child.count` for `self.child.count`) and whose
+expression is the assignment's right-hand side and operator. Every rule below
+matches that full path: a read of `r.count` never observes a write to
+`r.child.count`. It does not produce a
 `static_unknown` probe for the same span.
 
 ### Observation
@@ -104,7 +107,7 @@ The probe is confirmed by a related test that:
    method call on `r` taking `&mut self`, no assignment to `r` or `r.f`, no
    `&mut r` passed to a call, and no method call on `r` at all when `f` is a
    `Cell`, `RefCell`, `Mutex`, `RwLock` or atomic (interior mutability).
-    Otherwise the read does not confirm
+   Otherwise the read does not confirm
    (`c.bump(); c.reset(); assert_eq!(c.count, 0)` hides the mutant).
 
 A read of a sibling field keeps a `FieldValue` missing discriminator for `f`,

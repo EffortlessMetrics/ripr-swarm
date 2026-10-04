@@ -79,9 +79,12 @@ Three wrong outcomes follow:
 
 ### Selection facts
 
-For a changed `match_arm` probe, activation evaluates each related test's
+For a changed `match_arm` probe, activation collects every related test's
 owner calls whose scrutinee is a parameter of the owner, not shadowed or
-reassigned before the `match`, and whose argument is statically resolved. A call **provably selects** an arm when, in source order,
+reassigned before the `match`. Each call is either resolved (its argument is
+statically resolved, below) or unresolved; an unresolved call is kept as a
+blocker, never dropped. A resolved call **provably selects** an arm when, in
+source order,
 every earlier arm provably does not match the argument and that arm provably
 does.
 
@@ -92,17 +95,21 @@ Provable matching is defined for this pattern grammar and no other:
 - enum variant paths, qualified (`Kind::A`) or bare imported, including the
   prelude constructors `Some`, `None`, `Ok` and `Err`;
 - tuple-variant and tuple patterns whose subpatterns are in this grammar,
-  wildcards (`_`) or bindings;
+  wildcards (`_`) or bare bindings;
 - or-patterns whose alternatives are all in this grammar;
-- a top-level `_` or binding, which matches every argument.
+- `name @ subpattern`, which matches exactly when `subpattern` does;
+- a top-level `_` or bare identifier binding, which matches every argument.
+  A binding with an `@` subpattern is not a catch-all.
 
 An arm with a guard (`pat if cond`) is not provably matched or provably
 unmatched. When a guarded arm comes before or is the changed arm, the call
 does not provably select any arm at or after the guard.
 
 A resolved argument is a literal, an enum path or a constructor call of the
-grammar above written in the test call itself, or a `let` binding in the same
-test whose initializer is one. Arguments from helpers, fixtures, loops,
+grammar above written in the test call itself, or an immutable `let` binding
+in the same test whose initializer is one and which is not shadowed before
+the call. A `let mut` binding, or one passed as `&mut` before the call, is
+unresolved. Arguments from helpers, fixtures, loops,
 parameters or other calls are unresolved.
 
 ### Naming the unselected arm

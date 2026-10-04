@@ -97,11 +97,15 @@ literal the owner returns is confirmed by a related test when all of these
 hold:
 
 1. One `assert_eq!` operand is the owner's call, admitted by the same call
-   identity and execution gates as RIPR-SPEC-0197, or a `let` binding in the
-   same test whose initializer is that call.
+   identity and execution gates as RIPR-SPEC-0197, or an immutable `let`
+   binding in the same test whose initializer is that call, with no
+   `&mut` borrow, shadowing or interior-mutability write of the binding
+   between the call and the assertion. A `let mut` binding gives no credit.
 2. The other operand is a struct literal of `T` (wrapped at most once as
    above, matching any wrapper on the owner's return) that names `f`
-   explicitly with a value.
+   explicitly with an independent expected value: a literal, a constant, or
+   an expression that mentions neither the owner call nor the binding.
+   `Config { retries: c.retries, .. }` names `f` but pins nothing.
 3. `T` is a workspace type with a visible `#[derive(PartialEq)]` and no
    manual `impl PartialEq for T` in the workspace.
 4. The type of `f` compares by value: a primitive, `String`, `&str`, or a
@@ -187,6 +191,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 10. `assert_ne!(build(3), Config { retries: 9, name: "x".into() })`: `weakly_exposed`, no field credit.
 11. `retries` of type `Retries` with `impl PartialEq for Retries { fn eq(&self, _: &Self) -> bool { true } }`,
     test as in example 1: not `exposed`.
+12. `let c = build(3); assert_eq!(c, Config { retries: c.retries, name: "x".into() })`:
+    not `exposed`.
+13. `let mut c = build(3); c.retries = 4; assert_eq!(c, Config { retries: 4, name: "x".into() })`:
+    not `exposed`.
 
 ## Test Mapping
 
