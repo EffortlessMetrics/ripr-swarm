@@ -182,14 +182,17 @@ Two pattern terms are used below.
    wildcard pre-check, a `matches!` or `assert_matches!` whose whole
    pattern is irrefutable assigns `relational_check` / weak, guard or not,
    so `Ok(_) | Err(_)` never reaches step 2 as a result-side oracle that
-   RIPR-SPEC-0227 rules 3 and 3b could credit. At steps 0 and 5, a
+   RIPR-SPEC-0227 rules 3 and 3b could credit. At steps 0, 1 and 5, a
    side-only pattern assigns `smoke_only` / smoke when unguarded, because
    it only checks the side, and `relational_check` / weak with a guard; a
    range pattern, or a constructor whose payload is a range (`1..=5`,
-   `Some(1..=5)`), assigns `relational_check` / weak. At steps 0, 1 and 5,
-   an or-pattern that is not irrefutable reads as its weakest alternative
-   (`Ok(_) | Err(E::X)` is `smoke_only`). Any other pattern stays
-   `exact_value`.
+   `Some(1..=5)`), assigns `relational_check` / weak, and an `Err` range
+   payload (`Err(1..=5)`) assigns `broad_error` / weak. At steps 0, 1 and
+   5, an or-pattern that is not irrefutable but has alternatives on both
+   sides (`Ok` and `Err`, or `Some` and `None`) assigns `relational_check` /
+   weak, because it does not observe the side (`Ok(_) | Err(E::X)`); any
+   other or-pattern reads as its weakest alternative. Any other pattern
+   stays `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -300,7 +303,8 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(matches!(parse(), Some(Ok(_))))` and `&Some(_)`: `smoke_only` /
     smoke; `assert!(matches!(items(), [_, ..]))`: stays `exact_value`
     (a length check is not irrefutable); all read `exact_value` / strong
-    today.
+    today. `assert!(matches!(check(20), Ok(_) | Err(E::Bad)))`:
+    `relational_check` / weak (today `exact_error_variant` / strong).
     `assert!(matches!(lookup(1), Some(3) | Some(_)))`: `smoke_only` / smoke
     (weakest alternative).
 
