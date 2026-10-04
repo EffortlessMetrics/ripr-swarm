@@ -499,6 +499,34 @@ regression_floor = 0
 runner_dependent = false
 source = "ingest:agent-as-user"
 
+[[metric]]
+id = "agent.stub_calls"
+board = "agent"
+title = "`ripr agent stub` calls the agent made on `check`'s suggestion"
+unit = "calls"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:agent-as-user"
+# Context for the row below, not a bar: any count meets the zero target, and
+# a change is listed for review instead of gating.
+review_on_change = true
+
+[[metric]]
+id = "agent.stub_calls_producing_stub"
+board = "agent"
+title = "Of those stub calls, ones that produced a stub instead of a refusal"
+unit = "calls"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:agent-as-user"
+# A suggested route that is always refused is a dead end (#5471).
+
 # From `ripr agent stub` on corpus gaps (the "gap to ready-to-run test"
 # evaluation), ingested as `ripr-dx-scoreboard-input-v1` with source
 # `agent-stub`.

@@ -63,7 +63,7 @@ Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
 target/ripr/reports/dx-scoreboard.{json,md}.
 
-  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus
   --repo <id>         limit corpus measurements to these corpus ids
   --include-heavy     also measure corpus entries marked heavy
   --corpus-dir <dir>  where pinned corpus checkouts live
@@ -499,7 +499,12 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
             .metric
             .iter()
             .find(|metric| metric.id == id)
-            .ok_or_else(|| format!("ingest names unknown metric `{id}`"))?;
+            .ok_or_else(|| {
+                format!(
+                    "ingest names unknown metric `{id}`; declare it in \
+                     benchmarks/dx_scoreboard/scoreboards.toml or drop it from the receipt"
+                )
+            })?;
         if def.source != format!("ingest:{source}") {
             return Err(format!(
                 "metric `{id}` is sourced from `{}`, not `ingest:{source}`",

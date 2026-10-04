@@ -1247,6 +1247,28 @@ fn a_negative_ingested_value_is_refused() -> Result<(), String> {
 }
 
 #[test]
+fn an_unknown_ingested_metric_is_refused_with_where_to_declare_it() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let input = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "agent-as-user",
+        "metrics": [{"id": "agent.not_declared", "value": 1}],
+    });
+    assert!(parse_ingest(&input, &config).is_err_and(|e| e.contains("scoreboards.toml")));
+    // The agent-as-user stub-route counts are declared.
+    let stub_route = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "agent-as-user",
+        "metrics": [
+            {"id": "agent.stub_calls", "value": 5},
+            {"id": "agent.stub_calls_producing_stub", "value": 0},
+        ],
+    });
+    assert_eq!(parse_ingest(&stub_route, &config)?.len(), 2);
+    Ok(())
+}
+
+#[test]
 fn a_status_flip_is_listed_next_to_a_lost_completion() -> Result<(), String> {
     let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
     let current = smoke_receipt(&[("a", "timed_out", 600_000), ("b", "not_fetched", 0)]);
