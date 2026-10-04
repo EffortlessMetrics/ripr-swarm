@@ -130,6 +130,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     })?;
     if let Some(overlay) = overlay {
         result.uncommitted_source_paths = overlay.dirty_source_paths();
+        result.untracked_source_paths = overlay.untracked_source_paths();
     }
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
@@ -1105,6 +1106,7 @@ fn run_pipeline_for_diff_text(
         // effective base (#3940); every other path involves no base.
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1300,6 +1302,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         partial_scope: None,
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })

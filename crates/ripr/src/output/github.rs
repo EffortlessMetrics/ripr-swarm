@@ -274,10 +274,36 @@ fn advisory_packet_suffix(repair_packet_ready: bool) -> &'static str {
 fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
     let mut warnings = Vec::new();
     if output.unanalyzed_working_tree {
-        warnings.push(
-            "::warning title=ripr unanalyzed working tree::Uncommitted source and test changes were not analyzed; `ripr check` reads each file as committed at HEAD. An empty result here does NOT mean those changes are covered; add `--worktree` to include staged and unstaged edits (for example `ripr check --worktree`).\n"
-                .to_string(),
-        );
+        // #5258: mirrors the human note's wording decision — untracked
+        // files need the staging repair, not `--worktree`.
+        let message = if output.untracked_working_tree_source_paths.is_empty() {
+            "Uncommitted source and test changes were not analyzed; `ripr check` reads each file as committed at HEAD. An empty result here does NOT mean those changes are covered; add `--worktree` to include staged and unstaged tracked edits (for example `ripr check --worktree`).".to_string()
+        } else {
+            let untracked = &output.untracked_working_tree_source_paths;
+            const NAMED_PATHS: usize = 3;
+            let named = untracked
+                .iter()
+                .take(NAMED_PATHS)
+                .cloned()
+                .collect::<Vec<_>>();
+            let more = untracked.len().saturating_sub(NAMED_PATHS);
+            let listing = if more > 0 {
+                format!("{} and {more} more", named.join(", "))
+            } else {
+                named.join(", ")
+            };
+            format!(
+                "Uncommitted source and test changes were not analyzed; `ripr check` reads each \
+                 file as committed at HEAD, and `--worktree` adds staged and unstaged tracked \
+                 edits only. Untracked files ({listing}) are invisible to both; stage them first \
+                 (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
+                 visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
+                 `--diff PATH`. An empty result here does NOT mean those changes are covered."
+            )
+        };
+        warnings.push(format!(
+            "::warning title=ripr unanalyzed working tree::{message}\n"
+        ));
     }
     if output.no_scope_provided {
         let message = if let Some(base) = output.base.as_deref() {
@@ -487,6 +513,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -845,6 +872,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -918,6 +946,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -993,6 +1022,41 @@ mod tests {
             rendered,
             include_str!(
                 "../../../../fixtures/github_unanalyzed_states/expected/unanalyzed_working_tree.txt"
+            )
+        );
+    }
+
+    #[test]
+    fn render_names_the_staging_repair_for_untracked_files() {
+        // #5258: `--worktree` diffs tracked edits only, so the warning must
+        // not offer it as the remedy for untracked files; it names the
+        // staging repair and the files it applies to. The full stream is
+        // pinned by the sibling golden.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.unanalyzed_working_tree = true;
+        output.untracked_working_tree_source_paths = vec![
+            "src/new.rs".to_string(),
+            "tests/new.rs".to_string(),
+            "Cargo.toml".to_string(),
+            "src/other.rs".to_string(),
+        ];
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("git add -N <paths>"), "{rendered}");
+        assert!(
+            !rendered.contains("add `--worktree` to include staged and unstaged edits"),
+            "the pre-#5258 wording must not come back: {rendered}"
+        );
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/untracked_working_tree.txt"
             )
         );
     }
@@ -1559,6 +1623,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1900,6 +1965,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
