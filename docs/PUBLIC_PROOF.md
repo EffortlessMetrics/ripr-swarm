@@ -11,7 +11,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Receipt | Measures | Revision | Detail |
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (c6ccf9d) | runner `local-linux-x86_64-4cpu` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.4 | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.5 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -34,7 +34,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on the hand-checked verdict corpus | **33.3%** | <= 5.0% | below the bar | first receipt |
+| Trust | Wrong verdicts on the hand-checked verdict corpus | **35.6%** | <= 5.0% | below the bar | first receipt |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt |
 | Trust | Real mutants that join a ripr seam precisely enough to score | **10.0%** | >= 50.0% | below the bar | first receipt |
@@ -58,8 +58,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On the labeled corpus ripr reported a gap on 16 of 30 changes whose tests caught every listed mutant (53.3%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`, `pricing-gold-discount-rate`, `ledger-ship-log-push`, `ledger-receipt-remaining`, `ledger-stock-insert`, `config-missing-equals-line`, `config-log-level-warn`.
-- **Mostly unsure.** It abstained on 24 of 57 corpus cases (42.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On the labeled corpus ripr reported a gap on 33 of 56 changes whose tests caught every listed mutant (58.9%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`, `pricing-gold-discount-rate`, `ledger-ship-log-push`, `ledger-receipt-remaining`, `ledger-stock-insert`, `config-missing-equals-line`, `config-log-level-warn`, `checkout-fee-err-return-guard`, `checkout-withdraw-guarded-match-pin`, `checkout-refund-matches-variant`, `checkout-daily-limit-imported-const`, `checkout-minimum-same-file-const`, `checkout-bulk-custom-assert-macro`, `checkout-region-literal-match-helper`, `tokens-recursive-label-arm`, `tokens-base-six-hop-chain`, `tokens-inner-rate-macro-reach`, `tokens-inner-bonus-test-macro-call`, `tokens-add-fee-integration-api`, `tokens-long-flag-strip-prefix`, `tokens-byte-at-unsafe-fn`, `shop-score-imported-across-crates`, `shop-discount-path-dependent-test`, `shop-gate-let-bound-input`.
+- **Mostly unsure.** It abstained on 34 of 104 corpus cases (32.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 174 of 1745 mutants (10.0%) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
@@ -116,17 +116,17 @@ False-gap examples, as recorded:
 
 ## Verdict corpus
 
-57 hand-labeled changes (corpus 2026-10-04.4, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+104 hand-labeled changes (corpus 2026-10-04.5, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 | Rate | Count | Share |
 | --- | --- | --- |
-| False verdicts (all cases) | 19/57 | 33.3% |
-| False actionable (of discriminated) | 16/30 | 53.3% |
-| False exposed (of not fully discriminated) | 3/27 | 11.1% |
-| False silent (of not fully discriminated) | 0/27 | 0.0% |
-| Ideal verdict | 14/57 | 24.6% |
-| Abstained (limited or silent where acceptable) | 24/57 | 42.1% |
-| Findings with a contradiction | 4/77 | 5.2% |
+| False verdicts (all cases) | 37/104 | 35.6% |
+| False actionable (of discriminated) | 33/56 | 58.9% |
+| False exposed (of not fully discriminated) | 4/48 | 8.3% |
+| False silent (of not fully discriminated) | 0/48 | 0.0% |
+| Ideal verdict | 33/104 | 31.7% |
+| Abstained (limited or silent where acceptable) | 34/104 | 32.7% |
+| Findings with a contradiction | 2/138 | 1.5% |
 
 | Case | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -149,7 +149,7 @@ False-gap examples, as recorded:
 | `serde-derive-rename-variant-lower` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `serde-derive-rename-field-upper` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `semver-leading-zero` | discriminated | credited | limited | no_static_path | abstained | none |
-| `semver-op-greater-eq` | discriminated | credited | gap | reachable_unrevealed | false_actionable | reach_yes_without_related_tests |
+| `semver-op-greater-eq` | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
 | `itoa-four-digit-loop` | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `semver-digit-upper-first-run` | discriminated | credited | limited | infection_unknown | abstained | none |
 | `bytesize-format-unit-first-run` | discriminated | credited | limited | infection_unknown | abstained | none |
@@ -187,6 +187,53 @@ False-gap examples, as recorded:
 | `config-default-host` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `config-duplicate-key-case` | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `ledger-sku-family-end` | discriminated | credited | limited | infection_unknown | abstained | none |
+| `accounts-balance-add` | discriminated | credited | limited | static_unknown | abstained | none |
+| `accounts-trailer-crc` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `accounts-parse-too-long-variant` | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `accounts-last-byte-unchecked` | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `checkout-fee-closure-never-called` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-assert-under-false-flag` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-unpolled-async-assert` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-cfg-disabled-test` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-err-return-guard` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-withdraw-guarded-match-pin` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-withdraw-sibling-variant` | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `checkout-refund-matches-variant` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `checkout-deposit-cap-happy-path-only` | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `checkout-tax-self-computed-expected` | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `checkout-daily-limit-imported-const` | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `checkout-minimum-same-file-const` | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `checkout-review-split-boundary-tests` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-bulk-custom-assert-macro` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-rate-same-method-other-type` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-region-literal-match-helper` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-announce-stdout-sink` | not_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `checkout-record-discarded-result` | discriminated | credited | limited | static_unknown | abstained | none |
+| `checkout-persist-swallowed-ok` | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `tokens-scanner-state-arm` | discriminated | credited | credited | exposed | ideal | none |
+| `tokens-recursive-label-arm` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-word-start-helper` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `tokens-normalize-helper-chain` | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `tokens-base-six-hop-chain` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-inner-rate-macro-reach` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-inner-bonus-test-macro-call` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-add-fee-integration-api` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-ext-start-map-or-binding` | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `tokens-fits-binding-predicate` | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `tokens-long-flag-strip-prefix` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-byte-at-unsafe-fn` | discriminated | credited | gap | static_unknown, weakly_exposed | false_actionable | none |
+| `shop-score-imported-across-crates` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shop-rebate-same-name-other-crate` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-discount-path-dependent-test` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shop-item-cents-trait-method` | discriminated | credited | credited | exposed | ideal | none |
+| `shop-item-total-associated-vs-free` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-tier-gold-arm-unreached` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-cart-add-other-collection-observed` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-quote-total-result-field` | discriminated | credited | credited | exposed | ideal | none |
+| `shop-cap-literal-only-expected` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-gate-let-bound-input` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `roles-limit-const-value` | discriminated | credited | limited | static_unknown | abstained | none |
+| `roles-cfg-test-helper-input` | discriminated | credited | silent |  | abstained | none |
 
 What the corpus does not claim:
 
