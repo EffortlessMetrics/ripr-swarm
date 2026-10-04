@@ -35,9 +35,15 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
         "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
-        let tests = format!(
-            "import unittest\nimport pytest\nfrom src.subject import score\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
-        );
+        let test = if decorator == "unittest.expectedFailure" {
+            format!(
+                "class ScoreChecks(unittest.TestCase):\n    @{decorator}\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+            )
+        } else {
+            format!("@{decorator}\ndef test_score():\n    assert score(0) == 8\n")
+        };
+        let tests =
+            format!("import unittest\nimport pytest\nfrom src.subject import score\n{test}");
         let finding = classify_case(
             "def score(value):\n    return 8\n",
             &tests,
@@ -58,6 +64,51 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit() -> Result<(), String> {
+    for test in [
+        "@unittest.expectedFailure\ndef test_score():\n    assert score(0) == 8\n",
+        "@unittest.skip('ignored class flag')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
+        "@unittest.skipIf(True, 'ignored class flag')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
+        "@unittest.skipUnless(False, 'ignored class flag')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
+        "@unittest.expectedFailure\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
+    ] {
+        let tests = format!("import unittest\nfrom src.subject import score\n{test}");
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_nonframework_imports_cannot_disable_python_oracle_credit() -> Result<(), String> {
+    for declaration in [
+        "import project_marks as pytest\n@ pytest.mark.skip(reason='custom')",
+        "from local_marks import pytest\n@ pytest.mark.skip(reason='custom')",
+        "import project_marks as unittest\n@ unittest.skip('custom')",
+        "import pytest\nfrom local_marks import pytest\n@ pytest.mark.skip(reason='custom')",
+    ] {
+        let tests = format!(
+            "from src.subject import score\n{declaration}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
     }
     Ok(())
 }
@@ -150,6 +201,23 @@ fn disabled_python_boundary_input_cannot_activate_an_active_neighbor_oracle() ->
     Ok(())
 }
 
+/// A runner skip marker does not make the marked function uncallable.
+/// Withholding its oracle must not erase potential writes before an active call.
+#[test]
+fn marked_python_test_body_rebinding_cannot_manufacture_an_active_boundary() -> Result<(), String> {
+    let tests = "import pytest\nimport src.subject as subject\nfrom src.subject import score\n@ pytest.mark.skip(reason='runner skipped')\ndef test_marked_mutation():\n    subject.LIMIT = 5\n\ndef test_active_score():\n    test_marked_mutation()\n    assert score(10) == 1\n";
+    let finding = classify_case(
+        "LIMIT = 10\ndef score(value):\n    return 1 if value >= LIMIT else 0\n",
+        tests,
+        3,
+        "    return 1 if value > LIMIT else 0",
+        "    return 1 if value >= LIMIT else 0",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
 /// Keep the exact non-credit wording separate from the positive control below.
 #[test]
 fn disabled_python_import_alias_cannot_supply_an_active_tests_observer_identity()
@@ -186,7 +254,7 @@ fn python_test_body_imports_cannot_rebind_definition_scope_activation() -> Resul
     for tests in [
         "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\ndef test_score():\n    from other import disabled\n    assert score(0) == 8\n",
         "import unittest as control\nfrom src.subject import score\n@control.skip('skip')\ndef test_score():\n    import other as control\n    assert score(0) == 8\n",
-        "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\nclass TestScore:\n    from other import disabled\n    def test_score(self):\n        assert score(0) == 8\n",
+        "import unittest\nfrom unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\nclass TestScore(unittest.TestCase):\n    from other import disabled\n    def test_score(self):\n        assert score(0) == 8\n",
     ] {
         let finding = classify_case(
             "def score(value):\n    return 8\n",

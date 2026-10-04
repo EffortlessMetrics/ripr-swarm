@@ -6,16 +6,21 @@ design_reference = "RIPR-SPEC-0028"
 change_class = "behavior_change"
 
 claim_boundary = """
-Known unittest skip/expectedFailure and pytest skip/skipif/xfail controls,
-resolved in the decorator declaration scope, withhold Python preview oracle
-and boundary credit while retaining a related-test pointer. Known local class
+Known unittest controls in runner-honored placements and pytest skip/skipif/xfail
+controls, resolved in the decorator declaration scope, withhold Python preview
+oracle and boundary credit while retaining a related-test pointer. Ordinary
+pytest tests retain credit when unittest metadata does not affect their runner;
+explicit non-framework import bindings cannot act as framework controls. Known local class
 controls include overridden/inherited tests. Independent active tests retain
 their own evidence. Native ItsDangerous bug/fix and weakened/disabled controls
 remain outside analyzer metrics until exact-source analyzer proof exists.
+Oracle refusal does not establish absence of body side effects; conservative
+whole-module constant-rebinding limits remain in force for active boundaries.
 """
 non_goals = [
   "runtime condition evaluation or arbitrary decorator rebinding",
   "module pytestmark, dynamic skipTest or imported-base activation",
+  "execution-effect proof that a marked body cannot run or mutate constants",
   "async framework activation or support-tier promotion",
   "changing goldens without independent observed outcomes",
   "Rust/TypeScript/Perl corpus owner replacement",

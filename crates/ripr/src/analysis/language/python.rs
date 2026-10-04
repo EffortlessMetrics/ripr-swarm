@@ -277,7 +277,7 @@ struct PythonTest {
     imports: Vec<PythonImport>,
     decorators: Vec<String>,
     /// Recognized test controls resolved before test-body imports can shadow aliases.
-    activation_controls: Vec<String>,
+    activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
     parametrized: bool,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).

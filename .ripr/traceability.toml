@@ -2687,11 +2687,14 @@ name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::class_and_aliased_activation_controls_do_not_credit_python_tests",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::active_python_oracle_keeps_credit_beside_a_disabled_test",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_exact_python_oracle_cannot_lend_credit_to_an_active_smoke_test",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unrelated_python_decorator_names_do_not_disable_active_oracles",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_python_boundary_input_cannot_activate_an_active_neighbor_oracle",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::marked_python_test_body_rebinding_cannot_manufacture_an_active_boundary",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_python_import_alias_cannot_supply_an_active_tests_observer_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::skipped_python_base_class_controls_an_overridden_test",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::python_test_body_imports_cannot_rebind_definition_scope_activation",

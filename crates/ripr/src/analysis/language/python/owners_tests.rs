@@ -308,6 +308,7 @@ pub(super) fn collect_tests_from_statements(
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
+                        super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -343,6 +344,7 @@ pub(super) fn collect_tests_from_statements(
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
+                        super::test_activation::DeclarationSite::Function,
                     ),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -613,7 +615,8 @@ struct LocalTestClasses<'a> {
     last_definitions: BTreeSet<*const ast::StmtClassDef>,
     /// Marks on known local ancestors can control an overridden test too.
     class_decorators: BTreeMap<&'a str, Vec<String>>,
-    class_activation_controls: BTreeMap<&'a str, Vec<String>>,
+    class_activation_controls:
+        BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
     definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
 }
 
@@ -691,6 +694,7 @@ impl<'a> LocalTestClasses<'a> {
                     super::test_activation::activation_controls(
                         &decorator_names(&class.decorator_list),
                         imports,
+                        super::test_activation::DeclarationSite::Class,
                     )
                 })
                 .collect();
