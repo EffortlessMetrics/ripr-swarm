@@ -1130,6 +1130,8 @@ fn run_kill_on_group(pgid: u32, signal: &str) -> std::io::Result<std::process::O
     let group = format!("-{pgid}");
     Command::new("kill")
         .args([signal, "--", group.as_str()])
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -1165,13 +1167,14 @@ fn confirm_process_group_gone(
 }
 
 /// Live members of `pgid`, fail-closed: a probe that cannot run is an error,
-/// not an empty group. A complete Linux `/proc` scan of same-uid processes is
-/// the authority for *which* PIDs are live, so SIGKILL zombies are omitted.
-/// An empty complete scan still consults `kill -0`: ESRCH or a successful
-/// probe (zombie) may confirm gone, but EPERM/unknown must not, because a
-/// setuid descendant can leave the same-uid listing while still running.
-/// An incomplete scan (unreadable or unparseable same-uid `stat`) uses the
-/// probe alone.
+/// not an empty group. A complete Linux `/proc` scan of every readable
+/// numeric pid is the authority for *which* PIDs are live, so SIGKILL
+/// zombies are omitted and a live other-uid descendant is not hidden behind
+/// a same-uid zombie. An empty complete scan still consults `kill -0`:
+/// ESRCH or a successful probe (zombie) may confirm gone, but EPERM/unknown
+/// must not. An incomplete scan (unreadable or unparseable `stat`) uses the
+/// probe alone. The `kill` probe runs under `LC_ALL=C` so ESRCH text is
+/// stable across caller locales.
 #[cfg(unix)]
 fn process_group_live_members(pgid: u32) -> Result<Vec<u32>, String> {
     #[cfg(target_os = "linux")]
@@ -1249,13 +1252,11 @@ fn classify_group_probe(success: bool, stderr: &str) -> GroupProbe {
     }
 }
 
-/// Same-uid non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`.
-/// `None` if `/proc` cannot be listed. `Incomplete` if a same-uid numeric
+/// Non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`, regardless
+/// of uid. `None` if `/proc` cannot be listed. `Incomplete` if a numeric
 /// entry exists but its `stat` is unreadable for a reason other than NotFound.
 #[cfg(target_os = "linux")]
 fn scan_proc_pgrp(pgid: u32) -> Option<ProcGroupScan> {
-    use std::os::unix::fs::MetadataExt;
-    let self_uid = fs::metadata("/proc/self").ok()?.uid();
     let entries = fs::read_dir("/proc").ok()?;
     let mut live = Vec::new();
     let mut complete = true;
@@ -1274,19 +1275,7 @@ fn scan_proc_pgrp(pgid: u32) -> Option<ProcGroupScan> {
         let Ok(pid) = pid_str.parse::<u32>() else {
             continue;
         };
-        let path = entry.path();
-        let meta = match fs::metadata(&path) {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => {
-                complete = false;
-                continue;
-            }
-        };
-        if meta.uid() != self_uid {
-            continue;
-        }
-        match fs::read_to_string(path.join("stat")) {
+        match fs::read_to_string(entry.path().join("stat")) {
             Ok(stat) => match parse_stat_pgrp(&stat) {
                 Some(ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid => live.push(pid),
                 Some(_) => {}
@@ -2374,7 +2363,43 @@ mod tests {
         if super::classify_group_probe(false, "") != super::GroupProbe::Inaccessible {
             return Err("unknown nonzero kill status must not confirm gone".to_string());
         }
+        if super::classify_group_probe(false, "kill: (-9): Aucun processus de ce type\n")
+            != super::GroupProbe::Inaccessible
+        {
+            return Err(
+                "translated ESRCH must not confirm gone; the kill probe must use LC_ALL=C"
+                    .to_string(),
+            );
+        }
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_process_group_alive_classifies_a_missing_group_as_gone() -> Result<(), String> {
+        match super::probe_process_group_alive(u32::MAX) {
+            Ok(super::GroupProbe::Gone) => Ok(()),
+            other => Err(format!(
+                "LC_ALL=C kill -0 of a missing group should be ESRCH, got {other:?}"
+            )),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scan_proc_pgrp_includes_readable_other_uid_members() -> Result<(), String> {
+        let Ok(stat) = fs::read_to_string("/proc/1/stat") else {
+            return Ok(());
+        };
+        let Some(super::ProcStatPgrp::Live { pgrp, .. }) = parse_stat_pgrp(&stat) else {
+            return Ok(());
+        };
+        match super::scan_proc_pgrp(pgrp) {
+            Some(super::ProcGroupScan::Complete { live }) if live.contains(&1) => Ok(()),
+            other => Err(format!(
+                "readable pid 1 in group {pgrp} must appear in the scan, got {other:?}"
+            )),
+        }
     }
 
     #[test]
