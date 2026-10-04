@@ -261,7 +261,7 @@ impl<'a> CompactGripContext<'a> {
         let tests_started = Instant::now();
         trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
         let tests: Vec<CompactTest<'a>> = index
-            .tests
+            .tests()
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
@@ -442,7 +442,7 @@ impl<'a> CompactGripContext<'a> {
         name: &str,
         start_line: usize,
     ) -> Option<&'a FunctionSummary> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
+        let (path, facts) = self.index.files().get_key_value(path)?;
         let mut cache = self.evidence_functions_by_line_cache.borrow_mut();
         let by_line = cache.entry(path.as_path()).or_insert_with(|| {
             let mut by_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -474,7 +474,7 @@ impl<'a> CompactGripContext<'a> {
         &self,
         path: &Path,
     ) -> Option<String> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
+        let (path, facts) = self.index.files().get_key_value(path)?;
         if let Some(digest) = self.source_digest_cache.borrow().get(path.as_path()) {
             return Some(digest.clone());
         }
@@ -491,7 +491,7 @@ impl<'a> CompactGripContext<'a> {
         &self,
         path: &Path,
     ) -> Option<Parse<SourceFile>> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
+        let (path, facts) = self.index.files().get_key_value(path)?;
         if facts.used_lexical_fallback {
             return None;
         }
@@ -574,12 +574,12 @@ mod candidate_index_tests {
         let path = PathBuf::from("src/lib.rs");
         let facts = RaRustSyntaxAdapter
             .summarize_file(&path, "#[test] fn sample() { assert_eq!(1, 1); }")?;
-        let mut index = RustIndex {
-            tests: facts.tests.clone(),
-            functions: facts.functions.clone(),
-            ..RustIndex::default()
-        };
-        index.files.insert(path, facts);
+        // Flat facts are separate occurrences from the file copy, as before
+        // generation-owned arenas (#5109); only the flat test is rewritten.
+        let mut index = RustIndex::default();
+        index.extend_tests(facts.tests.clone());
+        index.extend_functions(facts.functions.clone());
+        index.insert_file_only(path, facts);
         let large_ordinary = "    let ordinary = 1;\n".repeat(4096);
         for body in [
             large_ordinary.as_str(),
@@ -592,10 +592,10 @@ mod candidate_index_tests {
             "use café;\r\nmodule::café();\r\nordinary();",
             "use unfinished\n\"unterminated::owner\nmodule::visible();",
         ] {
-            let Some(test) = index.tests.first_mut() else {
+            if index.tests().is_empty() {
                 return Err("fixture must contain a parsed test".to_string());
-            };
-            test.body = body.to_string();
+            }
+            index.test_at_mut(0).body = body.to_string();
             let full_lines = body
                 .lines()
                 .map(strip_comments_and_strings)
@@ -674,13 +674,13 @@ fn value() -> i32 { 1 }
 #[test] fn second() { assert_eq!(value(), 1); }
 "#,
         )?;
-        let mut index = RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: facts.tests.clone(),
             functions: facts.functions.clone(),
-            ..RustIndex::default()
-        };
-        index.files.insert(path, facts);
-        if index.tests.len() != 2 {
+            ..Default::default()
+        });
+        index.insert_file_only(path, facts);
+        if index.tests().len() != 2 {
             return Err("context fixture must admit exactly two parsed tests".to_string());
         }
         let ordinary = CompactGripContext::new(&index);
@@ -1022,7 +1022,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
     let owner_names_by_module_path = production_owner_names_by_module_path(index);
     let production_owner_names = production_owner_names(index);
     let actual_tests = actual_test_keys(index);
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !actual_tests.contains(&ActualTestKey {
             file: &function.file,
             name: &function.name,
@@ -1273,7 +1273,7 @@ fn target_affinity_production_owner_call_sets_by_package(
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -1316,7 +1316,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_module_path: HelperOwnerCallsByModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
@@ -1516,7 +1516,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_module_
     index: &RustIndex,
 ) -> OwnerNamesByModulePath {
     let mut by_module_path: OwnerNamesByModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
@@ -1534,7 +1534,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_package
     index: &RustIndex,
 ) -> OwnerNamesByPackageAndModulePath {
     let mut by_package: OwnerNamesByPackageAndModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -1557,7 +1557,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases_by_file(
     index: &RustIndex,
 ) -> ModuleImportAliasesByFile {
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = module_import_aliases(&facts.source);
@@ -1570,7 +1570,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases_by
     index: &RustIndex,
 ) -> ScopedDirectFunctionImportAliasesByFile {
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = direct_function_import_aliases(&facts.source);
@@ -1585,7 +1585,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_helper_import_aliases_by_f
 ) -> DirectFunctionImportAliasesByFile {
     let allowed_module_paths = qualified_helpers.keys().cloned().collect::<BTreeSet<_>>();
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = direct_helper_import_aliases(&facts.source, &allowed_module_paths);
@@ -2103,7 +2103,7 @@ pub(in crate::analysis::test_grip_evidence) fn unambiguous_production_owner_name
     index: &RustIndex,
 ) -> ProductionOwnerNamesByPackage {
     let mut counts_by_package: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -2135,7 +2135,7 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
     // excluding them would misread a helper's call to a sibling test-module
     // function as a potential owner call.
     let actual_tests = actual_test_keys(index);
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !actual_tests.contains(&ActualTestKey {
             file: &function.file,
             name: &function.name,
@@ -2169,7 +2169,7 @@ struct ActualTestKey<'a> {
 
 fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
     index
-        .tests
+        .tests()
         .iter()
         .map(|test| ActualTestKey {
             file: test.file.as_path(),
@@ -2188,7 +2188,7 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file)
     }) {
         if let Some(names) = names_by_file.get_mut(&function.file) {
@@ -2207,7 +2207,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names(
     index: &RustIndex,
 ) -> BTreeSet<String> {
     index
-        .functions
+        .functions()
         .iter()
         .filter(|function| {
             !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
@@ -3062,7 +3062,7 @@ mod tests {
     fn wrapper() {}
 }
 "#;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files: BTreeMap::from([(
                 file.clone(),
                 FileFacts {
@@ -3073,8 +3073,8 @@ mod tests {
                 },
             )]),
             functions: vec![production, evidence_shadow],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let scoped = test_scoped_function_names_by_file(&index);
         let scoped_names = scoped.get(&file);
