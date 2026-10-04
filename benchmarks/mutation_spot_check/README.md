@@ -89,5 +89,7 @@ recommendation is the first error a developer meets. A recommendation is:
 refuted, with counts split by tier (`line`, `owner`) and grip class. The
 owner tier is coarser: a caught whole-body mutant shows the function's tests
 notice when the function does nothing, not that they discriminate the seam.
-The dx-scoreboard reads the precision as
-`trust.pilot_top_recommendation_precision`.
+If `ripr pilot` fails or times out on a repository, that repository's entry
+carries `unavailable` with the reason and counts in `unavailable_repos`; its
+mutation results still feed the rest of the report. The dx-scoreboard reads
+the precision as `trust.pilot_top_recommendation_precision`.

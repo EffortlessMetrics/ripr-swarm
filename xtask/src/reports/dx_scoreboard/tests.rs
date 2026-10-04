@@ -620,13 +620,30 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
     // A receipt from before the pilot section, or with nothing scored, adds
     // no pilot row rather than a misleading zero.
-    let mut older = receipt.clone();
-    older["pilot_top_recommendations"] = json!({"scored": 0, "precision": null});
-    let rows = mutation_spot_check_to_input(&older)?;
-    assert!(rows["metrics"].as_array().is_some_and(|rows| {
-        rows.iter()
-            .all(|row| row["id"] != "trust.pilot_top_recommendation_precision")
-    }));
+    for section in [None, Some(json!({"scored": 0, "precision": null}))] {
+        let mut older = receipt.clone();
+        match section {
+            Some(section) => older["pilot_top_recommendations"] = section,
+            None => {
+                older
+                    .as_object_mut()
+                    .map(|map| map.remove("pilot_top_recommendations"));
+            }
+        }
+        let rows = mutation_spot_check_to_input(&older)?;
+        assert!(rows["metrics"].as_array().is_some_and(|rows| {
+            rows.iter()
+                .all(|row| row["id"] != "trust.pilot_top_recommendation_precision")
+        }));
+    }
+    // A present section with an unreadable count is a malformed receipt.
+    for scored in [json!(null), json!("39"), json!(-1)] {
+        let mut malformed = receipt.clone();
+        malformed["pilot_top_recommendations"]["scored"] = scored.clone();
+        if mutation_spot_check_to_input(&malformed).is_ok() {
+            return Err(format!("accepted pilot scored {scored}"));
+        }
+    }
     Ok(())
 }
 

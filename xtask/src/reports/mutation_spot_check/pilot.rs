@@ -166,12 +166,12 @@ pub(super) fn judge_recommendations(
 }
 
 /// Pool the judged recommendations of every repository.
-pub(super) fn summarize(repos: &[(String, Vec<Value>)]) -> Value {
+pub(super) fn summarize(repos: &[(String, Result<Vec<Value>, String>)]) -> Value {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut by_tier: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     let mut by_class: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for (_, judged) in repos {
-        for row in judged {
+        for row in judged.iter().flatten() {
             let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
             let verdict = match field("verdict") {
                 "confirmed" => "confirmed",
@@ -202,10 +202,11 @@ pub(super) fn summarize(repos: &[(String, Vec<Value>)]) -> Value {
         "precision": super::rate(confirmed, scored),
         "by_tier": by_tier,
         "by_grip_class": by_class,
-        "repos": repos.iter().map(|(name, judged)| json!({
-            "name": name,
-            "recommendations": judged,
-        })).collect::<Vec<_>>(),
+        "unavailable_repos": repos.iter().filter(|(_, judged)| judged.is_err()).count(),
+        "repos": repos.iter().map(|(name, judged)| match judged {
+            Ok(judged) => json!({"name": name, "recommendations": judged}),
+            Err(reason) => json!({"name": name, "recommendations": [], "unavailable": reason}),
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -241,6 +242,12 @@ pub(super) fn markdown(report: &Value) -> String {
         .flatten()
     {
         let name = repo.get("name").and_then(Value::as_str).unwrap_or("");
+        if let Some(reason) = repo.get("unavailable").and_then(Value::as_str) {
+            let reason = reason.lines().next().unwrap_or("").replace('|', "\\|");
+            out.push_str(&format!(
+                "| {name} | - | pilot unavailable: {reason} | | | unavailable | | | |\n"
+            ));
+        }
         for row in repo
             .get("recommendations")
             .and_then(Value::as_array)
@@ -349,7 +356,7 @@ mod tests {
             json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
             json!({"verdict": "unscored", "tier": "none", "grip_class": "ungripped"}),
         ];
-        let summary = summarize(&[("a".to_string(), judged)]);
+        let summary = summarize(&[("a".to_string(), Ok(judged))]);
         assert_eq!(summary["scored"], 3);
         assert_eq!(summary["recommendations_total"], 4);
         assert_eq!(summary["precision"], json!(0.333));
@@ -358,5 +365,28 @@ mod tests {
             markdown(&json!({"pilot_top_recommendations": summary})).contains("precision 33.3%")
         );
         assert_eq!(markdown(&json!({})), "");
+    }
+
+    #[test]
+    fn unavailable_pilot_is_reported_without_dropping_other_repos() {
+        let judged =
+            vec![json!({"verdict": "confirmed", "tier": "line", "grip_class": "ungripped"})];
+        let summary = summarize(&[
+            ("a".to_string(), Ok(judged)),
+            (
+                "b".to_string(),
+                Err("ripr pilot timed out | after 600s\nmore".to_string()),
+            ),
+        ]);
+        assert_eq!(summary["scored"], 1);
+        assert_eq!(summary["unavailable_repos"], 1);
+        assert_eq!(
+            summary["repos"][1]["unavailable"],
+            "ripr pilot timed out | after 600s\nmore"
+        );
+        let rendered = markdown(&json!({"pilot_top_recommendations": summary}));
+        assert!(rendered.contains(
+            "| b | - | pilot unavailable: ripr pilot timed out \\| after 600s | | | unavailable |"
+        ));
     }
 }

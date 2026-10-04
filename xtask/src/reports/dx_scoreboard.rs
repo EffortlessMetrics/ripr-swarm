@@ -989,8 +989,18 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         joined += precise;
         mutants += total;
     }
+    // Older receipts carry no pilot section; a present one must say how many
+    // recommendations it scored, so a malformed receipt fails instead of
+    // reading as not measured.
     let pilot = &value["pilot_top_recommendations"];
-    if let Some(scored) = pilot["scored"].as_u64().filter(|scored| *scored > 0) {
+    let scored = if pilot.is_null() {
+        0
+    } else {
+        pilot["scored"].as_u64().ok_or(
+            "mutation spot-check pilot_top_recommendations needs scored as a non-negative integer",
+        )?
+    };
+    if scored > 0 {
         let precision = pilot["precision"]
             .as_f64()
             .filter(|rate| (0.0..=1.0).contains(rate))

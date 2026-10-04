@@ -291,7 +291,9 @@ struct RepoRun {
     cargo_mutants_version: Option<String>,
     metrics: Value,
     pairs: Vec<Pair>,
-    pilot: Vec<Value>,
+    /// Judged pilot recommendations, or why pilot produced none. A pilot
+    /// failure does not discard the repo's validated mutation outcomes.
+    pilot: Result<Vec<Value>, String>,
 }
 
 fn spot_check_repo(
@@ -357,7 +359,7 @@ fn spot_check_repo(
     let outcomes = read_mutants_out("outcomes.json")?;
     let mutant_records = read_mutants_out("mutants.json")?;
     let diffs_checked = require_mutants_match_checkout(name, checkout, &revision, &mutant_records)?;
-    let pilot_top = pilot::pilot_top_seams(binary, scratch, name, checkout)?;
+    let pilot_top = pilot::pilot_top_seams(binary, scratch, name, checkout);
 
     let calibration = run_text(
         &path_arg(binary),
@@ -396,7 +398,7 @@ fn spot_check_repo(
             .map(str::to_string),
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
         pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
-        pilot: pilot::judge_recommendations(&pilot_top, &mutant_records, &outcomes),
+        pilot: pilot_top.map(|top| pilot::judge_recommendations(&top, &mutant_records, &outcomes)),
     })
 }
 
@@ -1340,9 +1342,9 @@ mod tests {
             cargo_mutants_version: Some("27.1.0".to_string()),
             metrics: Value::Null,
             pairs: classify_matches(&calibration, &exposure, &mutants),
-            pilot: vec![
+            pilot: Ok(vec![
                 json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
-            ],
+            ]),
         };
         let report = build_report(&[repo], 5);
 
