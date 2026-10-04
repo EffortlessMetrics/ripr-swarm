@@ -1490,7 +1490,10 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         match std::fs::metadata(probe_dir) {
             Ok(metadata) if metadata.is_dir() => break,
             Ok(_) => return Some(format!("{} is not a directory", probe_dir.display())),
-            Err(_) if std::fs::symlink_metadata(probe_dir).is_ok() => {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && std::fs::symlink_metadata(probe_dir).is_ok() =>
+            {
                 return Some(format!("{} is a dangling symlink", probe_dir.display()));
             }
             Err(error)
