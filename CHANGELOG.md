@@ -16,8 +16,9 @@ are scoped or reviewed.
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
   form when the path holds an apostrophe or typographic quote, so the command
   pastes as one argument in PowerShell. A new advisory `printed-command-paste`
-  lane pastes every printed command into bash, zsh, sh and PowerShell on Linux,
-  macOS and Windows.
+  lane pastes the commands from the main flows it runs into bash, zsh, sh and
+  PowerShell on Linux, macOS and Windows. Commands carried in JSON are checked
+  in Bash only.
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
