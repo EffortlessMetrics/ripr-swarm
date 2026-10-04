@@ -1,0 +1,696 @@
+//! New-developer first-run walk (`cargo xtask first-run`).
+//!
+//! Replays what a developer who has never used ripr does on a fresh machine,
+//! against pinned third-party crates ripr has not been tuned on: install,
+//! `ripr doctor`, `ripr check`, `ripr pilot`, the follow-up command `check`
+//! prints, then `ripr init --ci github` and a second `ripr doctor`. Every step
+//! is timed and its friction recorded (nonzero exit, stderr noise, oversized
+//! output, a missing next step, a blown time budget), and the report is
+//! written as JSON and Markdown so two releases can be compared.
+//!
+//! The walk observes; it does not gate. A static verdict is recorded per case
+//! but never asserted here. Verdict accuracy belongs to a labeled corpus, and
+//! this report only names which verdict each release produced.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use serde_json::{Value, json};
+
+use crate::run::{CapturedOutput, capture_output_in_dir};
+
+const DEFAULT_OUT: &str = "target/ripr/first-run";
+const SCHEMA_VERSION: &str = "first_run.v1";
+/// A developer is asked to review the generated workflow before committing it.
+const MAX_WORKFLOW_LINES: usize = 1500;
+const PROGRESS_PREFIX: &str = "ripr progress:";
+const VERDICT_CLASSES: [&str; 7] = [
+    "exposed",
+    "weakly_exposed",
+    "reachable_unrevealed",
+    "no_static_path",
+    "infection_unknown",
+    "propagation_unknown",
+    "static_unknown",
+];
+
+/// One pinned crate and the one-line behavior change applied on a feature
+/// branch. The edit must match exactly once on the named line, so a version
+/// drift fails loudly instead of measuring a different change.
+struct Case {
+    krate: &'static str,
+    version: &'static str,
+    file: &'static str,
+    line: usize,
+    from: &'static str,
+    to: &'static str,
+}
+
+const CASES: [Case; 3] = [
+    Case {
+        krate: "semver",
+        version: "1.0.23",
+        file: "src/parse.rs",
+        line: 166,
+        from: "digit > b'9'",
+        to: "digit >= b'9'",
+    },
+    Case {
+        krate: "fastrand",
+        version: "2.3.0",
+        file: "src/lib.rs",
+        line: 684,
+        from: "val >= surrogate_start",
+        to: "val > surrogate_start",
+    },
+    Case {
+        krate: "bytesize",
+        version: "1.3.0",
+        file: "src/lib.rs",
+        line: 192,
+        from: "bytes < unit",
+        to: "bytes <= unit",
+    },
+];
+
+/// Wall-clock budget per step. A blown budget is friction, not a failure.
+fn budget_secs(step: &str) -> f64 {
+    match step {
+        "check" | "check_json" => 10.0,
+        "pilot" => 30.0,
+        "explain" => 10.0,
+        _ => 5.0,
+    }
+}
+
+/// Stdout lines above which a step reads as a wall of text.
+fn max_stdout_lines(step: &str) -> Option<usize> {
+    match step {
+        "check" | "init_ci" | "doctor" | "doctor_after" => Some(60),
+        "pilot" => Some(40),
+        _ => None,
+    }
+}
+
+struct Options {
+    ripr: String,
+    out: PathBuf,
+    install_published: bool,
+}
+
+fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut options = Options {
+        ripr: "ripr".to_string(),
+        out: PathBuf::from(DEFAULT_OUT),
+        install_published: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--ripr" => {
+                options.ripr = iter
+                    .next()
+                    .ok_or_else(|| "--ripr needs a path to the ripr binary".to_string())?
+                    .clone();
+            }
+            "--out" => {
+                options.out = PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--out needs a directory".to_string())?,
+                );
+            }
+            "--install-published" => options.install_published = true,
+            other => {
+                return Err(format!(
+                    "unknown first-run argument `{other}`\nusage: cargo xtask first-run [--ripr <path>] [--out <dir>] [--install-published]"
+                ));
+            }
+        }
+    }
+    Ok(options)
+}
+
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    let options = parse_options(args)?;
+    let out = absolute(&options.out)?;
+    // A stale tree would let one release's leftovers pass for the next one's run.
+    if out.exists() {
+        fs::remove_dir_all(&out)
+            .map_err(|err| format!("failed to clear {}: {err}", out.display()))?;
+    }
+    fs::create_dir_all(&out).map_err(|err| format!("failed to create {}: {err}", out.display()))?;
+
+    let mut setup_steps = Vec::new();
+    let ripr = if options.install_published {
+        let root = out.join("install-root");
+        let step = timed(
+            &out,
+            "install_published",
+            "cargo",
+            &[
+                "install".into(),
+                "ripr".into(),
+                "--locked".into(),
+                "--root".into(),
+                root.display().to_string(),
+            ],
+        )?;
+        let failed = step.exit != Some(0);
+        setup_steps.push(step);
+        if failed {
+            return finish(&options, &out, "unavailable", setup_steps, Vec::new());
+        }
+        root.join("bin").join("ripr").display().to_string()
+    } else {
+        options.ripr.clone()
+    };
+
+    let version = capture_output_in_dir(&ripr, &["--version".to_string()], &out, "ripr --version")
+        .map(|captured| captured.stdout.trim().to_string())
+        .map_err(|err| {
+            format!(
+                "{err}\nbuild or install ripr first, or pass --ripr <path> / --install-published"
+            )
+        })?;
+
+    setup_steps.push(fetch_sources(&out)?);
+    let mut cases = Vec::new();
+    for case in &CASES {
+        cases.push(walk_case(&out, &ripr, case)?);
+    }
+    finish(&options, &out, &version, setup_steps, cases)
+}
+
+fn absolute(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(|err| format!("failed to read the working directory: {err}"))
+}
+
+struct StepResult {
+    name: String,
+    command: String,
+    exit: Option<i32>,
+    secs: f64,
+    stdout: String,
+    stderr: String,
+}
+
+impl StepResult {
+    fn stderr_noise(&self) -> Vec<&str> {
+        self.stderr
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with(PROGRESS_PREFIX))
+            .collect()
+    }
+}
+
+fn timed(cwd: &Path, name: &str, program: &str, args: &[String]) -> Result<StepResult, String> {
+    let started = Instant::now();
+    let captured = capture_output_in_dir(program, args, cwd, name)?;
+    Ok(step_result(name, program, args, started, captured))
+}
+
+fn step_result(
+    name: &str,
+    program: &str,
+    args: &[String],
+    started: Instant,
+    captured: CapturedOutput,
+) -> StepResult {
+    StepResult {
+        name: name.to_string(),
+        command: format!("{program} {}", args.join(" ")).trim().to_string(),
+        exit: captured.status.code(),
+        secs: started.elapsed().as_secs_f64(),
+        stdout: captured.stdout,
+        stderr: captured.stderr,
+    }
+}
+
+/// Fetches the pinned crates through cargo itself (registry, proxy and
+/// credentials as the developer's machine already configures them), so the walk
+/// adds no network client of its own.
+fn fetch_sources(out: &Path) -> Result<StepResult, String> {
+    let project = out.join("fetch");
+    fs::create_dir_all(project.join("src"))
+        .map_err(|err| format!("failed to create the fetch project: {err}"))?;
+    fs::write(project.join("src").join("lib.rs"), "")
+        .map_err(|err| format!("failed to write the fetch project: {err}"))?;
+    let mut manifest = String::from(
+        "[package]\nname = \"first-run-fetch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+    );
+    for case in &CASES {
+        manifest.push_str(&format!("{} = \"={}\"\n", case.krate, case.version));
+    }
+    fs::write(project.join("Cargo.toml"), manifest)
+        .map_err(|err| format!("failed to write the fetch manifest: {err}"))?;
+    let step = timed(
+        &project,
+        "fetch_sources",
+        "cargo",
+        &[
+            "vendor".into(),
+            "--versioned-dirs".into(),
+            "vendored".into(),
+        ],
+    )?;
+    if step.exit != Some(0) {
+        return Err(format!(
+            "could not fetch the pinned crates (exit {:?}):\n{}\nthe walk needs registry access; run it where `cargo fetch` works",
+            step.exit, step.stderr
+        ));
+    }
+    Ok(step)
+}
+
+fn run_checked(cwd: &Path, program: &str, args: &[&str]) -> Result<CapturedOutput, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    let captured = capture_output_in_dir(program, &owned, cwd, program)?;
+    if !captured.status.success() {
+        return Err(format!(
+            "`{program} {}` failed in {}: {}",
+            args.join(" "),
+            cwd.display(),
+            captured.stderr.trim()
+        ));
+    }
+    Ok(captured)
+}
+
+/// Builds the developer's starting state: a clone of an `origin` whose default
+/// branch is `main`, checked out on a feature branch with one committed edit.
+fn prepare_case(out: &Path, case: &Case) -> Result<PathBuf, String> {
+    let name = format!("{}-{}", case.krate, case.version);
+    let vendored = out.join("fetch").join("vendored").join(&name);
+    let seed = out.join("seed").join(&name);
+    let origin = out.join("origin").join(format!("{name}.git"));
+    let work = out.join("work").join(&name);
+    for parent in [seed.parent(), origin.parent(), work.parent()]
+        .into_iter()
+        .flatten()
+    {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    copy_tree(&vendored, &seed)?;
+    // Cargo's vendor bookkeeping is not part of a repository a developer clones.
+    let _ = fs::remove_file(seed.join(".cargo-checksum.json"));
+    fs::write(seed.join(".gitignore"), "/target\n")
+        .map_err(|err| format!("failed to write .gitignore: {err}"))?;
+
+    run_checked(&seed, "git", &["init", "-q", "-b", "main"])?;
+    run_checked(
+        &seed,
+        "git",
+        &["config", "user.email", "first-run@example.invalid"],
+    )?;
+    run_checked(&seed, "git", &["config", "user.name", "first-run"])?;
+    run_checked(&seed, "git", &["add", "-A"])?;
+    run_checked(&seed, "git", &["commit", "-q", "-m", "base"])?;
+    let origin_arg = origin.display().to_string();
+    let work_arg = work.display().to_string();
+    run_checked(
+        out,
+        "git",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &seed.display().to_string(),
+            &origin_arg,
+        ],
+    )?;
+    run_checked(out, "git", &["clone", "-q", &origin_arg, &work_arg])?;
+    run_checked(
+        &work,
+        "git",
+        &["config", "user.email", "first-run@example.invalid"],
+    )?;
+    run_checked(&work, "git", &["config", "user.name", "first-run"])?;
+    run_checked(&work, "git", &["checkout", "-q", "-b", "change"])?;
+
+    let target = work.join(case.file);
+    let source = fs::read_to_string(&target)
+        .map_err(|err| format!("failed to read {}: {err}", target.display()))?;
+    let mut edited = String::new();
+    let mut matched = 0usize;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == case.line && line.contains(case.from) {
+            edited.push_str(&line.replacen(case.from, case.to, 1));
+            matched += 1;
+        } else {
+            edited.push_str(line);
+        }
+    }
+    if matched != 1 {
+        return Err(format!(
+            "{name}: expected `{}` on {}:{}; the pinned source no longer matches the recorded edit",
+            case.from, case.file, case.line
+        ));
+    }
+    fs::write(&target, edited)
+        .map_err(|err| format!("failed to write {}: {err}", target.display()))?;
+    run_checked(&work, "git", &["commit", "-q", "-a", "-m", "change"])?;
+    Ok(work)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to).map_err(|err| format!("failed to create {}: {err}", to.display()))?;
+    let entries =
+        fs::read_dir(from).map_err(|err| format!("failed to read {}: {err}", from.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("failed to read {}: {err}", from.display()))?;
+        let destination = to.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(|err| format!("failed to stat {}: {err}", entry.path().display()))?;
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &destination)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &destination)
+                .map_err(|err| format!("failed to copy {}: {err}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
+struct CaseResult {
+    name: String,
+    steps: Vec<(StepResult, Vec<String>)>,
+    verdict: Option<&'static str>,
+    workflow_lines: Option<usize>,
+    workflow_installs_with_cargo: Option<bool>,
+}
+
+fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> {
+    let work = prepare_case(out, case)?;
+    let name = format!("{}-{}", case.krate, case.version);
+    let mut steps: Vec<StepResult> = Vec::new();
+    push_step(&mut steps, &work, ripr, "doctor", &["doctor"])?;
+    let check = push_step(&mut steps, &work, ripr, "check", &["check"])?;
+    push_step(
+        &mut steps,
+        &work,
+        ripr,
+        "check_json",
+        &["check", "--format", "json"],
+    )?;
+    push_step(&mut steps, &work, ripr, "pilot", &["pilot", "--root", "."])?;
+
+    // Run the drill-down exactly as `check` printed it, the way a developer would.
+    let printed = steps[check]
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr explain "))
+        .map(str::to_string);
+    let verdict = verdict_of(&steps[check].stdout);
+    if let Some(command) = printed {
+        let words: Vec<&str> = command.split_whitespace().skip(1).collect();
+        push_step(&mut steps, &work, ripr, "explain", &words)?;
+    }
+    push_step(
+        &mut steps,
+        &work,
+        ripr,
+        "init_ci",
+        &["init", "--ci", "github"],
+    )?;
+    push_step(&mut steps, &work, ripr, "doctor_after", &["doctor"])?;
+
+    let workflow = fs::read_to_string(work.join(".github").join("workflows").join("ripr.yml")).ok();
+    let workflow_lines = workflow.as_ref().map(|text| text.lines().count());
+    let workflow_installs_with_cargo = workflow
+        .as_ref()
+        .map(|text| text.contains("cargo install ripr"));
+
+    let mut annotated = Vec::new();
+    for result in steps {
+        let flags = friction(&result, workflow.as_deref());
+        annotated.push((result, flags));
+    }
+    Ok(CaseResult {
+        name,
+        steps: annotated,
+        verdict,
+        workflow_lines,
+        workflow_installs_with_cargo,
+    })
+}
+
+fn push_step(
+    steps: &mut Vec<StepResult>,
+    cwd: &Path,
+    ripr: &str,
+    label: &str,
+    args: &[&str],
+) -> Result<usize, String> {
+    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    steps.push(timed(cwd, label, ripr, &owned)?);
+    Ok(steps.len() - 1)
+}
+
+/// The first verdict class named after the "Static exposure" label, whichever
+/// release wording surrounds it.
+fn verdict_of(check_stdout: &str) -> Option<&'static str> {
+    let start = check_stdout.find("Static exposure")?;
+    let tail = &check_stdout[start..];
+    VERDICT_CLASSES
+        .iter()
+        .filter_map(|class| tail.find(class).map(|at| (at, *class)))
+        .min_by_key(|(at, _)| *at)
+        .map(|(_, class)| class)
+}
+
+fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
+    let mut flags = Vec::new();
+    if result.exit != Some(0) {
+        flags.push(format!("exit {:?}, expected 0", result.exit));
+    }
+    let noise = result.stderr_noise();
+    if !noise.is_empty() {
+        flags.push(format!(
+            "{} stderr line(s) beyond progress, first: {}",
+            noise.len(),
+            noise[0]
+        ));
+    }
+    if let Some(limit) = max_stdout_lines(&result.name) {
+        let lines = result.stdout.lines().count();
+        if lines > limit {
+            flags.push(format!(
+                "{lines} stdout lines, over the {limit}-line read budget"
+            ));
+        }
+    }
+    let budget = budget_secs(&result.name);
+    if result.secs > budget {
+        flags.push(format!("{:.1}s, over the {budget:.0}s budget", result.secs));
+    }
+    if result.name == "check" {
+        let has_next = result.stdout.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("Next") || line.starts_with("ripr explain ")
+        });
+        if !has_next {
+            flags.push("no next step printed".to_string());
+        }
+    }
+    if result.name == "init_ci" {
+        match workflow {
+            None => flags.push("no .github/workflows/ripr.yml written".to_string()),
+            Some(text) => {
+                let lines = text.lines().count();
+                if lines > MAX_WORKFLOW_LINES {
+                    flags.push(format!(
+                        "generated workflow is {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
+                    ));
+                }
+                if text.contains("cargo install ripr") && !text.contains("sha256") {
+                    flags.push(
+                        "generated workflow compiles ripr from source on every run".to_string(),
+                    );
+                }
+            }
+        }
+    }
+    flags
+}
+
+fn finish(
+    options: &Options,
+    out: &Path,
+    version: &str,
+    setup: Vec<StepResult>,
+    cases: Vec<CaseResult>,
+) -> Result<(), String> {
+    let step_json = |result: &StepResult, flags: &[String]| {
+        json!({
+            "step": result.name,
+            "command": result.command,
+            "exit": result.exit,
+            "secs": (result.secs * 100.0).round() / 100.0,
+            "stdout_lines": result.stdout.lines().count(),
+            "stderr_lines_beyond_progress": result.stderr_noise().len(),
+            "friction": flags,
+        })
+    };
+    let document = json!({
+        "schema_version": SCHEMA_VERSION,
+        "ripr": version,
+        "binary": if options.install_published { "cargo install ripr --locked".to_string() } else { options.ripr.clone() },
+        "setup": setup.iter().map(|s| step_json(s, &[])).collect::<Vec<Value>>(),
+        "cases": cases.iter().map(|case| json!({
+            "case": case.name,
+            "verdict": case.verdict,
+            "workflow_lines": case.workflow_lines,
+            "workflow_installs_with_cargo": case.workflow_installs_with_cargo,
+            "steps": case.steps.iter().map(|(s, f)| step_json(s, f)).collect::<Vec<Value>>(),
+        })).collect::<Vec<Value>>(),
+    });
+    let rendered = serde_json::to_string_pretty(&document)
+        .map_err(|err| format!("failed to render first-run.json: {err}"))?;
+    fs::write(out.join("first-run.json"), format!("{rendered}\n"))
+        .map_err(|err| format!("failed to write first-run.json: {err}"))?;
+    let markdown = render_markdown(version, &setup, &cases);
+    fs::write(out.join("first-run.md"), &markdown)
+        .map_err(|err| format!("failed to write first-run.md: {err}"))?;
+    print!("{markdown}");
+    println!("\nWrote {}", out.join("first-run.json").display());
+    Ok(())
+}
+
+fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) -> String {
+    let mut text = format!("# ripr first-run walk\n\nripr: `{version}`\n\n## Setup\n\n");
+    for step in setup {
+        text.push_str(&format!(
+            "- `{}`: {:.1}s, exit {:?}\n",
+            step.name, step.secs, step.exit
+        ));
+    }
+    let mut friction_total = 0usize;
+    for case in cases {
+        text.push_str(&format!(
+            "\n## {}\n\nverdict: `{}`; generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
+            case.name,
+            case.verdict.unwrap_or("none printed"),
+            case.workflow_lines
+                .map_or_else(|| "none".to_string(), |lines| lines.to_string()),
+            case.workflow_installs_with_cargo
+                .map_or_else(|| "unknown".to_string(), |flag| flag.to_string()),
+        ));
+        for (step, flags) in &case.steps {
+            friction_total += flags.len();
+            text.push_str(&format!(
+                "| {} | {} | {:.2} | {} | {} |\n",
+                step.name,
+                step.exit
+                    .map_or_else(|| "signal".to_string(), |c| c.to_string()),
+                step.secs,
+                step.stdout.lines().count(),
+                if flags.is_empty() {
+                    "-".to_string()
+                } else {
+                    flags.join("; ")
+                }
+            ));
+        }
+    }
+    text.push_str(&format!("\nFriction flags: {friction_total}\n"));
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(name: &str, exit: i32, stdout: &str, stderr: &str, secs: f64) -> StepResult {
+        StepResult {
+            name: name.to_string(),
+            command: name.to_string(),
+            exit: Some(exit),
+            secs,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        }
+    }
+
+    #[test]
+    fn verdict_is_the_first_class_after_the_static_exposure_label() {
+        // The summary line names every class (all counts), so only text after the
+        // label may decide the verdict.
+        let published = "Summary: 1 probe(s), 0 exposed, 0 weak\n\nStatic exposure\n  reachable_unrevealed (warning)\n";
+        let development = "Summary: 0 exposed, 1 infection_unknown\nStatic exposure: unknown (infection_unknown, warning)\n";
+        assert_eq!(verdict_of(published), Some("reachable_unrevealed"));
+        assert_eq!(verdict_of(development), Some("infection_unknown"));
+        assert_eq!(verdict_of("No findings"), None);
+    }
+
+    #[test]
+    fn progress_lines_are_not_friction_but_other_stderr_is() {
+        let quiet = step(
+            "check",
+            0,
+            "Next: ripr explain x\n",
+            "ripr progress: completed [diff]\n",
+            0.1,
+        );
+        assert!(friction(&quiet, None).is_empty());
+        let noisy = step(
+            "check",
+            0,
+            "Next: x\n",
+            "ripr progress: a\nwarning: odd\n",
+            0.1,
+        );
+        let flags = friction(&noisy, None);
+        assert_eq!(flags.len(), 1);
+        assert!(flags[0].contains("warning: odd"), "{flags:?}");
+    }
+
+    #[test]
+    fn exit_budget_length_and_missing_next_step_each_flag_independently() {
+        let wall = "line\n".repeat(61);
+        let slow = step("check", 2, &wall, "", 11.0);
+        let flags = friction(&slow, None);
+        assert_eq!(flags.len(), 4, "{flags:?}");
+        assert!(flags.iter().any(|f| f.contains("exit Some(2)")));
+        assert!(flags.iter().any(|f| f.contains("61 stdout lines")));
+        assert!(flags.iter().any(|f| f.contains("budget")));
+        assert!(flags.iter().any(|f| f.contains("no next step")));
+    }
+
+    #[test]
+    fn init_without_a_workflow_file_is_friction() {
+        let init = step("init_ci", 0, "Wrote ./ripr.toml\n", "", 0.1);
+        assert_eq!(friction(&init, None).len(), 1);
+        assert!(friction(&init, Some("name: ripr\n")).is_empty());
+    }
+
+    #[test]
+    fn a_long_source_compiling_workflow_is_friction_but_a_checksummed_prebuilt_one_is_not() {
+        let init = step("init_ci", 0, "Wrote ./ripr.toml\n", "", 0.1);
+        let compiled = format!(
+            "run: cargo install ripr --version 1 --locked\n{}",
+            "x\n".repeat(1600)
+        );
+        let flags = friction(&init, Some(&compiled));
+        assert_eq!(flags.len(), 2, "{flags:?}");
+        let prebuilt = "run: sha256sum -c; fallback: cargo install ripr --version 1 --locked\n";
+        assert!(friction(&init, Some(prebuilt)).is_empty());
+    }
+
+    #[test]
+    fn unknown_arguments_name_the_usage() {
+        let err = parse_options(&["--bogus".to_string()])
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("usage: cargo xtask first-run"), "{err}");
+        assert!(parse_options(&["--ripr".to_string()]).is_err());
+    }
+}
