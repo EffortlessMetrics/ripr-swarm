@@ -2035,12 +2035,15 @@ are scoped or reviewed.
   the workspace's `target/ripr/` is accepted; every other redirect is still
   refused.
 - Rust: a test that asserts through a helper in its own file no longer reads
-  as "no assertion". With `fn check(x, want) { assert_eq!(gate(x), want) }`
+  as "no assertion". With `fn check(x, want) { assert!(gate(x) == want) }`
   in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
-  a changed `gate` was `reachable_unrevealed`. The test now carries the
-  helper's owner call and assertion, one hop, only for a uniquely named
-  helper in the test's own module, called directly and not shadowed.
-  (#4574)
+  a changed `gate` was `reachable_unrevealed`; it now reads
+  `weakly_exposed`. The test carries the helper's owner call and assertion,
+  one hop, only for a uniquely named helper in the test's own
+  `#[cfg(test)]` module that the test calls directly, outside any closure,
+  and that is not shadowed, `async`, or cfg-gated. The caller's arguments
+  are not credited as the owner's inputs, and the helper's assertion is
+  admitted by the same rules as one written in the test. (#4574)
 - Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
   parameter parser read `#[case] x: u32` as a malformed name and bound no
   case values, so a test passing the boundary value through a case row was
