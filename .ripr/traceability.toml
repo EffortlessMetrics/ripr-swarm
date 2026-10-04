@@ -6084,6 +6084,8 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution",
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base",
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
+  "crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent",
+  "crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out",
   "crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags",
   "crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal",
   "crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source",
@@ -8415,6 +8417,12 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::diagnostic_result_ids_ignore_refresh_clock_and_attempt_snapshot_handle",
   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::diagnostic_result_ids_change_for_message_only_and_profile_changes",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::diagnostic_data_field_carries_seam_id_and_grip_class",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_publishes_empty_diagnostics_for_tracked_uris",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_publishes_nothing_for_pull_diagnostics_client",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_with_zero_tracked_uris_sends_no_publishes",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_during_refresh_publication_clears_last",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_before_refresh_publication_suppresses_rollback",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_after_root_change_publishes_no_duplicates",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -11820,6 +11828,13 @@ tests = [
   "crates/ripr/src/mcp/repair.rs::tests::evicted_transactions_keep_the_superseded_typed_code",
   "crates/ripr/src/mcp/repair.rs::tests::command_spec_modes_round_trip_without_display_authority",
   "crates/ripr/src/mcp/repair.rs::tests::argv_never_reconstructs_from_the_display_string",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_keeps_ordinary_descendant_continuation",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_refuses_diverged_continuation_without_rewriting_attempt",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_does_not_reuse_recorded_after_admission",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_unknown_head_never_offers_continuation",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_issued_receipt_at_unknown_head_is_limited",
+  "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head",
+  "crates/ripr/src/mcp/server_tests.rs::delayed_durable_read_leaves_the_async_executor_and_status_available",
   "crates/ripr/src/mcp/gaps.rs::tests::evidence_document_reports_producer_repair_readiness",
   "crates/ripr/src/mcp/gaps.rs::tests::readiness_stays_fail_closed_on_missing_producer_facts",
   "crates/ripr/src/mcp/protocol.rs::tests",
@@ -11832,6 +11847,7 @@ tests = [
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",
+  "crates/ripr/src/app/repair_attempt/mod.rs::repair_attempt_head_reading",
   "crates/ripr/src/mcp/gaps.rs",
   "crates/ripr/src/mcp/workspace.rs",
   "crates/ripr/src/mcp/protocol.rs",
@@ -12079,8 +12095,49 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0222"
+name = "Byte-bounded classified-cache store publication"
+spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
+tests = [
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_shard_matches_owned_codec_bytes",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_writers_match_owned_bytes_with_shared_related_tests",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::below_exactly_and_one_byte_over_the_encoded_ceiling",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::variable_size_records_force_byte_shards_when_record_count_would_not",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::many_small_records_empty_and_multi_shard_round_trip",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::store_high_water_is_independent_of_total_shard_payload",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::oversized_record_skips_without_claiming_a_populated_cache",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_replacement_keeps_the_previous_valid_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::injected_fill_failure_does_not_admit_a_partial_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_sharded_replace_restores_the_previous_single_entry",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_replace_a_newer_single_entry",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_hide_a_newer_sharded_manifest",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_cache_paths_reject_drive_prefix_and_parent_components",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/seam_cache/store.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/atomic_file.rs",
+  "crates/ripr/src/analysis/seam_classification.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md",
+  "docs/CONFIGURATION.md",
+]
+metrics = [
+  "classified_cache_encoded_shard_ceiling_bytes",
+  "classified_cache_store_io_buffer_bytes",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0223"
 name = "Issue lifecycle read-only intake pilot over six real issue snapshots"
-spec = "docs/specs/RIPR-SPEC-0222-issue-lifecycle-intake-pilot.md"
+spec = "docs/specs/RIPR-SPEC-0223-issue-lifecycle-intake-pilot.md"
 tests = [
   "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_committed_corpus_loads_with_six_categories",
   "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_false_duplicate_candidate_corrected_by_root_review",
@@ -12102,7 +12159,7 @@ code = [
   "xtask/src/issue_lifecycle_intake.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0222-issue-lifecycle-intake-pilot.md",
+  "docs/specs/RIPR-SPEC-0223-issue-lifecycle-intake-pilot.md",
 ]
 metrics = [
   "unit_test_pass_rate",

@@ -1,4 +1,4 @@
-//! Issue lifecycle read-only intake pilot (#4930, RIPR-SPEC-0222).
+//! Issue lifecycle read-only intake pilot (#4930, RIPR-SPEC-0223).
 //!
 //! The first real-corpus consumer of the frozen RIPR-SPEC-0218 attempt
 //! contract (#4929): exactly six REAL current issue snapshots, captured
@@ -665,7 +665,7 @@ pub(crate) fn load_intake_corpus_dir(
 }
 
 /// `cargo xtask issue-lifecycle-intake-scorecard [--corpus <dir>]` (#4930,
-/// RIPR-SPEC-0222): validate the committed read-only intake corpus
+/// RIPR-SPEC-0223): validate the committed read-only intake corpus
 /// fail-closed (shape, provenance, snapshot digest bindings, packet law),
 /// then project the embedded real attempt rows through the unchanged
 /// RIPR-SPEC-0218 validator and scorecard builder, writing the standard

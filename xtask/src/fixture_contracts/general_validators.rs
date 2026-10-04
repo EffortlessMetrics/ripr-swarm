@@ -1977,9 +1977,9 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     let spec_path = root.join("SPEC.md");
     if spec_path.exists() {
         let body = read_text_lossy(&spec_path)?;
-        if !body.contains("RIPR-SPEC-0222") {
+        if !body.contains("RIPR-SPEC-0223") {
             violations.push(
-                "issue lifecycle intake SPEC.md must name its RIPR-SPEC-0222 decision".to_string(),
+                "issue lifecycle intake SPEC.md must name its RIPR-SPEC-0223 decision".to_string(),
             );
         }
         for heading in ["## Given", "## When", "## Then", "## Must Not"] {

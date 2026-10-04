@@ -47,6 +47,7 @@ What are you trying to do?
 More:
   ripr help <command>    Options for one command.
   ripr help --all        Every command, grouped by area.
+  ripr help --json       Versioned machine-readable command catalog.
 
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
@@ -107,6 +108,7 @@ Editor & Agent:
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json   [advanced]
   ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json   [advanced]
   ripr agent card --root . --seam-id ID [--json]   [advanced]
+  ripr agent stub --root . (--seam-id ID | --at FILE:LINE) [--write] [--json]   [advanced]
   ripr agent verify --root . --before before.json --after after.json --json   [advanced]
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json   [advanced]
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json   [advanced]
@@ -150,6 +152,7 @@ Policy & Gate:
 
 Reports:
   ripr reports index [--reports-dir target/ripr/reports] [--review-dir target/ripr/review] [--out target/ripr/reports/index.json]
+  ripr reports ci-packet [--root .]
   ripr reports ci-summary [--root .] [--base-ref main] >> "$GITHUB_STEP_SUMMARY"
   ripr reports gap-ledger (--records PATH | --repo-exposure PATH | --check-output PATH) [--out target/ripr/reports/gap-decision-ledger.json]
   ripr reports ts-limitations --check-output <path> [--out target/ripr/reports/typescript-limitations.json]

@@ -1,6 +1,6 @@
 # Issue Lifecycle Intake Pilot Corpus
 
-Spec: RIPR-SPEC-0222
+Spec: RIPR-SPEC-0223
 
 ## Given
 

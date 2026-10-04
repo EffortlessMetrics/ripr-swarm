@@ -1,4 +1,4 @@
-# RIPR-SPEC-0222: Issue lifecycle read-only intake pilot over six real issue snapshots
+# RIPR-SPEC-0223: Issue lifecycle read-only intake pilot over six real issue snapshots
 
 Status: proposed
 
