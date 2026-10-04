@@ -152,7 +152,7 @@ summary counts that disagree with the findings list.
   digests and unlisted files, diff anchors, truth derived from mutant
   outcomes, and the label table.
 - `report [--cases <id,...>] [--out <dir>]` copies each subject to a
-  run-owned workspace under `target/ripr/verdict-corpus/`, applies the case
+  run-owned workspace under `target/ripr/verdict-corpus/<corpus directory>/`, applies the case
   diff with a strict patch reader that refuses drifted context, runs
   `ripr check --json` on the cases in parallel, and writes `report.json` and
   `report.md`. It refuses an `--out` inside the expected directory.

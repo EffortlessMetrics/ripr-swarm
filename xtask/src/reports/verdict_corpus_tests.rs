@@ -480,7 +480,14 @@ fn validator_rejects_ids_that_are_not_one_safe_path_segment() -> Result<(), Stri
     let violations = tampered(|raw| {
         raw["cases"][0]["case_id"] = json!("../escape");
         raw["subjects"][0]["subject_id"] = json!("a/b");
+        raw["cases"][1]["case_id"] = json!(".cache");
     })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("case id `.cache` is not a single safe path segment")),
+        "{violations:#?}"
+    );
     assert!(
         violations
             .iter()
@@ -896,21 +903,43 @@ fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(
         err.contains("c-case.json") && err.contains("`b-case`"),
         "{err}"
     );
+    // A mistyped record name or a diff without its record would drop a case
+    // silently; validate names both.
+    fs::remove_file(dir.join("cases/c-case.json")).map_err(|err| err.to_string())?;
+    crate::tests::write(&dir.join("cases/d-case.JSON"), "{}\n");
+    crate::tests::write(&dir.join("cases/e-case.diff"), "");
+    fs::create_dir_all(dir.join("subjects/orphan")).map_err(|err| err.to_string())?;
+    let corpus = load_corpus(&dir)?;
+    let violations = validate(&corpus, &dir);
+    for stray in [
+        "cases/d-case.JSON",
+        "cases/e-case.diff",
+        "subjects/orphan belongs",
+    ] {
+        assert!(
+            violations.iter().any(|v| v.starts_with(stray)),
+            "{stray}: {violations:#?}"
+        );
+    }
+    assert!(
+        !violations.iter().any(|v| v.starts_with("cases/a-case")),
+        "{violations:#?}"
+    );
     Ok(())
 }
 
 #[test]
 fn split_moves_the_one_file_layout_into_records_without_loss() -> Result<(), String> {
-    let dir = per_record_corpus("verdict-split", &["a-case", "b-case"])?;
-    let before = corpus_value(&dir)?;
-    // Rebuild the one-file layout a pre-split branch still carries.
+    // The whole committed corpus, upstream and authored subjects alike, as a
+    // pre-split branch would carry it in one corpus.json.
+    let before = corpus_value(&repo_corpus_dir())?;
+    let dir = crate::tests::temp_dir("verdict-split");
+    for sub in ["subjects", "cases"] {
+        fs::create_dir_all(dir.join(sub)).map_err(|err| err.to_string())?;
+    }
     let mut legacy = before.clone();
     legacy["corpus_version"] = json!("2026-10-04.5");
     crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
-    for id in ["a-case", "b-case"] {
-        fs::remove_file(dir.join("cases").join(format!("{id}.json")))
-            .map_err(|err| err.to_string())?;
-    }
     let refused = corpus_value(&dir).err().unwrap_or_default();
     assert!(
         refused.contains("verdict-corpus split") && refused.contains("corpus_version"),
@@ -918,13 +947,41 @@ fn split_moves_the_one_file_layout_into_records_without_loss() -> Result<(), Str
     );
     split(&dir)?;
     assert_eq!(corpus_value(&dir)?, before);
-    // A record that already exists with other content is kept and named.
+
+    // A hand-written record that leaves out an optional key is the same
+    // record, not a conflict.
+    let Some(case) = before["cases"]
+        .as_array()
+        .and_then(|cases| cases.iter().find(|c| c["hard_case"].is_null()))
+        .cloned()
+    else {
+        return Err("committed corpus has no case without a hard-case note".to_string());
+    };
+    let id = case["case_id"].as_str().unwrap_or_default().to_string();
+    let mut sparse = case.clone();
+    if let Some(fields) = sparse.as_object_mut() {
+        fields.remove("hard_case");
+    }
+    crate::tests::write(
+        &dir.join("cases").join(format!("{id}.json")),
+        &format!("{sparse:#}"),
+    );
+    crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+    split(&dir)?;
+
+    // A record that exists with other content is kept and named.
     let mut changed = legacy.clone();
-    changed["cases"][0]["reasoning"] = json!("edited on this branch");
+    if let Some(cases) = changed["cases"].as_array_mut()
+        && let Some(target) = cases.iter_mut().find(|c| c["case_id"] == json!(id))
+    {
+        target["reasoning"] = json!("edited on this branch");
+    }
     crate::tests::write(&dir.join("corpus.json"), &format!("{changed:#}"));
     let err = split(&dir).err().unwrap_or_default();
-    assert!(err.contains("a-case.json"), "{err}");
-    assert_eq!(corpus_value(&dir)?, before);
+    assert!(err.contains(&format!("{id}.json")), "{err}");
+    // corpus.json keeps the branch's copy until the conflict is reconciled.
+    let kept = parse_json(&dir.join("corpus.json"))?;
+    assert_eq!(kept, changed);
     Ok(())
 }
 
@@ -998,5 +1055,10 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
         .err()
         .unwrap_or_default();
     assert!(unknown.contains("no-such-case"), "{unknown}");
+    // An empty selection would score nothing and pass, so it is refused.
+    let empty = select_cases(&mut corpus.clone(), &[])
+        .err()
+        .unwrap_or_default();
+    assert!(empty.contains("names no case"), "{empty}");
     Ok(())
 }

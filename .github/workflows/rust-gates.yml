@@ -371,6 +371,7 @@ jobs:
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
           GOLDENS_RESULT: ${{ steps.goldens.outcome }}
           FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
         run: |
           {
@@ -392,6 +393,7 @@ jobs:
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
             printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
             printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."

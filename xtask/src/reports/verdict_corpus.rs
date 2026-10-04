@@ -1056,9 +1056,17 @@ fn split(dir: &Path) -> Result<(), String> {
     let header: CorpusHeader = serde_json::from_value(raw).map_err(parse_err)?;
     let mut written = 0;
     let mut differing = Vec::new();
-    let mut place = |target: PathBuf, value: Value, text: String| -> Result<(), String> {
+    // `existing` re-reads a present record through its type, so a key a
+    // hand-written file leaves out and serde fills with null is not a change.
+    let mut place = |target: PathBuf,
+                     value: Value,
+                     text: String,
+                     existing: &dyn Fn(Value) -> Result<Value, serde_json::Error>|
+     -> Result<(), String> {
         if target.exists() {
-            if parse_json(&target)? != value {
+            let typed = existing(parse_json(&target)?)
+                .map_err(|err| format!("parse {}: {err}", normalize_path(&target)))?;
+            if typed != value {
                 differing.push(normalize_path(&target));
             }
             return Ok(());
@@ -1068,6 +1076,18 @@ fn split(dir: &Path) -> Result<(), String> {
         written += 1;
         Ok(())
     };
+    let unsafe_ids: Vec<&str> = subjects
+        .iter()
+        .map(|s| s.subject_id.as_str())
+        .chain(cases.iter().map(|c| c.case_id.as_str()))
+        .filter(|id| !safe_id(id))
+        .collect();
+    if !unsafe_ids.is_empty() {
+        return Err(format!(
+            "verdict-corpus split: `{}` is not a single safe path segment; fix the id before splitting",
+            unsafe_ids.join("`, `")
+        ));
+    }
     for subject in &subjects {
         let to_value = serde_json::to_value(subject).map_err(|err| err.to_string())?;
         place(
@@ -1075,6 +1095,7 @@ fn split(dir: &Path) -> Result<(), String> {
                 .join(format!("{}.json", subject.subject_id)),
             to_value,
             pretty(subject, "subject")?,
+            &|raw| serde_json::to_value(serde_json::from_value::<Subject>(raw)?),
         )?;
     }
     for case in &cases {
@@ -1083,28 +1104,32 @@ fn split(dir: &Path) -> Result<(), String> {
             dir.join("cases").join(format!("{}.json", case.case_id)),
             to_value,
             pretty(case, "case")?,
+            &|raw| serde_json::to_value(serde_json::from_value::<Case>(raw)?),
         )?;
     }
-    fs::write(&path, pretty(&header, "corpus header")?)
-        .map_err(|err| format!("write {}: {err}", normalize_path(&path)))?;
     println!(
         "verdict-corpus split: wrote {written} record files from {} subjects and {} cases",
         subjects.len(),
         cases.len()
     );
     if differing.is_empty() {
+        fs::write(&path, pretty(&header, "corpus header")?)
+            .map_err(|err| format!("write {}: {err}", normalize_path(&path)))?;
         Ok(())
     } else {
+        // corpus.json keeps its arrays, so this branch's copy of each
+        // differing record stays on disk until it is reconciled.
         Err(format!(
-            "verdict-corpus split: kept these existing files, which differ from corpus.json's copy; reconcile them by hand:\n- {}",
+            "verdict-corpus split: kept these existing files, which differ from corpus.json's copy; corpus.json is left unchanged so its copy survives. Reconcile each by hand, then run split again:\n- {}",
             differing.join("\n- ")
         ))
     }
 }
 
 /// An identifier that becomes one directory name under the run root.
+/// A leading dot is refused so no id can name the run's shared `.cache`.
 fn safe_id(id: &str) -> bool {
-    safe_relative(id) && !id.contains('/')
+    safe_relative(id) && !id.contains('/') && !id.starts_with('.')
 }
 
 fn safe_relative(path: &str) -> bool {
@@ -1175,6 +1200,7 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
             )),
         }
     }
+    violations.extend(case_dir_violations(corpus, dir));
     let truths: BTreeSet<TruthState> = corpus.cases.iter().map(|c| c.truth.state).collect();
     for required in [TruthState::Discriminated, TruthState::NotDiscriminated] {
         if !truths.contains(&required) {
@@ -1185,6 +1211,56 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
         }
     }
     violations
+}
+
+/// `cases/` holds exactly one `<id>.json` and one `<id>.diff` per case, so a
+/// mistyped record name or a diff without its record cannot drop a case.
+fn case_dir_violations(corpus: &Corpus, dir: &Path) -> Vec<String> {
+    let ids: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let files = match files_under(&dir.join("cases")) {
+        Ok(files) => files,
+        Err(err) => return vec![err],
+    };
+    let mut stray: Vec<String> = files
+        .iter()
+        .filter(|file| {
+            let id = file
+                .strip_suffix(".json")
+                .or_else(|| file.strip_suffix(".diff"));
+            id.is_none_or(|id| !ids.contains(id))
+        })
+        .map(|file| {
+            format!("cases/{file} is not a case record or diff; name it `<case_id>.json` or `<case_id>.diff` beside its pair")
+        })
+        .collect();
+    // subjects/ holds `<id>.json` and the `<id>/` excerpt for each subject.
+    let subject_ids: BTreeSet<&str> = corpus
+        .subjects
+        .iter()
+        .map(|s| s.subject_id.as_str())
+        .collect();
+    let root = dir.join("subjects");
+    match fs::read_dir(&root) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let known = if entry.path().is_dir() {
+                    subject_ids.contains(name.as_str())
+                } else {
+                    name.strip_suffix(".json")
+                        .is_some_and(|id| subject_ids.contains(id))
+                };
+                if !known {
+                    stray.push(format!(
+                        "subjects/{name} belongs to no subject record; a subject is `subjects/<subject_id>.json` beside `subjects/<subject_id>/`"
+                    ));
+                }
+            }
+        }
+        Err(err) => stray.push(format!("read {}: {err}", normalize_path(&root))),
+    }
+    stray.sort();
+    stray
 }
 
 fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
@@ -1859,6 +1935,10 @@ fn validated_corpus(dir: &Path) -> Result<Corpus, String> {
 
 /// Keep only the named cases. Validation still covers the whole corpus.
 pub(crate) fn select_cases(corpus: &mut Corpus, ids: &[String]) -> Result<(), String> {
+    // An empty selection would score zero cases and pass.
+    if ids.is_empty() {
+        return Err("verdict-corpus: --cases names no case".to_string());
+    }
     let known: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
     let unknown: Vec<&str> = ids
         .iter()
@@ -2076,6 +2156,16 @@ fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
 
 const DRIFT_SHOWN: usize = 20;
 
+/// Run-owned workspaces live under one directory per corpus, so corpora for
+/// other languages (`fixtures/<language>-verdict-corpus`) never share a case
+/// work or cache directory.
+fn work_root(dir: &Path) -> PathBuf {
+    let name = dir
+        .file_name()
+        .map_or_else(|| "corpus".into(), |name| name.to_string_lossy());
+    Path::new(WORK_ROOT).join(name.as_ref())
+}
+
 pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
     let dir = Path::new(CORPUS_DIR);
     let expected_dir = dir.join("expected");
@@ -2122,7 +2212,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "split" => split(dir),
         "bless" => {
             let corpus = validated_corpus(dir)?;
-            let report = run_corpus(dir, &corpus, Path::new(WORK_ROOT))?;
+            let report = run_corpus(dir, &corpus, &work_root(dir))?;
             bless(&expected_dir, &report)?;
             println!(
                 "verdict-corpus: blessed {} rows and the summary into {}; state why each moved row changed in the PR",
@@ -2139,7 +2229,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             }
             let out = out.unwrap_or_else(|| PathBuf::from(DEFAULT_OUT));
             refuse_expected_out(&out, &expected_dir)?;
-            let report = run_corpus(dir, &corpus, Path::new(WORK_ROOT))?;
+            let report = run_corpus(dir, &corpus, &work_root(dir))?;
             write_report(&out, &report)?;
             println!(
                 "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",

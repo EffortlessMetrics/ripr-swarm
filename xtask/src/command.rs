@@ -1011,7 +1011,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "verdict-corpus check [--cases <id,...>] [--out <dir>]",
             "report_only",
-            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/",
+            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/<corpus>/",
             false,
             true,
             "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus summary.json and stale rows on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
