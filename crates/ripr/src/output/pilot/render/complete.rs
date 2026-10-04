@@ -419,6 +419,10 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    // Pilot ranks seams across the whole repository, never just a branch's
+    // diff; saying so keeps a recommendation outside the change from reading
+    // as a contradiction of `ripr check` (#5309).
+    out.push_str("  scope: whole repository; for your branch's change run `ripr check`\n");
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {

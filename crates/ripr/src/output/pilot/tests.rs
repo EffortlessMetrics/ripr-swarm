@@ -459,6 +459,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "root: .",
         "mode: draft",
         "config: loaded ripr.toml",
+        "scope: whole repository; for your branch's change run `ripr check`",
         "Top recommendation:",
         "inspected seam:",
         "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
