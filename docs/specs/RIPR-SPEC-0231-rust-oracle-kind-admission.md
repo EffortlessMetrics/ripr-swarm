@@ -49,7 +49,8 @@ They are decided by one precedence chain of substring checks
 (`analysis/extract/oracles/classify.rs`, `classify_assertion`, and
 `patterns.rs`). No spec defines that chain. Several links overstate the
 oracle. Measured on origin/main e177461 with `ripr check --diff` on a
-one-function crate (the oracle code is unchanged through cd5f0d473):
+one-function crate. The oracle code is unchanged through cd5f0d473 except
+for #5410 (de56e085a, the wildcard pre-check below), which affects no row:
 
 | Test assertion | Reported kind / strength | What it pins |
 | --- | --- | --- |
@@ -95,11 +96,16 @@ strength. The only later adjustment is the RIPR-SPEC-0106 upgrade in
 on an `unwrap_err`-bound variable into `exact_error_variant`. Kind is decided
 from the assertion's operand text after message arguments are removed
 (`assertion_oracle_text`), never from a format string or a diagnostic
-argument.
+argument, for the macros `assertion_oracle_text` recognizes; a custom helper
+is read from its whole line. The RIPR-SPEC-0106 upgrade never applies to an
+assertion that an admission rule below weakened.
 
 ### Precedence
 
-The chain runs in this order; the first match wins:
+The chain runs in this order; the first match wins. Before it, the
+wildcard pre-check (#5410) assigns `relational_check` / weak to an
+`assert!`, `ensure!` or `assert_matches!` whose `matches!` pattern is a
+whole unguarded `_`.
 
 0. an `ensure!` condition runs its own sub-chain
    (`classify_fallible_assertion`): `exact_error_variant` / strong, then
@@ -133,20 +139,25 @@ strength.
 1. **Inequality is never exact.** At steps 0, 5 and 10, an inequality
    assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
    `!=` in an `ensure!` condition, and a custom helper whose name has a
-   `ne`, `not` or `neq` segment. At step 4, `assert_ne!` with a struct
-   literal keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
-   at weak strength, and still gives no field credit.
-2. **Patterns with bindings are not variant pins.** At step 1, a `matches!`
-   or `assert_matches!` whose `Err(..)` inner pattern is `_`, `..` or a bare
-   binding assigns `broad_error` / weak, guard or not. `Err(E::X)`,
+   `ne`, `not` or `neq` segment that step 10 admits today. At step 4, every
+   `assert_ne!` assigns weak strength: a struct-literal operand keeps the
+   `whole_object_equality` kind, as RIPR-SPEC-0225 says, with no field
+   credit; any other `{` (a closure or block operand) assigns
+   `relational_check`.
+2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
+   `matches!` or `assert_matches!` whose `Err(..)` inner pattern is `_`, `..`
+   or a bare binding (a lowercase-initial identifier, including `_name`)
+   assigns `broad_error` / weak, guard or not. `Err(E::X)`,
    `Err(E::X(..))` and `Err(E::X { .. })` stay `exact_error_variant`.
    `assert_eq!` against `Err(value)` with any expression stays
    `exact_error_variant`, because equality pins the value.
-3. **Pattern assertions follow their pattern.** At step 5, a `matches!` or
-   `assert_matches!` whose whole pattern is `_` or a bare binding assigns
-   `relational_check` / weak (#5410). A constructor pattern whose only
-   content is wildcards (`Some(_)`, `Ok(_)`, `Ok(..)`) assigns `smoke_only` /
-   smoke, because it only checks the side (RIPR-SPEC-0227). Any other
+3. **Pattern assertions follow their pattern.** At steps 0 and 5, a
+   `matches!` or `assert_matches!` whose whole pattern is a guarded `_` or a
+   bare binding (a lowercase-initial identifier) assigns `relational_check` /
+   weak; the wildcard pre-check already covers an unguarded `_`. A
+   constructor pattern whose only content is wildcards (`Some(_)`, `Ok(_)`,
+   `Ok(..)`), and `None`, assign `smoke_only` / smoke, because they only
+   check the side (RIPR-SPEC-0227). Any other
    pattern stays `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
@@ -161,8 +172,8 @@ strength.
    `_`-separated or case-split segment of an identifier, with an optional
    trailing `s` (`events_sent`, `sentCount`, `events`, `state`), never inside
    another word (`present`, `statement`, `consent`). The segment must sit in
-   the asserted subject, not only in a message or an unrelated call; today
-   any position on the line counts. The `mock` and `expect_` call checks
+   the asserted subject, not only in an unrelated call; today any operand
+   text counts, including a call such as `is_present()`. The `mock` and `expect_` call checks
    keep their current form.
 6. **Custom helpers by name are strong only for equality names.** Step 10
    needs a name whose last `_`-segment is `eq`, `equal` or `equals`, or
@@ -231,6 +242,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     weak.
 15. `assert!(opt.is_some_and(|v| v > 1))`: `smoke_only` / smoke (unchanged).
 16. `assert!(!events.is_empty())`: `mock_expectation` / medium (unchanged).
+17. `assert!(matches!(check(20), Err(_e)))`: `broad_error` / weak (today
+    `exact_value` / strong).
+18. `ensure!(matches!(check(5), Ok(_)))`: `smoke_only` / smoke (today
+    `exact_value` / strong).
 
 ## Test Mapping
 
