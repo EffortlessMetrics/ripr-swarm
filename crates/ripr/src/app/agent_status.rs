@@ -14,10 +14,9 @@ use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, after_phase_head_admission, diverged_head_recovery,
-    inventory_repair_attempts_from, load_attempt_terminal_receipt,
-    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_state_label,
-    resolve_store,
+    RepairAttemptStoreLocationClass, diverged_head_recovery, inventory_repair_attempts_from,
+    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
+    repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -536,15 +535,13 @@ fn status_repair_attempt(
         store_flag,
     ));
     let receipt = attempt_receipt(root, manifest, receipt);
-    let evidence_head = manifest.after.as_ref().map_or_else(
-        || manifest.repository_head.clone(),
-        |after| after.repository_head.clone(),
-    );
+    let head_reading = repair_attempt_head_reading(root, manifest, current_head);
+    let evidence_head = head_reading.evidence_head;
     let mut diverged_recovery = None;
     let (head_current, (state, disposition, command)) = match manifest.state {
         RepairAttemptState::AwaitingEdit => {
-            match current_head.map(|_| after_phase_head_admission(root, manifest)) {
-                Some(Ok(AfterPhaseHeadAdmission::Current { .. })) => (
+            match head_reading.after_admission {
+                Some(AfterPhaseHeadAdmission::Current { .. }) => (
                     Some(true),
                     (
                         "awaiting_edit",
@@ -552,11 +549,11 @@ fn status_repair_attempt(
                         Some(manifest.next_command.clone()),
                     ),
                 ),
-                Some(Ok(AfterPhaseHeadAdmission::FinishesStale { .. })) => (
+                Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
                     Some(false),
                     ("awaiting_edit", "prepared_at_other_head", restart),
                 ),
-                Some(Ok(AfterPhaseHeadAdmission::RefusedDiverged { current_head })) => {
+                Some(AfterPhaseHeadAdmission::RefusedDiverged { current_head }) => {
                     diverged_recovery = Some(diverged_head_recovery(
                         root_display,
                         manifest.repair_attempt_id.as_str(),
@@ -572,11 +569,11 @@ fn status_repair_attempt(
                 }
                 // HEAD unreadable, or its lineage to the prepared head could not
                 // be established: status cannot tell what the after phase would do.
-                None | Some(Err(_)) => (None, ("awaiting_edit", "head_unknown", None)),
+                None => (None, ("awaiting_edit", "head_unknown", None)),
             }
         }
         _ => (
-            current_head.map(|head| head == evidence_head),
+            head_reading.head_current,
             status_after_disposition(manifest, &receipt, restart),
         ),
     };
@@ -1257,6 +1254,17 @@ fn legacy_next_command(
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
                 message: pilot_routed_to_check_message(&routes, root_display),
             });
+            // #5205/#5248 review: a packet can route preview files to check
+            // AND exclude Rust (Rust disabled while preview files are
+            // present). The route warning alone would drop the exclusion's
+            // config remedy, so emit both and still stop.
+            if let Some(excluded) = pilot_rust_excluded_from_scope(root) {
+                warnings.push(AgentStatusWarning {
+                    kind: "pilot_rust_excluded_no_repair_target".to_string(),
+                    artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                    message: pilot_rust_excluded_message(&excluded),
+                });
+            }
             return None;
         }
         if let Some(card) = pilot_python_repair_card_ready(root) {
@@ -4080,6 +4088,38 @@ mod tests {
                     .iter()
                     .any(|warning| warning.kind == "pilot_rust_excluded_no_repair_target"),
                 "control must not raise the exclusion warning: {control}"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5205/#5248 review: a packet that routes preview files to check AND
+    /// excludes Rust keeps both warnings — the route hand-off and the
+    /// exclusion's config remedy — instead of dropping the remedy.
+    #[test]
+    fn agent_status_keeps_rust_exclusion_alongside_check_routes() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-routed-plus-excluded");
+        let text = r#"{"status": "complete", "top_actionable_seams": [], "language_routes": {"state": "required", "routes": [{"language": "python", "enabled": true, "command": "ripr check --root ."}], "rust_excluded_from_scope": {"language": "rust", "file_count": 2, "enabled": false, "guidance": "g"}}, "next": {"repair_command": null}}"#;
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "routed plus excluded must stop: {:?}",
+            report.next_command
+        );
+        for kind in [
+            "pilot_routed_to_check_no_repair_target",
+            "pilot_rust_excluded_no_repair_target",
+        ] {
+            assert!(
+                report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == kind),
+                "expected {kind}: {:?}",
+                report.warnings
             );
         }
 
