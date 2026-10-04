@@ -402,10 +402,6 @@ server can provide seam-aware code actions:
   command that compares the pilot before snapshot to the after snapshot.
 - `Review result: copy receipt command`: copies the `ripr agent receipt`
   command for the selected seam.
-- `Write Rust test: copy test stub`: copies the compiling test stub that
-  `ripr agent stub` produces for this gap, with its placement and the
-  `--write` command that inserts it. The editor copies text and never edits
-  the file.
 - `Write targeted test: copy suggested assertion`: copies a concrete assertion
   suggestion from the seam packet.
 - `Write targeted test: open best related test`: opens the strongest related
@@ -425,8 +421,6 @@ evidence-context packet, and the remaining handoff, verify, and receipt
 actions stay as they were.
 `Write targeted test: copy brief` is shown only when the seam has related-test
 context or a concrete assertion suggestion.
-`Write Rust test: copy test stub` is shown only when the file on disk still
-matches the bytes the snapshot analyzed and the stub producer accepts the gap.
 `Write targeted test: copy suggested assertion` is shown only when the seam has
 a concrete assertion suggestion, and `Write targeted test: open best related
 test` is shown only when the current analysis snapshot can resolve a related

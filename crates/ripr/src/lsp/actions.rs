@@ -766,13 +766,6 @@ fn push_seam_actions(
     {
         actions.push(action);
     }
-    if let Some(target) = rust_test_stub_target(context.snapshot, context.seam) {
-        actions.push(copy_rust_test_stub_action(
-            target,
-            context.diagnostic,
-            Some(context.snapshot),
-        ));
-    }
     if let Some(assertion) = suggested_assertion {
         actions.push(copy_suggested_assertion_action(
             context.seam,
@@ -1050,7 +1043,6 @@ const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
 const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
 const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair card";
 const COPY_PYTHON_PYTEST_SKELETON_TITLE: &str = "Write Python test: copy pytest skeleton";
-const COPY_RUST_TEST_STUB_TITLE: &str = "Write Rust test: copy test stub";
 const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str = "Copy TypeScript repair packet (advisory)";
 const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 
@@ -2105,85 +2097,6 @@ fn copy_targeted_test_brief_action(
         data: Some(action_data_payload(
             "quickfix.ripr.inspect",
             "copy_targeted_test_brief",
-            COPY_TARGETED_TEST_BRIEF_COMMAND,
-            Some(diagnostic),
-            snapshot,
-        )),
-        ..CodeAction::default()
-    })
-}
-
-/// Build the target for "Write Rust test: copy test stub" (#5355). The stub
-/// comes from the same producer as `ripr agent stub`, over the exact bytes this
-/// snapshot analyzed: a file that changed since analysis, a path outside the
-/// workspace, or a producer refusal omits the action rather than offering a
-/// stub for different code. The editor copies text; it never edits the file
-/// (ADR 0017).
-fn rust_test_stub_target(snapshot: &AnalysisSnapshot, seam: &ClassifiedSeam) -> Option<LSPAny> {
-    use sha2::{Digest, Sha256};
-
-    let relative = seam.seam.file();
-    let relative_text = relative.to_str()?;
-    if relative.is_absolute() || !workspace_path_is_safe(snapshot.root.as_path(), relative_text) {
-        return None;
-    }
-    let analyzed_digest = snapshot.rust_consumed_sources.digest(relative)?;
-    let bytes = std::fs::read(snapshot.root.join(relative)).ok()?;
-    if format!("{:x}", Sha256::digest(&bytes)) != analyzed_digest {
-        return None;
-    }
-    let source = String::from_utf8(bytes).ok()?;
-    let stub =
-        crate::analysis::test_stub::rust_test_stub_for_classified_seam(seam, &source).ok()?;
-    let target_file = stub.placement.file().to_string_lossy().replace('\\', "/");
-    let write_command = format!(
-        "ripr agent stub --root {COMMAND_ROOT} --seam-id {} --write",
-        seam.seam.id().as_str()
-    );
-    let mut lines = vec![
-        format!("// ripr test stub for {}", seam.seam.owner()),
-        format!(
-            "// Place in {target_file} ({}).",
-            stub.placement.kind_str().replace('_', " ")
-        ),
-    ];
-    for input in &stub.derived_inputs {
-        lines.push(format!("// Input from the changed comparison: {input}"));
-    }
-    for fill_in in &stub.fill_ins {
-        lines.push(format!("// Fill in: {fill_in}"));
-    }
-    lines.push(format!("// Or write it in place: {write_command}"));
-    lines.push(stub.text.trim_end().to_string());
-
-    Some(serde_json::json!({
-        "label": "rust_test_stub",
-        "seam_id": seam.seam.id().as_str(),
-        "target_file": target_file,
-        "placement": stub.placement.kind_str(),
-        "test_name": stub.test_name,
-        "write_command": write_command,
-        "brief": lines.join("\n"),
-    }))
-}
-
-fn copy_rust_test_stub_action(
-    target: LSPAny,
-    diagnostic: &Diagnostic,
-    snapshot: Option<&AnalysisSnapshot>,
-) -> CodeActionOrCommand {
-    CodeActionOrCommand::CodeAction(CodeAction {
-        title: COPY_RUST_TEST_STUB_TITLE.to_string(),
-        kind: Some(CodeActionKind::new("quickfix.ripr.inspect")),
-        diagnostics: Some(vec![diagnostic.clone()]),
-        command: Some(Command {
-            title: COPY_RUST_TEST_STUB_TITLE.to_string(),
-            command: COPY_TARGETED_TEST_BRIEF_COMMAND.to_string(),
-            arguments: Some(vec![target]),
-        }),
-        data: Some(action_data_payload(
-            "quickfix.ripr.inspect",
-            "copy_rust_test_stub",
             COPY_TARGETED_TEST_BRIEF_COMMAND,
             Some(diagnostic),
             snapshot,
