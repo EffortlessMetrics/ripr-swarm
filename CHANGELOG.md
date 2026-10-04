@@ -1327,7 +1327,8 @@ are scoped or reviewed.
   `vitest run <file>`, which failed with command not found because
   `node_modules/.bin` is not on PATH. The same applies to `jest` and `ava`;
   `bun test`, `node --test` and the `npm test --` style runner scripts are
-  unchanged.
+  unchanged. The command still needs the package's dependencies installed;
+  ripr does not check for `node_modules`.
 
 - A TypeScript change that only edits type syntax on a signature or
   declaration line (a return type, a parameter or variable annotation, an
