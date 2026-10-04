@@ -23,6 +23,7 @@ Linked issues:
 - #1290 (changed-element, f-string and error-path gates, cited in code)
 - #4567 (owner call through a module and result locals)
 - #4765 (same-class transitive reach, RIPR-SPEC-0201)
+- #6603 (mutation evidence for rules 12 to 14, from the #6597 corpus)
 
 Linked PRs:
 
@@ -57,6 +58,11 @@ Support-tier impact:
   follows the 0028 statement that a `static_limit_kind` is emitted "when
   syntax-first analysis cannot classify"; a substring false positive such
   as `content_type(` is not such a case.
+- Rules 12 to 14 add credit that no earlier spec promised. Each rests on
+  runtime evidence instead: in the Python verdict corpus (#6597, #6603)
+  the test shape of examples 8, 20 and 21 fails on a non-equivalent
+  mutant of its owner, so today's `weakly_exposed` is a false actionable
+  verdict there. Those findings move to `exposed`.
 
 Policy impact:
 
@@ -169,7 +175,7 @@ code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3
-below as the only changes.
+and 12 to 14 below as the only changes.
 
 ### Oracle admission rules
 
@@ -266,7 +272,8 @@ a test relates "only when the test references the owner", proximity
 "only rank[s] a test that already references the owner without a
 recognized call shape", and heuristic links "must not promote unrelated
 assertions to strong revealability". Its "token-aware" direct call rule
-does not make a callable argument a call. Rule 7 changes what R1 admits.
+does not make a callable argument a call. Rules 7 and 13 change what R1
+admits.
 
 7. **A rival import does not relate.** A bare `name(` does not relate a
    free-function owner when the test file binds `name` only by
@@ -363,6 +370,42 @@ rule 4 and the rules below.
     strong assertion is not a pure `len` aggregate, even one that does not
     observe the owner.
 
+### Admissions from mutation evidence
+
+These three rules were added on 2026-10-04 after #6603 showed that each
+shape fails on a non-equivalent mutant of its owner (corpus cases
+`py-spec0233-ex08-almost-equal`, `py-spec0233-ex20-raises-regex` and
+`py-spec0233-ex21-exc-value` in #6597). The runtime outcome calibrates
+the rule; ripr still reports only what the static shape shows.
+
+12. **`assertAlmostEqual` pins a value.** A call statement whose last
+    segment is `assertAlmostEqual` assigns `exact_value` / strong, as
+    `pytest.approx` does (Decision 6). At its default seven places it
+    fails for any change of at least `1e-7` in the observed value. A
+    `places=` or `delta=` argument does not change the row, as
+    `pytest.approx` stays strong with any tolerance.
+    `assertNotAlmostEqual` stays unrecorded.
+13. **The callable of an exception assertion is called.** In a call
+    statement whose last segment is `assertRaises` or `assertRaisesRegex`,
+    or `raises` read as `pytest.raises`, the positional argument right
+    after the exception class (after the expected regex for
+    `assertRaisesRegex`) is the function the assertion calls when it is a
+    bare or dotted name. The test relates to that owner as R1
+    `syntactic_call`, under the same identity checks as a written call
+    (rule 7 applies), and the assertion keeps its table row. A lambda or
+    any other expression in that position is not read.
+14. **A bound exception compared by value pins the error.** A `with` item
+    `pytest.raises(...) as N` (or bare `raises`), or
+    `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`,
+    is recorded `exact_error_variant` / strong when a later statement of
+    the same test body asserts `==` (an `assert` chain with `==`, or
+    `assertEqual`) between two operands, one of which contains `N.value`
+    (pytest) or `N.exception` (unittest), and `N` is not assigned again
+    in between. Rule 1 applies to that comparison first: a tautology
+    does not promote. The value assertion keeps its own table row. The
+    promoted `with` item is the error-path assertion of rule 6, read
+    exactly as example 14 reads `raises(..., match=...)`.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -407,27 +450,42 @@ rejected alternative. Any can be reversed later without touching the rest.
    variant-token requirement, because the Python credit branches already
    need the owner name or a changed-line token in that assertion.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
-   Adopted: unchanged, not credited. Rejected for now: promote such an
-   assertion to `exact_error_variant` like the RIPR-SPEC-0106 Rust upgrade,
-   because it adds credit and needs its own binding proof.
+   Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
+   `with` item to `exact_error_variant` / strong when the test compares
+   `exc.value` or `cm.exception` with `==`, like the RIPR-SPEC-0106 Rust
+   upgrade. The first draft kept it uncredited because it added credit
+   without proof; the corpus case `py-spec0233-ex21-exc-value` fails on
+   the `KeyError("blank")` mutant, so the uncredited reading is a false
+   actionable verdict. The binding proof is the rule's name and
+   no-reassignment check. Rejected: any use of `exc.value`, because
+   `assert exc.value is not None` pins nothing.
 5. **Non-literal `match=`.** Adopted: stays strong, because a variable
    usually holds a real message. Rejected: weaken every non-literal
    pattern.
 6. **`pytest.approx` and `len(x) == n`.** Adopted: unchanged,
    `exact_value` / strong; both pin a value, and the f-string gate covers
    the length case it cannot see. Rejected: weaken them.
-7. **Unrecognized forms.** Adopted: `assertAlmostEqual`, `assertIs`,
-   `assertIsNone`, `assertListEqual`, `pytest.warns`, an aliased
-   `pt.raises` and an awaited mock assertion stay unrecorded (reach-only).
-   Recording them adds credit no spec promises. Rejected: add them here.
+7. **Unrecognized forms.** Adopted: `assertIs`, `assertIsNone`,
+   `assertListEqual`, `pytest.warns`, an aliased `pt.raises` and an
+   awaited mock assertion stay unrecorded (reach-only), because recording
+   them adds credit no spec promises and no corpus case yet shows the
+   cost. `assertAlmostEqual` was in this list until #6603: the corpus
+   case `py-spec0233-ex08-almost-equal` fails on its `+ 2` mutant, so
+   rule 12 records it like `pytest.approx`. Rejected: add the rest here
+   without evidence. Each can follow rule 12's route when a corpus case
+   shows a false actionable verdict.
 8. **`mocker.patch`.** Adopted: counts as `mocked_module`, because
    pytest-mock substitutes at runtime. Rejected: limit the rule to
    `unittest.mock` receivers.
-9. **Callable arguments of exception assertions.** Adopted: unchanged,
-   `assertRaisesRegex(E, r, f, '')` stays a reference read by R7.
-   RIPR-SPEC-0028 relates by reference and keeps proximity heuristic, and
-   no spec makes a callable argument a call. Rejected: count it as an R1
-   call, because that adds credit no spec promises.
+9. **Callable arguments of exception assertions.** Adopted (amended
+   2026-10-04, #6603): rule 13 relates the named callable as an R1
+   `syntactic_call`. The first draft kept `assertRaisesRegex(E, r, f, '')`
+   a reference read by R7 because no spec made a callable argument a
+   call. But `unittest` and pytest document that form as calling `f`,
+   and the corpus case `py-spec0233-ex20-raises-regex` fails on the
+   `KeyError("blank")` mutant, so the R7 reading is a false actionable
+   verdict. Rejected: relate any name passed to any call, because only
+   these assertions are documented to call their argument.
 10. **Non-transparent decorators.** Adopted: unchanged, `@property` and
     `@functools.lru_cache` stay `decorator_indirection`. Rejected for now:
     make `@property` transparent, because it adds credit.
@@ -440,7 +498,8 @@ rejected alternative. Any can be reversed later without touching the rest.
   class on the acceptance set.
 - Every "unchanged" example keeps its kind, strength, relation and class.
 - Golden drift lists every Python finding whose class, relation or
-  `oracle_alignment` moved, split into credit gained (rules 4, 6, 8) and
+  `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
+  13, 14) and
   credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
@@ -451,8 +510,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No helper body resolution, fixture resolution or import graph.
 - No change to the boundary activation rule, the changed-default rule, the
   dunder rules or RIPR-SPEC-0201.
-- No new relation for a callable passed by name to `assertRaises`,
-  `assertRaisesRegex` or `pytest.raises` (Decision 9).
+- No relation for a callable passed to any call other than the
+  exception assertions of rule 13.
 - No change to Rust, TypeScript or Perl classification.
 - No claim about runtime mutation outcomes.
 
@@ -481,8 +540,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `self.assertEqual(parse('1'), parse('1'))`.
 7. `assert parse('1') == pytest.approx(2.0)`: `exact_value` / strong,
    `exposed` (unchanged).
-8. `self.assertAlmostEqual(parse('1'), 2.0)` only: no assertion, reported
-   `unknown`, `weakly_exposed` (unchanged).
+8. `self.assertAlmostEqual(parse('1'), 2.0)` only: `exact_value` /
+   strong, `exposed` (today no assertion, reported `unknown`,
+   `weakly_exposed`; rule 12, #6603).
 9. `m = parse('1')` then `m.assert_called_once_with(1)`:
    `mock_expectation` / medium, `weakly_exposed` (unchanged).
 10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
@@ -515,10 +575,19 @@ and the test is `tests/test_subject.py`, which imports each owner from
     strong, `exposed`). With `pytest.raises(Exception, match='')`:
     `broad_error` / weak, `weakly_exposed` (class unchanged).
 20. Error owner, `self.assertRaisesRegex(KeyError, 'empty', perr, '')` in
-    a `unittest.TestCase`: relation `same_stem`, oracle not used,
-    `weakly_exposed` with no repair card (unchanged).
+    a `unittest.TestCase`: relation `syntactic_call`,
+    `exact_error_variant` / strong, `exposed` (today `same_stem`, oracle
+    not used, `weakly_exposed` with no repair card; rule 13, #6603).
+    `self.assertRaises(KeyError, perr, '')`: `syntactic_call`,
+    `broad_error` / weak, `weakly_exposed` (today `same_stem`, no repair
+    card). The same call with
+    `lambda: perr('')` in place of `perr, ''`: unchanged from today.
 21. Error owner, `with pytest.raises(KeyError) as exc: perr('')` then
-    `assert str(exc.value) == "'empty'"`: `weakly_exposed` (unchanged).
+    `assert str(exc.value) == "'empty'"`: `exact_error_variant` / strong,
+    `exposed` (today `weakly_exposed`; rule 14, #6603). The same with
+    `with self.assertRaises(KeyError) as cm:` and
+    `self.assertEqual(str(cm.exception), "'empty'")`: `exposed` (today
+    `weakly_exposed`).
 22. Owner `def build(): return {'port': 80, 'timeout': 8080}`, changed
     from `'port': 8080`; test `assert build()['timeout'] == 8080`:
     `weakly_exposed`, `orthogonal` (today `exposed`). Test
@@ -575,6 +644,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
 33. Changed `return sorted(x, key=lambda: 0)`: `unsupported_syntax`
     (today no limit). Changed `return getattr (x, 'a')`:
     `dynamic_dispatch` (today no limit).
+34. Error owner, `with pytest.raises(KeyError) as exc: perr('')` then
+    `assert exc.value is not None`: `broad_error` / weak,
+    `weakly_exposed` (unchanged; rule 14 needs `==`). With
+    `exc = other` between the block and
+    `assert str(exc.value) == "'empty'"`: `weakly_exposed` (unchanged;
+    `exc` was assigned again).
 
 ## Test Mapping
 
@@ -600,14 +675,20 @@ and the test is `tests/test_subject.py`, which imports each owner from
   orders.
 - Planned: a split-gate test for examples 31 and 32.
 - Planned: a negative detector test per token case of rule 8.
+- Planned: rule 12 to 14 tests for examples 8, 20, 21 and 34, including
+  the `lambda` callable, the `assertRaises` callable and the reassigned
+  `exc` negatives.
+- Corpus: `py-spec0233-ex08-almost-equal`,
+  `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
+  (#6597) score credited once rules 12 to 14 land.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
-  rules 1 to 3.
+  rules 1 to 3, 12 and 14.
 - `crates/ripr/src/analysis/language/python/related_tests.rs`:
   `strongest_assertion` and `RelatedTest` oracle text (rule 4), relation
-  order and rule 7.
+  order, rules 7 and 13.
 - `crates/ripr/src/analysis/language/python/sink_alignment.rs`: per
   assertion credit (rule 4), rules 9 to 11.
 - `crates/ripr/src/analysis/language/python/classify.rs`: error-path gate
