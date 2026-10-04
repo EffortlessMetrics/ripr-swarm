@@ -167,9 +167,17 @@ pub(super) fn diagnostic_at_position<'a>(
     diagnostics: &'a [Diagnostic],
     position: &Position,
 ) -> Option<&'a Diagnostic> {
-    diagnostics
+    // Prefer a column-precise diagnostic over a line-level zero-width one.
+    let mut covering = diagnostics
         .iter()
-        .find(|diagnostic| position_in_range(position, &diagnostic.range))
+        .filter(|diagnostic| position_in_range(position, &diagnostic.range));
+    let first = covering.next()?;
+    if first.range.start != first.range.end {
+        return Some(first);
+    }
+    covering
+        .find(|diagnostic| diagnostic.range.start != diagnostic.range.end)
+        .or(Some(first))
 }
 
 /// True if `diagnostic`'s range covers `position`. Useful for callers
@@ -750,7 +758,8 @@ fn number_or_string_label(value: &NumberOrString) -> String {
 
 fn position_in_range(position: &Position, range: &Range) -> bool {
     // A zero-width range is a coarse line-level origin: the producer refused
-    // column precision (`OriginKind::CoarseZeroWidth`, base-deleted findings).
+    // column precision (`OriginKind::CoarseZeroWidth`: stale currentness, no
+    // parser span, lexical fallback) or the input was missing.
     // Editors render it on that line, so the whole line must reach its hover;
     // a half-open check would make it unhoverable at every position.
     if range.start == range.end {

@@ -95,7 +95,7 @@ with the defaults.
 | `ripr.server.version` | Pin a server version. | Empty; match the extension |
 | `ripr.server.downloadBaseUrl` | Use an internal download mirror. | Built-in release location |
 | `ripr.check.mode` | Choose editor analysis mode. | `draft` |
-| `ripr.baseRef` | Select the Git comparison base. Empty resolves the repository default branch. | `""` |
+| `ripr.baseRef` | Select the Git comparison base. Empty resolves the repository default branch; set it when that fails. | `""` |
 | `ripr.includeUnchangedTests` | Include unchanged tests as evidence. | `true` |
 | `ripr.seamDiagnostics` | Include repository-scoped diagnostics. | `true` |
 | `ripr.diagnosticProfile` | Show actionable routes or full audit output. | `actionable` |

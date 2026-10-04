@@ -164,7 +164,8 @@ separate supply-chain boundary.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
   Empty by default, which resolves the repository's default branch like
   `ripr check`: `origin/HEAD`, then `origin/main`, `origin/master`, `main`,
-  `master`.
+  `master`. If none resolves, the status bar asks you to set this to the branch
+  to compare against.
 - `ripr.includeUnchangedTests`: include unchanged tests as static evidence.
   Defaults to `true`.
 - `ripr.seamDiagnostics`: publish repository seam diagnostics in addition to

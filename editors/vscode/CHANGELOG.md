@@ -10,6 +10,10 @@
   diagnostics until the user found the setting. The default is now empty and
   resolves `origin/HEAD`, then `origin/main`, `origin/master`, `main`,
   `master`, as `ripr check` does. An explicit setting is still used as given.
+  When no default branch resolves, the status bar now points at
+  `ripr.baseRef` instead of the generic retry text.
+- Hover prefers a column-precise finding over a line-level one on the same
+  line.
 
 - Start the server when Workspace Trust is granted or a first folder is added.
   Activation in an untrusted or folderless window was recorded as a running

@@ -177,7 +177,7 @@
         "ripr.baseRef": {
           "type": "string",
           "default": "",
-          "description": "Git base ref used by ripr editor diagnostics and context commands. Empty uses the repository's default branch, resolved like `ripr check`: origin/HEAD, then origin/main, origin/master, main, master."
+          "description": "Git base ref used by ripr editor diagnostics and context commands. Empty uses the repository's default branch, resolved like `ripr check`: origin/HEAD, then origin/main, origin/master, main, master. If none resolves, set this to the branch to compare against."
         },
         "ripr.includeUnchangedTests": {
           "type": "boolean",

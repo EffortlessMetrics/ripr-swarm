@@ -3290,8 +3290,11 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
+// Both the explicit-ref failure and the default-branch failure (an empty
+// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
+// by setting ripr.baseRef; the server's own wording names CLI flags instead.
 function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit/.test(message);
+  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
 }
 
 /**

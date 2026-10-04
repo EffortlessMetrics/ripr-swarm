@@ -13974,6 +13974,58 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
 }
 
 #[test]
+fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line()
+-> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let precise_finding = sample_finding();
+    let precise = diagnostic_for_finding(Path::new("/workspace"), &precise_finding);
+    let line = precise.range.start.line;
+    let mut coarse_finding = sample_finding();
+    coarse_finding.id = "probe:pricing:88:coarse".to_string();
+    coarse_finding.probe.id = ProbeId(coarse_finding.id.clone());
+    coarse_finding.class = ExposureClass::NoStaticPath;
+    let mut coarse = diagnostic_for_finding(Path::new("/workspace"), &coarse_finding);
+    coarse.range = Range {
+        start: Position { line, character: 0 },
+        end: Position { line, character: 0 },
+    };
+    assert!(
+        precise.range.start != precise.range.end,
+        "fixture needs a precise range"
+    );
+    let inside = precise.range.start.character;
+    let past_end = precise.range.end.character + 2;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    // The coarse diagnostic comes first, so first-match scanning would pick it.
+    let diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![coarse, precise],
+        vec![coarse_finding, precise_finding],
+    );
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+
+    for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+        let Some(hover) = backend.hover_for_position(&hover_params(uri.clone(), line, character))
+        else {
+            return Err(format!("expected finding hover at {line}:{character}"));
+        };
+        let HoverContents::Markup(markup) = hover.contents else {
+            return Err("expected markup hover".to_string());
+        };
+        assert!(
+            markup.value.contains(&format!("**ripr** `{expected}`")),
+            "hover at {line}:{character} should describe {expected}: {}",
+            markup.value
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn finding_hover_avoids_mutation_runtime_language() -> Result<(), String> {
     use super::hover::finding_hover_response;
 

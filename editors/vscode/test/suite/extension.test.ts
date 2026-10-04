@@ -1523,6 +1523,13 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
 
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
       for (const [retryCommand, expectedCommand] of [
         ['ripr.refresh', 'ripr: Refresh Diagnostics'],
         ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
