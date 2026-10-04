@@ -525,7 +525,10 @@ regression_pct = 0
 regression_floor = 0
 runner_dependent = false
 source = "ingest:agent-as-user"
-# A suggested route that is always refused is a dead end (#5471).
+# A suggested route that is always refused is a dead end (#5471). A raw
+# count moves with how often the agent tries the route, so a change is listed
+# for review instead of gating; a share of calls would gate cleanly.
+review_on_change = true
 
 # From `ripr agent stub` on corpus gaps (the "gap to ready-to-run test"
 # evaluation), ingested as `ripr-dx-scoreboard-input-v1` with source
