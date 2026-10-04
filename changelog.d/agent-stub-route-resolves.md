@@ -3,7 +3,9 @@
   stub resolver yields a stub for that finding, and otherwise prints the
   resolver's refusal. The route ends in `--kind <family>` (the finding's
   probe family), and `--at` tries seams of that kind first, so the stub
-  targets the seam `check` reported. `--at` reads the seams of the one file
+  targets the seam `check` reported. When the line holds two separate seams
+  of that kind (`a > 10 && b > 20`), `--at` refuses and lists their seam IDs
+  instead of guessing, and `check` prints no route. `--at` reads the seams of the one file
   from a parse of that file alone, without re-classifying; on
   rust-lang/regex (debug build) warm `ripr check` stays at 5.6-5.7 s and
   `agent stub --at` takes 0.06 s

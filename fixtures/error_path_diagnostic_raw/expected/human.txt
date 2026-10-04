@@ -25,7 +25,6 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/error_path_diagnostic_raw/input --diff fixtures/error_path_diagnostic_raw/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root fixtures/error_path_diagnostic_raw/input --diff fixtures/error_path_diagnostic_raw/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
-No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

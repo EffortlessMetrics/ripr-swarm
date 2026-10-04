@@ -75,3 +75,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_reached_uncalled (7)
+
+Reason:
+RIPR-SPEC-0122: #5471 a refusal from a seam of another kind no longer speaks for an error_path finding, so check prints neither route nor a call-seam refusal; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -416,7 +416,11 @@ fn resolve_at(
         if resolution.outcome.is_ok() {
             return Ok(resolution);
         }
-        first_refusal.get_or_insert(resolution);
+        // A refusal speaks for the finding only when its seam is of the
+        // finding's kind; another kind's refusal would name the wrong blocker.
+        if kind.is_none_or(|kind| candidate.seam().kind() == kind) {
+            first_refusal.get_or_insert(resolution);
+        }
     }
     if let Some(resolution) = first_refusal {
         return Ok(resolution);
