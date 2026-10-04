@@ -217,6 +217,7 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
     let reference = Fixture::new("terminated-ref")?;
     let cold = reference.result("ge12.diff")?;
 
+    let mut interrupted = 0usize;
     for delay_micros in [0u64, 300, 1_000, 3_000, 6_000, 10_000, 20_000, 40_000] {
         let _ = fs::remove_dir_all(&fixture.cache);
         let mut child = fixture
@@ -228,7 +229,10 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
         std::thread::sleep(Duration::from_micros(delay_micros));
         // The child may already have exited; a failed kill is not an error.
         let _ = child.kill();
-        child.wait().map_err(|error| error.to_string())?;
+        let status = child.wait().map_err(|error| error.to_string())?;
+        if !status.success() {
+            interrupted += 1;
+        }
 
         let label = format!("terminated after {delay_micros}us");
         // An interrupted atomic write must not be left where a reader or
@@ -245,6 +249,10 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
             &fixture.result("ge12.diff")?,
         )?;
     }
+    assert!(
+        interrupted > 0,
+        "no run was interrupted before it exited; the sweep proved nothing"
+    );
     Ok(())
 }
 
@@ -271,6 +279,7 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
         "fixture must produce distinguishable artifacts"
     );
 
+    let mut interrupted = 0usize;
     for delay_micros in [0u64, 500, 2_000, 5_000, 10_000, 20_000, 40_000] {
         let mut child = fixture
             .command("ge11.diff", &["--write-artifact", &artifact_arg])
@@ -280,7 +289,10 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
             .map_err(|error| format!("spawn ripr check: {error}"))?;
         std::thread::sleep(Duration::from_micros(delay_micros));
         let _ = child.kill();
-        child.wait().map_err(|error| error.to_string())?;
+        let status = child.wait().map_err(|error| error.to_string())?;
+        if !status.success() {
+            interrupted += 1;
+        }
 
         let observed = fs::read(&artifact).map_err(|error| error.to_string())?;
         assert!(
@@ -291,6 +303,10 @@ fn interrupted_artifact_write_keeps_the_previous_artifact_or_a_complete_new_one(
         // Restore the previous artifact so each delay races the same swap.
         fs::write(&artifact, &old_bytes).map_err(|error| error.to_string())?;
     }
+    assert!(
+        interrupted > 0,
+        "no run was interrupted before it exited; the sweep proved nothing"
+    );
     Ok(())
 }
 

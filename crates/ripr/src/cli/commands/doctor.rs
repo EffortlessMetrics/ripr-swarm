@@ -1493,6 +1493,14 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
             Err(_) if std::fs::symlink_metadata(probe_dir).is_ok() => {
                 return Some(format!("{} is a dangling symlink", probe_dir.display()));
             }
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Some(format!("cannot inspect {}: {error}", probe_dir.display()));
+            }
             Err(_) => match probe_dir.parent() {
                 Some(parent) if parent.as_os_str().is_empty() => {
                     probe_dir = Path::new(".");
