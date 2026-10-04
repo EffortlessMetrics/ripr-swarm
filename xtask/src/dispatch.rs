@@ -73,6 +73,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PythonJudgedPanel(args) => super::python_judged_panel::run(&args),
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::PythonRepairTrust(args) => super::reports::python_repair_trust(&args),
+        XtaskCommand::VerdictCorpus(args) => super::reports::verdict_corpus(&args),
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
@@ -90,6 +91,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::SeamInventoryScalingBenchmark(args) => {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
+        XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),

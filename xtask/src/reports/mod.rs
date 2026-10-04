@@ -47,6 +47,7 @@ mod repo;
 #[cfg(test)]
 mod reverse_authorization;
 mod review_comments;
+mod rust_corpus;
 mod rust_repair_trust;
 mod sarif;
 mod seam_inventory_scaling;
@@ -56,6 +57,7 @@ mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod verdict_corpus;
 
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
@@ -152,6 +154,7 @@ pub(crate) use repo::{
     repo_seam_inventory,
 };
 pub(crate) use review_comments::ripr_review_comments;
+pub(crate) use rust_corpus::rust_corpus;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
 pub(crate) use sarif::sarif_policy;
 #[cfg(test)]
@@ -174,6 +177,7 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use verdict_corpus::verdict_corpus;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

@@ -6634,7 +6634,7 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
@@ -6643,13 +6643,34 @@ schemas.
   "runs": [
     {
       "format": "repo-exposure-json",
-      "status": "timeout",
-      "duration_ms": 30082,
-      "exit_code": 1,
-      "stdout_bytes": 0,
+      "status": "pass",
+      "duration_ms": 842,
+      "exit_code": 0,
+      "stdout_bytes": 21874,
       "stderr_bytes": 152,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "resource_cost": {
+        "schema_version": "0.1",
+        "observer": "ripr_process_self",
+        "observer_pid": 27044,
+        "host_os": "windows",
+        "host_arch": "x86_64",
+        "cpu": {
+          "state": "observed",
+          "source_unit": "windows_hundred_nanoseconds",
+          "source_unit_per_second": 10000000,
+          "user_source": 156250,
+          "system_source": 625000,
+          "user_ms": 15,
+          "system_ms": 62
+        },
+        "peak_resident_bytes": {
+          "state": "observed",
+          "value": 15069184
+        }
+      },
+      "resource_cost_limitation": null,
       "trace": [
         {
           "phase": "collect_workspace_state",
@@ -6667,14 +6688,33 @@ schemas.
           "duration_ms": 328
         }
       ]
+    },
+    {
+      "format": "repo-exposure-md",
+      "status": "pass",
+      "duration_ms": 771,
+      "exit_code": 0,
+      "stdout_bytes": 19003,
+      "stderr_bytes": 138,
+      "file_fact_cache": null,
+      "file_fact_cache_limitation": "cache_phase_not_observed",
+      "resource_cost": null,
+      "resource_cost_limitation": "resource_cost_receipt_not_observed",
+      "trace": []
     }
   ]
 }
 ```
 
+A timed-out or skipped format never carries a populated `resource_cost`:
+the analyzer was killed before it could emit its receipt, so `resource_cost` is
+`null` with the named limitation. The example above shows the completed-run
+shape; the second run stands for any format that produced no receipt.
+
 Field contract:
 
-- `schema_version` - currently `"0.2"` for the diagnostic report.
+- `schema_version` - currently `"0.3"` for the diagnostic report. `0.3` adds
+  the analyzer's own `resource_cost` block; no `0.2` field changed.
 - `status` - `pass` when every attempted format completes successfully, `warn`
   when a format times out or a later format is skipped after timeout, and
   `fail` when a format exits unsuccessfully before timeout.
@@ -6708,6 +6748,44 @@ Field contract:
   duplicate, or invalid cache receipts. Completed rows survive a later timeout.
   The Markdown sibling derives its cache table and limitation from these same
   typed run fields.
+- `runs[].resource_cost` - the analyzed `ripr` process's own CPU time and peak
+  resident memory, as measured by that process about itself and emitted on the
+  same opt-in stderr stream as the phase trace. It states the host observed on
+  (`host_os`, `host_arch`) and attributes the numbers to the observed process
+  (`observer` is always `ripr_process_self`; `observer_pid` is that process, not
+  the harness). `cpu` is observed as a unit or not at all: an observed value
+  carries `source_unit`, `source_unit_per_second`, the raw `user_source` and
+  `system_source`, and the derived `user_ms` and `system_ms`, so the
+  millisecond figures can be recomputed rather than trusted.
+  `peak_resident_bytes` is in bytes.
+- Supported hosts are **Linux** and **Windows**, both of which observe. Linux
+  reads `/proc/self/stat` `utime`/`stime` in `USER_HZ` clock ticks
+  (`source_unit_per_second` 100) and `/proc/self/status` `VmHWM` in kibibytes.
+  Windows reads `GetProcessTimes` (kernel time is `system_source`, user time is
+  `user_source`, both in 100-nanosecond intervals, so
+  `source_unit_per_second` is 10000000) and `GetProcessMemoryInfo`'s
+  `PeakWorkingSetSize`, which is already in bytes. Both go through the safe
+  `winsafe` wrappers; the `unsafe` lives inside that crate.
+- Observed and unavailable are **separate shapes**, never a bare number, and
+  both the producer and this consumer refuse an unknown key on either shape. A
+  measurement reads `{"state": "observed", "value": ...}`; an absent one reads
+  `{"state": "unavailable", "reason": "..."}` and carries no value at all, so a
+  zero is never inferred. Reasons are `platform_not_supported` (this build
+  wires no safe per-process source for the host platform),
+  `source_query_failed` (the per-process counter was queried and the query
+  failed - the capability is present, the read did not succeed),
+  `source_unreadable`, `source_field_missing`, `source_value_malformed` (the
+  value could not be interpreted in its documented unit or does not fit the
+  reported range; no saturated substitute is emitted), and
+  `receipt_serialization_failed` (the receipt itself could not be serialized,
+  so every number is unavailable under that reason rather than the receipt
+  disappearing).
+- `runs[].resource_cost_limitation` - `null` when the cost block is present;
+  otherwise a named state: `resource_cost_receipt_not_observed`,
+  `duplicate_resource_cost_receipt`, `malformed_resource_cost_receipt`,
+  `invalid_resource_cost_receipt`, or `format_skipped`. An absent receipt is
+  never rendered as zero CPU or zero memory. The Markdown sibling derives its
+  "Analyzer Resource Cost" section from these same typed run fields.
 
 ## Targeted-Test Outcome Report
 
@@ -13942,7 +14020,14 @@ matching repository root, exact clean HEAD, producer input identity, content
 commitment, and GapRecords. The input identity is recomputed from the current
 producer-consumed configuration, including an untracked `ripr.toml`; a changed
 or invalid relevant configuration therefore fails closed as stale or
-`not_evaluated`.
+`not_evaluated`. `refresh_commands` replay the ledger's own source route. A
+repo-exposure ledger gets `ripr check --format repo-exposure-json` and
+`ripr reports gap-ledger --repo-exposure`. A check-output ledger (the
+Python/TypeScript preview route) gets `ripr check --json` with the base its
+check output recorded and `ripr reports gap-ledger --check-output`; it stays
+`not_evaluated` because check output carries no producer snapshot identity.
+Check output does not record a `--diff` scope, so a check run from a diff file
+must be rerun with the same `--diff`; the blocked reason says so.
 
 `staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
 proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
@@ -17128,7 +17213,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.29",
+      "schema_version": "1.30",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
