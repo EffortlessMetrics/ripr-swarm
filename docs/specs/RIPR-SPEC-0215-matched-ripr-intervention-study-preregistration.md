@@ -110,7 +110,13 @@ preregistration does not prove intervention value.
 ## Acceptance Examples
 
 1. The example IV01 protocol validates and seals a `sha256:` digest over the
-   canonical payload.
+   canonical payload. The digest binds the `serde_json` serialization of the
+   v1 struct in field-declaration order, not a separate canonical-JSON form:
+   reordering or re-tagging fields changes sealed digests and therefore
+   requires a schema version change rather than a silent refactor. The
+   published JSON schema pins identity (`schema_version`, `kind`,
+   `implementation_state`) and shape; the study laws are owned by the domain
+   validator.
 2. Rendering JSON then parsing it yields the same object; Markdown from that
    object is unchanged on a second render.
 3. Assignment that may change after an outcome is rejected as

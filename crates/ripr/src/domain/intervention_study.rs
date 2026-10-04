@@ -1227,6 +1227,30 @@ mod tests {
     }
 
     #[test]
+    fn each_missing_required_outcome_cell_is_rejected() -> Result<(), String> {
+        for cell in [
+            OutcomeCell::Pass,
+            OutcomeCell::Fail,
+            OutcomeCell::Partial,
+            OutcomeCell::NotProven,
+            OutcomeCell::Invalid,
+            OutcomeCell::InstrumentFailure,
+        ] {
+            let mut study = example_preregistered_study();
+            let before = study.invalid_attempt_rules.outcome_cells.len();
+            study
+                .invalid_attempt_rules
+                .outcome_cells
+                .retain(|present| *present != cell);
+            if study.invalid_attempt_rules.outcome_cells.len() == before {
+                return Err(format!("example study did not carry {cell:?}"));
+            }
+            assert_code(study.validate(), codes::MISSING_FIELD)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn recorded_attempt_lock_cannot_be_cleared_under_the_same_study_id() -> Result<(), String> {
         let mut predecessor = example_preregistered_study();
         predecessor.protocol_lock.first_attempt_recorded = true;
