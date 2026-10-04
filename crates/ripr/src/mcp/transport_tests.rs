@@ -123,6 +123,43 @@ async fn repeated_preinitialize_violations_recover_with_invalid_request_and_stay
 }
 
 #[tokio::test]
+async fn preinitialize_notification_recovers_without_a_reply_frame() -> Result<(), String> {
+    // The handshake refuses any pre-initialize message that is not an
+    // `initialize` request, notifications included. A notification owes no
+    // reply frame, so recovery must consume it silently and answer the next
+    // real `initialize` on the same connection (#5267 review).
+    let notification = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let initialize = r#"{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"control","version":"1"}}}"#;
+    let input = format!("{notification}\n{initialize}\n");
+    let output = SharedOutput::default();
+    serve(
+        std::io::Cursor::new(input.into_bytes()),
+        output.clone(),
+        WorkspaceStatus::resolve_with_root(None).0,
+        None,
+    )
+    .await?;
+    let frames = wire_frames(&output)?;
+    if frames.len() != 1 {
+        return Err(format!(
+            "a pre-init notification must produce no reply frame, leaving only the initialize result: {frames:?}"
+        ));
+    }
+    let frame = &frames[0];
+    if frame.get("id") != Some(&json!(7))
+        || frame
+            .pointer("/result/serverInfo/name")
+            .and_then(Value::as_str)
+            != Some("ripr")
+    {
+        return Err(format!(
+            "the session must continue into a normal initialize after a refused pre-init notification: {frame}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(), String> {
     use std::{
         future::{Future, poll_fn},

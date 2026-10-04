@@ -1023,6 +1023,42 @@ mod tests {
     }
 
     #[test]
+    fn static_limited_finding_refuses_as_static_limitation() -> Result<(), String> {
+        // A finding whose canonical gap the producer withheld behind its own
+        // typed static limitation refuses as `static_limitation` — the
+        // per-finding limitation, not language-wide non-population — in the
+        // negative repair document as well as the gap readiness block.
+        let mut limited = super::super::gaps::test_finding()?;
+        limited.canonical_gap = None;
+        limited.missing = Vec::new();
+        limited.language = Some(crate::domain::LanguageId::Python);
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let mut session = session_with(&[limited], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Err(format!(
+                "a static-limited finding must stay fail-closed: {document}"
+            ));
+        }
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("static_limitation")
+        {
+            return Err(format!(
+                "a static-limited finding must refuse as static_limitation: {document}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn stale_snapshot_and_unknown_items_fail_closed() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let current = session

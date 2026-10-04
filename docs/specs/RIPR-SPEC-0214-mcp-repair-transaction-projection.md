@@ -71,12 +71,17 @@ read-only and without execution authority (ADR 0022):
   high-confidence directly-related test on a shared edit-cage test-surface
   path). The first failing gate is the typed reason (`not_candidate_actionable`,
   `missing_discriminator`,
-  `discriminator_not_populated_for_language`, `fix_site_not_established`,
+  `discriminator_not_populated_for_language`, `static_limitation`,
+  `fix_site_not_established`,
   `fix_site_not_test_surface`). A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
   `Missing discriminator value:` entry in `missing`) refuses as
-  `missing_discriminator`. A producer that names none but produced no
-  normalized discriminator at all — a language producer that does not
+  `missing_discriminator`. A finding whose canonical gap the producer
+  withheld behind the finding's own typed static limitation refuses as
+  `static_limitation` — the per-finding limitation, not the language,
+  explains the missing fact (Python omits the canonical gap exactly when a
+  static limit is present). A producer that names no missing discriminator
+  and populates no canonical gap at all — a language producer that does not
   populate canonical gaps yet, today every Rust finding — refuses as
   `discriminator_not_populated_for_language`, naming the unpopulated
   producer condition so one document cannot contradict its own
@@ -162,8 +167,10 @@ read-only and without execution authority (ADR 0022):
   readiness block (which agrees with its own `discriminator_availability`
   block) and the negative `ripr_prepare_repair` document, while a
   producer-named missing discriminator keeps the `missing_discriminator`
-  refusal. Flipping the refusal back to a contradiction must fail these
-  controls.
+  refusal and a finding whose gap the producer withheld behind its own
+  typed static limitation refuses as `static_limitation`, never as a
+  language-wide gap. Flipping a refusal back to a contradiction or a
+  misattribution must fail these controls.
 - Vocabulary and projection controls: the receipt-status mapping over the
   shared receipt reading and subordinate presence lifecycle. Producer-backed
   controls cover complete improved, changed, regressed and unchanged, typed
