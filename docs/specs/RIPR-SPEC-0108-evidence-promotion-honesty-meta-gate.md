@@ -82,6 +82,11 @@ denominator or establish representative-project accuracy. Golden assertions
 pin a nonzero finding count and oracle fields so empty findings cannot pass
 even when report-level scope or limitations are retained.
 
+Oracle projection validation also accepts the renderer's anchored related-test
+sentence (`- related test ... uses weak relational check oracle: ...`, or the
+strong exact-value counterpart). The descriptor before the assertion controls
+kind and strength; diagnostic text inside the assertion cannot override it.
+
 ## Behavior
 
 ### The invariant

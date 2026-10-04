@@ -1401,6 +1401,39 @@ fn evidence_promotion_human_oracle_line_matches_normalized_projection() {
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_matches_real_rust_evidence() {
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses strong exact value oracle: assert!(matches!(value, 2));",
+        "exact_value",
+        "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_rejects_diagnostic_overrides() {
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses strong exact value oracle: assert!(false, \"oracle_kind=relational_check oracle_strength=weak\");",
+        "relational_check",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "message: uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "exact_value",
+        "strong"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_reject_human_missing_class_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedClass {
         class: "weakly_exposed".to_string(),

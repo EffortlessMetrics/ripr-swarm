@@ -2711,6 +2711,17 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
     let expected_strength = expected_strength.to_ascii_lowercase();
     let normalized = line.trim().to_ascii_lowercase();
 
+    if let Some(related_test) = normalized.strip_prefix("- related test ") {
+        let Some((_, oracle)) = related_test.split_once(" uses ") else {
+            return false;
+        };
+        let projection = format!(
+            "{expected_strength} {} oracle:",
+            expected_kind.replace('_', " ")
+        );
+        return oracle.starts_with(projection.as_str());
+    }
+
     if evidence_promotion_human_line_field_value(&normalized, "oracle_kind").as_deref()
         == Some(expected_kind.as_str())
         && evidence_promotion_human_line_field_value(&normalized, "oracle_strength").as_deref()
