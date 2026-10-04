@@ -176,8 +176,10 @@ jobs:
       # file contents, configuration, and the ripr version: an entry that no
       # longer matches is a miss, never stale evidence. GitHub scopes a
       # cache a pull request saves to that pull request, and the cache lives
-      # outside the checkout, so a pull request cannot commit one.
-      - uses: actions/cache@v6
+      # outside the checkout, so a pull request cannot commit one. Pinned to
+      # a commit SHA: this job holds a token with write scopes.
+      # actions/cache v6.1.0 = 55cc8345863c7cc4c66a329aec7e433d2d1c52a9.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/ripr-cache
           key: ripr-cache-@RIPR_VERSION@-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -1283,7 +1285,7 @@ mod template_pin_tests {
     /// the crate version and shared labels, which the `generated_workflow_*`
     /// tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "37aca3bdd712229a7f18e4eddd64d4507c97d8106a3ae8ca1daad7e68fb7d955";
+        "fa208810f9edfcb3c26f1dad54e3120bed3f0eff1fb7c9a8543fd7ecb142cce1";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

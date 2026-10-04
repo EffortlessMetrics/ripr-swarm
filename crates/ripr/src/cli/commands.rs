@@ -7694,15 +7694,21 @@ language = "rust"
         );
         let cache = workflow
             .split("\n\n")
-            .find(|block| block.contains("      - uses: actions/cache@v6\n"))
+            .find(|block| {
+                block.contains(
+                    "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9\n",
+                )
+            })
             .unwrap_or_default();
         assert!(cache.contains("          path: ${{ runner.temp }}/ripr-cache\n"));
+        // The job token has write scopes, so the action is pinned to a SHA.
+        assert!(!workflow.contains("actions/cache@v"));
         assert!(cache.contains(&format!(
             "          key: ripr-cache-{}-${{{{ runner.os }}}}-",
             env!("CARGO_PKG_VERSION")
         )));
         let cache_at = workflow
-            .find("      - uses: actions/cache@v6")
+            .find("      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
             .unwrap_or(usize::MAX);
         let install_at = workflow.find("      - name: Install ripr").unwrap_or(0);
         let pilot_at = workflow
