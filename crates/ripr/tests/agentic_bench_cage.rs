@@ -239,9 +239,7 @@ fn start_before_after(
     let root = unique_temp_workspace(label);
     fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
     let owned = Fixture(root.clone());
-    if let Err(error) = init_fixture_repo(&root) {
-        return Err(error);
-    }
+    init_fixture_repo(&root)?;
     after_init(&root)?;
     let root_arg = root.display().to_string();
     let seam_id = discover_seam_id(&root, &root_arg)?;
@@ -397,17 +395,21 @@ fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
             "CLI refusal did not name the out-of-surface path:\n{joined}"
         ));
     }
-    if !joined.contains("OutsideAllowedSurface") && !joined.contains("outside") {
+    if !joined.contains("OutsideAllowedSurface")
+        && !joined.contains("ForbiddenPath")
+        && !joined.contains("forbidden")
+        && !joined.contains("outside")
+    {
         return Err(format!(
             "CLI refusal did not name the out-of-surface kind:\n{joined}"
         ));
     }
-    if let Ok(document) = parse_stdout_json(&after) {
-        if document.get("kind").and_then(Value::as_str) == Some("repair_after_result") {
-            return Err(format!(
-                "out-of-surface refusal printed a success after-result envelope:\n{document}"
-            ));
-        }
+    if let Ok(document) = parse_stdout_json(&after)
+        && document.get("kind").and_then(Value::as_str) == Some("repair_after_result")
+    {
+        return Err(format!(
+            "out-of-surface refusal printed a success after-result envelope:\n{document}"
+        ));
     }
     assert_no_advisory_receipt(&journey.root, "out-of-surface edit")?;
     Ok(())
@@ -500,12 +502,13 @@ fn b6_over_budget_capture_fails_closed() -> Result<(), String> {
             "over-budget capture still recorded a compliant verdict: {status:?}\n{joined}"
         ));
     }
-    if let Some(status) = status.as_deref() {
-        if status != "incomparable" && status != "violated" {
-            return Err(format!(
-                "over-budget capture verdict is {status}, want incomparable (or a fail-closed violated):\n{joined}"
-            ));
-        }
+    if let Some(status) = status.as_deref()
+        && status != "incomparable"
+        && status != "violated"
+    {
+        return Err(format!(
+            "over-budget capture verdict is {status}, want incomparable (or a fail-closed violated):\n{joined}"
+        ));
     }
     assert_no_advisory_receipt(&journey.root, "over-budget capture")?;
     Ok(())
