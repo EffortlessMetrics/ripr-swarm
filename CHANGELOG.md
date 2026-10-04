@@ -50,6 +50,12 @@ are scoped or reviewed.
   publication behind the shared transition guard, and a refresh cancelled
   by shutdown no longer rolls back previous diagnostics afterward, so no
   stale diagnostics survive shutdown (#5202).
+- `ripr pilot --root X` without `--out` now writes its packet to
+  `X/target/ripr/pilot`, where the cache and `ripr agent status --root X`
+  already look, instead of `target/ripr/pilot` under the shell's working
+  directory, which overwrote that directory's own packet (#5324). `--root .`
+  and an explicit `--out` are unchanged; the terminal output already names
+  the packet path.
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`

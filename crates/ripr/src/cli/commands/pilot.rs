@@ -387,7 +387,7 @@ fn collect_pilot_python_first_use(
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
     let mut options = PilotOptions {
         root: PathBuf::from("."),
-        out_dir: PathBuf::from("target/ripr/pilot"),
+        out_dir: PathBuf::from(DEFAULT_PILOT_OUT_DIR),
         mode: Mode::Draft,
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
@@ -395,6 +395,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         timeout_explicit: false,
         quiet: false,
     };
+    let mut out_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -405,6 +406,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--out" => {
                 i += 1;
                 options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                out_explicit = true;
             }
             "--mode" => {
                 i += 1;
@@ -429,7 +431,29 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         }
         i += 1;
     }
+    if !out_explicit {
+        options.out_dir = default_pilot_out_dir(&options.root);
+    }
     Ok(options)
+}
+
+/// Where pilot writes its packet when `--out` is not given, relative to the
+/// working directory.
+const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
+
+/// The default packet directory sits under `--root`, where the cache already
+/// goes and where `ripr agent status --root` reads `pilot-summary.json`
+/// (#5324). Anchoring it at the working directory wrote the packet beside
+/// whatever repository the shell was in, overwriting that repository's own
+/// packet. A `.` root keeps the bare relative path so printed commands are
+/// unchanged; an explicit `--out` still resolves against the working
+/// directory.
+fn default_pilot_out_dir(root: &Path) -> PathBuf {
+    if root == Path::new(".") {
+        PathBuf::from(DEFAULT_PILOT_OUT_DIR)
+    } else {
+        root.join(DEFAULT_PILOT_OUT_DIR)
+    }
 }
 
 /// The deadline extension applies only to the default budget. A typed
@@ -595,6 +619,23 @@ mod tests {
                 quiet: true,
             })
         );
+    }
+
+    #[test]
+    fn default_out_dir_sits_under_the_root() -> Result<(), String> {
+        // #5324: without --out the packet goes under --root, where the cache
+        // and `ripr agent status --root` already look, not under the shell's
+        // directory. A `.` root keeps the bare relative path.
+        let other = parse_pilot_options(&args(&["--root", "../other"]))?;
+        assert_eq!(other.out_dir, Path::new("../other/target/ripr/pilot"));
+        let here = parse_pilot_options(&args(&["--root", "."]))?;
+        assert_eq!(here.out_dir, Path::new("target/ripr/pilot"));
+        let omitted = parse_pilot_options(&args(&[]))?;
+        assert_eq!(omitted.out_dir, Path::new("target/ripr/pilot"));
+        // An explicit --out stays as typed, before or after --root.
+        let out_first = parse_pilot_options(&args(&["--out", "packet", "--root", "../other"]))?;
+        assert_eq!(out_first.out_dir, Path::new("packet"));
+        Ok(())
     }
 
     #[test]

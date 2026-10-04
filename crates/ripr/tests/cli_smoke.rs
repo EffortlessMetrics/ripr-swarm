@@ -13968,6 +13968,54 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     Ok(())
 }
 
+/// #5324: `ripr pilot --root X` without `--out`, run from another
+/// directory, writes its packet under X (where `ripr agent status --root X`
+/// reads it) and leaves the working directory's `target/` untouched.
+#[test]
+fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-default-out-root",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"out_root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let elsewhere = unique_temp_workspace("pilot-default-out-cwd");
+    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create cwd: {err}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&elsewhere),
+        &["pilot", "--root", &root_arg],
+    )
+    .map_err(|err| format!("run ripr pilot: {err}"))?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let packet = root.join("target/ripr/pilot");
+    assert!(
+        packet.join("pilot-summary.json").is_file(),
+        "packet missing under the root {}: {stdout}",
+        packet.display()
+    );
+    assert!(
+        !elsewhere.join("target").exists(),
+        "pilot wrote under the working directory {}",
+        elsewhere.display()
+    );
+    assert!(
+        stdout.contains(&packet.join("pilot-summary.md").display().to_string()),
+        "{stdout}"
+    );
+    Ok(())
+}
+
 #[test]
 fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
     let root = pilot_language_fixture_repo(
