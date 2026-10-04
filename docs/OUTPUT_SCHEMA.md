@@ -65,7 +65,7 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
-| `ripr help --json` | `schema_version` | `1` |
+| `ripr help --json` | `schema_version` | `2` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -1009,6 +1009,37 @@ The evidence-first fields are additive in schema `0.2`:
   `opaque`. `direct_owner_call` → `high`; `assertion_target_affinity`,
   `owner_named_test`, `same_test_file` → `medium`; `weak_token_substring`,
   `same_module`, `helper_owner_call` → `low`; other static signals → `opaque`.
+- `related_tests[].miss` and `related_tests[].why` — (optional, additive,
+  #5344) why this test would not notice the changed behavior being wrong.
+  `miss` is a controlled `related_test_miss` value; `why` is one short
+  sentence for people. Both are omitted when the analyzer established no
+  miss, for example for an `exposed` finding's catching test. The
+  assertion-level values (`no_assertion`, `assertion_not_observing`,
+  `assertion_not_credited`) can appear under any class; the class-level values
+  (`no_call_path`, `weak_assertion`, `missing_input`,
+  `missing_exact_assertion`, `observation_unconfirmed`) appear only under
+  `no_static_path`, `weakly_exposed` and `reachable_unrevealed`. `no_call_path`: linked by name or file location only, no
+  call to the changed code. `no_assertion`: the test has no assertion ripr
+  recognizes. `assertion_not_observing`: the test asserts, but none of its
+  assertions observe the changed value; `oracle` then carries the first
+  assertion as checked text and `oracle_strength` is `none`.
+  `assertion_not_credited`: an assertion exists but ripr could not establish
+  that it runs as the standard macro. `weak_assertion`: the matched oracle is
+  weak or smoke-only. `missing_input`: on a predicate probe, the oracle
+  observes the behavior but no input reaches the boundary value in
+  `missing_discriminators` (the `left == right` entry).
+  `missing_exact_assertion`: no assertion pins the exact error variant or
+  constructed field value named in `missing_discriminators`.
+  `observation_unconfirmed`: the oracle has the right shape but ripr could not
+  confirm that it observes the changed behavior (for Rust, its text never
+  names the changed expression, `observation_unverified`; for Perl, the
+  packet establishes no sink alignment). It is an unknown, not an
+  established miss: only `assertion_not_observing` claims the assertion
+  observes something else. Tests are listed
+  even when they supply no oracle, so `related_tests_total` counts every
+  examined row (one per matched assertion, one per test that supplied none).
+  Rows listed only as `assertion_not_observing` take only window slots the
+  oracle rows leave free, so the oracle rows and their order are unchanged.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -1981,6 +2012,71 @@ enforcement beyond `expires` (review-after deadlines, required-active
 ledgers) belongs to the gate exception policy (#1442), not check
 suppression.
 
+### `run_limitations` (top-level additive, #5203)
+
+`ripr check --format json` caps the rendered `findings` array at
+`RIPR_CHECK_FINDINGS_BYTES` emitted array bytes (payloads plus separators),
+default 1,000,000. Findings render in deterministic pipeline order; once the
+emitted bytes exceed the budget, the rest is disclosed rather than rendered.
+The first finding always renders, so a nonempty analysis never yields an empty
+prefix. Set the variable to `0` to remove the cap (unbounded); any positive
+integer sets the budget explicitly. An unparseable value fails the run
+(fail-closed), naming the variable and the repair. Does not bump
+`schema_version` (additive optional member).
+
+When the budget engages, the document carries one `run_limitations[]` entry and
+is never complete:
+
+- `category` / `run_status` — always `"limited_findings_bound"` for machine
+  filtering (the `limited_*` family).
+- `basis` — always `"check_findings_byte_budget"`.
+- `downstream_consumable` — always `false`.
+- `message` — `rendered <R> of <T> findings within the findings-array byte
+  budget (...)`, naming the applied setting and the `=0` full-set repair.
+- `repair_route` — always `"output/check-findings-budget"`.
+
+`summary` keeps full analysis counts (`summary.findings` is the analyzed
+total, `rendered + omitted == total`); `finding_alignment` covers the rendered
+prefix only, so alignment rows always resolve inside the document; per-finding
+`canonical_gap_group_size` counts the analyzed group (a total, like
+`related_tests_total`). The gate refuses a bounded document at the pr-guidance,
+gap-ledger, and baseline positions with a `config_error` naming
+`limited_findings_bound` and the budget repair. Gap ledgers generated from a
+bounded check document (`reports gap-ledger --check-output`) propagate
+`run_limitations[]` unchanged, so the gate refuses the generated ledger like
+the bounded check itself. `pr-evidence` renders its internal check input
+unbounded: routing counts the full finding set regardless of the external
+budget, since that JSON never leaves the process. The run exit code is
+unchanged (analysis completed); consumers must read `run_limitations[]`
+before treating `findings[]` as the full set. When the limitation is
+present, `summary.findings` can exceed `findings.len()`; consumers that
+require equal counts must disable the bound (`=0`) or handle the limited
+output.
+
+Example (budget engaged after the first of 61 findings):
+
+```json
+"summary": {"findings": 61, ...},
+"findings": [
+  {"id": "probe:src_lib.rs:call_deletion:184d39d1", ...}
+],
+"run_limitations": [
+  {
+    "category": "limited_findings_bound",
+    "run_status": "limited_findings_bound",
+    "basis": "check_findings_byte_budget",
+    "downstream_consumable": false,
+    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set)",
+    "repair_route": "output/check-findings-budget"
+  }
+]
+```
+
+Scope: the budget applies to the JSON check renderer only. SARIF, GitHub, and
+human formats render from the same full `CheckOutput` through their own
+existing bounds; per-finding caps (`related_tests`, `observed_values`) are
+unchanged and compose underneath (the budget counts already-capped payloads).
+
 ## Enums
 
 `classification` values:
@@ -2146,6 +2242,17 @@ while `call_effect` remains the fallback for other observable calls.
 - `identity_unnameable`
 - `budget_overflow`
 
+`related_test_miss` values:
+
+- `no_call_path`
+- `no_assertion`
+- `assertion_not_observing`
+- `assertion_not_credited`
+- `weak_assertion`
+- `missing_input`
+- `missing_exact_assertion`
+- `observation_unconfirmed`
+
 ## Badge Output
 
 Badge-native JSON is a separate output contract from `ripr check --json`.
@@ -2243,7 +2350,17 @@ Field contract:
   artifacts, or `"gap_decision_ledger"` when repo badge formats are explicitly
   rendered from supplied GapRecord projection targets. Diff-scoped badge
   formats currently use `finding_exposure`; repo-scoped public badge formats
-  use `canonical_actionable_gap` unless `--gap-ledger` is supplied.
+  use `canonical_actionable_gap` unless `--gap-ledger` is supplied. The
+  `canonical_actionable_gap` count derives from the same full classified seam
+  inventory `repo-exposure-json` renders, so the two artifacts cannot
+  contradict each other on one tree (#5261); these badge formats — and the
+  repo badge-plus formats, whose measured path renders that same walk when a
+  test-efficiency report exists — are therefore full-repo audit-path
+  surfaces and disclose the same invocation cost class. When the classified
+  inventory was seam-capped, the public projection resolves to `limited`
+  (`run_status` `limited_seam_cap`, with the cap named in
+  `limited_reason`) instead of presenting a partial count as a full-scan
+  result.
 - `message` — the headline rendered as a string for Shields compatibility.
   Diff-scoped and internal badges render the bare count (for example `"5"`).
   Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
@@ -8979,6 +9096,35 @@ Field contract:
 - `inputs.gap_ledger` - optional explicit gap decision ledger input. When
   supplied, gate candidates come from GapRecord gate-candidate projection
   targets instead of raw PR guidance candidates.
+- `subject` - identity of the evaluation (#5263): `analyzer_version` (the
+  writing binary's build identity, the same stamp `check --write-artifact`
+  records) plus one entry per consumed input keyed by input name — every
+  CLI-supplied input that can change the decision (`pr_guidance`,
+  `gap_ledger`, `repo_exposure`, `sarif_policy`, `labels_json`,
+  `agent_verify`, `agent_receipt`, `recommendation_calibration`,
+  `mutation_calibration`, `baseline`, `exception_policy`), not only the
+  candidate sources. Each entry carries `content_hash`, the `sha256:<hex>`
+  of the exact bytes consumed (`null` only when the bytes could not be read;
+  the read failure itself surfaces as a `config_error` or warning). Read
+  model: every decision-affecting input hashes exactly the bytes its reader
+  parsed; only the warn-only inputs that no reader parses (`repo_exposure`,
+  `sarif_policy`, `agent_verify`, `agent_receipt`) hash a fresh read taken
+  at subject-build time. The auto-loaded causal artifacts are outside
+  this block: they are workspace-durable files that self-identify (the
+  canonical-delta artifact carries its own identity fields), not invocation
+  inputs. `labels_sha256` appears when `--labels` strings were supplied on
+  the command line (SHA-256 over the label strings joined with NUL
+  separators); labels supplied through `--labels-json` hash as that file's
+  entry instead. The `pr_guidance` entry additionally carries
+  `producer_subject` only when its document recorded a `run_receipt` with
+  resolved, non-empty `base_sha` and `head_sha`; a receipt missing either is
+  treated as absent rather than partly quoted, so no identity value here is
+  ever inferred from a different field. The copied producer values mirror
+  the producer's receipt verbatim (`base_sha`, `head_sha`, `root_identity`,
+  `reusable_cache_identity`) so a `pr-ledger record --base/--head` assertion
+  can be cross-checked against what the gate actually consumed. The block
+  has no timestamp: identical evaluations stay byte-identical, and staleness
+  is carried by the content hashes and producer SHAs.
 - `policy.mode` - effective gate mode after config and CLI precedence.
 - `policy.threshold` - initially `high_confidence_new_gap`.
 - `policy.acknowledgement_labels` - configured labels that can turn a blocking
@@ -15234,13 +15380,19 @@ Field contract:
   ripr adapter reads (Go, Java, C, shell and others); the empty ranking is then
   a non-claim, and no follow-up command applies. `unanalyzed_languages` —
   additive, present only when such source exists — lists `{language,
-  file_count}` per language name.
+  file_count}` per language name. `rust_excluded_from_scope` — additive,
+  present only when Rust files exist but Rust is not in the effective
+  `[languages] enabled` set (#5205) — carries `{language: "rust",
+  file_count, enabled: false, guidance}`; pilot bypasses the Rust inventory
+  in that state, so the empty ranking discloses the exclusion rather than a
+  clean result, on the terminal and Markdown as well as here.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, `after_snapshot_command`
-  and `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, or when
+  `rust_excluded_from_scope` is present, `after_snapshot_command` and
+  `outcome_command` are `null`: there is no seam to snapshot or measure.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
@@ -16644,8 +16796,12 @@ JSON shape:
 ```
 
 `status` is `advisory` when records parse cleanly, `advisory_with_warnings`
-when records are present but violate projection-safety checks, and `blocked`
-when no records can be read. The summary counts are projection inputs only;
+when records are present but violate projection-safety checks, `no_records`
+when the input parsed cleanly but zero gap records were derived from it (for
+the `--check-output` route a warning then names how many findings the
+Python/TypeScript/Perl-only projections skipped), and `blocked` when no
+records can be read because the artifact is missing, unreadable, or
+malformed. The summary counts are projection inputs only;
 they are not gate authority.
 
 `source_subject` records which source contents the ledger was computed from
@@ -17223,7 +17379,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.18",
+    "schema_version": "1.20",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -17234,7 +17390,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.30",
+      "schema_version": "1.32",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

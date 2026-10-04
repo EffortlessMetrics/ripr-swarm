@@ -3,6 +3,60 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
+
+Pinned `rmcp` 3.5.0 answers pre-init `ping` in the handshake loop (any
+params, including handshake `_meta`) with `{}`. After `initialize`, the
+same SDK classifies a ping whose `params._meta` names `2026-07-28` as a
+discovery-lifecycle request and returns `-32601` with message `"ping"`.
+Empty-params ping on that session still succeeds, so that control is not
+proof. Route initialize-session ping from the negotiated peer version
+(`has_initialize`), not `RequestContext::protocol_version()` — that helper
+prefers request `_meta` over the session. Do not change
+`server/discover` ping rejection. Do not treat this as a `#5267` pre-init
+repair.
+
+## 2026-10-04: `help --json` must project the typed 0/2/3 exit contract (#5066)
+
+`stop_states` is free-text. An orchestrator that branches on process status
+cannot recover that `ripr check` exits 0 on `exposed` findings, that
+`gate evaluate` maps `config_error` to 2 and `blocked` to 3, or that
+standalone `agent verify` refuses with exit 3 and empty stdout. Put a closed
+`exit` object on every command row, pin the orchestrator-branching rows to
+the implemented `CommandError` / `gate evaluate` mapping, and bump
+`HELP_JSON_SCHEMA_VERSION`. The `config_error` / `blocked` tokens are owned
+by `output::gate` (`top_level_status`); the CLI exit map consumes those
+bytes. `ExitJson::GateEvaluate` still declares those names as fixed serde
+keys; a compile-time assertion requires the keys to match the producer
+tokens. Do not treat a limitation sentence or a "non-zero" stop-state as
+the contract.
+
+## 2026-10-04: Weak grip needs established activation (pilot accuracy)
+
+`ripr pilot` ranks `weakly_gripped` first. The mutation spot check scored its
+top ten recommendations on five crates: 9 of 37 pointed at a missed
+mutant. Most top weak seams had `activate: unknown`. Some had #4214's
+boundary hint with no observed value, others only same-file related tests.
+Real mutants caught 8 of the 11 seam-precise "missing boundary" claims of
+that shape. `classify_seam` now grades weak grip only when activation is
+known. Otherwise the seam is `ActivationUnknown`. The missing-discriminator
+hint stays in the evidence as guidance. Score ranking changes with
+`cargo xtask mutation-spot-check`, whose receipt now carries
+`pilot_top_recommendations`. Do not judge them from verdict agreement:
+`weakly_gripped` and unknown classes are unscored there.
+
+## 2026-10-04: `help --json` must be named and self-reported (#5266)
+
+A machine-only route that human `ripr help` does not name is undiscoverable.
+`json_support` is the catalog's own authority: if `ripr help --json` parses
+and emits the document, `cmd:help` cannot report `json_support: false` or
+claim it prints text only. #5398 landed the default-screen `More:` line
+and `json_support: true`. That is not enough: `ripr help --all` was still
+a discovery dead end, and naming the route next to "global flags accepted
+in any position" is a second honesty hole because `help --json` rejects
+`-v`/`--verbose`. Pin the `More:` line, the `--all` header, and the
+projected catalog row together, and qualify the adjacent `-v` claim with
+the same usage phrase the parser already emits.
 ## 2026-10-04: A recorded timeout is not process-group-gone (#5382)
 
 `capture_output_with_timeout` used to set `timed_out: true` after the first
@@ -201,9 +255,10 @@ absorb #4478 (confirmation pin), #4486 (proximity-only oracle), or #3727.
 `CallFact`, `LetBindingFact`, and `ValueEnv` cannot prove that a local is the
 direct return of the seam owner. A nearby test name or a `.field` token on
 another object must not emit a compatible missing discriminator. Derive the
-fact only after activation is already `Yes`; nonempty `missing_discriminators`
-classifies `WeaklyGripped` before `ActivationUnknown`, so an unconditional
-field fact would invent actionability. Keep helper-transfer and qualified or
+fact only after activation is already `Yes`; with activation known, nonempty
+`missing_discriminators` classifies `WeaklyGripped` before
+`ActivationUnknown`, so an unconditional field fact would invent
+actionability. Keep helper-transfer and qualified or
 method callees as named limitations until a later producer can resolve them.
 A same-name local or imported callee, a mutable borrow of the observed field,
 an assertion-message-only field mention, and an assertion-local shadow of the

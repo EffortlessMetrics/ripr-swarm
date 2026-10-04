@@ -307,12 +307,27 @@ fn durable_attempt_document(
     root_identity: Option<&str>,
 ) -> Value {
     let current_head = crate::agent::artifact::current_git_head(root).ok();
-    let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
-    let (command_routes, route_limitations) = if head_reading.head_current == Some(true) {
+    let selected = crate::app::agent_status::selected_attempt_status_reading(
+        root,
+        root,
+        crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY,
+        "",
+        manifest,
+        current_head.as_deref(),
+    );
+    // Historical/unknown reads keep the freshness refusal. At a current HEAD,
+    // use the shared selected action: a finished result has none, and failed
+    // or open-gap work restarts before instead of repeating the old after.
+    let next_action = selected
+        .next_action
+        .as_ref()
+        .filter(|_| selected.view.head_current == Some(true));
+    let continues_after = next_action.is_some_and(|action| action.step == "repair_attempt_after");
+    let (command_routes, route_limitations) = if continues_after {
         durable_command_routes(root, manifest)
     } else {
         (Vec::new(), vec![
-            "live HEAD applicability is historical or unknown; retained commands are not offered as current continuation".to_string(),
+            "this selected attempt has no current after continuation; retained packet routes are not a restart authority".to_string(),
         ])
     };
     let terminal_receipt = match &manifest.state {
@@ -351,12 +366,12 @@ fn durable_attempt_document(
             "sha256": artifact.sha256,
             "bytes": artifact.bytes,
         })).collect::<Vec<_>>(),
-        "next_command": (head_reading.head_current == Some(true)).then_some(&manifest.next_command),
+        "next_command": next_action.map(|action| &action.command),
         "after": after,
         "currentness": {
-            "state": head_reading.currentness(),
-            "head_current": head_reading.head_current,
-            "evidence_head": head_reading.evidence_head,
+            "state": selected.currentness,
+            "head_current": selected.view.head_current,
+            "evidence_head": selected.view.evidence_head,
             "basis": "shared read-time HEAD applicability; awaiting attempts use after-phase lineage admission and terminal evidence requires its exact after HEAD",
         },
         "terminal_receipt": terminal_receipt,
@@ -618,16 +633,16 @@ impl WorkspaceSession {
     /// field and never a misleading transaction.
     pub(crate) fn prepare_repair(
         &mut self,
-        gap_id: &str,
+        canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(gap_id) else {
+        let Some(item) = snapshot.item(canonical_id) else {
             return Err(AttemptFailure::new(
                 CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {gap_id} exists in the current snapshot"),
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
@@ -1004,6 +1019,11 @@ mod tests {
 
     #[test]
     fn missing_producer_facts_never_create_a_misleading_attempt() -> Result<(), String> {
+        // #5268: no canonical gap and no producer-named missing discriminator
+        // is the unpopulated-language-producer state, so the negative
+        // document must name that condition (the same evaluation the gap
+        // document's readiness block serves), never claim the producer failed
+        // to establish a discriminator its own availability block contradicts.
         let mut no_discriminator = super::super::gaps::test_finding()?;
         no_discriminator.canonical_gap = None;
         let mut session = session_with(&[no_discriminator], "root:sha256:a")?;
@@ -1025,12 +1045,78 @@ mod tests {
         if document
             .pointer("/ineligibility/reason")
             .and_then(Value::as_str)
-            != Some("missing_discriminator")
+            != Some("discriminator_not_populated_for_language")
         {
             return Err(format!("ineligibility lost its typed reason: {document}"));
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+        // The unpopulated state must not swallow the honest actionable
+        // refusal: a producer that names the missing discriminator still
+        // answers `missing_discriminator`.
+        let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.canonical_gap = None;
+        named_missing.activation.missing_discriminators.push(
+            crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            },
+        );
+        let mut session = session_with(&[named_missing], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("missing_discriminator")
+        {
+            return Err(format!(
+                "a producer-named missing discriminator must stay the typed refusal: {document}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn static_limited_finding_refuses_as_static_limitation() -> Result<(), String> {
+        // A finding whose canonical gap the producer withheld behind its own
+        // typed static limitation refuses as `static_limitation` — the
+        // per-finding limitation, not language-wide non-population — in the
+        // negative repair document as well as the gap readiness block.
+        let mut limited = super::super::gaps::test_finding()?;
+        limited.canonical_gap = None;
+        limited.missing = Vec::new();
+        limited.language = Some(crate::domain::LanguageId::Python);
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let mut session = session_with(&[limited], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Err(format!(
+                "a static-limited finding must stay fail-closed: {document}"
+            ));
+        }
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("static_limitation")
+        {
+            return Err(format!(
+                "a static-limited finding must refuse as static_limitation: {document}"
+            ));
         }
         Ok(())
     }
