@@ -239,7 +239,7 @@ const CI_PACKET_RUNNER: CommandEffects = CommandEffects {
 const METADATA: &[CommandMetadata] = &[
     CommandMetadata {
         id: "cmd:help",
-        summary: "Route to per-command options and the exhaustive reference.",
+        summary: "Route to per-command options, the exhaustive reference, and the versioned machine catalog.",
         task: "Read detailed help",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,
@@ -1585,6 +1585,29 @@ const METADATA: &[CommandMetadata] = &[
         not_applicable_reason: None,
     },
     CommandMetadata {
+        id: "cmd:agent.stub",
+        summary: "Write a compiling Rust test stub for one gap, ready to fill and run.",
+        task: "Repair a selected Rust gap",
+        workflows: &["repair-loop", "editor-agent"],
+        operation: CommandOperation::StateChanging,
+        cost: CommandCost::Analysis,
+        effects: ANALYSIS_RUNNER,
+        primary_inputs: &["--seam-id", "--at"],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: Some(
+            "the owner file's inline test module or a new tests/ file, only when --write names it",
+        ),
+        json_support: true,
+        example: "ripr agent stub --root . --at src/lib.rs:12",
+        next_routes: &["agent repair"],
+        stop_states: &[],
+        limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
         id: "cmd:agent.verify",
         summary: "Compare before and after exposure JSONs directly.",
         task: "Repair a selected Rust gap",
@@ -2529,6 +2552,12 @@ mod tests {
             return Err(format!(
                 "cmd:help limitations {:?} do not name the --json catalog route",
                 row.limitations
+            ));
+        }
+        if !row.summary.contains("machine catalog") {
+            return Err(format!(
+                "cmd:help summary {:?} still omits the machine catalog route",
+                row.summary
             ));
         }
         Ok(())

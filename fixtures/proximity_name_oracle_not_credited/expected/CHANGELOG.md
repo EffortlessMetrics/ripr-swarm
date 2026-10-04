@@ -85,6 +85,17 @@ Updated:
 ## Pending — proximity_name_oracle_not_credited (8)
 
 Reason:
+RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+## Pending — proximity_name_oracle_not_credited (9)
+
+Reason:
 RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:

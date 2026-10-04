@@ -21,6 +21,18 @@ human outputs are unchanged. Full golden and independent honesty checks rerun.
 ## Pending — error_path_diagnostic_escaped (2)
 
 Reason:
+RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_diagnostic_escaped (3)
+
+Reason:
 RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:

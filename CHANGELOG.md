@@ -22,6 +22,23 @@ are scoped or reviewed.
   this verdict" section: each examined test with the assertion it was judged
   by, what a test would need to change the verdict, and what each stop reason
   means (#5356). No verdict changes.
+- `ripr help --all` now names `ripr help --json` and excepts that route
+  from the global `-v` claim. The default `More:` line and `cmd:help`
+  `json_support: true` already landed with #5398; the exhaustive screen
+  was still a discovery dead end (#5266 residual).
+- Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
+  `mutants.out` output. Outcomes nested under `scenario.Mutant` with
+  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
+  `caught`/`missed`/`timeout`/`unviable`, and `outcomes.json` and
+  `mutants.json` records merge by mutant name. Before, every outcome from a
+  cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
+  filled.
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
+  the default base and HEAD each resolve to the same commit after analysis (for
+  example `origin/HEAD` tracking the checked-out branch in a clone of a feature
+  branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
+  skips it. The empty result alone is not a clean pass, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
 - `ripr check`: the uncommitted-changes note no longer offers `--worktree`
   as the remedy for untracked files, which the flag never sees. The tracked
   wording now says "staged and unstaged tracked edits" (matching
@@ -79,7 +96,21 @@ are scoped or reviewed.
   provider, and `ripr agent repair --phase before` without `--seam-id` points
   to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
   not seam IDs.
-
+- Tiny repositories are fast again: `ripr check` on a ~20-file crate no
+  longer pays ~0.3 s of fixed waiting. Every `git`/`cargo` subprocess wait
+  slept a fixed 50 ms after spawn although the probes exit in ~3 ms (8 probes
+  per `check`); the wait now backs off from 1 ms to the same 50 ms ceiling.
+  The progress heartbeat thread is woken on the terminal stage instead of
+  finishing its 50 ms tick, `pilot` renders each `repo-exposure.json` seam
+  once instead of once per pass (subject, hash, write) for the first 64 MiB
+  of rendered seams (only seams past that are rendered per pass), and pilot
+  ranking computes each seam's rank key once.
+  Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
+  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s,
+  `check --format json` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s, `explain`
+  0.38/0.26/0.38 s -> 0.04/0.03/0.05 s, `doctor` 0.21 s -> 0.07 s, `pilot`
+  0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
+  -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -121,6 +152,13 @@ are scoped or reviewed.
   `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
   client palette alias, which the server dispatcher rejects. Palette advice in
   human-readable recovery prose is unchanged (#5274).
+
+- MCP durable attempt and receipt reads use the CLI's live Git HEAD
+  applicability. Admitted ordinary descendants keep continuation; historical
+  or unreadable HEADs suppress continuation and report stale or limited
+  actionable receipt status. Retained evidence and recorded finish admission
+  remain unchanged. Durable reads run off the async executor; supported stdio
+  request admission remains serialized through reply flush (#5399).
 
 ### Changed
 
@@ -295,6 +333,15 @@ are scoped or reviewed.
   explicit and never assigned an inferred package (#5043).
 
 ### Added
+
+- `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
+  into a test that compiles and fails at its own labelled `todo!()` until
+  you write the expected value; `--write` places it in the existing inline
+  test module, a new one, or the producer-admitted integration file.
+  Inputs come from the changed comparison; the expected value is never
+  invented. `ripr check` prints the command under "Write a test for it:"
+  for Rust predicate, return-value, error-path and match-arm gaps, and
+  unsupported shapes refuse with a typed reason (#5355, #5357).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited

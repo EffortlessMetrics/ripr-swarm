@@ -66,8 +66,9 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
+Machine catalog: ripr help --json  (this route accepts no other arguments)
 
-Global flags (accepted in any position, before or after the command):
+Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
                   mode, and probe/finding counts. A -v/--verbose token is
                   always this global flag, never another flag's value.
@@ -108,6 +109,7 @@ Editor & Agent:
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json   [advanced]
   ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json   [advanced]
   ripr agent card --root . --seam-id ID [--json]   [advanced]
+  ripr agent stub --root . (--seam-id ID | --at FILE:LINE) [--write] [--json]   [advanced]
   ripr agent verify --root . --before before.json --after after.json --json   [advanced]
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json   [advanced]
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json   [advanced]
