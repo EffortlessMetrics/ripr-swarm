@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Config: a `ripr.toml` that is a dangling or self-referencing symlink is
+  reported as an unreadable config naming the file. It was treated as absent,
+  so the run silently used built-in defaults while a directory or non-UTF-8
+  `ripr.toml` already failed loudly.
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
@@ -72,6 +76,12 @@ are scoped or reviewed.
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
   `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
   instead of telling every client to set the VS Code-only name (#5094).
+- Git invocation timeout is a crate-internal typed `CoreError` variant. Semantic
+  consumers match the variant (including through structured context) instead of
+  the `git_invocation_timeout` Display prefix. Public wording, LSP
+  `git_invocation_timeout` kind (#2811), exit mapping, and process cleanup are
+  unchanged.
+
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
   exposure classification remain unchanged. (#5146)
@@ -189,6 +199,14 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
+- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
+  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
+  bytesize excerpts, each labeled by running mutants against the crate's own
+  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
+  actionable, false exposed or false silent and counts contradictions inside
+  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
+  (false actionable), no case is credited, and 2 of 29 findings contradict
+  themselves. It runs no mutation testing or network access.
 - Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
   a frozen protocol names study identity, assignment, equal budgets, the named
   RIPR evidence surface, leakage controls, retries, stopping, non-compensating
