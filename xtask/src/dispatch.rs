@@ -73,6 +73,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::PythonJudgedPanel(args) => super::python_judged_panel::run(&args),
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::PythonRepairTrust(args) => super::reports::python_repair_trust(&args),
+        XtaskCommand::VerdictCorpus(args) => super::reports::verdict_corpus(&args),
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
@@ -91,6 +92,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
         XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
+        XtaskCommand::ScaleCliffBenchmark(args) => super::reports::scale_cliff_benchmark(&args),
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
@@ -139,7 +141,14 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::recommendation_calibration(&args)
         }
         XtaskCommand::SarifPolicy(args) => super::reports::sarif_policy(&args),
-        XtaskCommand::ImpactedEvidence(args) => super::reports::impacted_evidence(&args),
+        XtaskCommand::ImpactedEvidence(args) => {
+            // Rooted at the xtask workspace, not the cwd, so the command works
+            // from any subdirectory like the rest of the xtask reports.
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .ok_or_else(|| "xtask manifest must have a repository parent".to_string())?;
+            ripr::app::run_impacted_evidence_at(repo_root, &args)
+        }
         XtaskCommand::RiprPr(args) => super::reports::ripr_pr(&args),
         XtaskCommand::FirstPr(args) => super::reports::first_pr(&args),
         XtaskCommand::RiprReviewComments(args) => super::reports::ripr_review_comments(&args),
