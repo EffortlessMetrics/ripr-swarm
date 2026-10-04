@@ -1858,10 +1858,11 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
     /// #5348: a child that exits in a few milliseconds must not cost a full
     /// 50 ms poll interval. Up to 20 trials, stopping at the first under the
     /// bound, absorb load spikes. The child sleeps 10 ms so the first
-    /// `try_wait` always sees it running; an `exit 0` child could be reaped
-    /// before that first poll and pass without exercising the backoff.
-    /// Negative experiment: with the pre-#5348 fixed 50 ms sleep restored in
-    /// `poll_child`, every trial takes >= 50 ms. Unix only: a Windows `cmd`
+    /// `try_wait` sees it running unless the test thread stalls for longer;
+    /// an `exit 0` child could be reaped before that first poll and pass
+    /// without exercising the backoff. Negative experiment: with the
+    /// pre-#5348 fixed 50 ms sleep restored in `poll_child`, each such trial
+    /// takes >= 50 ms (observed: fastest of 20 was 50.5 ms). Unix only: a Windows `cmd`
     /// start can itself take tens of milliseconds.
     #[cfg(unix)]
     #[test]

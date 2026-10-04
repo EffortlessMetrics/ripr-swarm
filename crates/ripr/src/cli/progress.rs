@@ -661,9 +661,10 @@ mod tests {
     /// #5348: a terminal stage must join the heartbeat thread at once. The
     /// thread used to `sleep` its whole tick, so every command paid up to
     /// one tick (50 ms) at exit waiting for the join. Negative experiment:
-    /// with `thread::sleep(HEARTBEAT_TICK)` restored (and no unpark) every
-    /// trial, timed only once the thread has signalled its wait, waits out
-    /// the tick and the best trial misses the bound.
+    /// with `thread::sleep(HEARTBEAT_TICK)` restored (and no unpark), a
+    /// trial timed once the thread has signalled its wait owes nearly the
+    /// whole tick unless the test thread itself stalls past the bound
+    /// (observed: best of 20 was 49.9 ms against 25 ms).
     #[test]
     fn terminal_stage_joins_the_heartbeat_thread_without_waiting_out_a_tick() {
         let bound = HEARTBEAT_TICK / 2;
