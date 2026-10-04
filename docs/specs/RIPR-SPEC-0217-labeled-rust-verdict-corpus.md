@@ -75,9 +75,10 @@ Truth is runtime evidence. The edit was applied to the full pinned checkout
 and the crate's own test command run. For a `behavior_preserving_rewrite`
 the edit keeps tests green and each listed mutant of the edited expression
 was applied on top; for a `behavior_change` the edit is its own single
-mutant. A mutant is killed when the test command fails after compiling.
-Each mutant carries a written equivalence review and its killing test.
-Truth derives from the kill count: all killed is `discriminated`, none is
+mutant. A mutant counts as detected (`tests_failed`) when the test command
+fails after compiling.
+Each mutant carries a written equivalence review and the test that failed.
+Truth derives from how many mutants failed the tests: all is `discriminated`, none is
 `not_discriminated`, otherwise `partially_discriminated`.
 
 Expected verdicts follow one table the validator enforces:

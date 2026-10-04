@@ -4,11 +4,11 @@
   "spec": "RIPR-SPEC-0217",
   "corpus_version": "2026-10-04.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
-  "label_method": "For each case the edit was applied to the full pinned checkout, the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or breaks them (behavior_change), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant is killed when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the kill count: all killed is discriminated, none killed is not_discriminated, otherwise partially_discriminated.",
+  "label_method": "For each case the edit was applied to the full pinned checkout, the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or breaks them (behavior_change), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count. exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. This mirrors the per-finding reading in crates/ripr/src/output/human/triage.rs.",
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
-    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant was killed.",
+    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
     "The harness runs ripr on retained upstream excerpts; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.",
     "The harness does not run mutation testing, cargo test, or any network access."
   ],
@@ -315,14 +315,14 @@
         "mutants": [
           {
             "replacement": "n > 100",
-            "outcome": "killed",
-            "killing_test": "ser::impls::test_format_u8",
+            "outcome": "tests_failed",
+            "failing_test": "ser::impls::test_format_u8",
             "equivalence_review": "not equivalent: 100 takes the two-digit branch and indexes the table past its end"
           },
           {
             "replacement": "n > 98",
-            "outcome": "killed",
-            "killing_test": "ser::impls::test_format_u8",
+            "outcome": "tests_failed",
+            "failing_test": "ser::impls::test_format_u8",
             "equivalence_review": "not equivalent: 99 takes the three-digit branch and writes a leading zero"
           }
         ]
@@ -365,14 +365,14 @@
         "mutants": [
           {
             "replacement": "n > 10",
-            "outcome": "killed",
-            "killing_test": "ser::impls::test_format_u8",
+            "outcome": "tests_failed",
+            "failing_test": "ser::impls::test_format_u8",
             "equivalence_review": "not equivalent: 10 takes the one-digit branch and writes ':'"
           },
           {
             "replacement": "n > 8",
-            "outcome": "killed",
-            "killing_test": "ser::impls::test_format_u8",
+            "outcome": "tests_failed",
+            "failing_test": "ser::impls::test_format_u8",
             "equivalence_review": "not equivalent: 9 takes the two-digit branch and writes \"09\""
           }
         ]
@@ -415,14 +415,14 @@
         "mutants": [
           {
             "replacement": "minor < ver.minor",
-            "outcome": "killed",
-            "killing_test": "test_caret",
+            "outcome": "tests_failed",
+            "failing_test": "test_caret",
             "equivalence_review": "not equivalent: ^1.2 stops matching 1.2.x"
           },
           {
             "replacement": "minor == ver.minor",
-            "outcome": "killed",
-            "killing_test": "test_caret",
+            "outcome": "tests_failed",
+            "failing_test": "test_caret",
             "equivalence_review": "not equivalent: ^1.2 stops matching 1.3.0"
           }
         ]
@@ -465,14 +465,14 @@
         "mutants": [
           {
             "replacement": "cmp.pre < ver.pre",
-            "outcome": "killed",
-            "killing_test": "test_tilde",
+            "outcome": "tests_failed",
+            "failing_test": "test_tilde",
             "equivalence_review": "not equivalent: ~1.2.3-beta stops matching 1.2.3-beta"
           },
           {
             "replacement": "cmp.pre == ver.pre",
-            "outcome": "killed",
-            "killing_test": "test_tilde",
+            "outcome": "tests_failed",
+            "failing_test": "test_tilde",
             "equivalence_review": "not equivalent: ~1.2.3-beta stops matching 1.2.4"
           }
         ]
@@ -516,14 +516,14 @@
         "mutants": [
           {
             "replacement": "cmp.pre >= ver.pre",
-            "outcome": "killed",
-            "killing_test": "test_less_than",
+            "outcome": "tests_failed",
+            "failing_test": "test_less_than",
             "equivalence_review": "not equivalent: <1.2.3-beta starts matching itself"
           },
           {
             "replacement": "cmp.pre != ver.pre",
-            "outcome": "killed",
-            "killing_test": "test_less_than",
+            "outcome": "tests_failed",
+            "failing_test": "test_less_than",
             "equivalence_review": "not equivalent: later prereleases start matching"
           }
         ]
@@ -567,8 +567,8 @@
         "mutants": [
           {
             "replacement": "patch > ver.patch",
-            "outcome": "killed",
-            "killing_test": "test_multiple",
+            "outcome": "tests_failed",
+            "failing_test": "test_multiple",
             "equivalence_review": "not equivalent: >1.2.3 starts matching 1.2.2 and stops matching 1.2.4"
           }
         ]
@@ -611,14 +611,14 @@
         "mutants": [
           {
             "replacement": "b'9' <= digit",
-            "outcome": "killed",
-            "killing_test": "test_basic",
+            "outcome": "tests_failed",
+            "failing_test": "test_basic",
             "equivalence_review": "not equivalent: '9' stops being a digit"
           },
           {
             "replacement": "b':' < digit",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: ':' becomes a digit with value 10, but no test parses a ':' right after a number"
           }
         ]
@@ -660,14 +660,14 @@
         "mutants": [
           {
             "replacement": "MAX_COMPARATORS == depth + 2",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a 31-comparator requirement is rejected"
           },
           {
             "replacement": "MAX_COMPARATORS == depth",
-            "outcome": "killed",
-            "killing_test": "test_multiple",
+            "outcome": "tests_failed",
+            "failing_test": "test_multiple",
             "equivalence_review": "not equivalent: the limit check moves one comparator later"
           }
         ]
@@ -709,14 +709,14 @@
         "mutants": [
           {
             "replacement": "1 < minor",
-            "outcome": "killed",
-            "killing_test": "test_caret",
+            "outcome": "tests_failed",
+            "failing_test": "test_caret",
             "equivalence_review": "not equivalent: ^0.1.x loses its minor-pinned branch"
           },
           {
             "replacement": "0 <= minor",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: ^0.0.1 starts matching 0.0.2"
           }
         ]
@@ -758,8 +758,8 @@
         "mutants": [
           {
             "replacement": "Self::Error::InvalidStringLength",
-            "outcome": "killed",
-            "killing_test": "test::test_invalid_length",
+            "outcome": "tests_failed",
+            "failing_test": "test::test_invalid_length",
             "equivalence_review": "not equivalent: odd-length input reports the wrong error variant"
           }
         ]
@@ -803,8 +803,8 @@
         "mutants": [
           {
             "replacement": "data.len() % 2 == 2",
-            "outcome": "killed",
-            "killing_test": "test::test_decode_to_slice",
+            "outcome": "tests_failed",
+            "failing_test": "test::test_decode_to_slice",
             "equivalence_review": "not equivalent: odd input is never rejected as OddLength"
           }
         ]
@@ -847,14 +847,14 @@
         "mutants": [
           {
             "replacement": "out.len() < data.len() / 2",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a longer output buffer is accepted"
           },
           {
             "replacement": "out.len() > data.len() / 2",
-            "outcome": "killed",
-            "killing_test": "test::test_from_hex_array",
+            "outcome": "tests_failed",
+            "failing_test": "test::test_from_hex_array",
             "equivalence_review": "not equivalent: a shorter output buffer is accepted"
           }
         ]
@@ -896,14 +896,14 @@
         "mutants": [
           {
             "replacement": "output.len() < input.len() * 2",
-            "outcome": "killed",
-            "killing_test": "test::test_encode_to_slice",
+            "outcome": "tests_failed",
+            "failing_test": "test::test_encode_to_slice",
             "equivalence_review": "not equivalent: a too-long output buffer is accepted"
           },
           {
             "replacement": "output.len() > input.len() * 2",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a too-short output buffer is silently truncated"
           }
         ]
@@ -945,14 +945,14 @@
         "mutants": [
           {
             "replacement": "remain >= 11",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a trailing 10 is written as ':'"
           },
           {
             "replacement": "remain >= 9",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a trailing 9 is written as \"09\""
           }
         ]
@@ -994,20 +994,20 @@
         "mutants": [
           {
             "replacement": "(remove `| b'_'`)",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: '_' stops being a word byte"
           },
           {
             "replacement": "b'b'..=b'z'",
-            "outcome": "killed",
-            "killing_test": "tests::word_byte",
+            "outcome": "tests_failed",
+            "failing_test": "tests::word_byte",
             "equivalence_review": "not equivalent: 'a' stops being a word byte"
           },
           {
             "replacement": "b'A'..=b'Y'",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: 'Z' stops being a word byte"
           }
         ]
@@ -1049,14 +1049,14 @@
         "mutants": [
           {
             "replacement": "2 => 0x7FE",
-            "outcome": "killed",
-            "killing_test": "utf8::tests::bmp",
+            "outcome": "tests_failed",
+            "failing_test": "utf8::tests::bmp",
             "equivalence_review": "not equivalent: U+07FF is no longer two-byte encodable"
           },
           {
             "replacement": "2 => 0x800",
-            "outcome": "killed",
-            "killing_test": "utf8::tests::bmp",
+            "outcome": "tests_failed",
+            "failing_test": "utf8::tests::bmp",
             "equivalence_review": "not equivalent: U+0800 becomes two-byte encodable"
           }
         ]
@@ -1099,14 +1099,14 @@
         "mutants": [
           {
             "replacement": "str::to_ascii_uppercase(variant)",
-            "outcome": "killed",
-            "killing_test": "internals::case::rename_variants",
+            "outcome": "tests_failed",
+            "failing_test": "internals::case::rename_variants",
             "equivalence_review": "not equivalent: lowercase renames produce uppercase"
           },
           {
             "replacement": "variant.to_owned()",
-            "outcome": "killed",
-            "killing_test": "internals::case::rename_variants",
+            "outcome": "tests_failed",
+            "failing_test": "internals::case::rename_variants",
             "equivalence_review": "not equivalent: lowercase renames keep the original case"
           }
         ]
@@ -1149,14 +1149,14 @@
         "mutants": [
           {
             "replacement": "str::to_ascii_lowercase(field)",
-            "outcome": "killed",
-            "killing_test": "internals::case::rename_fields",
+            "outcome": "tests_failed",
+            "failing_test": "internals::case::rename_fields",
             "equivalence_review": "not equivalent: UPPERCASE renames produce lowercase"
           },
           {
             "replacement": "field.to_owned()",
-            "outcome": "killed",
-            "killing_test": "internals::case::rename_fields",
+            "outcome": "tests_failed",
+            "failing_test": "internals::case::rename_fields",
             "equivalence_review": "not equivalent: UPPERCASE renames keep the original case"
           }
         ]
@@ -1199,14 +1199,14 @@
         "mutants": [
           {
             "replacement": "len > 1 && value == 0",
-            "outcome": "killed",
-            "killing_test": "test_parse",
+            "outcome": "tests_failed",
+            "failing_test": "test_parse",
             "equivalence_review": "not equivalent: \"01\" is accepted"
           },
           {
             "replacement": "len > 0 && value == 1",
-            "outcome": "killed",
-            "killing_test": "test_parse",
+            "outcome": "tests_failed",
+            "failing_test": "test_parse",
             "equivalence_review": "not equivalent: \"10\" is rejected and \"01\" accepted"
           }
         ]
@@ -1249,8 +1249,8 @@
         "mutants": [
           {
             "replacement": "Some(&b'>') == bytes.get(1)",
-            "outcome": "killed",
-            "killing_test": "test_digit_after_wildcard",
+            "outcome": "tests_failed",
+            "failing_test": "test_digit_after_wildcard",
             "equivalence_review": "not equivalent: \">=1.0\" parses as Greater"
           }
         ]
@@ -1293,14 +1293,14 @@
         "mutants": [
           {
             "replacement": "remain >= 1001",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a remaining 1000 skips the four-digit loop"
           },
           {
             "replacement": "remain >= 999",
-            "outcome": "survived",
-            "killing_test": null,
+            "outcome": "tests_passed",
+            "failing_test": null,
             "equivalence_review": "not equivalent: a remaining 999 is written with a leading zero"
           }
         ]
@@ -1342,8 +1342,8 @@
         "mutants": [
           {
             "replacement": "digit >= b'9'",
-            "outcome": "killed",
-            "killing_test": "test_basic",
+            "outcome": "tests_failed",
+            "failing_test": "test_basic",
             "equivalence_review": "the edit itself: '9' is no longer a digit"
           }
         ]
@@ -1386,8 +1386,8 @@
         "mutants": [
           {
             "replacement": "bytes <= unit",
-            "outcome": "killed",
-            "killing_test": "tests::test_display",
+            "outcome": "tests_failed",
+            "failing_test": "tests::test_display",
             "equivalence_review": "the edit itself: exactly one unit formats as \"1024 B\" instead of \"1.0 KiB\""
           }
         ]

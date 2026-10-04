@@ -255,8 +255,8 @@ fn tampered(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
 #[test]
 fn validator_rejects_a_label_that_contradicts_its_mutant_outcomes() -> Result<(), String> {
     let violations = tampered(|raw| {
-        raw["cases"][0]["truth"]["mutants"][0]["outcome"] = json!("survived");
-        raw["cases"][0]["truth"]["mutants"][0]["killing_test"] = Value::Null;
+        raw["cases"][0]["truth"]["mutants"][0]["outcome"] = json!("tests_passed");
+        raw["cases"][0]["truth"]["mutants"][0]["failing_test"] = Value::Null;
     })?;
     assert!(
         violations

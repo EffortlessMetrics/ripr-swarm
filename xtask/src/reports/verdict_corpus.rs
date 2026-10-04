@@ -161,15 +161,15 @@ impl TruthState {
 pub(crate) struct Mutant {
     pub(crate) replacement: String,
     pub(crate) outcome: MutantOutcome,
-    pub(crate) killing_test: Option<String>,
+    pub(crate) failing_test: Option<String>,
     pub(crate) equivalence_review: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MutantOutcome {
-    Killed,
-    Survived,
+    TestsFailed,
+    TestsPassed,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -871,18 +871,18 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
             "case `{id}` is a behavior_change; its one mutant is the edit itself"
         ));
     }
-    let killed = mutants
+    let failing = mutants
         .iter()
-        .filter(|m| m.outcome == MutantOutcome::Killed)
+        .filter(|m| m.outcome == MutantOutcome::TestsFailed)
         .count();
-    let derived = match killed {
+    let derived = match failing {
         0 => TruthState::NotDiscriminated,
         k if k == mutants.len() => TruthState::Discriminated,
         _ => TruthState::PartiallyDiscriminated,
     };
     if !mutants.is_empty() && derived != case.truth.state {
         violations.push(format!(
-            "case `{id}` truth `{}` does not follow from {killed}/{} killed mutants (`{}`)",
+            "case `{id}` truth `{}` does not follow from {failing}/{} mutants that failed the tests (`{}`)",
             case.truth.state.as_str(),
             mutants.len(),
             derived.as_str()
@@ -895,9 +895,9 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
                 mutant.replacement
             ));
         }
-        if (mutant.outcome == MutantOutcome::Killed) != mutant.killing_test.is_some() {
+        if (mutant.outcome == MutantOutcome::TestsFailed) != mutant.failing_test.is_some() {
             violations.push(format!(
-                "case `{id}` mutant `{}` names a killing test only when killed",
+                "case `{id}` mutant `{}` names a failing test only when the tests failed",
                 mutant.replacement
             ));
         }
