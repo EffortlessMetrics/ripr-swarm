@@ -6,3 +6,5 @@
 # This policy is for narrow generic examples only. Real machine paths, Codex
 # memory paths, sandbox paths, uploaded-file references, and session transcripts
 # should be removed instead of allowlisted.
+fixtures/issue_lifecycle_intake/snapshots/issue-5399.json|C:\\Users\\Steven\\Documents\\Codex\\2026-10-04\\task-10\\candidate|1|Immutable verbatim GitHub snapshot for the #4930 read-only intake pilot; the captured issue body quotes one host worktree path as observed evidence and editing the capture would break its committed digest binding.
+fixtures/issue_lifecycle_intake/snapshots/issue-5399-timeline.json|C:\\Users\\Steven\\Documents\\Codex\\2026-10-04\\task-10\\candidate|1|Immutable verbatim GitHub timeline capture for the #4930 read-only intake pilot; the captured cross-reference embeds the same host worktree path as observed evidence and editing the capture would break its committed digest binding.
