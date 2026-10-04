@@ -678,9 +678,9 @@
       }
     },
     {
-      "case_id": "py-pytest-footer-untested",
+      "case_id": "py-pytest-footer-unreferenced",
       "subject_id": "authored-py-pytest-pricing",
-      "diff": "cases/py-pytest-footer-untested.diff",
+      "diff": "cases/py-pytest-footer-unreferenced.diff",
       "anchor": {
         "file": "pricing/receipts.py",
         "line": 11

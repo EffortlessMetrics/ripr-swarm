@@ -9,7 +9,7 @@ Five small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
-  `capsys`, `isinstance`, `!=`, a package re-export and an untested owner.
+  `capsys`, `isinstance`, `!=`, a package re-export and an owner no test references.
 - `authored-py-pytest-spec0233`: one owner per RIPR-SPEC-0233 acceptance
   example (examples 9, 10 and the `lambda: 0` half of 33 are left out: 9 has
   no realistic owner, 10 needs numpy, and `sorted(x, key=lambda: 0)` raises

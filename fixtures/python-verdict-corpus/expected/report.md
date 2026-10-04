@@ -25,7 +25,7 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 61.
 | `py-pytest-bulk-default` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `py-pytest-quote-shipping-term` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `py-pytest-receipt-format` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `py-pytest-footer-untested` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `py-pytest-footer-unreferenced` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `py-unittest-deposit-add` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `py-unittest-owner-strip` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `py-unittest-can-withdraw` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |

@@ -307,7 +307,7 @@
       "contradictions": []
     },
     {
-      "case_id": "py-pytest-footer-untested",
+      "case_id": "py-pytest-footer-unreferenced",
       "subject_id": "authored-py-pytest-pricing",
       "origin": "authored",
       "anchor": "pricing/receipts.py:11",
