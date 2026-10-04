@@ -1004,7 +1004,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout only",
             false,
             false,
-            "Validates a labeled verdict corpus offline (RIPR-SPEC-0219; per-language corpora RIPR-SPEC-0233): retained excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. --language (rust, typescript, python, perl; default rust) selects fixtures/<lang>-verdict-corpus. It builds and runs nothing.",
+            "Validates a labeled verdict corpus offline (RIPR-SPEC-0219; per-language corpora RIPR-SPEC-0238): retained excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. --language (rust, typescript, python, perl; default rust) selects fixtures/<lang>-verdict-corpus. It builds and runs nothing.",
         ),
         command_entry(
             "verdict-corpus check [--language <lang>] [--out <dir>]",

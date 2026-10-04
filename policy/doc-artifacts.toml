@@ -1206,9 +1206,9 @@ owner = "product-eval"
 standalone_reason = "Records the labeled Rust verdict corpus: one-line edits in pinned real crates labeled by running mutants against each crate's own tests, a fixed truth-to-verdict table, and cargo xtask verdict-corpus, which scores ripr's anchored verdicts and reports false-verdict and contradiction rates without running mutation testing or network access."
 
 [[artifact]]
-id = "RIPR-SPEC-0233"
+id = "RIPR-SPEC-0238"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0233-per-language-verdict-corpora.md"
+path = "docs/specs/RIPR-SPEC-0238-per-language-verdict-corpora.md"
 status = "proposed"
 owner = "product-eval"
 standalone_reason = "Extends the RIPR-SPEC-0219 verdict corpus harness to one corpus directory per language (rust, typescript, python, perl) selected with --language, so each language's runtime-mutant-labeled cases keep their own expected report and regression gate, and defines the authored TypeScript corpus across jest, vitest, mocha with chai and node:test."

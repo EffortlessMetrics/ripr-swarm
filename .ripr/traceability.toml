@@ -12062,9 +12062,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0233"
+id = "RIPR-SPEC-0238"
 name = "Per-language labeled verdict corpora"
-spec = "docs/specs/RIPR-SPEC-0233-per-language-verdict-corpora.md"
+spec = "docs/specs/RIPR-SPEC-0238-per-language-verdict-corpora.md"
 tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes",
   "xtask/src/reports/verdict_corpus_tests.rs::a_non_rust_corpus_names_its_language_in_both_reports",

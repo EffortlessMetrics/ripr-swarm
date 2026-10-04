@@ -1,4 +1,4 @@
-# RIPR-SPEC-0233: Per-language labeled verdict corpora
+# RIPR-SPEC-0238: Per-language labeled verdict corpora
 
 Status: proposed
 

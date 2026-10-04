@@ -1,4 +1,4 @@
-//! Labeled verdict corpora (RIPR-SPEC-0219 for Rust, RIPR-SPEC-0233 for the
+//! Labeled verdict corpora (RIPR-SPEC-0219 for Rust, RIPR-SPEC-0238 for the
 //! per-language corpora that reuse this harness).
 //!
 //! Each case pairs a one-line edit in a pinned real crate with a runtime truth
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 pub(crate) const CORPUS_DIR: &str = "fixtures/rust-verdict-corpus";
 /// Languages a corpus may declare. Each language keeps its own corpus
 /// directory, labels and expected report, so a verdict change in one language
-/// never re-blesses another (RIPR-SPEC-0233).
+/// never re-blesses another (RIPR-SPEC-0238).
 pub(crate) const CORPUS_LANGUAGES: [&str; 4] = ["rust", "typescript", "python", "perl"];
 const DEFAULT_LANGUAGE: &str = "rust";
 const CORPUS_SCHEMA: &str = "ripr_verdict_corpus.v1";
