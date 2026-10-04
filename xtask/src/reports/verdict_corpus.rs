@@ -341,17 +341,34 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
     plain.then_some(name)
 }
 
-/// The initializer of a `let` statement: the text after its first plain `=`,
-/// skipping `==`, `!=`, `<=`, `>=` and `=>`, so an `=` inside the
-/// initializer never splits it.
+/// The initializer of a `let` statement: the text after its first plain `=`
+/// outside the type's angle brackets, skipping `==`, `!=`, `<=`, `>=` and
+/// `=>`, so neither an associated-type binding (`Item = u32`) nor an `=`
+/// inside the initializer splits it.
 fn let_initializer(statement: &str) -> Option<&str> {
     let bytes = statement.as_bytes();
-    let at = statement.match_indices('=').map(|(at, _)| at).find(|&at| {
-        let prev = at.checked_sub(1).map(|i| bytes[i]);
-        let next = bytes.get(at + 1).copied();
-        !matches!(prev, Some(b'=' | b'!' | b'<' | b'>')) && !matches!(next, Some(b'=' | b'>'))
-    })?;
-    let init = statement[at + 1..].trim_start();
+    let mut depth = 0usize;
+    let mut at = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        let prev = i.checked_sub(1).map(|j| bytes[j]);
+        let next = bytes.get(i + 1).copied();
+        match b {
+            b'<' if next != Some(b'=') => depth += 1,
+            // `->` in a fn-pointer type is not a closing bracket.
+            b'>' if prev != Some(b'-') && prev != Some(b'=') && next != Some(b'=') => {
+                depth = depth.saturating_sub(1)
+            }
+            b'=' if depth == 0
+                && !matches!(prev, Some(b'=' | b'!' | b'<' | b'>'))
+                && !matches!(next, Some(b'=' | b'>')) =>
+            {
+                at = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let init = statement[at? + 1..].trim_start();
     (!init.is_empty()).then_some(init)
 }
 

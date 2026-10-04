@@ -145,6 +145,11 @@ fn retarget_relation_matches_an_initializer_containing_backticks() {
     assert_eq!(let_initializer("let ok = a == b"), Some("a == b"));
     assert_eq!(let_initializer("let x: Vec<u8> = g()"), Some("g()"));
     assert_eq!(let_initializer("let x = |a| a >= 1"), Some("|a| a >= 1"));
+    assert_eq!(
+        let_initializer("let it: Box<dyn Iterator<Item = u32>> = b()"),
+        Some("b()")
+    );
+    assert_eq!(let_initializer("let f: fn(u8) -> u8 = g"), Some("g"));
     // Without a distinct old initializer the relation names the new one alone.
     let single = "binding_predicate_relation: changed binding `cut` initializer `input.rfind('`')` flows into predicate operand at line 13";
     assert!(is_anchor_relation(
