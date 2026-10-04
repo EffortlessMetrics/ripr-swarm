@@ -8,8 +8,9 @@
 
 use super::parse_clean_source_file;
 use super::ra::module_attributes_require_test;
+use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
-    AstNode, TextSize,
+    AstNode, SyntaxKind, TextSize,
     ast::{self, HasGenericParams, HasName},
 };
 
@@ -420,6 +421,19 @@ fn signature_of(function: &ast::Fn) -> OwnerSignature {
 }
 
 fn container_of(function: &ast::Fn) -> OwnerContainer {
+    // A cfg on the owner, an enclosing module or the file (outer or inner
+    // attribute) that a plain `cargo test` build may not enable would leave
+    // the stub compiled out, so the printed run builds zero tests.
+    let gated = function.syntax().ancestors().any(|node| {
+        node.children().filter_map(ast::Attr::cast).any(|attr| {
+            attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
+        })
+    });
+    if gated {
+        return OwnerContainer::Unsupported(
+            "owner sits behind a cfg a plain test build may not enable",
+        );
+    }
     for ancestor in function.syntax().ancestors().skip(1) {
         if ast::Fn::can_cast(ancestor.kind()) {
             return OwnerContainer::Unsupported("owner is nested inside another function body");
@@ -516,6 +530,23 @@ pub(crate) fn single_comparison(expression: &str) -> Option<ComparisonFact> {
         op,
         rhs: binary.rhs()?.syntax().text().to_string(),
     })
+}
+
+/// Start offsets of identifier tokens spelled `name`, read from the clean
+/// parse so comments and string literals never count. Empty when the file
+/// does not parse cleanly.
+pub(crate) fn identifier_offsets(source: &str, name: &str) -> Vec<usize> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == name)
+        .map(|token| usize::from(token.text_range().start()))
+        .collect()
 }
 
 #[cfg(test)]

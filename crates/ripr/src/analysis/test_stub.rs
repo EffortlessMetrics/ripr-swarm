@@ -23,7 +23,7 @@ use super::repair_route::{
 use super::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use super::syntax::fn_signature::{
     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, field_init_is_returned,
-    owner_signature_at, single_comparison,
+    identifier_offsets, owner_signature_at, single_comparison,
 };
 use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules};
 use std::path::{Path, PathBuf};
@@ -144,7 +144,7 @@ impl TestStubRefusal {
             }
             Self::SourceUnparsed => "the owner file did not parse cleanly",
             Self::OwnerUnsupported => {
-                "the owner is a trait default method or nested function, sits in an impl whose self type is not a plain path, or takes a typed `self` receiver"
+                "the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver"
             }
             Self::OwnerAsync => "the owner is async and needs a runtime the stub cannot pick",
             Self::OwnerUnsafe => "the owner is unsafe; its preconditions need a person",
@@ -390,7 +390,8 @@ fn inline_placement<'a>(
 
 /// One of several inline test modules beside the owner, chosen without
 /// guessing at intent: the modules whose body already names the owner
-/// (as a whole word) when any does, otherwise all of them; then, among
+/// (as an identifier token, so comments and strings do not count) when any
+/// does, otherwise all of them; then, among
 /// those, the nearest one after the owner, else the nearest one before it.
 /// `None` only when no candidate has a body to insert into.
 fn pick_test_module<'m>(
@@ -404,12 +405,16 @@ fn pick_test_module<'m>(
         .copied()
         .filter(|module| module.close_brace_start.is_some())
         .collect::<Vec<_>>();
+    let owner_mentions = identifier_offsets(source, owner_name);
     let names_owner = |module: &&GovernedCfgTestModule| {
         module
             .body_start
             .zip(module.close_brace_start)
-            .and_then(|(start, end)| source.get(start..end))
-            .is_some_and(|body| contains_word(body, owner_name))
+            .is_some_and(|(start, end)| {
+                owner_mentions
+                    .iter()
+                    .any(|offset| (start..end).contains(offset))
+            })
     };
     let referencing = insertable
         .iter()
@@ -432,20 +437,6 @@ fn pick_test_module<'m>(
             .copied()
             .filter(|module| module.item_start <= owner_offset)
             .max_by_key(|module| module.item_start)
-    })
-}
-
-/// Whether `word` occurs in `text` with no identifier character on either
-/// side.
-fn contains_word(text: &str, word: &str) -> bool {
-    if word.is_empty() {
-        return false;
-    }
-    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
-    text.match_indices(word).any(|(index, _)| {
-        let before = text[..index].chars().next_back();
-        let after = text[index + word.len()..].chars().next();
-        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
     })
 }
 

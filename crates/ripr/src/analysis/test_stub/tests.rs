@@ -508,6 +508,24 @@ mod tests {
     assert_eq!(value_traits("Out", test_only), ValueTraits::Unknown);
 }
 
+/// The inline module a boundary stub for `needle` is inserted into.
+fn stub_module_name(source: &str, needle: &str) -> Result<String, String> {
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        needle,
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    match rust_test_stub(&seam, None, source).map_err(|r| r.as_str().to_string())? {
+        RustTestStub {
+            placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
+            ..
+        } => Ok(module_name),
+        other => Err(format!("unexpected placement {:?}", other.placement)),
+    }
+}
+
 #[test]
 fn several_inline_test_modules_pick_the_one_naming_the_owner_then_the_nearest() -> Result<(), String>
 {
@@ -529,22 +547,7 @@ mod b {
     fn early_works() { assert_eq!(early(0), 0); }
 }
 ";
-    let module_name = |source: &str, needle: &str| -> Result<String, String> {
-        let seam = seam_at(
-            "src/lib.rs",
-            source,
-            needle,
-            SeamKind::PredicateBoundary,
-            boundary(""),
-        )?;
-        match rust_test_stub(&seam, None, source).map_err(|r| r.as_str().to_string())? {
-            RustTestStub {
-                placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
-                ..
-            } => Ok(module_name),
-            other => Err(format!("unexpected placement {:?}", other.placement)),
-        }
-    };
+    let module_name = stub_module_name;
     // `b` already names `early`, so it wins over the nearer `a`.
     assert_eq!(module_name(source, "x > 1")?, "b");
     // Nothing names `late`: the nearest module after it.
@@ -557,8 +560,33 @@ mod b {
     let with_head =
         format!("pub fn head(x: u8) -> u8 {{ if x > 4 {{ 1 }} else {{ 0 }} }}\n{source}");
     assert_eq!(module_name(&with_head, "x > 4")?, "a");
-    assert!(contains_word("assert_eq!(early(0), 0)", "early"));
-    assert!(!contains_word("fn early_works()", "early"));
+    Ok(())
+}
+
+#[test]
+fn comments_and_strings_do_not_count_as_naming_the_owner() -> Result<(), String> {
+    // Codex review of #5477: a nearer module mentioning `early` only in a
+    // comment or string must not outrank the one that calls it.
+    let source = "pub fn early(x: u8) -> u8 { if x > 1 { 1 } else { 0 } }
+
+#[cfg(test)]
+mod a {
+    // early is covered in b
+    #[test]
+    fn s() { let _ = \"early\"; }
+}
+
+#[cfg(test)]
+mod b {
+    use super::*;
+    #[test]
+    fn early_works() { assert_eq!(early(0), 0); }
+}
+";
+    assert_eq!(stub_module_name(source, "x > 1")?, "b");
+    // `early_works` is a different identifier, not a mention of `early`.
+    let renamed = source.replace("assert_eq!(early(0), 0)", "assert!(true)");
+    assert_eq!(stub_module_name(&renamed, "x > 1")?, "a");
     Ok(())
 }
 
@@ -958,5 +986,44 @@ mod tests {
         } => assert_eq!(module_name, "tests"),
         other => return Err(format!("unexpected placement {:?}", other.placement)),
     }
+    Ok(())
+}
+
+#[test]
+fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
+    // Codex review of #5477: a stub beside a feature-gated owner compiles
+    // out of a plain `cargo test`, which then builds zero tests and passes.
+    let refused = [
+        "#![cfg(feature = \"x\")]\npub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n",
+        "#[cfg(feature = \"x\")]\nmod inner {\n    pub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n    #[cfg(test)]\n    mod tests {}\n}\n",
+        "mod inner {\n    #![cfg(unix)]\n    pub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n}\n",
+        "#[cfg(feature = \"x\")]\npub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n",
+        "pub struct S;\n#[cfg(not(test))]\nimpl S {\n    pub fn f(&self, n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n}\n",
+    ];
+    for source in refused {
+        let seam = seam_at(
+            "src/lib.rs",
+            source,
+            "n > 5",
+            SeamKind::PredicateBoundary,
+            boundary(""),
+        )?;
+        assert_eq!(
+            rust_test_stub(&seam, None, source).map(|stub| stub.test_name),
+            Err(TestStubRefusal::OwnerUnsupported),
+            "{source}"
+        );
+    }
+    // Attributes a plain test build keeps do not refuse.
+    let kept =
+        "/// Docs.\n#[inline]\n#[must_use]\npub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n";
+    let seam = seam_at(
+        "src/lib.rs",
+        kept,
+        "n > 5",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    assert!(rust_test_stub(&seam, None, kept).is_ok(), "{kept}");
     Ok(())
 }
