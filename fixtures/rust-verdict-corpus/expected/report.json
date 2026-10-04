@@ -1,6 +1,6 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
-  "spec": "RIPR-SPEC-0217",
+  "spec": "RIPR-SPEC-0219",
   "corpus_version": "2026-10-04.1",
   "cases_total": 23,
   "by_truth": {

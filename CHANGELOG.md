@@ -34,6 +34,11 @@ are scoped or reviewed.
   tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
   prefix components stay rejected (#5128).
 
+- LSP: stale-seam evidence packets name the executable wire command
+  `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
+  client palette alias, which the server dispatcher rejects. Palette advice in
+  human-readable recovery prose is unchanged (#5274).
+
 ### Changed
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
@@ -172,7 +177,7 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
-- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0217):
+- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
   23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
   bytesize excerpts, each labeled by running mutants against the crate's own
   tests. The harness scores ripr's anchored verdict as ideal, abstained, false

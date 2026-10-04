@@ -1,4 +1,4 @@
-# RIPR-SPEC-0217: Labeled Rust verdict corpus
+# RIPR-SPEC-0219: Labeled Rust verdict corpus
 
 Status: proposed
 

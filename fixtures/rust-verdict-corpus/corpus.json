@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
-  "spec": "RIPR-SPEC-0217",
+  "spec": "RIPR-SPEC-0219",
   "corpus_version": "2026-10-04.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout, the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or breaks them (behavior_change), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",

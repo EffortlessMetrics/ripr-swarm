@@ -961,7 +961,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout only",
             false,
             false,
-            "Validates the labeled Rust verdict corpus offline (RIPR-SPEC-0217): retained upstream excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. It builds and runs nothing.",
+            "Validates the labeled Rust verdict corpus offline (RIPR-SPEC-0219): retained upstream excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. It builds and runs nothing.",
         ),
         command_entry(
             "verdict-corpus check [--out <dir>]",

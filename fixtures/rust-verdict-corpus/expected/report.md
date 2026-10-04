@@ -1,6 +1,6 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0217. Corpus version: 2026-10-04.1. Cases: 23.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.1. Cases: 23.
 
 | Rate | Count | Rate |
 | --- | --- | --- |

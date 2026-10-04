@@ -1,4 +1,4 @@
-//! Labeled Rust verdict corpus (RIPR-SPEC-0217).
+//! Labeled Rust verdict corpus (RIPR-SPEC-0219).
 //!
 //! Each case pairs a one-line edit in a pinned real crate with a runtime truth
 //! label: the edited behavior was mutated and the crate's own test suite was

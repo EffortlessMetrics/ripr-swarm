@@ -1,6 +1,6 @@
 # Fixture Corpus: rust-verdict-corpus
 
-Spec: RIPR-SPEC-0217
+Spec: RIPR-SPEC-0219
 
 ## Given
 
