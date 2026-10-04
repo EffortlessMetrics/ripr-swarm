@@ -179,10 +179,35 @@ title = "Wrong verdicts on the hand-checked verdict corpus"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.05
+# One more wrong case out of 23 (0.043) exceeds the floor and regresses.
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "ingest:verdict-corpus"
+source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_verdict_rate"
+
+[[metric]]
+id = "trust.verdict_corpus_false_actionable"
+board = "trust"
+title = "Hand-checked edits the crate's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_actionable_rate"
+
+[[metric]]
+id = "trust.verdict_corpus_abstention"
+board = "trust"
+title = "Hand-checked edits where ripr gives no specific verdict"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.2
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "file:fixtures/rust-verdict-corpus/expected/report.json#abstention_rate"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

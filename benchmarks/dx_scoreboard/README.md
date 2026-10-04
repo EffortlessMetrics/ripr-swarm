@@ -15,7 +15,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 |---|---|---|
 | `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, install time (pending) |
-| `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, self-contradicting findings, false-verdict rate on the hand-checked corpus, mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
+| `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, self-contradicting findings, false-verdict, false-actionable and abstention rates on the hand-checked verdict corpus (read from `fixtures/rust-verdict-corpus/expected/report.json`, whose drift `cargo xtask verdict-corpus check` gates), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
 | `first_run` | The new-developer journey from install to first useful result | time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 
@@ -76,16 +76,16 @@ release ripr first, because developers run release builds.
 
 ## Ingesting other harnesses
 
-The hand-checked verdict corpus and the scripted first-run journey measure
-their metrics elsewhere and hand them over with `--ingest <file>`:
+The scripted first-run journey and the mutation spot-check measure their
+metrics elsewhere and hand them over with `--ingest <file>`:
 
 ```json
 {
   "schema_version": "ripr-dx-scoreboard-input-v1",
-  "source": "verdict-corpus",
+  "source": "first-run",
   "evidence": "link or path to the run",
   "metrics": [
-    {"id": "trust.false_verdict_rate", "value": 0.08},
+    {"id": "first_run.friction_events", "value": 3},
     {"id": "first_run.time_to_first_useful_result_s", "value": 412, "repo": "serde", "completed": true}
   ]
 }
