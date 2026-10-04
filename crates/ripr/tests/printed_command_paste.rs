@@ -1227,8 +1227,10 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                 // A Bash command with no PowerShell form that PowerShell splits at
                 // a `;` in the path runs its tail, which is the injection the
                 // known PowerShell gaps allow. Those cases run in their own
-                // batch, so a hit from any other command is a new failure.
-                if !excused {
+                // batch, and only that one effect is excused: any other file
+                // (FILECANARY, the tail marker, a stray redirect target) is a
+                // new failure even when the command also hits the listed gap.
+                if !(excused && hit.ends_with("gained \"ROOTCANARY\"")) {
                     problems.push(format!("[{}] {hit}", shell.name()));
                 }
                 // Clear it so one injection is reported against the shell that ran
