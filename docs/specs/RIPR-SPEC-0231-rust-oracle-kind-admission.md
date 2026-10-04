@@ -104,8 +104,9 @@ assertion that an admission rule below weakened.
 
 The chain runs in this order; the first match wins. Before it, the
 wildcard pre-check (#5410) assigns `relational_check` / weak to an
-`assert!`, `ensure!` or `assert_matches!` whose `matches!` pattern is a
-whole unguarded `_`.
+`assert!`, `debug_assert!` or `ensure!` whose whole condition is
+`matches!(x, _)`, and to an `assert_matches!` or `debug_assert_matches!`
+whose pattern is a whole unguarded `_`.
 
 0. an `ensure!` condition runs its own sub-chain
    (`classify_fallible_assertion`): `exact_error_variant` / strong, then
@@ -156,8 +157,9 @@ strength.
    bare binding (a lowercase-initial identifier) assigns `relational_check` /
    weak; the wildcard pre-check already covers an unguarded `_`. A
    constructor pattern whose only content is wildcards (`Some(_)`, `Ok(_)`,
-   `Ok(..)`), and `None`, assign `smoke_only` / smoke, because they only
-   check the side (RIPR-SPEC-0227). Any other
+   `Ok(..)`), and `None`, assign `smoke_only` / smoke when unguarded,
+   because they only check the side (RIPR-SPEC-0227); with a guard they
+   assign `relational_check` / weak. Any other
    pattern stays `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
@@ -173,8 +175,8 @@ strength.
    trailing `s` (`events_sent`, `sentCount`, `events`, `state`), never inside
    another word (`present`, `statement`, `consent`). The segment must sit in
    the asserted subject, not only in an unrelated call; today any operand
-   text counts, including a call such as `is_present()`. The `mock` and `expect_` call checks
-   keep their current form.
+   text counts, including a call such as `is_present()`. The `mock` and
+   `expect_` call checks keep their current form.
 6. **Custom helpers by name are strong only for equality names.** Step 10
    needs a name whose last `_`-segment is `eq`, `equal` or `equals`, or
    which ends in `_eq` / `_equal` / `_equals` / `_matches`, with no `ne`,

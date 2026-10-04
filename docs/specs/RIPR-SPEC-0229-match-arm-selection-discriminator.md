@@ -175,7 +175,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 1. **Pattern grammar.** Adopted: the list above, including ranges and
    bare imported variants, because each is decidable from the pattern's
-   syntax and the argument literal alone. Rejected, narrower: literals and
+   syntax, the file's `use` imports and the argument literal alone. Rejected, narrower: literals and
    qualified enum paths only.
 2. **`_` and binding arms by first-match.** Adopted: a trailing `_` is
    selected when every earlier arm provably does not match, so a change to

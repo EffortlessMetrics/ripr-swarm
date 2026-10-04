@@ -360,10 +360,11 @@ seam was wrongfully downgraded.
 ## Later Amendment
 
 RIPR-SPEC-0227 decision 3 (2026-10-04) adds one narrow exception for an
-added or removed `?`: a broad `is_err()`/`is_ok()` oracle confirms the
+added or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 `error_path` probe only when the test input provably reaches the `?` call's
-`Err` and the original code provably returned `Ok` on that input. Every
-other `error_path` probe still needs a variant-observing oracle.
+`Err`, the original and changed code provably return different sides on
+that input, and RIPR-SPEC-0227 rule 3's path conditions hold. Every other
+`error_path` probe still needs a variant-observing oracle.
 
 ## Metrics
 

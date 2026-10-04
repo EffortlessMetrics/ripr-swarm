@@ -191,9 +191,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    same way a guard does, but a `?` line is an `error_path` probe, and
    RIPR-SPEC-0107 says a broad oracle never confirms `error_path`.
    Adopted: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
-   input provably reaches the `?` call's `Err` and the original code returned
-   `Ok` on that input, because then the side alone tells the original from
-   the change; when either fact is not established, RIPR-SPEC-0107 still
+   input provably reaches the `?` call's `Err`, the original and changed
+   code provably return different sides on that input, and rule 3's path
+   conditions hold, because then the side alone tells the original from the
+   change; when any of these is not established, RIPR-SPEC-0107 still
    applies. RIPR-SPEC-0107 records this exception. Rejected: leave `?`
    under RIPR-SPEC-0107 (always weak with a broad oracle).
 

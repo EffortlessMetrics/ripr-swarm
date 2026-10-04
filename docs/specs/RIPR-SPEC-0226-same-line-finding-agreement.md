@@ -130,8 +130,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 1. **Line verdict in human output and LSP hover.** Adopted: when findings
    on one line read different classes, human output and LSP hover print one
    line-level summary that uses the RIPR-SPEC-0219 precedence (gap over
-   credit over limit), followed by each finding, because a reader of one line should not have to
-   reconcile disagreeing classes alone. JSON, SARIF, annotations and gates
+   credit over limit), followed by each finding, because a reader of one
+   line should not have to reconcile disagreeing classes alone. JSON, SARIF, annotations and gates
    stay per finding. Rejected: no line-level summary anywhere.
 2. **Catch-all beside a typed finding.** When a lexical `static_unknown`
    finding shares the exact expression span of a typed finding with a
