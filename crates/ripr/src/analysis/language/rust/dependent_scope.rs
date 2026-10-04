@@ -676,7 +676,8 @@ enum Closure {
     /// The withheld files the closure admits.
     Files(BTreeSet<PathBuf>),
     /// The closure stopped once the main files plus the files it had
-    /// reached exceeded the limit; at least this many files take part.
+    /// reached, with their module parents, exceeded the limit; at least
+    /// this many files take part.
     Over(usize),
 }
 

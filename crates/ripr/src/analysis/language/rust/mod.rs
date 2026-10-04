@@ -3277,7 +3277,13 @@ mod tests {
                 && !reach.contains(&"c/src/lib.rs".to_string()),
             "fixture premise: the closure reaches hop.rs but not its parent: {reach:?}"
         );
-        let main_files = searched.1.ok_or("the named mode must narrow")?.len();
+        let main = slash_paths(&searched.1.ok_or("the named mode must narrow")?);
+        assert!(
+            full_parses == reach.len() && !main.contains(&"c/src/lib.rs".to_string()),
+            "fixture premise: one closure parsed once, the parent outside the main index: \
+             {full_parses} parses, {reach:?}, {main:?}"
+        );
+        let main_files = main.len();
         let raw = dependent_scope::with_forced_reach_limit(main_files + full_parses, || {
             scoped_findings(&root, DependentScopeMode::NameAdmitted)
         })?;
