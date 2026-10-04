@@ -813,7 +813,7 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
             continue;
         }
         listed.insert(file.path.clone());
-        match fs::read(root.join(&file.path)) {
+        match fs::read(root.join(stored_path(&file.path))) {
             Ok(bytes) if sha256_hex(&bytes) == file.sha256 => {}
             Ok(_) => violations.push(format!(
                 "subject `{id}` file `{}` does not match its pinned sha256; restore the upstream bytes from {} at {}, or re-pin the sha256 if the pin moved deliberately",
@@ -833,7 +833,18 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         violations.push(format!("subject `{id}` retains no LICENSE file"));
     }
     match files_under(&root) {
-        Ok(found) => {
+        Ok(stored) => {
+            let mut found = BTreeSet::new();
+            for path in stored {
+                match logical_path(&path) {
+                    Some(logical) => {
+                        found.insert(logical);
+                    }
+                    None => violations.push(format!(
+                        "subject `{id}` stores `{path}` as Rust source; rename it to `{path}.txt` so vendored code stays fixture data"
+                    )),
+                }
+            }
             for path in found.difference(&listed) {
                 violations.push(format!(
                     "subject `{id}` carries unlisted file `{path}`; list it with its sha256 or remove it"
@@ -843,6 +854,30 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         Err(err) => violations.push(err),
     }
     violations
+}
+
+/// Retained Rust sources are stored as `<name>.rs.txt` so the vendored
+/// upstream code is fixture data, not repository Rust: it stays out of the
+/// workspace's Rust gates and PR diff-scope budget. The run-owned copy gets
+/// the upstream `.rs` name back.
+pub(crate) fn stored_path(logical: &str) -> String {
+    if logical.ends_with(".rs") {
+        format!("{logical}.txt")
+    } else {
+        logical.to_string()
+    }
+}
+
+/// The upstream name of a stored file, or `None` for a bare `.rs` file that
+/// should have been stored as `.rs.txt`.
+pub(crate) fn logical_path(stored: &str) -> Option<String> {
+    if let Some(rust) = stored.strip_suffix(".rs.txt") {
+        Some(format!("{rust}.rs"))
+    } else if stored.ends_with(".rs") {
+        None
+    } else {
+        Some(stored.to_string())
+    }
 }
 
 fn files_under(root: &Path) -> Result<BTreeSet<String>, String> {
@@ -1106,7 +1141,15 @@ pub(crate) fn parse_patch(text: &str) -> Result<Vec<FilePatch>, String> {
         } else if line.starts_with("@@") {
             let (old_start, old_count, new_start, new_count) = hunk_header(line)
                 .ok_or_else(|| format!("diff line {at}: bad hunk header `{line}`"))?;
-            if old_count > 0 && new_count > 0 && new_start as i64 != old_start as i64 + offset {
+            // Corpus edits rewrite lines in place; a pure insertion or
+            // deletion hunk has shifted start semantics the anchor check
+            // cannot pin, so it is refused outright.
+            if old_count == 0 || new_count == 0 {
+                return Err(format!(
+                    "diff line {at}: hunk `{line}` only inserts or only deletes; corpus edits must rewrite at least one line in place"
+                ));
+            }
+            if new_start as i64 != old_start as i64 + offset {
                 return Err(format!(
                     "diff line {at}: hunk new start {new_start} does not follow from old start {old_start} and earlier hunks (expected {}); regenerate the diff",
                     old_start as i64 + offset
@@ -1208,9 +1251,16 @@ pub(crate) fn apply_patch(original: &str, patch: &FilePatch) -> Result<String, S
     Ok(text)
 }
 
+/// Copy a stored subject, restoring upstream `.rs` names.
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     for rel in files_under(from)? {
-        let target = to.join(&rel);
+        let logical = logical_path(&rel).ok_or_else(|| {
+            format!(
+                "{} is stored as bare Rust source; run validate",
+                normalize_path(&from.join(&rel))
+            )
+        })?;
+        let target = to.join(&logical);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("create {}: {err}", normalize_path(parent)))?;
@@ -1374,11 +1424,16 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             } else {
                 None
             };
-            let resolve = |p: &Path| {
-                std::path::absolute(p)
-                    .map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
+            // Canonical paths collapse `..` and symlinks, so no spelling of
+            // the expected directory slips past the guard.
+            let canonical = |p: &Path| {
+                fs::canonicalize(p).map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
             };
-            if sub == "check" && resolve(&out)? == resolve(&dir.join("expected"))? {
+            if sub == "check" {
+                fs::create_dir_all(&out)
+                    .map_err(|err| format!("create {}: {err}", normalize_path(&out)))?;
+            }
+            if sub == "check" && canonical(&out)? == canonical(&dir.join("expected"))? {
                 return Err(format!(
                     "verdict-corpus: --out {} is the expected-report directory; use `report --out` there to re-bless deliberately when a verdict change is intended",
                     normalize_path(&out)

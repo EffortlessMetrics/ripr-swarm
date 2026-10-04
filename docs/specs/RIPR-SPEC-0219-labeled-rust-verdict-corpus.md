@@ -38,9 +38,10 @@ Policy impact:
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - Add `fixtures/rust-verdict-corpus` to the manifest-only fixture set.
-- Two `.ripr/allow-attributes.txt` rows (`allow(dead_code)` in semver
-  `tests/util/mod.rs`, `allow(unused_imports)` in semver `src/lib.rs`) for
-  retained upstream files; retained files are byte-identical to upstream.
+- Retained upstream Rust files are stored as `<name>.rs.txt`, byte-identical
+  to upstream, and get their `.rs` name back only in the run-owned copy. The
+  vendored code is fixture data: it adds no workspace Rust, no lint or
+  process-policy allowlist rows, and no lines to the PR diff-scope budget.
 - No new crates, binaries, dependencies, network allowlist rows, process
   spawn sites, or support-tier changes. The harness reuses the fixture
   runner's ripr build and process owner.
@@ -199,6 +200,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
 - `contradiction_counts_use_one_per_finding_unit`
+- `stored_paths_keep_vendored_rust_out_of_the_workspace`
 
 ## Implementation Mapping
 

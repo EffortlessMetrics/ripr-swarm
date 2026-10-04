@@ -6,7 +6,8 @@ Spec: RIPR-SPEC-0219
 
 Pinned excerpts of real Rust crates (serde, regex-syntax, semver, hex,
 itoa, bytesize) under `subjects/`, byte-identical to their upstream commits
-with license files, and one-line edits under `cases/`. Each case is labeled
+with license files (Rust sources stored as `.rs.txt`), and one-line edits
+under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout.

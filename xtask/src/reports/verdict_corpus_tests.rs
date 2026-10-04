@@ -236,6 +236,13 @@ fn parse_patch_holds_hunks_to_their_declared_counts_and_starts() {
         truncated_error.contains("hunk ends early"),
         "{truncated_error}"
     );
+    // Pure insertions and deletions cannot pin the anchor, so they are refused.
+    let insertion = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -769,0 +820,1 @@\n+x\n";
+    let insertion_error = parse_patch(insertion).err().unwrap_or_default();
+    assert!(
+        insertion_error.contains("only inserts or only deletes"),
+        "{insertion_error}"
+    );
     // A second file header is never swallowed as a removed line.
     let two_files = format!(
         "{}--- a/src/two.rs\n+++ b/src/two.rs\n@@ -1 +1 @@\n-x\n+y\n",
@@ -565,4 +572,17 @@ fn contradiction_counts_use_one_per_finding_unit() -> Result<(), String> {
         vec!["reach_yes_without_related_tests".to_string()]
     );
     Ok(())
+}
+
+#[test]
+fn stored_paths_keep_vendored_rust_out_of_the_workspace() {
+    assert_eq!(stored_path("src/lib.rs"), "src/lib.rs.txt");
+    assert_eq!(stored_path("Cargo.toml"), "Cargo.toml");
+    assert_eq!(
+        logical_path("src/lib.rs.txt").as_deref(),
+        Some("src/lib.rs")
+    );
+    assert_eq!(logical_path("LICENSE-MIT").as_deref(), Some("LICENSE-MIT"));
+    // A bare `.rs` file under subjects is refused, not silently copied.
+    assert_eq!(logical_path("src/lib.rs"), None);
 }
