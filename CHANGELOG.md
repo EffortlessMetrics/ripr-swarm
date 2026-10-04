@@ -12,10 +12,11 @@ are scoped or reviewed.
 ### Added
 
 - Bounded repair states its inline-test boundary as permanent scope:
-  repositories whose only tests are inline `#[cfg(test)]` modules are out
-  of repair scope (`docs/REPAIR_ATTEMPT.md` Boundary, `ripr agent repair
-  --help`), and the CLI, pilot, and MCP refusals name it so no surface
-  promises what another refuses (#5210).
+  repositories whose only tests are inline `#[cfg(test)]` modules in
+  non-test-surface files are out of repair scope
+  (`docs/REPAIR_ATTEMPT.md` Boundary, `ripr agent repair --help`), and
+  the CLI, pilot, and MCP refusals name it so no surface promises what
+  another refuses (#5210).
 - `ripr help --json` now projects a typed per-command `exit` object for the
   0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
   `check` findings still completing with 0, `gate evaluate` `config_error`=2

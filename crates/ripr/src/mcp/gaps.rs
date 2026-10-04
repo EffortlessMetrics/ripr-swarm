@@ -163,7 +163,7 @@ impl RepairReadiness {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test surface; a production file is never the authored edit target (inline-`#[cfg(test)]`-only repos are out of repair scope)"
+                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
             None => {
@@ -703,10 +703,10 @@ mod tests {
         };
         let reason = readiness.reason();
         for needle in [
-            "never the authored edit target",
+            "only test-surface paths can be the authored edit target",
             "inline",
             "#[cfg(test)]",
-            "out of repair scope",
+            "don't qualify their file",
         ] {
             if !reason.contains(needle) {
                 return Err(format!(

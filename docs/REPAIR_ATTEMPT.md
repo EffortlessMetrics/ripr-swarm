@@ -300,24 +300,36 @@ A repair attempt prepares and verifies evidence. RIPR does not author or apply t
 
 ### Inline-only repositories are out of repair scope (#5210)
 
-A repository whose only tests live in inline `#[cfg(test)]` modules inside
-production files can never start a bounded repair, on any surface. This is a
-permanent scope boundary, not a missing feature queued behind other work: the
-edit cage authorizes whole file paths only, so allow-listing the production
-file would also authorize production edits, and no syntax-scoped
-(test-module-only) cage rule exists. Refusals stay loud and typed on every
-surface; no surface promises what another refuses:
+Bounded repair authorizes whole files only, and only files matching the
+test-surface path convention (`tests`/`test` components, `*_test` and
+`*_tests` Rust/Python names, `test_*.py`, TypeScript test files): a
+production file that matches the convention is eligible as a whole-file
+target, and inline `#[cfg(test)]` modules in a file that does not match
+never qualify it. A repository whose only tests are inline in
+non-test-surface files can never start a bounded repair, on any surface.
+This is a permanent scope boundary, not a missing feature queued behind
+other work: the repair workflow consumes only file-level cage authority
+(#3163) and does not integrate the existing inline-module region cage
+(`edit_cage/inline_test_region`, RIPR-SPEC-0181). Refusals stay loud and
+typed on every surface; no surface promises what another refuses:
 
 - CLI: `ripr agent repair --phase before` refuses with `has no test file
   ripr can route a repair to` and names the packet field below;
 - MCP: `ripr_prepare_repair` returns `repair_packet_ready: false` with
-  ineligibility `fix_site_not_test_surface` and creates nothing;
+  ineligibility `fix_site_not_test_surface` once the earlier gates
+  (candidate actionability, discriminator, static limits, established
+  fix site) pass, and creates nothing; earlier gates keep their own
+  refusal reasons;
 - pilot: the summary ranks seams for inspection by hand with no repair
   start, and the focused-test line names the missing test target;
-- packet: `recommended_test.file` is `"not_applicable"` with an empty
-  `allowed_edit_surface` and the production file under `forbidden_files`.
+- packet: `recommended_test.file` is `"not_applicable"` when no target
+  was proposed; an inline-module proposal instead names the production
+  file with target kind `NewInlineTestModule` and a demoted
+  inspection-only task. Both states carry an empty
+  `allowed_edit_surface` with the seam's production file under
+  `forbidden_files`.
 
-To gain a repair target, add the focused test as a separate test file (a
-`tests/` or `test/` path, `*_test.rs` / `*_tests.rs`) in the crate that owns
-the seam, then rerun pilot. Until then, inspect the ranked seams by hand:
+To gain a repair target, add the focused test as a separate test-surface
+file (a `tests/` path or `*_test.rs` name) in the crate that owns the
+seam, then rerun pilot. Until then, inspect the ranked seams by hand:
 they are still worth reading, just not repairable through RIPR.
