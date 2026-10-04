@@ -994,12 +994,11 @@ fn build_index(
     consumed: &mut ConsumedRustSources,
 ) -> Result<RustIndex, String> {
     let loaded = load(root, files, consumed)?;
-    let cached =
-        crate::analysis::rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-            root,
-            &loaded,
-            test_harnesses,
-        )?;
+    let cached = crate::analysis::rust_index::build_analysis_index_from_loaded_files(
+        root,
+        &loaded,
+        test_harnesses,
+    )?;
     Ok(cached.index)
 }
 

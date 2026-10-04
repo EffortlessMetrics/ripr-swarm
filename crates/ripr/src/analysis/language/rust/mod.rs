@@ -1482,7 +1482,7 @@ impl RustAdapter {
             })
             .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_files,
             &options.test_harnesses,
@@ -2084,7 +2084,7 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_rust_files,
             &options.test_harnesses,
