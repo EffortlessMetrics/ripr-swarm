@@ -3171,7 +3171,8 @@ mod tests {
     }
 
     /// #5320: an owner whose caller closure exceeds the limit names the
-    /// unsearched reach only when the main index finds no witness itself. A
+    /// unsearched reach only when the main index finds no witness itself,
+    /// and (#5450) the closure stops before parsing past the limit. A
     /// test in the changed package that reaches the owner through a helper
     /// is a searched result and keeps its named witness; without that test
     /// the finding carries the over-limit note.
@@ -3192,6 +3193,20 @@ mod tests {
         assert!(
             plain.contains(unsearched),
             "fixture premise: the closure is over the forced limit: {plain}"
+        );
+        // #5450: the closure stops at the first caller level that would pass
+        // the limit, before parsing it, so no withheld file is indexed.
+        assert_eq!(
+            dependent_scope::observed_reach_files(),
+            Vec::<PathBuf>::new(),
+            "an over-limit closure must not parse its caller levels"
+        );
+        let searched = dependent_scope::with_forced_reach_limit(100, || {
+            scoped_findings(&root, DependentScopeMode::NameAdmitted)
+        })?;
+        assert!(
+            !dependent_scope::observed_reach_files().is_empty() && !searched.0.contains(unsearched),
+            "control: under a roomy limit the same closure admits and searches files"
         );
 
         let witnessed_root = temp_root("dependent-scope-over-limit-witnessed")?;
