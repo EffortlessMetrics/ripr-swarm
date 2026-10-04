@@ -105,8 +105,10 @@ In this section `f` is the full projection path (`r.child.count`, never
 1. calls the owner method on a local binding `r` (the receiver), and the
    changed statement is not inside a loop or closure, and after it, on any
    path to the owner's return, the body uses `self` only in plain reads of
-   fields whose values are copied or compared (`let n = self.limit;`,
-   `self.count > 3`). Any other later use refuses credit, written or
+   fields whose values are copied, or compared with a built-in operator on
+   a primitive type (`let n = self.limit;`, `self.count > 3`). A comparison
+   that dispatches to a workspace `PartialEq` or `PartialOrd` impl counts as
+   a call, because that impl could write interior-mutable state. Any other later use refuses credit, written or
    implicit: an assignment to `f` or a prefix (`self.child = ..`,
    `*self = ..`), a method call on `self` or on any field path
    (`self.reset()`, `self.child.reset()`, `self.count.set(0)` through a
