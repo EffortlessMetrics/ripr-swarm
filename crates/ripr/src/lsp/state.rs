@@ -396,6 +396,7 @@ pub(super) enum AnalysisAttemptState {
     Succeeded,
     Failed,
     Cancelled,
+    DeadlineExceeded,
     Superseded,
     Stopped,
 }
@@ -408,6 +409,7 @@ impl AnalysisAttemptState {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::DeadlineExceeded => "deadline_exceeded",
             Self::Superseded => "superseded",
             Self::Stopped => "stopped",
         }
@@ -428,6 +430,7 @@ pub(super) enum AnalysisFailureKind {
     ConfigPullFailed,
     ConfigPullInvalid,
     SessionStateInconsistent,
+    DeadlineExceeded,
 }
 
 impl AnalysisFailureKind {
@@ -441,6 +444,7 @@ impl AnalysisFailureKind {
             Self::ConfigPullFailed => "config_pull_failed",
             Self::ConfigPullInvalid => "config_pull_invalid",
             Self::SessionStateInconsistent => "session_state_inconsistent",
+            Self::DeadlineExceeded => "deadline_exceeded",
         }
     }
 }
@@ -1667,6 +1671,7 @@ mod tests {
                 AnalysisFailureKind::SessionStateInconsistent,
                 "session_state_inconsistent",
             ),
+            (AnalysisFailureKind::DeadlineExceeded, "deadline_exceeded"),
         ];
 
         for (kind, expected) in cases {
