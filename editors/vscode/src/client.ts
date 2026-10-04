@@ -1770,7 +1770,7 @@ export class RiprClientController {
   }
 
   // ---------------------------------------------------------------------------
-  // Shared repair-attempt status (RIPR-SPEC-0218, #4643)
+  // Shared repair-attempt status (RIPR-SPEC-0220, #4643)
   //
   // The CLI `agent_attempt_status` DTO (RIPR-SPEC-0217, #4798) is the semantic
   // authority; src/attemptStatus.ts is the only parser. This command is

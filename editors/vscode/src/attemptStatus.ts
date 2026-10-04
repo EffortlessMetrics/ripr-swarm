@@ -1,6 +1,6 @@
 /**
  * Shared repair-attempt status adapter for the VS Code client (#4643,
- * RIPR-SPEC-0218).
+ * RIPR-SPEC-0220).
  *
  * The semantic authority is the CLI DTO emitted by
  * `ripr agent status --attempt <id> --json` (RIPR-SPEC-0217, #4798); this

@@ -1,5 +1,5 @@
 //
-// Shared repair-attempt status adapter parity suite (#4643, RIPR-SPEC-0218).
+// Shared repair-attempt status adapter parity suite (#4643, RIPR-SPEC-0220).
 //
 // The fixtures under test-fixtures/attempt-status/ hold documents in the exact
 // shape `ripr agent status --json` / `--attempt <id> --json` emit (RIPR-SPEC-
@@ -215,6 +215,8 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     selectedByAttempt?: Record<string, unknown>;
     remembered?: Record<string, unknown>;
     pickIndex?: number;
+    /** The workspace root this harness reports; defaults to /workspace. */
+    root?: string;
     onRunRipr?: () => Promise<void>;
   }): RuntimeHarness {
     const runRiprCalls: string[][] = [];
@@ -226,7 +228,10 @@ suite('Show Repair Attempt Status command (#4643)', () => {
 
     const runtime: RiprClientRuntime = {
       getConfig: () => enabledConfig,
-      workspaceRootState: () => ({ kind: 'singleRoot', root: '/workspace', roots: ['/workspace'] }),
+      workspaceRootState: () => {
+        const root = options.root ?? '/workspace';
+        return { kind: 'singleRoot', root, roots: [root] };
+      },
       workspaceFolders: () => [],
       showQuickPick: <T extends vscode.QuickPickItem>(items: T[]): Thenable<T | undefined> => {
         counters.quickPickCalls += 1;
@@ -400,6 +405,30 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     assert.strictEqual(h2.quickPickCalls, 0, 'no quick pick expected when the remembered selection is valid');
     assert.deepStrictEqual(h2.runRiprCalls[1], ['agent', 'status', '--root', '/workspace', '--attempt', pickedId, '--json']);
     assert.strictEqual(h2.bar.text, '$(warning) ripr: attempt stale');
+  });
+
+  test('a remembered selection for another root is never honored', async () => {
+    const inventory = await loadFixture('inventory.json');
+    const selected = await loadFixture('status-awaiting_edit.json');
+    const otherRootPick = 'repair-attempt-0bbb2222bbbb2222bbbb2222bbbb2222bbbb2222';
+    const h = harness({
+      inventory,
+      selected,
+      root: '/ws2',
+      pickIndex: undefined,
+      remembered: { 'ripr.activeAttemptSelection.v1': { '/workspace': otherRootPick } }
+    });
+    const controller = controllerFor(h);
+
+    await controller.showAttemptStatus();
+
+    assert.strictEqual(
+      h.quickPickCalls,
+      1,
+      'a selection remembered for a different root must not suppress the picker'
+    );
+    assert.strictEqual(h.runRiprCalls.length, 1, 'a dismissed cross-root pick issues no selected read');
+    assert.strictEqual(h.bar.shown, 0, 'no attempt state may be presented');
   });
 
   test('dismissing the pick never guesses between several attempts', async () => {

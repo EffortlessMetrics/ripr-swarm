@@ -1,4 +1,4 @@
-# RIPR-SPEC-0218: VS Code shared repair-attempt status and active-attempt resolution
+# RIPR-SPEC-0220: VS Code shared repair-attempt status and active-attempt resolution
 
 Status: proposed
 
@@ -124,8 +124,13 @@ The VS Code extension consumes the shared DTO; it invents no state.
   rejection of a strengthened class (`passed`) and foreign envelopes,
   no-attempt/one-attempt/several-attempts distinctness, stale remembered
   selection discard, explicit-selection precedence, unknown explicit id kept
-  as an exact query, quick-pick dismissal presenting nothing, and the
-  untrusted-workspace refusal with zero CLI invocations.
+  as an exact query, quick-pick dismissal presenting nothing,
+  per-root isolation of remembered selections (a selection stored for one
+  root never suppresses the picker in another), persistence of a remembered
+  selection across a fresh controller reading the same `workspaceState`
+  (the restart/deactivation lifecycle, since `workspaceState` is the only
+  store and survives both), and the untrusted-workspace refusal with zero
+  CLI invocations.
 - `cargo xtask check-spec-format`, `check-spec-numbering`,
   `check-doc-artifacts`, `check-traceability`, `check-doc-index`, and
   `check-file-policy` pass on the candidate.
@@ -167,7 +172,9 @@ The VS Code extension consumes the shared DTO; it invents no state.
 - `editors/vscode/test/suite/attempt_status.test.ts` — suite "Active attempt
   resolution law (#4643)"
 - `editors/vscode/test/suite/attempt_status.test.ts` — suite "Show Repair
-  Attempt Status command (#4643)"
+  Attempt Status command (#4643)", including the remembered-selection
+  second run that models post-restart persistence (a fresh controller reads
+  the same `workspaceState`) and the cross-root isolation case.
 
 Fixtures: `editors/vscode/test-fixtures/attempt-status/` (one
 `status-<class>.json` per pinned class plus `inventory.json`).
