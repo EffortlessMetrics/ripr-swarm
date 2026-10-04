@@ -1,0 +1,64 @@
+{
+  "schema_version": "0.4",
+  "tool": "ripr",
+  "ripr_version": "0.11.0",
+  "ripr_build_msrv": "1.95",
+  "root": "fixtures/doctor-json-parity/input",
+  "profile": "analysis",
+  "status": "pass",
+  "checks": [
+    { "name": "root_directory", "status": "pass", "evidence": "root directory exists at fixtures/doctor-json-parity/input" },
+    { "name": "cargo_toml", "status": "pass", "evidence": "Cargo.toml found at fixtures/doctor-json-parity/input/Cargo.toml" },
+    { "name": "git_repository", "status": "pass", "evidence": "inside a Git work tree at fixtures/doctor-json-parity/input" },
+    { "name": "config", "status": "pass", "evidence": "loaded ripr.toml at fixtures/doctor-json-parity/input/ripr.toml" },
+    { "name": "tool_git", "status": "pass", "evidence": "git version 2.54.0" },
+    { "name": "tool_cargo", "status": "advisory", "evidence": "cargo is not on PATH" },
+    { "name": "generated_workflow", "status": "advisory", "evidence": ".github/workflows/ripr.yml installs ripr without a version" }
+  ],
+  "runtime_probes": [
+    { "language": "python", "tool": "python3", "status": "fail", "evidence": "python3 not available", "required": false, "hint": "install python3" }
+  ],
+  "languages": ["rust"],
+  "detected_languages": [
+    { "language": "rust", "status": "stable", "adapter_available": true, "enabled": true },
+    { "language": "python", "status": "preview", "adapter_available": true, "enabled": false },
+    { "language": "perl", "status": "preview", "adapter_available": false, "enabled": false }
+  ],
+  "unanalyzed_source_languages": [{ "language": "Go", "file_count": 2 }],
+  "preview_language_gaps": [
+    { "config_entry": "python", "detected_language": "python" }
+  ],
+  "config_defaults": {
+    "source_path": "fixtures/doctor-json-parity/input/ripr.toml",
+    "analysis_mode": "draft",
+    "lsp_seam_diagnostics": true,
+    "suppressions_path": ".ripr/suppressions.toml",
+    "bun_ub_profile_configured": false,
+    "bun_ub_test_roots": []
+  },
+  "cache": {
+    "cache_dir": "fixtures/doctor-json-parity/input/target/ripr/cache",
+    "relocated_by_env": false,
+    "size_bytes": 2048,
+    "size_display": "2.00 KB"
+  },
+  "test_surfaces": [
+    { "language": "rust", "framework": "cargo test", "evidence": "rust: cargo test (#[cfg(test)])" },
+    { "language": "python", "framework": "pytest", "evidence": "python: pytest" },
+    { "language": "perl", "framework": null, "evidence": "perl: prove available on PATH" }
+  ],
+  "perl_preview": {
+    "pm_files": 1,
+    "pl_files": 0,
+    "t_files": 1,
+    "adapter_compiled": false,
+    "producer": "perllsp",
+    "ignored_configured_executable": null,
+    "exporter": { "state": "incompatible", "executable": "bin/perllsp", "version": "perllsp 0.17.0" },
+    "expected_schema": "ripr-perl-facts-v1",
+    "test_roots": ["t/"],
+    "frameworks": ["Test::More"],
+    "runners": ["prove"],
+    "next_command": "ripr check --perl-facts <packet.json> --diff <diff.patch> --json"
+  }
+}

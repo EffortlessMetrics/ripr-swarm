@@ -54,6 +54,14 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        "doctor",
+        &[producer(
+            "crates/ripr/src/output/doctor.rs",
+            "pub(crate) const SCHEMA_VERSION: &'static str = \"",
+            1,
+        )],
+    ),
+    (
         "executed-control",
         &[producer(
             "crates/ripr/src/domain/executed_control.rs",
@@ -417,6 +425,30 @@ const CONTRACTS: &[VerificationContract] = &[
             "cases",
             "exclusions",
             "observations",
+        ],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/doctor.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/doctor.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "schema_version",
+            "tool",
+            "root",
+            "profile",
+            "status",
+            "checks[].status",
+            "runtime_probes[].status",
+            "languages",
+            "detected_languages[]",
+            "unanalyzed_source_languages[]",
+            "preview_language_gaps[]",
+            "config_defaults",
+            "cache",
+            "test_surfaces[]",
+            "perl_preview",
         ],
     },
     VerificationContract {

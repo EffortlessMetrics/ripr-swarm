@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/doctor.schema.json",
+  "title": "RIPR Doctor Environment Report",
+  "description": "The versioned JSON envelope emitted by `ripr doctor --json`. It reports the environment facts the human doctor screen prints: which checks ran, detected (not merely enabled) languages, unanalyzed source languages, preview-language enablement gaps, effective configuration defaults, seam-cache state, detected test surfaces, and the Perl preview/exporter state. These are static observations of one root and one host; none of them establish that analysis, verification, or a repair will succeed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "ripr_version",
+    "ripr_build_msrv",
+    "root",
+    "profile",
+    "status",
+    "checks",
+    "runtime_probes",
+    "languages",
+    "config_defaults",
+    "cache",
+    "perl_preview"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.4" },
+    "tool": { "const": "ripr" },
+    "ripr_version": { "type": "string", "minLength": 1 },
+    "ripr_build_msrv": { "type": "string", "minLength": 1 },
+    "root": { "type": "string", "minLength": 1 },
+    "profile": { "enum": ["analysis", "source-build"] },
+    "status": { "$ref": "#/$defs/doctor_status" },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "runtime_probes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/runtime_probe" }
+    },
+    "languages": {
+      "description": "Enabled language wire strings from the effective configuration. This is what `ripr.toml` turns on, NOT what the root contains; the marker scan's answer is `detected_languages`.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "binary": { "$ref": "#/$defs/binary_identity" },
+    "detected_languages": {
+      "description": "Languages the root marker scan found, whether or not the configuration enables them (schema 0.4). Omitted when no marker was found.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/detected_language" }
+    },
+    "unanalyzed_source_languages": {
+      "description": "Source in languages no adapter reads, counted per language. A non-coverage disclosure, never a finding. Omitted when no such source exists.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/unanalyzed_language" }
+    },
+    "preview_language_gaps": {
+      "description": "Detected preview languages `ripr check` skips until they are enabled. `config_entry` is what `[languages] enabled` accepts; `detected_language` is the source it analyzes, and the two differ for a JavaScript-only workspace (schema 0.4). Omitted when there is no such gap.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/preview_language_gap" }
+    },
+    "config_defaults": { "$ref": "#/$defs/config_defaults" },
+    "cache": { "$ref": "#/$defs/cache_status" },
+    "test_surfaces": {
+      "description": "The detected test surface per language. `framework` is null when no framework marker was confirmed; doctor never names a framework it did not read. Omitted when no language was detected.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/test_surface" }
+    },
+    "perl_preview": { "$ref": "#/$defs/perl_preview" }
+  },
+  "$defs": {
+    "doctor_status": {
+      "description": "The top-level outcome. `fail` is what maps to the exit code documented in docs/EXIT_CODES.md.",
+      "enum": ["pass", "fail"]
+    },
+    "check_status": {
+      "description": "`skipped` marks a check that does not apply to this root and was not run; it never fails the report.",
+      "enum": ["pass", "fail", "advisory", "skipped"]
+    },
+    "language_status": {
+      "description": "The capability tier `ripr check` treats the language as.",
+      "enum": ["stable", "preview"]
+    },
+    "nullable_string": { "type": ["string", "null"] },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/check_status" },
+        "evidence": { "$ref": "#/$defs/nullable_string" }
+      }
+    },
+    "runtime_probe": {
+      "description": "One language runtime probe. `required` marks a probe whose failure fails the report; a language runtime is an analysis capability, not a prerequisite for building RIPR from source.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "tool", "status", "evidence", "required", "hint"],
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/doctor_status" },
+        "evidence": { "type": "string" },
+        "required": { "type": "boolean" },
+        "hint": { "type": "string" }
+      }
+    },
+    "detected_language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "status", "adapter_available", "enabled"],
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/language_status" },
+        "adapter_available": {
+          "description": "Whether the adapter was compiled into this binary. A detected language whose adapter is absent cannot be enabled at all.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "description": "Whether the effective configuration enables this language.",
+          "type": "boolean"
+        }
+      }
+    },
+    "unanalyzed_language": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "file_count"],
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "file_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "preview_language_gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config_entry", "detected_language"],
+      "properties": {
+        "config_entry": { "type": "string", "minLength": 1 },
+        "detected_language": { "type": "string", "minLength": 1 }
+      }
+    },
+    "config_defaults": {
+      "description": "The effective configuration defaults. `null` when the configuration could not be loaded, so this field never claims a default the run did not verify. The `config` check owns that state and its evidence, which stays redacted per RIPR-SPEC-0007.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "source_path",
+        "analysis_mode",
+        "lsp_seam_diagnostics",
+        "suppressions_path",
+        "bun_ub_profile_configured",
+        "bun_ub_test_roots"
+      ],
+      "properties": {
+        "source_path": {
+          "description": "The `ripr.toml` this configuration was read from, or null when the built-in defaults apply.",
+          "$ref": "#/$defs/nullable_string"
+        },
+        "analysis_mode": { "type": "string", "minLength": 1 },
+        "lsp_seam_diagnostics": { "type": "boolean" },
+        "suppressions_path": { "type": "string", "minLength": 1 },
+        "bun_ub_profile_configured": { "type": "boolean" },
+        "bun_ub_test_roots": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "cache_status": {
+      "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display"],
+      "properties": {
+        "cache_dir": { "type": "string", "minLength": 1 },
+        "relocated_by_env": {
+          "description": "Whether RIPR_CACHE_DIR relocated the cache for this run.",
+          "type": "boolean"
+        },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "size_display": { "type": "string", "minLength": 1 }
+      }
+    },
+    "test_surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "framework", "evidence"],
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "framework": { "$ref": "#/$defs/nullable_string" },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "binary_identity": {
+      "description": "The running binary and the `ripr` on PATH (schema 0.2). Advisory: its warnings never change `status` or the exit code.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "commit",
+        "commit_dirty",
+        "executable",
+        "executable_is_cargo_build_output",
+        "path_ripr",
+        "path_ripr_is_cargo_build_output",
+        "path_ripr_is_running_executable",
+        "warnings"
+      ],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "commit": { "$ref": "#/$defs/nullable_string" },
+        "commit_dirty": { "type": "boolean" },
+        "executable": { "$ref": "#/$defs/nullable_string" },
+        "executable_is_cargo_build_output": { "type": "boolean" },
+        "path_ripr": { "$ref": "#/$defs/nullable_string" },
+        "path_ripr_is_cargo_build_output": { "type": "boolean" },
+        "path_ripr_is_running_executable": { "type": ["boolean", "null"] },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "perl_exporter_state": {
+      "description": "Compatibility is a capability probe, not an end-to-end proof: only `ripr check` validates an actual packet.",
+      "enum": ["compatible", "incompatible", "not_found"]
+    },
+    "perl_exporter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "executable", "version"],
+      "properties": {
+        "state": { "$ref": "#/$defs/perl_exporter_state" },
+        "executable": { "$ref": "#/$defs/nullable_string" },
+        "version": { "$ref": "#/$defs/nullable_string" }
+      }
+    },
+    "perl_preview": {
+      "description": "Perl preview state for a root whose marker scan found Perl. `null` when no Perl project was detected. Every field reports only what the static layer can determine; nothing here claims the producer works end to end (schema 0.4).",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "pm_files",
+        "pl_files",
+        "t_files",
+        "adapter_compiled",
+        "producer",
+        "ignored_configured_executable",
+        "exporter",
+        "expected_schema",
+        "test_roots",
+        "frameworks",
+        "runners",
+        "next_command"
+      ],
+      "properties": {
+        "pm_files": { "type": "integer", "minimum": 0 },
+        "pl_files": { "type": "integer", "minimum": 0 },
+        "t_files": { "type": "integer", "minimum": 0 },
+        "adapter_compiled": {
+          "description": "Whether this binary was built with the `lang-perl` Cargo feature.",
+          "type": "boolean"
+        },
+        "producer": { "$ref": "#/$defs/nullable_string" },
+        "ignored_configured_executable": {
+          "description": "A configured `[perl].executable` the opt-in gate refused to run. Reported so a user can see why the configured path was not probed.",
+          "$ref": "#/$defs/nullable_string"
+        },
+        "exporter": { "$ref": "#/$defs/perl_exporter" },
+        "expected_schema": { "type": "string", "minLength": 1 },
+        "test_roots": {
+          "description": "Which of `t/` and `t2/` exist.",
+          "type": "array",
+          "items": { "enum": ["t/", "t2/"] }
+        },
+        "frameworks": {
+          "description": "Perl test frameworks named by the `.t` sources. Empty means none were found.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "runners": {
+          "description": "Perl test runners found on PATH. Empty means none were found.",
+          "type": "array",
+          "items": { "enum": ["prove", "yath", "carton", "dzil"] }
+        },
+        "next_command": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

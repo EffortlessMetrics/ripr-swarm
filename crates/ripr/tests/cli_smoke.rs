@@ -9749,7 +9749,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.3");
+    assert_eq!(report["schema_version"], "0.4");
     assert_eq!(report["tool"], "ripr");
     assert_eq!(report["profile"], "analysis");
     assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
@@ -9758,7 +9758,440 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
     );
+    // #5214: schema 0.3 published a `sections` array that could never carry
+    // content, because its only mutator and only reader were `#[cfg(test)]`.
+    // It is gone rather than permanently empty.
+    assert!(
+        report.get("sections").is_none(),
+        "a dead sections array must not stay in the released document: {report}"
+    );
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    Ok(())
+}
+
+/// A workspace that makes the human doctor screen print every environment fact
+/// #5214 types: detected languages, an unanalyzed language, a detected-but-
+/// disabled preview language, cache state, detected test surfaces, and the Perl
+/// preview. `ripr.toml` exists and enables only Rust, so Python stays detected
+/// and disabled instead of being auto-enabled by the no-config default path.
+/// Git-initialized so the core checks decide the exit status, not the fixture
+/// location.
+fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for dir in ["src", "lib", "t"] {
+        std::fs::create_dir_all(root.join(dir)).map_err(|err| format!("create {dir}: {err}"))?;
+    }
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"doctor-json-parity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        ("src/lib.rs", "pub fn placeholder() {}\n"),
+        ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
+        (
+            "pyproject.toml",
+            "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        ),
+        ("calc.py", "def add(a, b):\n    return a + b\n"),
+        (
+            "Makefile.PL",
+            "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+        ),
+        (
+            "lib/Pricing.pm",
+            "package Pricing;\nsub discount { return 0; }\n1;\n",
+        ),
+        (
+            "t/pricing.t",
+            "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+        ),
+        ("tool.go", "package main\n\nfunc main() {}\n"),
+    ] {
+        std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+    }
+    run_git(&root, &["init"])?;
+    Ok(root)
+}
+
+fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "doctor JSON did not parse: {err}\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn json_array<'a>(
+    report: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value], String> {
+    report[key]
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| format!("`{key}` must be an array in the doctor report: {report}"))
+}
+
+/// #5214 acceptance 2 — coverage, not presence. For one root where the human
+/// screen prints each fact, every corresponding typed JSON field must be
+/// present and non-empty, and must name the same value the screen printed.
+/// Dropping a fact from either surface makes this red.
+#[test]
+fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-parity")?;
+    let human = doctor_human_stdout(&root)?;
+    let report = doctor_json_for(&root)?;
+    let outcome = (|| -> Result<(), String> {
+        // Detected languages, with the tier the screen prints in parentheses.
+        let detected = json_array(&report, "detected_languages")?;
+        let rust = detected
+            .iter()
+            .find(|entry| entry["language"] == "rust")
+            .ok_or_else(|| format!("detected_languages must name rust: {detected:?}"))?;
+        if rust["status"] != "stable" {
+            return Err(format!("rust must carry its tier: {rust}"));
+        }
+        assert!(
+            human.contains("- Detected languages: rust (stable)"),
+            "the screen must print the detected tier: {human}"
+        );
+        let python = detected
+            .iter()
+            .find(|entry| entry["language"] == "python")
+            .ok_or_else(|| format!("detected_languages must name python: {detected:?}"))?;
+        if python["status"] != "preview" {
+            return Err(format!("python must carry its tier: {python}"));
+        }
+        assert!(
+            human.contains("python (preview)"),
+            "the screen must print python as a preview: {human}"
+        );
+        // Unanalyzed source languages.
+        let unanalyzed = json_array(&report, "unanalyzed_source_languages")?;
+        let go = unanalyzed
+            .iter()
+            .find(|entry| entry["language"] == "Go")
+            .ok_or_else(|| format!("unanalyzed_source_languages must name Go: {unanalyzed:?}"))?;
+        let count = go["file_count"].as_u64().unwrap_or(0);
+        if count < 1 {
+            return Err(format!("Go must carry its file count: {go}"));
+        }
+        assert!(
+            human.contains(&format!("~ Unanalyzed languages: Go ({count} file(s))")),
+            "the screen must print the same Go count the JSON carries: {human}"
+        );
+        // Preview enablement gap.
+        let gaps = json_array(&report, "preview_language_gaps")?;
+        let gap = gaps
+            .iter()
+            .find(|entry| entry["config_entry"] == "python")
+            .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
+        if gap["detected_language"] != "python" {
+            return Err(format!("the gap must name its detected source: {gap}"));
+        }
+        assert!(
+            human.contains("- Tip: python files detected but not enabled"),
+            "the screen must print the enablement tip: {human}"
+        );
+        // Cache state.
+        let cache = &report["cache"];
+        let cache_dir = cache["cache_dir"].as_str().unwrap_or_default();
+        if !cache_dir.ends_with("target/ripr/cache") {
+            return Err(format!("cache_dir must name the workspace cache: {cache}"));
+        }
+        if cache["size_bytes"].as_u64().is_none() {
+            return Err(format!("cache must carry a numeric size: {cache}"));
+        }
+        assert!(
+            human.contains(&format!("- Cache location: {cache_dir}")),
+            "the screen must print the same cache directory: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "- Cache size: {}",
+                cache["size_display"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the same cache size: {human}"
+        );
+        // Detected test surfaces.
+        let surfaces = json_array(&report, "test_surfaces")?;
+        let rust_surface = surfaces
+            .iter()
+            .find(|surface| surface["language"] == "rust")
+            .ok_or_else(|| format!("test_surfaces must carry the rust surface: {surfaces:?}"))?;
+        if rust_surface["framework"] != "cargo test" {
+            return Err(format!(
+                "the rust surface must type its framework: {rust_surface}"
+            ));
+        }
+        let rendered = surfaces
+            .iter()
+            .map(|surface| surface["evidence"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            !rendered.is_empty()
+                && human.contains(&format!("- Detected test surfaces: {rendered}")),
+            "the screen must print exactly the JSON evidence fragments: {human}"
+        );
+        // Perl preview / exporter state.
+        let preview = &report["perl_preview"];
+        if preview.is_null() {
+            return Err(format!("a Perl root must carry perl_preview: {report}"));
+        }
+        if preview["pm_files"].as_u64() != Some(1) || preview["t_files"].as_u64() != Some(1) {
+            return Err(format!(
+                "perl_preview must carry the real file counts: {preview}"
+            ));
+        }
+        if preview["expected_schema"] != "ripr-perl-facts-v1" {
+            return Err(format!(
+                "perl_preview must carry the packet schema it consumes: {preview}"
+            ));
+        }
+        let state = preview["exporter"]["state"].as_str().unwrap_or_default();
+        if !matches!(state, "compatible" | "incompatible" | "not_found") {
+            return Err(format!(
+                "exporter state must be typed, not free text: {preview}"
+            ));
+        }
+        assert!(
+            human.contains("- Perl preview:")
+                && human.contains(&format!(
+                    "  project: {} .pm, {} .pl, {} .t",
+                    preview["pm_files"], preview["pl_files"], preview["t_files"]
+                ))
+                && human.contains(&format!(
+                    "  schema: {} expected",
+                    preview["expected_schema"].as_str().unwrap_or_default()
+                )),
+            "the screen must print the counts and schema the JSON carries: {human}"
+        );
+        // Exact block shape, heading flush and body indented by two. The
+        // refactor that produced the typed preview briefly indented the
+        // heading too, and only this assertion caught it.
+        assert!(
+            human.contains(&format!(
+                "- Perl preview:\n  project: {} .pm, {} .pl, {} .t\n",
+                preview["pm_files"], preview["pl_files"], preview["t_files"]
+            )),
+            "the Perl preview block shape must not drift: {human}"
+        );
+        assert!(
+            human.contains(&format!("  test roots: {}", human_test_roots(preview))),
+            "the screen must print the test roots the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  frameworks: {}",
+                human_perl_list(&preview["frameworks"], "none detected")
+            )),
+            "the screen must print the frameworks the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  runners: {}",
+                human_perl_list(&preview["runners"], "none found on PATH")
+            )),
+            "the screen must print the runners the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  next: {}",
+                preview["next_command"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the next command the JSON carries: {human}"
+        );
+        // Effective configuration defaults.
+        let defaults = &report["config_defaults"];
+        if defaults.is_null() {
+            return Err(format!(
+                "a loadable config must carry config_defaults: {report}"
+            ));
+        }
+        assert!(
+            human.contains(&format!(
+                "- Analysis mode default: {}",
+                defaults["analysis_mode"].as_str().unwrap_or_default()
+            )) && human.contains(&format!(
+                "- LSP seam diagnostics default: {}",
+                defaults["lsp_seam_diagnostics"]
+            )) && human.contains(&format!(
+                "- Suppressions path: {}",
+                defaults["suppressions_path"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the config defaults the JSON carries: {human}"
+        );
+        Ok(())
+    })();
+    let human_status = run_ripr(&["doctor", "--root", &root.display().to_string()]).status;
+    let json_status = run_ripr(&["doctor", "--root", &root.display().to_string(), "--json"]).status;
+    ignore_remove_dir_all(&root);
+    outcome?;
+    // #5214 acceptance 7: the two surfaces answer with the same status for the
+    // same root. The value itself is #5102's contract, not this issue's.
+    assert_eq!(
+        human_status.code(),
+        json_status.code(),
+        "doctor and doctor --json must share one exit status for one root"
+    );
+    Ok(())
+}
+
+fn human_test_roots(preview: &serde_json::Value) -> String {
+    let roots = preview["test_roots"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|value| value.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match roots.as_slice() {
+        [] => "none detected".to_string(),
+        [only] => format!("{only} detected"),
+        [first, .., last] => format!("{first} and {last} detected"),
+    }
+}
+
+fn human_perl_list(values: &serde_json::Value, empty: &str) -> String {
+    let entries = values.as_array().cloned().unwrap_or_default();
+    if entries.is_empty() {
+        return empty.to_string();
+    }
+    entries
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// #5214 acceptance 1's live correctness trap. `languages` is what `ripr.toml`
+/// enables; `detected_languages` is what the root contains. A repo with a
+/// `pyproject.toml` and no Python in `[languages] enabled` must let a consumer
+/// see that Python was detected and never enabled, rather than reading a
+/// plausible `languages` array and concluding Python is analyzed.
+#[test]
+fn doctor_json_separates_detected_languages_from_enabled_languages() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-detected-vs-enabled")?;
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    let enabled = json_array(&report, "languages")?
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        enabled,
+        vec!["rust".to_string()],
+        "the enabled set must stay the configured one: {report}"
+    );
+
+    let detected = json_array(&report, "detected_languages")?;
+    let python = detected
+        .iter()
+        .find(|entry| entry["language"] == "python")
+        .ok_or_else(|| format!("python must be reported as detected: {detected:?}"))?;
+    assert_eq!(
+        python["enabled"], false,
+        "a detected language must carry whether the config enables it: {python}"
+    );
+    // The conflation this guards: if `detected_languages` echoed the enabled
+    // set, python would read as analyzed.
+    assert!(
+        !enabled.iter().any(|language| language == "python"),
+        "python must not appear in the enabled set for this fixture: {report}"
+    );
+    assert!(
+        detected.iter().any(|entry| entry["language"] == "perl"
+            && entry["status"] == "preview"
+            && entry["enabled"] == false),
+        "a detected preview language must carry its tier and its disabled state: {report}"
+    );
+    Ok(())
+}
+
+/// #5214 acceptance 6 / RIPR-SPEC-0007. A malformed `ripr.toml` must not leak
+/// its source excerpt into any newly typed field, and the document must not
+/// claim a configuration default it never verified.
+#[test]
+fn doctor_json_keeps_config_parse_errors_redacted_in_the_typed_fields() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-redaction");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Both markers sit on the offending line, because `toml`'s error Display
+    // embeds the source excerpt for the failing line and only that line. A
+    // marker on a later line would sit outside the excerpt and the test would
+    // pass against a leak.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "secret_marker_9f2b = \"do-not-publish\n",
+    )
+    .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"redaction\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    let document = String::from_utf8_lossy(&output.stdout).into_owned();
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        !document.contains("secret_marker_9f2b") && !document.contains("do-not-publish"),
+        "ripr.toml source text must never reach the doctor JSON document: {document}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    // The environment fields are still computed from the filesystem, so the
+    // leak had every chance to happen and did not.
+    assert!(
+        report["cache"]["cache_dir"].is_string(),
+        "cache facts must still be reported: {report}"
+    );
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unloadable config must not claim verified defaults: {report}"
+    );
+    Ok(())
+}
+
+/// An unloadable `ripr.toml` must not be reported as carrying verified
+/// configuration defaults: the field is `null`, not a guess.
+#[test]
+fn doctor_json_reports_no_config_defaults_for_an_unloadable_config() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-no-defaults");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("ripr.toml"), "[languages\n")
+        .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"no-defaults\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unreadable config must not claim verified defaults: {report}"
+    );
     Ok(())
 }
 

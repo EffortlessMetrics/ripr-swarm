@@ -9,7 +9,7 @@ use crate::analysis;
 use crate::app::Mode;
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
-use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig, load_for_root};
+use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
 use crate::domain::{LanguageId, LanguageStatus};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -73,20 +73,23 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     }
     let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
 
+    // One marker scan per run, shared by both surfaces. `--json` used to branch
+    // away before any of the environment facts were gathered, so the machine
+    // surface reported none of them (#5214).
+    let detected = detect_languages(&root);
+
     if json_output {
-        return doctor_json(&root, profile);
+        return doctor_json(&root, profile, &detected);
     }
 
     // Human-readable path.
-    let core_evaluation = output::doctor::evaluate_doctor_core_with_config_for_profile(
-        &root,
-        &detect_languages(&root),
-        profile,
-    );
+    let core_evaluation =
+        output::doctor::evaluate_doctor_core_with_config_for_profile(&root, &detected, profile);
     let mut report = core_evaluation.report;
     let core_report = &report;
     let mut ok = matches!(core_report.status, output::doctor::DoctorStatus::Pass);
     let enabled_languages = enabled_languages(&core_evaluation.config);
+    let environment = DoctorEnvironment::probe(&root, &detected, &core_evaluation.config);
     println!("ripr doctor");
     println!("- root: {}", output::path::human_path(&root));
     for line in output::doctor_binary::probe_binary_identity().human_lines() {
@@ -105,21 +108,34 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     ok &= report_doctor_core_check(core_report, "root_directory");
     ok &= report_doctor_core_check(core_report, "cargo_toml");
     ok &= report_doctor_core_check(core_report, "git_repository");
-    report_config_status(&root, core_evaluation.config, &mut ok);
-    report_cache_status(&root);
+    report_config_status(
+        &root,
+        &core_evaluation.config,
+        environment.facts.config_defaults.as_ref(),
+        core_report,
+        &mut ok,
+    );
+    report_cache_status(&environment.facts.cache);
     report_generated_workflow_status(&root);
-    report_detected_languages(&root);
-    ok &= add_language_runtime_probes(&root, &enabled_languages, &mut report, true, probe_runtime);
-    suggest_preview_language_enablement(&root);
-    report_detected_test_surfaces(&root);
-    report_perl_preview(&root);
+    report_detected_languages(&environment.facts);
+    ok &= add_language_runtime_probes(
+        &root,
+        &detected,
+        &enabled_languages,
+        &mut report,
+        true,
+        probe_runtime,
+    );
+    suggest_preview_language_enablement(&environment);
+    report_detected_test_surfaces(&environment.facts);
+    report_perl_preview(environment.facts.perl_preview.as_ref());
     report_known_limitations();
 
     for tool in output::doctor::DOCTOR_TOOLS {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root, &report);
+    print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");
@@ -130,26 +146,159 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Typed JSON doctor output. Captures top-level checks and language runtime
-/// probes as structured values. Deeper sub-checks (cache, Perl, and test
-/// surfaces) remain on the human-oriented path for a follow-up PR to type
-/// individually. See #1771 / #1614.
-fn doctor_json(root: &Path, profile: output::doctor::DoctorProfile) -> Result<(), String> {
-    let evaluation = output::doctor::evaluate_doctor_core_with_config_for_profile(
-        root,
-        &detect_languages(root),
-        profile,
-    );
+/// Typed JSON doctor output. Carries the same environment facts as the human
+/// screen as typed fields: every value below comes from one
+/// [`DoctorEnvironment`] probe that the human path also reads, so `--json` is
+/// not a second, thinner report (#5214).
+fn doctor_json(
+    root: &Path,
+    profile: output::doctor::DoctorProfile,
+    detected: &[LanguageId],
+) -> Result<(), String> {
+    let evaluation =
+        output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
     report.binary = Some(output::doctor_binary::probe_binary_identity());
     let enabled_languages = enabled_languages(&evaluation.config);
-    let _ =
-        add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
+    let _ = add_language_runtime_probes(
+        root,
+        detected,
+        &enabled_languages,
+        &mut report,
+        false,
+        probe_runtime,
+    );
     if let Some(advisory) = generated_workflow_advisory(root) {
         report.add_advisory_check("generated_workflow", advisory);
     }
+    let environment = DoctorEnvironment::probe(root, detected, &evaluation.config);
+    report.apply_environment(environment.facts);
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
+}
+
+/// The run's environment facts, plus the one input the human enablement tip
+/// needs that is not part of the JSON document.
+///
+/// The typed facts live in one owner
+/// ([`output::doctor::DoctorEnvironmentFacts`]) that both surfaces read, so a
+/// fact cannot be printed for a user and missing from the machine document.
+/// Each one reuses a probe the human screen already performs; nothing here adds
+/// a new observation, and none of it can change a check's status or the exit
+/// code. The tip's own inputs stay here because the tip is prose, not an
+/// observation.
+struct DoctorEnvironment {
+    facts: output::doctor::DoctorEnvironmentFacts,
+    preview_enablement: Option<PreviewEnablement>,
+}
+
+impl DoctorEnvironment {
+    fn probe(root: &Path, detected: &[LanguageId], config: &Result<RiprConfig, String>) -> Self {
+        let enabled = enabled_languages(config);
+        let preview_enablement = preview_languages_to_enable(detected, config);
+        Self {
+            facts: output::doctor::DoctorEnvironmentFacts {
+                detected_languages: detected_language_entries(detected, &enabled),
+                unanalyzed_source_languages: unanalyzed_language_entries(root),
+                preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
+                config_defaults: config_defaults(config),
+                cache: cache_status(root),
+                test_surfaces: detect_test_surfaces(root, detected),
+                perl_preview: probe_perl_preview(root),
+            },
+            preview_enablement,
+        }
+    }
+}
+
+fn detected_language_entries(
+    detected: &[LanguageId],
+    enabled: &[LanguageId],
+) -> Vec<output::doctor::DoctorDetectedLanguage> {
+    detected
+        .iter()
+        .map(|id| output::doctor::DoctorDetectedLanguage {
+            language: id.as_str().to_string(),
+            status: language_status(*id),
+            adapter_available: id.is_available(),
+            enabled: enabled.contains(id),
+        })
+        .collect()
+}
+
+fn unanalyzed_language_entries(root: &Path) -> Vec<output::doctor::DoctorUnanalyzedLanguage> {
+    crate::analysis::workspace_unanalyzed_source_languages(root)
+        .into_iter()
+        .map(
+            |(language, file_count)| output::doctor::DoctorUnanalyzedLanguage {
+                language: language.to_string(),
+                file_count,
+            },
+        )
+        .collect()
+}
+
+/// The enablement tip's payload as typed data: which `[languages] enabled`
+/// entry to add, and which detected source it analyzes. They differ for a
+/// JavaScript-only workspace, which the `typescript` entry analyzes.
+fn preview_language_gaps(
+    enablement: Option<&PreviewEnablement>,
+) -> Vec<output::doctor::DoctorPreviewLanguageGap> {
+    let Some(enablement) = enablement else {
+        return Vec::new();
+    };
+    enablement
+        .missing
+        .iter()
+        .zip(&enablement.labels)
+        .map(|(entry, label)| output::doctor::DoctorPreviewLanguageGap {
+            config_entry: entry.as_str().to_string(),
+            detected_language: label.clone(),
+        })
+        .collect()
+}
+
+/// The effective configuration defaults, or `None` when the configuration could
+/// not be loaded. The load error itself stays on the `config` check, redacted
+/// for the JSON surface (RIPR-SPEC-0007).
+fn config_defaults(
+    config: &Result<RiprConfig, String>,
+) -> Option<output::doctor::DoctorConfigDefaults> {
+    let config = config.as_ref().ok()?;
+    Some(output::doctor::DoctorConfigDefaults {
+        source_path: config.source_path().map(output::path::human_path),
+        analysis_mode: config
+            .analysis()
+            .mode()
+            .map(Mode::as_str)
+            .unwrap_or_else(|| Mode::Draft.as_str())
+            .to_string(),
+        lsp_seam_diagnostics: config
+            .lsp()
+            .seam_diagnostics()
+            .unwrap_or(DEFAULT_LSP_SEAM_DIAGNOSTICS),
+        suppressions_path: config.suppressions().display_path(),
+        bun_ub_profile_configured: config.profiles().bun_ub().is_some(),
+        bun_ub_test_roots: config
+            .profiles()
+            .bun_ub()
+            .map(|profile| profile.test_roots().to_vec())
+            .unwrap_or_default(),
+    })
+}
+
+/// The seam cache doctor will use for `root`, with its measured size.
+fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
+    let cache_dir = analysis::seam_cache::cache_base_dir(root);
+    let relocated =
+        std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
+    let size_bytes = dir_size_bytes(&cache_dir);
+    output::doctor::DoctorCacheStatus {
+        cache_dir: output::path::human_path(&cache_dir),
+        relocated_by_env: relocated,
+        size_bytes,
+        size_display: format_bytes(size_bytes),
+    }
 }
 
 fn enabled_languages(config: &Result<RiprConfig, String>) -> Vec<LanguageId> {
@@ -179,7 +328,11 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
     check.status != output::doctor::DoctorCheckStatus::Fail
 }
 
-fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::DoctorReport) {
+fn print_doctor_start_here_guidance(
+    root: &Path,
+    report: &output::doctor::DoctorReport,
+    preview_enablement: Option<&PreviewEnablement>,
+) {
     // Both the first action and the recommendation consume this one fallible
     // route. No-packet guidance must not point at a command below when its
     // selected root cannot be rendered losslessly. The report states decide
@@ -305,15 +458,15 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
     // guaranteed no-op. Name the enable step next to the command.
-    if let Some(line) = enable_before_first_command_line(root) {
+    if let Some(line) = enable_before_first_command_line(preview_enablement) {
         println!("{line}");
     }
 }
 
-fn enable_before_first_command_line(root: &Path) -> Option<String> {
+fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> Option<String> {
     // Name the config entries here: this line says what to write in
     // ripr.toml, while the Tip names the detected source.
-    let names = preview_languages_to_enable(root)?
+    let names = enablement?
         .missing
         .iter()
         .map(|id| id.as_str())
@@ -437,6 +590,7 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
 /// and optional test/package runners remain advisory.
 fn add_language_runtime_probes<F>(
     root: &Path,
+    detected: &[LanguageId],
     enabled: &[LanguageId],
     report: &mut output::doctor::DoctorReport,
     print: bool,
@@ -446,7 +600,7 @@ where
     F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
     let mut ok = true;
-    for (language, tool, hint) in language_runtime_probes_for(root, enabled) {
+    for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
         let (status, evidence) = probe(tool);
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
@@ -519,9 +673,10 @@ fn primary_runtime(language: &str) -> Option<(&'static str, &'static str)> {
 
 fn language_runtime_probes_for(
     root: &Path,
+    detected: &[LanguageId],
     enabled: &[LanguageId],
 ) -> Vec<(&'static str, &'static str, &'static str)> {
-    let mut probes = language_runtime_probes(root);
+    let mut probes = language_runtime_probes_for_detected(root, detected);
     append_missing_primary_runtime_probes(&mut probes, enabled);
     probes
 }
@@ -574,8 +729,18 @@ fn language_runtime_probe_line(
 
 /// The (language, tool, install hint) runtime probes for a root (#2071).
 /// Factored from the printer so the probe list is directly testable.
+/// [`language_runtime_probes_for_detected`] over the root's own marker scan.
+#[cfg(test)]
 fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
-    let detected = detect_languages(root);
+    language_runtime_probes_for_detected(root, &detect_languages(root))
+}
+
+/// [`language_runtime_probes`] over an already-computed marker scan, so the
+/// run's four consumers of the scan share one walk.
+fn language_runtime_probes_for_detected(
+    root: &Path,
+    detected: &[LanguageId],
+) -> Vec<(&'static str, &'static str, &'static str)> {
     let mut probes: Vec<(&str, &str, &str)> = Vec::new();
     if detected.contains(&LanguageId::Python) {
         let (python_tool, python_hint) = python_runtime_for_os(std::env::consts::OS);
@@ -622,10 +787,10 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
 /// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
-fn report_detected_languages(root: &Path) {
+fn report_detected_languages(facts: &output::doctor::DoctorEnvironmentFacts) {
     for line in detected_languages_lines(
-        &detect_languages(root),
-        &crate::analysis::workspace_unanalyzed_source_languages(root),
+        &facts.detected_languages,
+        &facts.unanalyzed_source_languages,
     ) {
         println!("{line}");
     }
@@ -634,9 +799,12 @@ fn report_detected_languages(root: &Path) {
 /// The detected-languages line, followed by the unanalyzed-languages line
 /// whenever such source exists: a mixed Rust and Go workspace needs the Go
 /// half named as much as a Go-only one does.
+///
+/// Renders the same typed entries the JSON document serializes, so the two
+/// surfaces cannot disagree about what was found.
 fn detected_languages_lines(
-    detected: &[LanguageId],
-    unanalyzed: &[(&'static str, usize)],
+    detected: &[output::doctor::DoctorDetectedLanguage],
+    unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
 ) -> Vec<String> {
     let mut lines = Vec::new();
     if detected.is_empty() {
@@ -644,13 +812,15 @@ fn detected_languages_lines(
     } else {
         let entries: Vec<String> = detected
             .iter()
-            .map(|id| {
-                let tier = language_status(*id).as_str().to_string();
-                let available = id.is_available();
-                if available {
-                    format!("{} ({})", id.as_str(), tier)
+            .map(|language| {
+                if language.adapter_available {
+                    format!("{} ({})", language.language, language.status.as_str())
                 } else {
-                    format!("{} ({}) [adapter not compiled]", id.as_str(), tier)
+                    format!(
+                        "{} ({}) [adapter not compiled]",
+                        language.language,
+                        language.status.as_str()
+                    )
                 }
             })
             .collect();
@@ -664,13 +834,15 @@ fn detected_languages_lines(
 /// `ripr check` will find nothing instead of being sent there as the
 /// recommended first command, and a mixed workspace learns which half is
 /// reported as not analyzed.
-fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<String> {
+fn unanalyzed_languages_line(
+    unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
+) -> Option<String> {
     if unanalyzed.is_empty() {
         return None;
     }
     let found = unanalyzed
         .iter()
-        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .map(|language| format!("{} ({} file(s))", language.language, language.file_count))
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
@@ -678,7 +850,7 @@ fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<Str
     ))
 }
 
-/// When a preview language is detected in `root` but is not yet enabled in
+/// When a preview language is detected at the root but is not yet enabled in
 /// `ripr.toml`, print a copy-paste-ready TOML block so the user can enable
 /// it in a single edit.
 ///
@@ -690,24 +862,25 @@ fn unanalyzed_languages_line(unanalyzed: &[(&'static str, usize)]) -> Option<Str
 ///
 /// Emits nothing when either condition fails, when the root has no config
 /// file, or when the config cannot be loaded.
-fn suggest_preview_language_enablement(root: &Path) {
-    for line in preview_language_enable_suggestions(root) {
+fn suggest_preview_language_enablement(environment: &DoctorEnvironment) {
+    for line in preview_language_enable_suggestions(environment.preview_enablement.as_ref()) {
         println!("{line}");
     }
 }
 
-/// Pure computation for `suggest_preview_language_enablement` — returns the
-/// tip lines (ready to print) for each preview language that is detected,
-/// available (compiled in), and not yet enabled in `ripr.toml`.
+/// Pure rendering of the preview-enablement tip — the tip lines (ready to
+/// print) for each preview language that is detected, available (compiled in),
+/// and not yet enabled in `ripr.toml`.
 ///
-/// Returns an empty vec when there is nothing to suggest. Separated from the
-/// printing logic so it can be covered by unit tests without stdout capture.
-fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
+/// Returns an empty vec when there is nothing to suggest. The same
+/// `PreviewEnablement` becomes the typed `preview_language_gaps` field, so the
+/// tip and the JSON document name the same languages.
+fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -> Vec<String> {
     let Some(PreviewEnablement {
         enabled,
         missing,
         labels,
-    }) = preview_languages_to_enable(root)
+    }) = enablement
     else {
         return Vec::new();
     };
@@ -716,7 +889,7 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
     // other preview language in a mixed repository, so following one tip
     // would produce the other.
     let mut target: Vec<&str> = enabled.iter().map(|id| id.as_str()).collect();
-    for id in &missing {
+    for id in missing {
         if !target.contains(&id.as_str()) {
             target.push(id.as_str());
         }
@@ -740,8 +913,10 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
 /// The enabled languages and the detected, compiled-in preview languages that
 /// are not enabled. `None` when there is nothing to suggest or the config
 /// cannot be loaded (fail closed: no tip).
-fn preview_languages_to_enable(root: &Path) -> Option<PreviewEnablement> {
-    let detected = detect_languages(root);
+fn preview_languages_to_enable(
+    detected: &[LanguageId],
+    config: &Result<RiprConfig, String>,
+) -> Option<PreviewEnablement> {
     // JavaScript is analyzed by the TypeScript adapter and has no config
     // entry of its own (`parse_languages_enabled` accepts only `typescript`),
     // so a detected JavaScript source maps to the `typescript` entry. Using
@@ -760,7 +935,7 @@ fn preview_languages_to_enable(root: &Path) -> Option<PreviewEnablement> {
     if preview_detected.is_empty() {
         return None;
     }
-    let config = load_for_root(root).ok()?;
+    let config = config.as_ref().ok()?;
     let enabled = config.languages().enabled().to_vec();
     let missing: Vec<LanguageId> = preview_detected
         .into_iter()
@@ -821,36 +996,60 @@ fn config_entry(id: LanguageId) -> LanguageId {
     }
 }
 
-/// Detect test-framework markers per detected language.
+/// Print the detected test surfaces the environment probe found.
 ///
-/// Reports `<lang>: test framework not detected` rather than guessing when
-/// no clear marker is found — the function never claims a framework it cannot
-/// confirm.
-fn report_detected_test_surfaces(root: &Path) {
-    let lines = detected_test_surface_lines(root);
-    if !lines.is_empty() {
-        println!("- Detected test surfaces: {}", lines.join("; "));
+/// `framework` stays `None` rather than guessing when no clear marker is
+/// found — doctor never claims a framework it cannot confirm. The
+/// `<language>: …` fragment printed here is the same string the JSON
+/// `test_surfaces[].evidence` carries.
+fn report_detected_test_surfaces(facts: &output::doctor::DoctorEnvironmentFacts) {
+    if facts.test_surfaces.is_empty() {
+        return;
     }
+    let evidence = facts
+        .test_surfaces
+        .iter()
+        .map(|surface| surface.evidence.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    println!("- Detected test surfaces: {evidence}");
 }
 
-/// Build the detected test-surface lines for doctor (#2106). Split from the
-/// printer so the output contract is directly testable.
-fn detected_test_surface_lines(root: &Path) -> Vec<String> {
-    let detected = detect_languages(root);
+/// Build the detected test surfaces for doctor (#2106). Each entry is one
+/// `<language>: …` fragment the human screen prints, plus the detected
+/// framework name typed separately for machine consumers.
+fn detect_test_surfaces(
+    root: &Path,
+    detected: &[LanguageId],
+) -> Vec<output::doctor::DoctorTestSurface> {
+    use output::doctor::DoctorTestSurface;
     if detected.is_empty() {
         return Vec::new();
     }
-    let mut lines: Vec<String> = Vec::new();
-    for id in &detected {
+    let surface = |language: &str, framework: Option<&str>, evidence: String| DoctorTestSurface {
+        language: language.to_string(),
+        framework: framework.map(str::to_string),
+        evidence,
+    };
+    let mut surfaces: Vec<DoctorTestSurface> = Vec::new();
+    for id in detected {
         match id {
             LanguageId::Rust => {
                 // Cargo.toml presence is the Rust test surface marker
                 // (`cargo test` and `#[cfg(test)]` are available in any
                 // Cargo workspace).
                 if root.join("Cargo.toml").exists() {
-                    lines.push("rust: cargo test (#[cfg(test)])".to_string());
+                    surfaces.push(surface(
+                        "rust",
+                        Some("cargo test"),
+                        "rust: cargo test (#[cfg(test)])".to_string(),
+                    ));
                 } else {
-                    lines.push("rust: test framework not detected".to_string());
+                    surfaces.push(surface(
+                        "rust",
+                        None,
+                        "rust: test framework not detected".to_string(),
+                    ));
                 }
             }
             LanguageId::Python => {
@@ -866,8 +1065,14 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
                         None
                     };
                 match framework {
-                    Some(name) => lines.push(format!("python: {name}")),
-                    None => lines.push("python: test framework not detected".to_string()),
+                    Some(name) => {
+                        surfaces.push(surface("python", Some(name), format!("python: {name}")))
+                    }
+                    None => surfaces.push(surface(
+                        "python",
+                        None,
+                        "python: test framework not detected".to_string(),
+                    )),
                 }
             }
             LanguageId::TypeScript | LanguageId::JavaScript => {
@@ -894,8 +1099,14 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
                     None
                 };
                 match framework {
-                    Some(name) => lines.push(format!("{lang}: {name}")),
-                    None => lines.push(format!("{lang}: test framework not detected")),
+                    Some(name) => {
+                        surfaces.push(surface(lang, Some(name), format!("{lang}: {name}")))
+                    }
+                    None => surfaces.push(surface(
+                        lang,
+                        None,
+                        format!("{lang}: test framework not detected"),
+                    )),
                 }
             }
             LanguageId::Perl => {
@@ -905,36 +1116,74 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
                 let t_count = count_files(root, "t");
                 if pm_count > 0 || pl_count > 0 || t_count > 0 {
                     let framework = detect_perl_framework(root);
-                    lines.push(format!(
-                        "perl: {} .pm, {} .pl, {} .t; framework: {}",
-                        pm_count, pl_count, t_count, framework
+                    surfaces.push(surface(
+                        "perl",
+                        perl_framework_name(framework),
+                        format!(
+                            "perl: {} .pm, {} .pl, {} .t; framework: {}",
+                            pm_count, pl_count, t_count, framework
+                        ),
                     ));
                     // Report adapter availability.
                     if id.is_available() {
-                        lines.push("perl: adapter compiled (lang-perl feature ON)".to_string());
+                        surfaces.push(surface(
+                            "perl",
+                            None,
+                            "perl: adapter compiled (lang-perl feature ON)".to_string(),
+                        ));
                     } else {
-                        lines.push(format!(
-                            "perl: adapter NOT compiled; {}",
-                            id.unavailable_adapter_recovery()
+                        surfaces.push(surface(
+                            "perl",
+                            None,
+                            format!(
+                                "perl: adapter NOT compiled; {}",
+                                id.unavailable_adapter_recovery()
+                            ),
                         ));
                     }
                     // Report runner availability.
                     if which("prove") {
-                        lines.push("perl: prove available on PATH".to_string());
+                        surfaces.push(surface(
+                            "perl",
+                            None,
+                            "perl: prove available on PATH".to_string(),
+                        ));
                     } else {
-                        lines.push("perl: prove NOT found on PATH".to_string());
+                        surfaces.push(surface(
+                            "perl",
+                            None,
+                            "perl: prove NOT found on PATH".to_string(),
+                        ));
                     }
                     // Report exact first command.
                     if id.is_available() {
-                        lines.push("perl: first command: ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string());
+                        surfaces.push(surface(
+                            "perl",
+                            None,
+                            "perl: first command: ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string(),
+                        ));
                     }
                 } else {
-                    lines.push("perl: no Perl files detected".to_string());
+                    surfaces.push(surface(
+                        "perl",
+                        None,
+                        "perl: no Perl files detected".to_string(),
+                    ));
                 }
             }
         }
     }
-    lines
+    surfaces
+}
+
+/// The framework name a `detect_perl_framework` answer carries, or `None` for
+/// its two "not detected" spellings, which name no framework.
+fn perl_framework_name(framework: &str) -> Option<&str> {
+    if framework.starts_with("not detected") {
+        None
+    } else {
+        Some(framework)
+    }
 }
 
 /// Count files with a given extension under the root (recursive). Used by the
@@ -1062,98 +1311,185 @@ fn which(bin: &str) -> bool {
 /// Conservative throughout: every line reports only what the static layer can
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
-fn report_perl_preview(root: &Path) {
-    if !perl_project_detected(root) {
+fn report_perl_preview(preview: Option<&output::doctor::DoctorPerlPreview>) {
+    let Some(preview) = preview else {
         return;
+    };
+    for line in perl_preview_lines(preview) {
+        println!("{line}");
     }
-    let pm_count = count_files(root, "pm");
-    let pl_count = count_files(root, "pl");
-    let t_count = count_files(root, "t");
+}
 
-    println!("- Perl preview:");
-    println!("  project: {pm_count} .pm, {pl_count} .pl, {t_count} .t");
+/// The Perl preview lines, in the order the human screen prints them. Rendered
+/// from the same typed value the JSON `perl_preview` object serializes, so the
+/// two surfaces cannot drift.
+fn perl_preview_lines(preview: &output::doctor::DoctorPerlPreview) -> Vec<String> {
+    let mut lines = vec![
+        "- Perl preview:".to_string(),
+        format!(
+            "project: {} .pm, {} .pl, {} .t",
+            preview.pm_files, preview.pl_files, preview.t_files
+        ),
+    ];
 
     // lang-perl compiled? (cfg!(feature = "lang-perl") is build-time constant.)
-    if cfg!(feature = "lang-perl") {
-        println!("  adapter: compiled (lang-perl feature ON)");
+    if preview.adapter_compiled {
+        lines.push("adapter: compiled (lang-perl feature ON)".to_string());
     } else {
-        println!("  adapter: NOT compiled in this ripr binary (see next)");
+        lines.push("adapter: NOT compiled in this ripr binary (see next)".to_string());
     }
 
-    // [perl] producer configured? + Perl facts exporter found? + version?
-    let producer_configured = perl_producer_configured(root);
-    match producer_configured.as_deref() {
+    // [perl] producer configured?
+    lines.push(match preview.producer.as_deref() {
         Some("perl-ripr-facts") => {
-            println!("  producer: configured as `perl-ripr-facts` (canonical)")
+            "producer: configured as `perl-ripr-facts` (canonical)".to_string()
         }
-        Some("perllsp") => println!("  producer: configured as `perllsp` (compatibility wrapper)"),
+        Some("perllsp") => "producer: configured as `perllsp` (compatibility wrapper)".to_string(),
         Some("perl-lsp") => {
-            println!("  producer: configured as `perl-lsp` (compatibility wrapper)")
+            "producer: configured as `perl-lsp` (compatibility wrapper)".to_string()
         }
-        Some(other) => println!("  producer: configured as `{other}`"),
-        None => println!("  producer: not configured (managed mode off)"),
+        Some(other) => format!("producer: configured as `{other}`"),
+        None => "producer: not configured (managed mode off)".to_string(),
+    });
+
+    // A configured executable the opt-in gate refused, so the user can see why
+    // the configured path was not probed.
+    if let Some(refused) = &preview.ignored_configured_executable {
+        lines.push(format!(
+            "executable: ignoring [perl].executable `{refused}` from ripr.toml (not run); set {}=1 to trust it",
+            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
+        ));
     }
 
     // Find a compatible exporter: one that answers `--version` AND accepts
     // the managed `ripr-facts` subcommand. A binary that only answers
     // `--version` (for example the published perllsp LSP server) is reported
     // as found-but-incompatible, never as a working exporter.
-    if let Some(refused) = crate::config::load_for_root(root)
-        .ok()
-        .and_then(|config| config.perl().refused_executable().map(Path::to_path_buf))
-    {
-        println!(
-            "  executable: ignoring [perl].executable `{}` from ripr.toml (not run); set {}=1 to trust it",
-            refused.display(),
-            crate::config::PERL_EXECUTABLE_OPT_IN_ENV
-        );
-    }
-    let exporter = probe_perl_exporter(root);
-    for line in perl_exporter_lines(&exporter) {
-        println!("  {line}");
-    }
+    lines.extend(perl_exporter_lines(&preview.exporter));
 
     // schema compatible? (always reports the schema this ripr build consumes.)
-    println!("  schema: {} expected", crate::app::PERL_FACT_PACKET_SCHEMA);
+    lines.push(format!("schema: {} expected", preview.expected_schema));
 
     // t/ and t2/ roots detected?
-    let roots = detect_perl_test_roots(root);
-    println!("  test roots: {roots}");
+    lines.push(format!(
+        "test roots: {}",
+        perl_test_roots_display(&preview.test_roots)
+    ));
 
     // Detected test frameworks.
-    let frameworks = detect_perl_frameworks(root);
-    println!("  frameworks: {frameworks}");
+    lines.push(format!(
+        "frameworks: {}",
+        perl_list_display(&preview.frameworks, "none detected")
+    ));
 
     // Runner availability: prove/yath/carton/dzil.
-    let mut runners: Vec<&str> = Vec::new();
-    if which("prove") {
-        runners.push("prove");
-    }
-    if which("yath") {
-        runners.push("yath");
-    }
-    if which("carton") {
-        runners.push("carton");
-    }
-    if which("dzil") {
-        runners.push("dzil");
-    }
-    let runners_str = if runners.is_empty() {
-        "none found on PATH".to_string()
-    } else {
-        runners.join(", ")
-    };
-    println!("  runners: {runners_str}");
+    lines.push(format!(
+        "runners: {}",
+        perl_list_display(&preview.runners, "none found on PATH")
+    ));
 
     // Exact next command: branch on whether the adapter is compiled in,
     // whether managed mode is configured, and whether a COMPATIBLE exporter
     // is present.
-    let next = perl_next_command(
-        LanguageId::Perl.is_available(),
-        producer_configured.as_deref(),
-        exporter.compatible_bin(),
-    );
-    println!("  next: {next}");
+    lines.push(format!("next: {}", preview.next_command));
+
+    // The heading is the one line without the two-space body indent.
+    let mut rendered = Vec::new();
+    for (index, line) in lines.into_iter().enumerate() {
+        if index == 0 {
+            rendered.push(line);
+        } else {
+            rendered.push(format!("  {line}"));
+        }
+    }
+    rendered
+}
+
+/// The `test roots:` value for the detected Perl test roots.
+fn perl_test_roots_display(roots: &[&str]) -> String {
+    match roots {
+        [t, t2] => format!("{t} and {t2} detected"),
+        [only] => format!("{only} detected"),
+        [] => "none detected".to_string(),
+        _ => roots.join(", "),
+    }
+}
+
+fn perl_list_display(values: &[&str], empty: &str) -> String {
+    if values.is_empty() {
+        empty.to_string()
+    } else {
+        values.join(", ")
+    }
+}
+
+/// The typed Perl preview state, or `None` when the marker scan found no Perl
+/// project. Computed once per run and read by both surfaces.
+fn probe_perl_preview(root: &Path) -> Option<output::doctor::DoctorPerlPreview> {
+    if !perl_project_detected(root) {
+        return None;
+    }
+    let pm_count = count_files(root, "pm");
+    let pl_count = count_files(root, "pl");
+    let t_count = count_files(root, "t");
+    let producer_configured = perl_producer_configured(root);
+    let refused_executable = crate::config::load_for_root(root)
+        .ok()
+        .and_then(|config| config.perl().refused_executable().map(Path::to_path_buf));
+    let exporter = probe_perl_exporter(root);
+    let adapter_compiled = cfg!(feature = "lang-perl");
+    Some(output::doctor::DoctorPerlPreview {
+        pm_files: pm_count,
+        pl_files: pl_count,
+        t_files: t_count,
+        adapter_compiled,
+        producer: producer_configured.clone(),
+        ignored_configured_executable: refused_executable.map(|path| path.display().to_string()),
+        exporter: exporter_typed(&exporter),
+        expected_schema: crate::app::PERL_FACT_PACKET_SCHEMA.to_string(),
+        test_roots: detect_perl_test_roots(root),
+        frameworks: detect_perl_frameworks(root),
+        runners: perl_runners(),
+        // Exact next command: branch on whether the adapter is compiled in,
+        // whether managed mode is configured, and whether a COMPATIBLE exporter
+        // is present.
+        next_command: perl_next_command(
+            adapter_compiled,
+            producer_configured.as_deref(),
+            exporter.compatible_bin(),
+        ),
+    })
+}
+
+fn exporter_typed(exporter: &PerlExporterProbe) -> output::doctor::DoctorPerlExporter {
+    use output::doctor::{DoctorPerlExporter, DoctorPerlExporterState};
+    let (state, (executable, version)) = match exporter {
+        PerlExporterProbe::Compatible { bin, version } => (
+            DoctorPerlExporterState::Compatible,
+            (Some(bin.clone()), Some(version.clone())),
+        ),
+        PerlExporterProbe::Incompatible { bin, version } => (
+            DoctorPerlExporterState::Incompatible,
+            (Some(bin.clone()), Some(version.clone())),
+        ),
+        PerlExporterProbe::NotFound => (DoctorPerlExporterState::NotFound, (None, None)),
+    };
+    DoctorPerlExporter {
+        state,
+        executable,
+        version,
+    }
+}
+
+/// Perl test runners found on PATH, in a fixed order.
+fn perl_runners() -> Vec<&'static str> {
+    let mut runners: Vec<&'static str> = Vec::new();
+    for candidate in ["prove", "yath", "carton", "dzil"] {
+        if which(candidate) {
+            runners.push(candidate);
+        }
+    }
+    runners
 }
 
 /// Whether `[perl].producer` is configured in the root's ripr config. Returns
@@ -1278,15 +1614,22 @@ fn run_exporter_probe(
     .ok()
 }
 
-/// Doctor lines for an exporter probe result.
-fn perl_exporter_lines(exporter: &PerlExporterProbe) -> Vec<String> {
-    match exporter {
-        PerlExporterProbe::Compatible { bin, version } => vec![format!(
-            "exporter: compatible `{bin}` ({version}) accepts `ripr-facts` (capability probe only; packets are validated by `ripr check`)"
+/// Doctor lines for the typed exporter probe result. The `Compatible` and
+/// `Incompatible` arms name the probed binary and its version because the
+/// probe only recorded them for those two states.
+fn perl_exporter_lines(exporter: &output::doctor::DoctorPerlExporter) -> Vec<String> {
+    use output::doctor::DoctorPerlExporterState;
+    match exporter.state {
+        DoctorPerlExporterState::Compatible => vec![format!(
+            "exporter: compatible `{}` ({}) accepts `ripr-facts` (capability probe only; packets are validated by `ripr check`)",
+            exporter.executable.as_deref().unwrap_or_default(),
+            exporter.version.as_deref().unwrap_or_default()
         )],
-        PerlExporterProbe::Incompatible { bin, version } => vec![
+        DoctorPerlExporterState::Incompatible => vec![
             format!(
-                "exporter: found `{bin}` ({version}) but it does not accept `ripr-facts`; not a compatible exporter"
+                "exporter: found `{}` ({}) but it does not accept `ripr-facts`; not a compatible exporter",
+                exporter.executable.as_deref().unwrap_or_default(),
+                exporter.version.as_deref().unwrap_or_default()
             ),
             format!(
                 "note: managed mode runs `<exporter> ripr-facts --schema {} ...`; the compatible exporter is `{}`, which is not yet published",
@@ -1294,7 +1637,7 @@ fn perl_exporter_lines(exporter: &PerlExporterProbe) -> Vec<String> {
                 crate::domain::PERL_FACT_EXPORTER
             ),
         ],
-        PerlExporterProbe::NotFound => vec![format!(
+        DoctorPerlExporterState::NotFound => vec![format!(
             "exporter: NOT found (expected `{}` or a `perllsp` wrapper on PATH, or [perl].executable with {}=1); `{}` is not yet published",
             crate::domain::PERL_FACT_EXPORTER,
             crate::config::PERL_EXECUTABLE_OPT_IN_ENV,
@@ -1330,24 +1673,23 @@ fn has_perl_project_markers(root: &Path) -> bool {
         .any(|marker| root.join(marker).is_file())
 }
 
-/// Detect Perl test directories: `t/` and `t2/`. Returns a human-readable
-/// summary.
-fn detect_perl_test_roots(root: &Path) -> String {
-    let has_t = root.join("t").is_dir();
-    let has_t2 = root.join("t2").is_dir();
-    match (has_t, has_t2) {
-        (true, true) => "t/ and t2/ detected".to_string(),
-        (true, false) => "t/ detected".to_string(),
-        (false, true) => "t2/ detected".to_string(),
-        (false, false) => "none detected".to_string(),
+/// Detect Perl test directories: `t/` and `t2/`.
+fn detect_perl_test_roots(root: &Path) -> Vec<&'static str> {
+    let mut roots = Vec::new();
+    if root.join("t").is_dir() {
+        roots.push("t/");
     }
+    if root.join("t2").is_dir() {
+        roots.push("t2/");
+    }
+    roots
 }
 
-/// Detect Perl test frameworks from .t files in t/ and t2/. Returns a
-/// comma-separated list of detected frameworks (Test::More, Test2::V0/V1/Suite,
-/// Test::Exception, Test::Fatal), or "none detected".
-fn detect_perl_frameworks(root: &Path) -> String {
-    let mut found: Vec<&str> = Vec::new();
+/// Detect Perl test frameworks from .t files in t/ and t2/ (Test::More,
+/// Test2::V0/V1/Suite, Test::Exception, Test::Fatal). Empty means none were
+/// found; doctor never names a framework it did not read.
+fn detect_perl_frameworks(root: &Path) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
     let mut contents: Vec<String> = Vec::new();
     for dir in ["t", "t2"] {
         let test_dir = root.join(dir);
@@ -1382,11 +1724,7 @@ fn detect_perl_frameworks(root: &Path) -> String {
     if blob.contains("use Test::Fatal") {
         found.push("Test::Fatal");
     }
-    if found.is_empty() {
-        "none detected".to_string()
-    } else {
-        found.join(", ")
-    }
+    found
 }
 
 /// Choose the exact next command based on adapter availability, producer
@@ -1456,21 +1794,19 @@ fn report_known_limitations() {
     );
 }
 
-fn report_cache_status(root: &Path) {
-    let cache_dir = analysis::seam_cache::cache_base_dir(root);
-    let relocated =
-        std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
-    let size_bytes = dir_size_bytes(&cache_dir);
-    let size_display = format_bytes(size_bytes);
-    if relocated {
+fn report_cache_status(cache: &output::doctor::DoctorCacheStatus) {
+    if cache.relocated_by_env {
         println!(
             "- Cache location: {} (RIPR_CACHE_DIR active)",
-            output::path::human_path(&cache_dir)
+            cache.cache_dir
         );
     } else {
-        println!("- Cache location: {}", output::path::human_path(&cache_dir));
+        println!("- Cache location: {}", cache.cache_dir);
     }
-    println!("- Cache size: {size_display} (run `ripr cache status` for details)");
+    println!(
+        "- Cache size: {} (run `ripr cache status` for details)",
+        cache.size_display
+    );
 }
 
 const GENERATED_WORKFLOW_PATH: &str = ".github/workflows/ripr.yml";
@@ -1567,44 +1903,59 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mut bool) {
+/// Print the effective configuration state.
+///
+/// The success arm renders `defaults`, the same typed value the JSON
+/// `config_defaults` object carries, so the two surfaces cannot disagree. The
+/// failure arm prints the full local `toml` error to the user's own terminal;
+/// only the redacted `config` check evidence reaches JSON (RIPR-SPEC-0007).
+fn report_config_status(
+    root: &Path,
+    config: &Result<RiprConfig, String>,
+    defaults: Option<&output::doctor::DoctorConfigDefaults>,
+    report: &output::doctor::DoctorReport,
+    ok: &mut bool,
+) {
     match config {
-        Ok(config) => {
-            match config.source_path() {
+        Ok(_) => {
+            let Some(defaults) = defaults else {
+                // The probe and the evaluator load the same configuration, so
+                // this arm is unreachable in practice. Fail loudly in the
+                // terminal rather than print a default the probe never
+                // verified.
+                println!("! Config: invalid {CONFIG_FILE_NAME}");
+                println!(
+                    "- Config path: {}",
+                    output::path::human_path(&root.join(CONFIG_FILE_NAME))
+                );
+                println!("  error: configuration loaded but produced no defaults");
+                *ok = false;
+                return;
+            };
+            match &defaults.source_path {
                 Some(path) => {
                     println!("✓ Config: loaded {CONFIG_FILE_NAME}");
-                    println!("- Config path: {}", output::path::human_path(path));
+                    println!("- Config path: {path}");
                 }
                 None => println!("✓ Config: not found; using built-in defaults"),
             }
-            let analysis_mode = config
-                .analysis()
-                .mode()
-                .map(Mode::as_str)
-                .unwrap_or_else(|| Mode::Draft.as_str());
-            println!("- Analysis mode default: {analysis_mode}");
+            println!("- Analysis mode default: {}", defaults.analysis_mode);
             println!(
                 "- LSP seam diagnostics default: {}",
-                config
-                    .lsp()
-                    .seam_diagnostics()
-                    .unwrap_or(DEFAULT_LSP_SEAM_DIAGNOSTICS)
+                defaults.lsp_seam_diagnostics
             );
-            println!(
-                "- Suppressions path: {}",
-                config.suppressions().display_path()
-            );
-            let languages = config
-                .languages()
-                .enabled()
-                .iter()
-                .map(|language| language.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("- Enabled languages: {languages}");
-            if let Some(profile) = config.profiles().bun_ub() {
+            println!("- Suppressions path: {}", defaults.suppressions_path);
+            println!("- Enabled languages: {}", report.languages.join(", "));
+            if let Some(profile) = config
+                .as_ref()
+                .ok()
+                .and_then(|config| config.profiles().bun_ub())
+            {
                 println!("- Bun UB profile: configured (preview advisory only)");
-                println!("- Bun UB test roots: {}", profile.test_roots().join(", "));
+                println!(
+                    "- Bun UB test roots: {}",
+                    defaults.bun_ub_test_roots.join(", ")
+                );
                 println!("- Bun UB bridge hints: {}", profile.display_bridge_hints());
                 println!(
                     "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
@@ -1779,10 +2130,35 @@ mod tests {
         Ok(())
     }
 
+    /// A detected-language entry with every field the human screen reads.
+    fn detected_entry(
+        language: LanguageId,
+        adapter_available: bool,
+    ) -> output::doctor::DoctorDetectedLanguage {
+        output::doctor::DoctorDetectedLanguage {
+            language: language.as_str().to_string(),
+            status: language_status(language),
+            adapter_available,
+            enabled: true,
+        }
+    }
+
+    fn unanalyzed_entry(
+        language: &str,
+        file_count: usize,
+    ) -> output::doctor::DoctorUnanalyzedLanguage {
+        output::doctor::DoctorUnanalyzedLanguage {
+            language: language.to_string(),
+            file_count,
+        }
+    }
+
     #[test]
     fn unanalyzed_languages_line_names_go_as_not_analyzed() {
         assert_eq!(unanalyzed_languages_line(&[]), None);
-        let line = unanalyzed_languages_line(&[("Go", 2), ("Shell", 1)]).unwrap_or_default();
+        let line =
+            unanalyzed_languages_line(&[unanalyzed_entry("Go", 2), unanalyzed_entry("Shell", 1)])
+                .unwrap_or_default();
         assert!(
             line.starts_with("~ Unanalyzed languages: Go (2 file(s)), Shell (1 file(s));"),
             "{line}"
@@ -1790,7 +2166,10 @@ mod tests {
         assert!(line.contains("never as clean"), "{line}");
 
         // Mixed workspace: the Go half is named beside the detected Rust.
-        let lines = detected_languages_lines(&[LanguageId::Rust], &[("Go", 2)]);
+        let lines = detected_languages_lines(
+            &[detected_entry(LanguageId::Rust, true)],
+            &[unanalyzed_entry("Go", 2)],
+        );
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
             lines[0].starts_with("- Detected languages: rust"),
@@ -1800,10 +2179,22 @@ mod tests {
             lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
             "{lines:?}"
         );
-        let lines = detected_languages_lines(&[], &[("Go", 2)]);
+        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)]);
         assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
         assert_eq!(lines.len(), 2, "{lines:?}");
-        assert_eq!(detected_languages_lines(&[LanguageId::Rust], &[]).len(), 1);
+        assert_eq!(
+            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[]).len(),
+            1
+        );
+        // An adapter that was not compiled into this binary says so on the
+        // same line; the typed `adapter_available` field is what says it in JSON.
+        let unavailable = detected_language_entries(&[LanguageId::Perl], &[]);
+        assert!(!unavailable[0].adapter_available);
+        assert!(
+            detected_languages_lines(&unavailable, &[])[0].contains("[adapter not compiled]"),
+            "{:?}",
+            detected_languages_lines(&unavailable, &[])
+        );
     }
 
     #[test]
@@ -1999,6 +2390,7 @@ mod tests {
         let required_ok = add_language_runtime_probes(
             &root,
             &[LanguageId::TypeScript],
+            &[LanguageId::TypeScript],
             &mut required_report,
             false,
             |tool| {
@@ -2031,6 +2423,7 @@ mod tests {
         let mut optional_report = output::doctor::DoctorReport::new(&root.display().to_string());
         let optional_ok = add_language_runtime_probes(
             &root,
+            &[LanguageId::TypeScript],
             &[LanguageId::Rust],
             &mut optional_report,
             false,
@@ -2069,6 +2462,7 @@ mod tests {
             output::doctor::DoctorReport::new(&configured_only_root.display().to_string());
         let configured_only_ok = add_language_runtime_probes(
             &configured_only_root,
+            &[],
             &[LanguageId::Python],
             &mut configured_only_report,
             false,
@@ -2126,6 +2520,7 @@ mod tests {
             let ok = add_language_runtime_probes(
                 &root,
                 &[LanguageId::TypeScript],
+                &[LanguageId::TypeScript],
                 &mut report,
                 false,
                 missing_node,
@@ -2178,9 +2573,12 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         std::fs::write(root.join("test_pricing.py"), "import unittest\n")
             .map_err(|err| format!("write test file: {err}"))?;
-        let lines = detected_test_surface_lines(&root);
+        let lines = detect_test_surfaces(&root, &detect_languages(&root));
         assert!(
-            lines.iter().any(|line| line == "python: unittest"),
+            lines
+                .iter()
+                .any(|surface| surface.evidence == "python: unittest"
+                    && surface.framework.as_deref() == Some("unittest")),
             "expected python: unittest in {lines:?}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -2192,9 +2590,12 @@ mod tests {
             r#"{"name":"ky","scripts":{"test":"xo && npm run build && ava"}}"#,
         )
         .map_err(|err| format!("write package.json: {err}"))?;
-        let lines = detected_test_surface_lines(&root);
+        let lines = detect_test_surfaces(&root, &detect_languages(&root));
         assert!(
-            lines.iter().any(|line| line == "typescript: ava"),
+            lines
+                .iter()
+                .any(|surface| surface.evidence == "typescript: ava"
+                    && surface.framework.as_deref() == Some("ava")),
             "expected typescript: ava in {lines:?}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -2283,10 +2684,10 @@ mod tests {
 
     #[test]
     fn perl_exporter_lines_never_call_an_incompatible_binary_found() {
-        let incompatible = perl_exporter_lines(&PerlExporterProbe::Incompatible {
+        let incompatible = perl_exporter_lines(&exporter_typed(&PerlExporterProbe::Incompatible {
             bin: "/opt/bin/perllsp".to_string(),
             version: "perllsp 0.17.0".to_string(),
-        });
+        }));
         let first = incompatible.first().map(String::as_str).unwrap_or("");
         assert!(
             first.contains("does not accept `ripr-facts`")
@@ -2305,10 +2706,10 @@ mod tests {
                 && note.contains("not yet published"),
             "incompatible exporter must name the argv and the compatible exporter: {note:?}"
         );
-        let compatible = perl_exporter_lines(&PerlExporterProbe::Compatible {
+        let compatible = perl_exporter_lines(&exporter_typed(&PerlExporterProbe::Compatible {
             bin: "/opt/bin/perl-ripr-facts".to_string(),
             version: "perl-ripr-facts 0.1.0".to_string(),
-        });
+        }));
         assert!(
             compatible
                 .first()
@@ -2511,7 +2912,13 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
-        if doctor_json(&dir, output::doctor::DoctorProfile::Analysis).is_ok() {
+        if doctor_json(
+            &dir,
+            output::doctor::DoctorProfile::Analysis,
+            &detect_languages(&dir),
+        )
+        .is_ok()
+        {
             let _ = std::fs::remove_dir_all(&dir);
             return Err("invalid JSON doctor report unexpectedly passed".to_string());
         }
@@ -2555,6 +2962,21 @@ mod tests {
 
     // --- preview_language_enable_suggestions tests ---
 
+    /// The run's preview-enablement inputs, computed the way `doctor`
+    /// computes them, so a test exercises the shared probe rather than a
+    /// second derivation.
+    fn test_preview_enablement(root: &Path) -> Option<PreviewEnablement> {
+        preview_languages_to_enable(&detect_languages(root), &crate::config::load_for_root(root))
+    }
+
+    fn test_enablement_suggestions(root: &Path) -> Vec<String> {
+        preview_language_enable_suggestions(test_preview_enablement(root).as_ref())
+    }
+
+    fn test_enable_before_first_command(root: &Path) -> Option<String> {
+        enable_before_first_command_line(test_preview_enablement(root).as_ref())
+    }
+
     /// When TypeScript files are detected in a directory that has no ripr.toml
     /// (so the config defaults to `["rust"]`) AND the `lang-typescript` feature
     /// was compiled in, we expect a suggestion line containing the copy-paste
@@ -2568,8 +2990,8 @@ mod tests {
         std::fs::write(dir.join("index.ts"), "export const x = 1;\n")
             .map_err(|err| format!("write ts: {err}"))?;
         // No ripr.toml → defaults to enabled = ["rust"] only.
-        let suggestions = preview_language_enable_suggestions(&dir);
-        let before = enable_before_first_command_line(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
+        let before = test_enable_before_first_command(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             !suggestions.is_empty(),
@@ -2611,8 +3033,8 @@ mod tests {
             "[languages]\nenabled = [\"rust\", \"python\"]\n",
         )
         .map_err(|err| format!("write ripr.toml: {err}"))?;
-        let suggestions = preview_language_enable_suggestions(&dir);
-        let before = enable_before_first_command_line(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
+        let before = test_enable_before_first_command(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one combined tip: {suggestions:?}");
         assert!(
@@ -2640,8 +3062,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create dir: {err}"))?;
         std::fs::write(dir.join("src/index.js"), "export const x = 1;\n")
             .map_err(|err| format!("write js: {err}"))?;
-        let suggestions = preview_language_enable_suggestions(&dir);
-        let before = enable_before_first_command_line(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
+        let before = test_enable_before_first_command(&dir);
         assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
         assert!(
             suggestions[0].starts_with("- Tip: javascript files detected")
@@ -2662,9 +3084,10 @@ mod tests {
             "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
         )
         .map_err(|err| format!("write ripr.toml: {err}"))?;
-        let loaded = load_for_root(&dir).map(|config| config.languages().enabled().to_vec());
-        let after = preview_language_enable_suggestions(&dir);
-        let after_before = enable_before_first_command_line(&dir);
+        let loaded =
+            crate::config::load_for_root(&dir).map(|config| config.languages().enabled().to_vec());
+        let after = test_enablement_suggestions(&dir);
+        let after_before = test_enable_before_first_command(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             loaded,
@@ -2687,7 +3110,7 @@ mod tests {
             "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
         )
         .map_err(|err| format!("write Cargo.toml: {err}"))?;
-        let before = enable_before_first_command_line(&dir);
+        let before = test_enable_before_first_command(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(before, None);
         Ok(())
@@ -2708,7 +3131,7 @@ mod tests {
             "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
         )
         .map_err(|err| format!("write ripr.toml: {err}"))?;
-        let suggestions = preview_language_enable_suggestions(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             suggestions.is_empty(),
@@ -2729,7 +3152,7 @@ mod tests {
             "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
         )
         .map_err(|err| format!("write Cargo.toml: {err}"))?;
-        let suggestions = preview_language_enable_suggestions(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             suggestions.is_empty(),
@@ -2749,7 +3172,7 @@ mod tests {
         std::fs::write(dir.join("index.ts"), "export const x = 1;\n")
             .map_err(|err| format!("write ts: {err}"))?;
         // No ripr.toml → defaults to enabled = ["rust"] only.
-        let suggestions = preview_language_enable_suggestions(&dir);
+        let suggestions = test_enablement_suggestions(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             suggestions.is_empty(),

@@ -45,7 +45,7 @@ map is:
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
-| `ripr doctor --json` | `schema_version` | `0.3` |
+| `ripr doctor --json` | `schema_version` | `0.4` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
@@ -78,6 +78,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
@@ -284,6 +285,53 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
+
+### Doctor environment fields (schema `0.4`, #5214)
+
+The published schema for this document is
+[`schemas/ripr/doctor.schema.json`](../schemas/ripr/doctor.schema.json).
+The `schema_version`, `tool`, `ripr_version`, `ripr_build_msrv`, `root`,
+`profile`, `status`, `checks[]`, `runtime_probes[]`, `languages`, and `binary`
+fields keep their `0.3` meanings; `0.4` is additive on top of them.
+Schema `0.4` adds the environment facts the human `ripr doctor` screen already
+printed and `--json` did not, as typed fields. Both surfaces read one probe per
+run, so a fact cannot be printed for a user and missing from the machine
+document.
+
+| Field | Meaning |
+| --- | --- |
+| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it). Omitted when no marker was found. |
+| `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
+| `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
+| `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`. The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
+| `cache` | `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, and `size_display`. `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. |
+| `test_surfaces[]` | The detected test surface per language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). |
+| `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
+
+`languages` keeps its own meaning and is **not** the same set as
+`detected_languages`: `languages` is what `ripr.toml` enables, while
+`detected_languages` is what the root contains. A repository with a
+`pyproject.toml` and no Python in `[languages] enabled` therefore reports
+`detected_languages` containing `python` with `enabled: false` — the exact state
+the human screen's enablement tip exists to warn about. Conflating the two would
+tell a consumer that `ripr check` analyzes source it skips.
+
+Schema `0.4` also **removes** the top-level `sections` array that `0.3`
+published. Its only mutator and only reader were `#[cfg(test)]`, so every
+released document carried `"sections": []` — a field structurally incapable of
+carrying information. Populating it would have meant giving a text blob a
+production writer that the typed fields above now replace; removing it breaks no
+consumer, because the array never held anything.
+
+Known limitations and the start-here guidance block remain human-only. They are
+static product prose and a rendered recommendation, not observations of this
+root or this host, so typing them would duplicate documentation the CLI help and
+this document already own. The larger convergence of doctor's language and
+guidance surfaces stays with #2615 and #1614.
+
+Config parse errors stay redacted on this surface (RIPR-SPEC-0007): the
+`config` check's `evidence` keeps only the first line of the `toml` error, and no
+environment field above reproduces `ripr.toml` source text.
 
 `ripr cache status --json` (schema `0.1`) prints one object with
 `schema_version`, `cache_dir` (the inspected directory), `status`,
