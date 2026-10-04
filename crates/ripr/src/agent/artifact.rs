@@ -1973,7 +1973,7 @@ mod tests {
         }
         let parent = temporary_git_root()?;
         let _owned = OwnedRoot(parent.clone());
-        let result = (|| -> Result<(), String> {
+        (|| -> Result<(), String> {
             let root = parent.join("team\\repo 'quoted'");
             std::fs::create_dir(&root).map_err(|error| error.to_string())?;
             crate::testing::fixture_git::fixture_git_ok(&root, &["init"])?;
@@ -2025,8 +2025,7 @@ mod tests {
             assert!(refusal.contains("repository root") && refusal.contains("does not match"));
             assert_eq!(raw.as_bytes(), bytes_before);
             Ok(())
-        })();
-        result
+        })()
     }
 
     #[test]
