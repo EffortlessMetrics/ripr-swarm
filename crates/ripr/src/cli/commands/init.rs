@@ -6,7 +6,7 @@ use crate::config::{CONFIG_FILE_NAME, generated_init_config};
 use crate::output;
 use std::path::{Path, PathBuf};
 
-use super::init_workflow::generated_github_actions_workflow;
+use super::init_workflow::{generated_github_actions_workflow, workflow_install_version};
 
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -23,6 +23,19 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     let plan = init_plan(&options)?;
     if let Some(warning) = unanalyzed_root_warning(&options.root) {
         eprintln!("{warning}");
+    }
+    // #5208: an unreleased generator cannot pin itself — that version does
+    // not exist on crates.io, so the install step would fail. The workflow
+    // pins the latest release instead; say so loudly, on stderr like the
+    // root warning, in both dry-run and real runs.
+    if options.ci.is_some() {
+        let generator = env!("CARGO_PKG_VERSION");
+        let pinned = workflow_install_version(generator);
+        if pinned != generator {
+            eprintln!(
+                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, refresh with `ripr init --ci github --force` and review the diff before committing."
+            );
+        }
     }
     if options.dry_run {
         print_init_dry_run(&plan);
@@ -93,7 +106,7 @@ struct InitTarget {
 fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if !options.root.is_dir() {
         return Err(format!(
-            "init root {} is not a directory",
+            "init root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
     }
@@ -348,7 +361,9 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(format!("unknown init --ci provider {value:?}")),
+        _ => Err(format!(
+            "unknown init --ci provider {value:?}. Accepted: github."
+        )),
     }
 }
 
@@ -393,12 +408,7 @@ fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
     use crate::cli::commands_options::InitCi;
-    use crate::output::first_pr::{
-        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-        REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// #4378: on Windows `ripr init --dry-run --root <drive>:/Temp/demo`
@@ -444,31 +454,18 @@ mod tests {
             "the workflow must pin bash for every job:\n{workflow}"
         );
         assert!(
-            workflow.contains("gate_args=("),
-            "bash-only syntax the pin protects"
+            workflow.contains("<<< \"$operation\""),
+            "bash-only syntax (a here-string) the pin protects"
         );
     }
 
-    /// The workflow carries the shared proof-path labels (#3906) inside
-    /// single-quoted shell strings, so none may hold a single quote, and
-    /// every placeholder must be substituted.
+    /// Every render-time placeholder is substituted; the shared proof-path
+    /// labels (#3906) now render in `ripr reports ci-summary`, not the
+    /// workflow text.
     #[test]
-    fn generated_workflow_substitutes_shared_labels_into_single_quoted_strings() {
-        for text in [
-            REPAIR_AFTER_PHASE_LABEL,
-            REPAIR_AFTER_PHASE_STEP,
-            MANUAL_VERIFY_LABEL,
-            MANUAL_RECEIPT_LABEL,
-            VERIFY_AFTER_EDIT_LABEL,
-            RECEIPT_AFTER_VERIFY_LABEL,
-            NO_RECEIPT_BEFORE_REPAIR,
-        ] {
-            assert!(!text.contains('\''), "{text}");
-        }
+    fn generated_workflow_substitutes_every_placeholder() {
         let workflow = generated_github_actions_workflow();
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
-        assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
-        assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
     }
 
     /// #4726: the gate reads PR labels from `$GITHUB_EVENT_PATH`, so a run
@@ -479,7 +476,7 @@ mod tests {
     fn generated_workflow_reruns_when_pull_request_labels_change() -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
         assert!(
-            workflow.contains("\"$GITHUB_EVENT_PATH\" > target/ci/labels.json"),
+            include_str!("ci_packet.rs").contains("event.pointer(\"/pull_request/labels\")"),
             "labels are no longer read from the event payload; revisit #4726"
         );
         let on_block: Vec<&str> = workflow
@@ -512,23 +509,59 @@ mod tests {
         Ok(())
     }
 
-    /// W5: an unpinned `cargo install ripr` installs whatever release is
-    /// latest, so CI could run an older ripr that lacks the commands this
-    /// workflow calls, or change behavior silently on a later release. The
-    /// install pins the generating binary's own version and keeps `--locked`.
+    /// W5: an unpinned install takes whatever release is latest, so CI
+    /// could run an older ripr that lacks the commands this workflow calls,
+    /// or change behavior silently on a later release. Both install routes,
+    /// the prebuilt release download and the `cargo install` fallback, pin
+    /// an exact version; the fallback keeps `--locked`. #5208: released
+    /// generators pin themselves; unreleased generators pin the latest
+    /// release (their own version would neither download nor install),
+    /// with a stderr warning at the `init` call site.
     #[test]
-    fn generated_workflow_pins_the_generating_ripr_version() {
+    fn generated_workflow_pins_a_resolvable_ripr_version() {
         let workflow = generated_github_actions_workflow();
-        let pinned = format!(
-            "run: cargo install ripr --version {} --locked",
-            env!("CARGO_PKG_VERSION")
-        );
+        let version = workflow_install_version(env!("CARGO_PKG_VERSION"));
+        let download = format!("          version={version}\n");
+        assert!(workflow.contains(&download), "missing {download}");
+        let pinned = format!("cargo install ripr --version {version} --locked");
         assert!(workflow.contains(&pinned), "missing {pinned}");
         let installs: Vec<&str> = workflow
             .lines()
-            .filter(|line| line.contains("run: cargo install"))
+            .filter(|line| line.contains("cargo install ripr"))
+            .filter(|line| !line.trim_start().starts_with('#'))
             .collect();
-        assert_eq!(installs.len(), 1, "{installs:?}");
+        assert_eq!(installs, [format!("            {pinned}")]);
+    }
+
+    /// The install downloads the release archive for the runner and refuses
+    /// a mismatched checksum instead of falling back to a compile; only a
+    /// runner with no archive, or a failed download, takes `cargo install`.
+    #[test]
+    fn generated_workflow_installs_the_checksummed_release_binary() {
+        let workflow = generated_github_actions_workflow();
+        let install = workflow
+            .split("\n\n")
+            .find(|block| block.contains("      - name: Install ripr\n"))
+            .unwrap_or_default();
+        for needle in [
+            "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
+            "macOS-ARM64) target=aarch64-apple-darwin ;;",
+            r#"asset="ripr-server-v$version-$target.tar.gz""#,
+            r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
+            r#"curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"; then"#,
+            r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
+            r#"echo "$bin_dir" >> "$GITHUB_PATH""#,
+        ] {
+            assert!(install.contains(needle), "install step missing {needle}");
+        }
+        // The mismatch branch exits before the `else` that compiles.
+        let mismatch = install.find("does not match its published SHA-256");
+        let exit = install.find("exit 1");
+        let fallback = install.find("cargo install ripr");
+        assert!(
+            mismatch < exit && exit < fallback && mismatch.is_some(),
+            "a checksum mismatch must fail before the cargo fallback"
+        );
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove

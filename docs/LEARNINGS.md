@@ -3,6 +3,78 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
+
+Pinned `rmcp` 3.5.0 answers pre-init `ping` in the handshake loop (any
+params, including handshake `_meta`) with `{}`. After `initialize`, the
+same SDK classifies a ping whose `params._meta` names `2026-07-28` as a
+discovery-lifecycle request and returns `-32601` with message `"ping"`.
+Empty-params ping on that session still succeeds, so that control is not
+proof. Route initialize-session ping from the negotiated peer version
+(`has_initialize`), not `RequestContext::protocol_version()` — that helper
+prefers request `_meta` over the session. Do not change
+`server/discover` ping rejection. Do not treat this as a `#5267` pre-init
+repair.
+
+## 2026-10-04: `help --json` must project the typed 0/2/3 exit contract (#5066)
+
+`stop_states` is free-text. An orchestrator that branches on process status
+cannot recover that `ripr check` exits 0 on `exposed` findings, that
+`gate evaluate` maps `config_error` to 2 and `blocked` to 3, or that
+standalone `agent verify` refuses with exit 3 and empty stdout. Put a closed
+`exit` object on every command row, pin the orchestrator-branching rows to
+the implemented `CommandError` / `gate evaluate` mapping, and bump
+`HELP_JSON_SCHEMA_VERSION`. The `config_error` / `blocked` tokens are owned
+by `output::gate` (`top_level_status`); the CLI exit map consumes those
+bytes. `ExitJson::GateEvaluate` still declares those names as fixed serde
+keys; a compile-time assertion requires the keys to match the producer
+tokens. Do not treat a limitation sentence or a "non-zero" stop-state as
+the contract.
+
+## 2026-10-04: `help --json` must be named and self-reported (#5266)
+
+A machine-only route that human `ripr help` does not name is undiscoverable.
+`json_support` is the catalog's own authority: if `ripr help --json` parses
+and emits the document, `cmd:help` cannot report `json_support: false` or
+claim it prints text only. #5398 landed the default-screen `More:` line
+and `json_support: true`. That is not enough: `ripr help --all` was still
+a discovery dead end, and naming the route next to "global flags accepted
+in any position" is a second honesty hole because `help --json` rejects
+`-v`/`--verbose`. Pin the `More:` line, the `--all` header, and the
+projected catalog row together, and qualify the adjacent `-v` claim with
+the same usage phrase the parser already emits.
+## 2026-10-04: A recorded timeout is not process-group-gone (#5382)
+
+`capture_output_with_timeout` used to set `timed_out: true` after the first
+Unix group-kill and a bounded pipe drain. Drain-truncated output proves the
+helper returned, not that every group member died. A descendant can miss the
+first `kill -KILL -- -<pgid>` by forking around it (GNU `time` starting `ripr`
+is the concrete case), keep running, and skew later timings on a shared runner.
+
+After reaping the direct child, the timeout path must confirm the process group
+is empty (re-sending SIGKILL while a short budget remains) or fail closed that
+it could not. Callers may record `timed_out` only when that confirmation
+succeeds. Do not treat Job Object containment on Windows as covering this Unix
+group-confirm gap, and do not fold the check into scale-cliff or another
+caller: the shared wait/timeout owner is the authority.
+
+On Linux, a complete `/proc` scan of every readable numeric pid is the member
+list so SIGKILL zombies are not "still running" and a live other-uid descendant
+is not hidden behind a same-uid zombie. An empty scan is not gone by itself:
+`kill -0` ESRCH (or a successful probe of a zombie) may confirm empty, while
+EPERM or an unreadable/unparseable `stat` must not. The probe runs under
+`LC_ALL=C` so ESRCH is English "No such process". A stdout-to-file capture must
+delete its temp file when confirmation fails.
+
+## 2026-10-03: Windows `where` is not a PATH probe (#5103)
+
+`where prove` searches the process current directory first. Doctor's Perl
+runner line printed "prove available on PATH" for a checkout `prove.cmd` that
+was never on PATH. Walk PATH entries only; skip empty and `.` components (cwd
+aliases). Keep a repo-local `prove.cmd` control that must stay missing, and a
+PATH `prove` control that must still count. Do not spawn `which`/`where` from
+the checkout cwd, and do not treat a cwd file as the displayed exporter path.
+
 ## 2026-10-03: source-subject stamps must not trim path identity (#5128)
 
 `subject_relative_path` used to `trim()` a named file and then reject leftover
@@ -18,6 +90,36 @@ slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
 
+## 2026-10-03: record-count sharding is not a byte bound (#4999)
+
+`RIPR_REPO_SEAM_CACHE_LIMIT` / `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` cap
+how many `ClassifiedSeam` records share one file. They do not cap encoded
+bytes. On `origin/main` `3fb4f1675` the sharded path still did `chunk.to_vec()`
+and `codec::encode(&_shard)` into a full `Vec<u8>`; the single-entry path did
+the same two representation classes with `seams.to_vec()`. That is the
+`cache_store` amplification previously OOM-killed around #4291 (~5.2 GB cache,
+~11.7 GB anonymous RSS). Record-count sharding can still emit one huge shard
+when records are large.
+
+The write-side repair is borrowed serde plus a bounded IO buffer into the
+existing atomic temp-file protocol, with an encoded-byte ceiling on both the
+single-entry and sharded paths. Size planning may use a same-length
+placeholder digest so planning does not retain a second encoded body.
+Generation-atomic shard names keep a failed replacement from mixing
+manifests. Load prefers any non-`Miss` single entry over a sharded
+manifest, and `publish_single_entry` currently leaves the previous
+sharded manifest in place. A parked restore therefore cannot treat
+`manifest.exists()` as “newer shards”: that leftover file is not a
+newer generation. Compare the parked-at snapshot; restore when it is
+unchanged, and refuse restore when the bytes changed or the file is
+unreadable. Load/decode auxiliary memory is a separate claim (#5124).
+A passing record-count test is not RSS proof; host-scoped 10k/self-dogfood
+store-phase RSS stays `not_established` until #3794 observes it. After
+#5291, owned envelopes serialize `classified_seams` through
+`related_test_table`. Borrowed store envelopes must use the same adapter
+(`serialize_with = related_test_table::serialize`); a sequence body is
+load-incompatible even when checksums are well-formed.
+
 ## 2026-10-03: `Path::is_dir()` is not a missing-path probe (#5101)
 
 `Path::is_dir()` is false for a missing path and for an existing file. Doctor
@@ -29,6 +131,28 @@ say "does not exist"; a symlink to a directory must still pass. A live name
 whose follow fails with a non-`NotFound` error (symlink into an unreadable
 directory) is unreadable, not a non-directory. Do not give MissingRoot's
 Directory re-classify arm the missing-path sentence.
+
+## 2026-10-03: typed timeouts must survive the current consumer path (#4859)
+
+Git timeout classification belongs to the crate-internal `CoreError` variant;
+`Message` never acquires that meaning from its Display text. Structured context
+preserves the family until the public String boundary. The current worktree
+check returns output, Rust diagnostic origins, and consumed source commitments
+and observes producer progress. Carry the typed error through that tuple route
+and its open-path variant; replacing it with an older check adapter discards
+landed behavior. Committed-source reads retain the typed family through context.
+
+Control placement matters: wrapped timeout and lookalike Message tests invoke
+the production LSP error decision before the renderer. The framed server control
+uses numeric `gitTimeoutMs = 0` with explicit base `HEAD`, then restores the normal
+deadline and requires a nonempty recovery. Preserve spawned-timeout repair
+guidance: `--git-timeout SECS` or `RIPR_GIT_TIMEOUT=<seconds>` for CLI runs
+(`0 disables it`), and the editor session `gitTimeoutMs` initialization option.
+Editor zero remains the explicit fail-fast stimulus in the framed control.
+Fixed root-probe guidance has its own escape hatch; bounded cat-file session
+deadlines, cancellation Display, and terminate/reap behavior remain independent
+compatibility obligations. Source inspection and a patch
+application receipt establish bytes, not compilation or behavioral execution.
 
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
@@ -2537,3 +2661,36 @@ Treat the retired commands in those entries as historical record only — do not
 copy them into new playbooks, and replay the premise check with
 `git fetch origin`, `git status --short`, `gh issue list --state open`,
 and `gh pr list --state open` instead.
+
+## 2026-10-04: A shallow glob manufactures a false capability claim (Windows PowerShell)
+
+While implementing #5213 I searched the vendored `winsafe-0.0.29` crate with
+`Select-String -Path "$w/src/**/*.rs"` and concluded that Windows had no safe
+per-process CPU or memory counter, publishing that claim in a module doc, an
+unavailable-state enum, and `docs/OUTPUT_SCHEMA.md`. It was false.
+`winsafe-0.0.29/src/kernel/handles/hprocess.rs:115` has
+`HPROCESS::GetProcessTimes() -> SysResult<(FILETIME, FILETIME, FILETIME, FILETIME)>`
+and `src/psapi/handles/hprocess.rs:126` has
+`HPROCESS::GetProcessMemoryInfo() -> SysResult<PROCESS_MEMORY_COUNTERS_EX>`.
+Both are safe `fn`; the `unsafe` lives inside `winsafe`.
+
+The cause was the search, not the crate. On Windows PowerShell, `**` in a
+`-Path` argument is not recursive, so `src/**/*.rs` expanded to one directory
+level and read only `src/kernel/ffi.rs` and `src/psapi/ffi.rs` - the raw
+extern declarations - while skipping every `handles/` wrapper. The evidence
+looked like a thorough sweep and supported the opposite of the truth.
+
+Durable rules:
+
+- A capability-absence claim needs a search that provably covered the tree.
+  `Get-ChildItem -Recurse -File | Select-String` does; a `**` glob passed to
+  `-Path` does not. On PowerShell, use `-Path (Get-ChildItem -Recurse -Filter
+  '*.rs').FullName` or `git grep` rather than a shell glob.
+- "The grep found no implementation" and "the API does not exist" are
+  different claims. Only the second may reach published documentation.
+- When a review or a later read contradicts a published absence claim, fix the
+  claim before optimizing the explanation of it. An unreachable enum variant
+  plus docs describing it is the same defect one layer down.
+- Prefer proving a negative twice on two independent paths - e.g. the safe
+  wrapper listing and a compile attempt that uses it - before writing that a
+  capability is unavailable.

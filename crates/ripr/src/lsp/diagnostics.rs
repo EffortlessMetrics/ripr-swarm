@@ -18,6 +18,7 @@ use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
+use crate::core_error::CoreError;
 #[cfg(test)]
 use crate::domain::RelatedTest;
 use crate::domain::{DiagnosticWitness, ExposureClass, Finding, LanguageId, LanguageStatus};
@@ -117,21 +118,32 @@ pub(super) fn canonicalize_diagnostic_batches(
 /// the CLI/report alignment layer. Findings without that identity remain
 /// individual report items; LSP must not invent a semantic grouping key.
 pub(super) fn canonical_finding_groups(findings: &[Finding]) -> Vec<(Finding, Vec<Finding>)> {
-    let mut grouped = BTreeMap::<String, Vec<Finding>>::new();
+    canonical_group_members(findings)
+        .into_iter()
+        .map(|(primary, members)| (primary.clone(), members.into_iter().cloned().collect()))
+        .collect()
+}
+
+/// Borrowing form of [`canonical_finding_groups`]: the same grouping key,
+/// primary selection, and ordering without cloning the findings, so count
+/// and class summaries can read the same group structure the listing and
+/// publishing paths see.
+pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Vec<&Finding>)> {
+    let mut grouped = BTreeMap::<String, Vec<&Finding>>::new();
     for finding in findings {
         let key = finding
             .canonical_gap
             .as_ref()
             .map(|gap| format!("canonical:{}", gap.id))
             .unwrap_or_else(|| format!("raw:{}", finding.id));
-        grouped.entry(key).or_default().push(finding.clone());
+        grouped.entry(key).or_default().push(finding);
     }
 
     grouped
         .into_values()
         .filter_map(|mut group| {
-            group.sort_by_key(finding_primary_sort_key);
-            let primary = group.first().cloned()?;
+            group.sort_by_key(|finding| finding_primary_sort_key(finding));
+            let primary = *group.first()?;
             Some((primary, group))
         })
         .collect()
@@ -203,6 +215,11 @@ pub(super) fn add_canonical_group_data(
                         "line": test.line,
                         "oracle_kind": test.oracle_kind.as_str(),
                         "oracle_strength": test.oracle_strength.as_str(),
+                        "miss": test.miss.map(|miss| miss.as_str()),
+                        "why": crate::output::related_test_miss::related_test_miss_reason(
+                            test,
+                            &finding.activation.missing_discriminators,
+                        ),
                     }))
                     .collect::<Vec<_>>(),
                 "evidence": finding.evidence,
@@ -805,34 +822,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             progress_sink,
         ) {
             Ok(pair) => pair,
-            // #2303: a git invocation that exceeded the configured cooperative
-            // deadline commits a limited snapshot (zero findings, one typed
-            // failed `diff` outcome) instead of dropping the refresh with no
-            // snapshot. ONLY the named timeout error converts; every other
-            // analysis failure keeps the pre-#2303 no-snapshot path.
-            Err(err) if crate::git::is_git_invocation_timeout(&err) => {
-                return Ok(git_timeout_limited_diagnostics(
+            Err(err) => {
+                return workspace_analysis_error_diagnostics(
                     root,
                     config,
                     defer_seam_inventory,
                     err,
-                ));
+                );
             }
-            // #2299: a diff that exceeds the fail-closed scope guard commits a
-            // limited snapshot carrying ONE workspace-scoped warning diagnostic
-            // (plus the typed failed `diff` outcome) instead of dropping the
-            // refresh with no snapshot, so the editor user sees the limitation
-            // in-surface. ONLY the named guard error converts; the CLI keeps the
-            // non-zero exit and unchanged error text.
-            Err(err) if crate::analysis::is_diff_scope_oversized(&err) => {
-                return Ok(oversized_diff_limited_diagnostics(
-                    root,
-                    config,
-                    defer_seam_inventory,
-                    err,
-                ));
-            }
-            Err(err) => return Err(format!("workspace analysis failed: {err}")),
         };
     let root = output.root;
     let base = output.base;
@@ -1185,15 +1182,48 @@ pub(super) fn workspace_diagnostics_with_config_and_cancellation(
 /// route. The shared run-status derivation turns the degraded component into
 /// `limited` (no new run-status string). Pure so the conversion contract is
 /// testable without a hung git.
+fn workspace_analysis_error_diagnostics(
+    root: &Path,
+    config: &LspAnalysisConfig,
+    defer_seam_inventory: bool,
+    error: CoreError,
+) -> Result<WorkspaceDiagnostics, String> {
+    // #2303 / #4859: the current tuple-bearing check reaches this guard
+    // before any Display boundary. Context preserves the timeout family.
+    if error.is_git_invocation_timeout() {
+        return Ok(git_timeout_limited_diagnostics(
+            root,
+            config,
+            defer_seam_inventory,
+            error,
+        ));
+    }
+    // Oversized-diff and cancellation retain their existing String owners.
+    let message = error.to_string();
+    if crate::analysis::is_diff_scope_oversized(&message) {
+        return Ok(oversized_diff_limited_diagnostics(
+            root,
+            config,
+            defer_seam_inventory,
+            message,
+        ));
+    }
+    Err(error.with_context("workspace analysis failed").into())
+}
+
 fn git_timeout_limited_diagnostics(
     root: &Path,
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
-    message: String,
+    error: CoreError,
 ) -> WorkspaceDiagnostics {
+    let kind = error
+        .git_invocation_timeout_kind()
+        .unwrap_or(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX);
+    let message = error.to_string();
     let component_outcomes = vec![ComponentOutcome::failed(
         AnalysisComponent::Diff,
-        crate::git::GIT_INVOCATION_TIMEOUT_PREFIX,
+        kind,
         message,
         false,
         "retry ripr.refreshDiagnostics",
@@ -1615,11 +1645,13 @@ fn git_timeout_error_converts_to_a_committed_limited_snapshot() -> Result<(), St
     // replacement for the pre-#2303 no-snapshot path. Pure conversion: no
     // hung git required.
     let config = LspAnalysisConfig::default();
-    let message = "git_invocation_timeout: git -C /workspace [\"diff\", \"--unified=0\", \
-                   \"origin/main...HEAD\"] exceeded the 30000ms deadline (process terminated)"
-        .to_string();
+    let error = CoreError::git_invocation_timeout(
+        "git -C /workspace [\"diff\", \"--unified=0\", \"origin/main...HEAD\"]",
+        30000,
+        true,
+    );
     let diagnostics =
-        git_timeout_limited_diagnostics(Path::new("/workspace"), &config, false, message);
+        workspace_analysis_error_diagnostics(Path::new("/workspace"), &config, false, error)?;
 
     if !diagnostics.snapshot.findings.is_empty() {
         return Err("a timed-out diff load must commit zero findings".to_string());
@@ -1697,23 +1729,97 @@ fn git_timeout_error_converts_to_a_committed_limited_snapshot() -> Result<(), St
 #[cfg(test)]
 #[test]
 fn non_timeout_analysis_errors_are_not_converted() -> Result<(), String> {
-    // #2303: the conversion guard matches ONLY the named timeout prefix; an
-    // ordinary analysis failure (missing base ref, parse error) keeps the
-    // pre-#2303 no-snapshot `Err` path.
+    // #2303 / #4859: the conversion guard matches ONLY the typed timeout
+    // variant; a lookalike Display prefix, wrapped Message, or ordinary
+    // analysis failure keeps the pre-#2303 no-snapshot `Err` path.
     for lookalike in [
-        "workspace analysis failed: git diff failed: fatal: ambiguous argument",
-        "agit_invocation_timeout: forged prefix must not match",
-        "could not resolve a default base (no origin/main, origin/master, or local main/master found)",
+        CoreError::message("workspace analysis failed: git diff failed: fatal: ambiguous argument"),
+        CoreError::message("agit_invocation_timeout: forged prefix must not match"),
+        CoreError::message("analysis_cancelled: Superseded"),
+        CoreError::message("git_invocation_timeout: forged").with_context("outer"),
+        CoreError::message("git_invocation_timeout: forged prefix must not match"),
+        CoreError::message(
+            "could not resolve a default base (no origin/main, origin/master, or local main/master found)",
+        ),
     ] {
-        if crate::git::is_git_invocation_timeout(lookalike) {
+        if workspace_analysis_error_diagnostics(
+            Path::new("/workspace"),
+            &LspAnalysisConfig::default(),
+            false,
+            lookalike.clone(),
+        )
+        .is_ok()
+        {
             return Err(format!("non-timeout error matched the guard: {lookalike}"));
         }
     }
-    if !crate::git::is_git_invocation_timeout(
-        "git_invocation_timeout: git -C /x [\"diff\"] exceeded the 1ms deadline (process terminated)",
-    ) {
+    let named = CoreError::git_invocation_timeout("git -C /x [\"diff\"]", 1, true);
+    if !named.is_git_invocation_timeout() {
         return Err("the named timeout error must match the guard".to_string());
     }
+    let wrapped = named.clone().with_context("workspace analysis failed");
+    if !wrapped.is_git_invocation_timeout() {
+        return Err("wrapping a typed timeout must not lose the kind".to_string());
+    }
+    if wrapped
+        .to_string()
+        .starts_with(crate::core_error::GIT_INVOCATION_TIMEOUT_KIND)
+    {
+        return Err(
+            "wrapped Display must not start with the legacy prefix; prefix matching would miss it"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn wrapped_timeout_still_converts_to_the_named_kind() -> Result<(), String> {
+    // Control 4: structured context around a real timeout must not lose
+    // the #2811 kind. Prefix matching on Display would miss this case.
+    let config = LspAnalysisConfig::default();
+    let error = CoreError::git_invocation_timeout("git -C /workspace [\"diff\"]", 30000, true)
+        .with_context("workspace analysis failed");
+    let diagnostics =
+        workspace_analysis_error_diagnostics(Path::new("/workspace"), &config, false, error)?;
+    let Some(outcome) = diagnostics.snapshot.component_outcomes.first() else {
+        return Err("expected the failed diff outcome".to_string());
+    };
+    if outcome.kind != Some("git_invocation_timeout") {
+        return Err(format!(
+            "wrapped timeout must still project git_invocation_timeout, got {:?}",
+            outcome.kind
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn real_git_stderr_timeout_words_do_not_convert_to_a_snapshot() -> Result<(), String> {
+    let root = std::env::current_dir().map_err(|error| error.to_string())?;
+    let args = ["cat-file", "-t", "git_invocation_timeout: forged deadline"];
+    let output = crate::git::run_git_output_with_deadline(&root, &args, None)?;
+    assert!(
+        !output.status.success(),
+        "the control must be a nonzero Git exit"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("git_invocation_timeout"),
+        "Git stderr must carry the lookalike words"
+    );
+    let error = match crate::git::run_git(&root, &args) {
+        Err(error) => error,
+        Ok(_) => return Err("the invalid Git object unexpectedly succeeded".into()),
+    };
+    assert!(matches!(&error, CoreError::Message(_)));
+    let result =
+        workspace_analysis_error_diagnostics(&root, &LspAnalysisConfig::default(), false, error);
+    assert!(
+        result.is_err(),
+        "stderr words must not commit a timeout snapshot"
+    );
     Ok(())
 }
 
@@ -2503,6 +2609,60 @@ fn related_information_for_finding(
     root: &Path,
     finding: &Finding,
 ) -> Option<Vec<DiagnosticRelatedInformation>> {
+    let mut related = fix_site_related_information(root, finding)
+        .into_iter()
+        .collect::<Vec<_>>();
+    related.extend(examined_test_related_information(root, finding));
+    (!related.is_empty()).then_some(related)
+}
+
+/// Editor rows for the first examined tests that miss the change (#5344), so
+/// a click opens the test the finding is about and the message says why it
+/// does not catch the change.
+const MAX_EXAMINED_TEST_ROWS: usize = 3;
+
+fn examined_test_related_information(
+    root: &Path,
+    finding: &Finding,
+) -> Vec<DiagnosticRelatedInformation> {
+    let mut seen = Vec::new();
+    finding
+        .related_tests
+        .iter()
+        // One row per test: a test with several assertion rows is one place
+        // to open.
+        .filter(|test| {
+            let key = (&test.name, &test.file, test.line);
+            let fresh = !seen.contains(&key);
+            if fresh {
+                seen.push(key);
+            }
+            fresh
+        })
+        .filter_map(|test| {
+            let why = crate::output::related_test_miss::related_test_miss_reason(
+                test,
+                &finding.activation.missing_discriminators,
+            )?;
+            let uri = file_uri_for_path(&absolute_join(root, &test.file)).ok()?;
+            Some(DiagnosticRelatedInformation {
+                location: Location {
+                    uri,
+                    range: crate::lsp::position::line_span_range(
+                        test.line.saturating_sub(1) as u32,
+                    ),
+                },
+                message: format!("Related test `{}` misses: {why}", test.name),
+            })
+        })
+        .take(MAX_EXAMINED_TEST_ROWS)
+        .collect()
+}
+
+fn fix_site_related_information(
+    root: &Path,
+    finding: &Finding,
+) -> Option<DiagnosticRelatedInformation> {
     let witness = DiagnosticWitness::from_finding(finding)?;
     let fix_site = witness.fix_site.as_ref()?;
     let path = absolute_join(root, Path::new(&fix_site.file));
@@ -2516,7 +2676,7 @@ fn related_information_for_finding(
         .current_oracle
         .as_deref()
         .map_or_else(String::new, |oracle| format!(": {oracle}"));
-    Some(vec![DiagnosticRelatedInformation {
+    Some(DiagnosticRelatedInformation {
         location: Location {
             uri,
             range: crate::lsp::position::line_span_range(line),
@@ -2525,7 +2685,7 @@ fn related_information_for_finding(
             "Fix site: related test `{}` has {} {} oracle{}",
             fix_site.test_name, fix_site.oracle_strength, fix_site.oracle_kind, oracle
         ),
-    }])
+    })
 }
 
 #[cfg(test)]
@@ -3801,6 +3961,7 @@ mod seam_diagnostic_tests {
             oracle_strength: crate::domain::OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -3818,6 +3979,7 @@ mod seam_diagnostic_tests {
             oracle_strength: crate::domain::OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -4128,6 +4290,7 @@ mod diagnostic_policy_tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -4179,6 +4342,7 @@ mod diagnostic_policy_tests {
                 oracle_strength: OracleStrength::Strong,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             });
             finding
         };
@@ -4922,6 +5086,7 @@ mod lsp_next_step_parity_tests {
                 oracle: Some("expect(result).toBeGreaterThan(50)".to_string()),
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
