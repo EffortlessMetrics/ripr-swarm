@@ -414,11 +414,12 @@ The repair-start, targeted-test, assertion, and related-test actions are
 conditional. `Start repair: copy repair command` is shown only when
 `ripr agent repair` would accept the seam: it passes the fail-closed
 repair-packet flip (RIPR-SPEC-0087 §8) and its recommended test file is a test
-surface. Any other seam (for example, one whose oracle path is cross-language
-unresolved, or one whose only related test is an inline `#[cfg(test)]` module
-in the source file) gets no repair start in the action list, hover, or
-evidence-context packet, and the remaining handoff, verify, and receipt
-actions stay as they were.
+surface, or is the seam's own source file with exactly one governed inline
+`#[cfg(test)]` module that the repair is confined to. Any other seam (for
+example, one whose oracle path is cross-language unresolved, or one whose
+related test is in a source file with no single governed inline test module)
+gets no repair start in the action list, hover, or evidence-context packet,
+and the remaining handoff, verify, and receipt actions stay as they were.
 `Write targeted test: copy brief` is shown only when the seam has related-test
 context or a concrete assertion suggestion.
 `Write targeted test: copy suggested assertion` is shown only when the seam has

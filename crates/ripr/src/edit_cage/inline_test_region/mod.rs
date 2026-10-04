@@ -6,14 +6,8 @@
 //! is consumed from [`crate::analysis::cfg_predicates`]; this module does not
 //! add a second lexical detector.
 
+mod attempt;
 mod observe;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "staged inline-test region cage; #4784 and RepairAttempt consume it next"
-    )
-)]
 mod validate;
 
 use std::io::Read as _;
@@ -24,6 +18,10 @@ use sha2::{Digest, Sha256};
 
 use super::{canonical_repository_root, normalize_repo_relative_path};
 
+pub(crate) use attempt::{
+    InlineTargetCopies, InlineTestRegionBaseline, InlineTestRegionObservation,
+    capture_attempt_inline_region, observe_attempt_inline_region, read_attempt_inline_target,
+};
 #[cfg(test)]
 pub(crate) use validate::validate_inline_test_region_edit;
 
@@ -315,5 +313,7 @@ pub(crate) fn digest_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+#[cfg(test)]
+mod attempt_tests;
 #[cfg(test)]
 mod tests;

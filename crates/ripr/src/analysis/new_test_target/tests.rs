@@ -866,3 +866,49 @@ fn parent_dir_escape_is_path_unsafe() {
     let admission = admit_from_source("../src/lib.rs", private_owner_with_inline_tests());
     assert_eq!(admission.blocker, Some(NewTestProposalBlocker::PathUnsafe));
 }
+
+/// #5210: the `cargo new --lib` shape. A public crate-root owner with no
+/// `tests/` directory keeps the Integration layout blocker as its admission,
+/// and its weak existing test stays the selected target, yet the owner file's
+/// one governed inline module is still recorded for the routability
+/// predicate (asserted end to end in `output::evidence_record` tests).
+#[test]
+fn owner_inline_region_rides_with_an_existing_target_in_the_same_file() -> Result<(), String> {
+    let public_owner = existing_related_test_source().replacen(
+        "fn discounted_total",
+        "pub fn discounted_total",
+        1,
+    );
+    let (_root, classified) = library_case("owner-inline-region", &public_owner)?;
+    let entry = boundary_entry(&classified)?;
+    let admission = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .ok_or("the boundary seam must carry an admission")?;
+    let region = admission
+        .owner_inline_region
+        .as_ref()
+        .ok_or("the owner file's one governed inline module must be recorded")?;
+    assert_eq!(region.file, PathBuf::from("src/lib.rs"));
+    assert_eq!(region.module_name, "tests");
+    Ok(())
+}
+
+/// Negative: with two governed inline modules no region is recorded.
+#[test]
+fn two_governed_inline_modules_record_no_owner_inline_region() -> Result<(), String> {
+    let two_modules = format!(
+        "{}\n#[cfg(test)]\nmod more_tests {{\n    use super::*;\n}}\n",
+        existing_related_test_source()
+    );
+    let (_root, classified) = library_case("owner-inline-ambiguous", &two_modules)?;
+    let entry = boundary_entry(&classified)?;
+    let region = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(|admission| admission.owner_inline_region.as_ref());
+    assert!(region.is_none(), "{region:?}");
+    Ok(())
+}

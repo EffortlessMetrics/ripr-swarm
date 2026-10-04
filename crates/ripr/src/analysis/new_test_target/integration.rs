@@ -31,11 +31,13 @@ pub(crate) fn admit_new_integration_test(
             proposal: Some(proposal),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         },
         Err(blocker) => NewTestTargetAdmission {
             proposal: None,
             region: None,
             blocker: Some(blocker),
+            owner_inline_region: None,
         },
     }
 }

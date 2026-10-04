@@ -11,7 +11,7 @@ use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, powershell_form};
 use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
-    PilotCommands, python_card_first_pr_command, repair_start_command,
+    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
 };
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
 use crate::output::pilot::{
@@ -287,9 +287,13 @@ pub(crate) fn render_pilot_summary_md(
     let python_first_pr = python_card_first_pr_command(context.root);
     let next_commands: Vec<&String> = match (repair.as_ref(), routes) {
         (Some(command), _) => {
-            out.push_str(
-                "Start the repair transaction for the top seam, add one focused test (test files only), then run the `--attempt ... --phase after` command it prints:\n\n",
-            );
+            let scope = top
+                .first()
+                .map(|entry| repair_edit_scope(entry))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `--attempt ... --phase after` command it prints:\n\n",
+            ));
             vec![command]
         }
         // #3906: with no Rust seams, the repo-exposure snapshot pair would
@@ -513,7 +517,12 @@ pub(crate) fn render_pilot_terminal(
     {
         out.push_str("Next, in order:\n");
         out.push_str(&format!("  1. {command}\n"));
-        out.push_str("  2. add the focused test named above (test files only)\n");
+        out.push_str(&format!(
+            "  2. add the focused test named above {}\n",
+            top.first()
+                .map(|entry| repair_edit_scope(entry))
+                .unwrap_or_default()
+        ));
         out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
         out.push_str(
             "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",

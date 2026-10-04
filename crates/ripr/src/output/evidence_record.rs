@@ -18,7 +18,6 @@ use crate::analysis::repair_route::{
 // The cross-language producer facts now live in `analysis::repair_route`
 // (the repair-packet eligibility authority). Re-exported here so existing
 // output/lsp callers keep compiling until their migration slice lands.
-use crate::analysis::is_test_surface_path;
 pub(crate) use crate::analysis::repair_route::{
     cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
 };
@@ -29,7 +28,7 @@ use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     AssertionShape, CandidateValue, RecommendedTest, assertion_shape_for_entry,
     candidate_values_for, missing_discriminator_records_for, nearest_strong_test_to_imitate,
-    recommended_test_for,
+    recommended_test_for, recommended_test_is_repair_edit_target,
 };
 use serde_json::{Value, json};
 
@@ -1021,17 +1020,17 @@ pub(crate) fn canonical_repair_command_for(
 ///
 /// Two conditions, both fail-closed:
 /// - the repair-packet flip (`repair_packet_eligibility(..).eligible()`);
-/// - the edit target the packet will name is a test surface. The
-///   transaction refuses any other target before it builds an edit cage
-///   (`app::repair_attempt`, "is not a test surface"), so a seam whose only
-///   test lives in an inline `#[cfg(test)]` module of a source file passes the
-///   flip but cannot start a repair. Offering it would print a command that
+/// - the edit target the packet will name is one the edit cage can route
+///   (`recommended_test_is_repair_edit_target`): a test surface, or the
+///   seam's own production Rust file confined to its one governed inline
+///   `#[cfg(test)]` module (#5210). The transaction refuses any other target
+///   before it builds an edit cage, so offering it would print a command that
 ///   fails (#3906).
 pub(crate) fn repair_start_command_for(entry: &ClassifiedSeam, root: &str) -> Option<String> {
     if !repair_packet_eligibility(entry).eligible() {
         return None;
     }
-    if !is_test_surface_path(&recommended_test_for(entry).file) {
+    if !recommended_test_is_repair_edit_target(entry) {
         return None;
     }
     Some(format!(
@@ -1801,6 +1800,7 @@ fn presentation_text_json(presentation_text: &EvidenceRecordPresentationText) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::is_test_surface_path;
 
     #[test]
     fn consumer_evidence_state_preserves_wire_values_and_rejects_unknown_words() {
@@ -2723,14 +2723,47 @@ mod tests {
         for test in &mut inline.evidence.related_tests {
             test.file = std::path::PathBuf::from("src/lib.rs");
         }
+        // #5210: the related test lives in the seam's own file, whose one
+        // governed inline test module the InlineUnit producer admitted. The
+        // edit cage can confine a repair to that module, so the start is
+        // offered. The same region recorded for a different file, or no
+        // region at all (`inline` above), still withholds it.
+        let mut own_file_inline = under_tests.clone();
+        for test in &mut own_file_inline.evidence.related_tests {
+            test.file = std::path::PathBuf::from("src/pricing.rs");
+        }
+        let region = |file: &str| crate::analysis::new_test_target::NewTestTargetAdmission {
+            owner_inline_region: Some(
+                crate::analysis::new_test_target::InlineTestRegionAuthority {
+                    file: std::path::PathBuf::from(file),
+                    module_name: "tests".to_string(),
+                    parent_modules: Vec::new(),
+                    body_start: 0,
+                    close_brace_start: 0,
+                    source_digest: String::new(),
+                },
+            ),
+            ..Default::default()
+        };
+        own_file_inline.evidence.new_test_target = Some(region("src/pricing.rs"));
+        let mut other_file_region = own_file_inline.clone();
+        other_file_region.evidence.new_test_target = Some(region("src/other.rs"));
 
-        for (entry, want) in [(under_tests, true), (inline, false)] {
+        for (entry, want, test_surface) in [
+            (under_tests, true, true),
+            (inline, false, false),
+            (own_file_inline, true, false),
+            (other_file_region, false, false),
+        ] {
             if !repair_packet_eligibility(&entry).eligible() {
                 return Err(format!("fixture must pass the flip (want={want})"));
             }
             let target = recommended_test_for(&entry).file;
-            if is_test_surface_path(&target) != want {
+            if is_test_surface_path(&target) != test_surface {
                 return Err(format!("fixture edit target `{target}` for want={want}"));
+            }
+            if recommended_test_is_repair_edit_target(&entry) != want {
+                return Err(format!("routable edit target `{target}` for want={want}"));
             }
             if repair_start_command_for(&entry, ".").is_some() != want {
                 return Err(format!("repair start for edit target `{target}`"));
@@ -2741,6 +2774,56 @@ mod tests {
                     "canonical_item.repair_command for edit target `{target}`: {}",
                     json["canonical_item"]["repair_command"]
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #5210 end to end over the production analysis path: the
+    /// `cargo new --lib` shape (public crate-root owner, weak test in the
+    /// file's one inline `#[cfg(test)] mod tests`, no `tests/`) is offered a
+    /// repair start for `src/lib.rs`; a second governed inline module in the
+    /// same file withdraws it.
+    #[test]
+    fn inline_cfg_test_library_offers_a_repair_start_only_with_one_governed_module()
+    -> Result<(), String> {
+        const LIB: &str = "pub fn discount(total: u32) -> u32 {\n    if total >= 100 {\n        total - 10\n    } else {\n        total\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn discount_runs() {\n        let _ = discount(150);\n    }\n}\n";
+        let second = format!("{LIB}\n#[cfg(test)]\nmod more_tests {{\n    use super::*;\n}}\n");
+        for (label, lib, want) in [("one", LIB.to_string(), true), ("two", second, false)] {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let root = std::env::temp_dir()
+                .join(format!("ripr-5210-{label}-{}-{stamp}", std::process::id()));
+            std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("src/lib.rs"), &lib).map_err(|error| error.to_string())?;
+            let classified = crate::analysis::inventory_classified_seams_at_with_config(
+                &root,
+                &crate::config::RiprConfig::default(),
+            )
+            .map(|(classified, _)| classified);
+            let _ = std::fs::remove_dir_all(&root);
+            let classified = classified?;
+            let entry = classified
+                .iter()
+                .find(|entry| entry.seam.kind() == SeamKind::PredicateBoundary)
+                .ok_or_else(|| format!("{label}: expected the boundary seam"))?;
+            if recommended_test_for(entry).file != "src/lib.rs" {
+                return Err(format!(
+                    "{label}: fixture must recommend src/lib.rs, got {}",
+                    recommended_test_for(entry).file
+                ));
+            }
+            if recommended_test_is_repair_edit_target(entry) != want
+                || repair_start_command_for(entry, ".").is_some() != want
+            {
+                return Err(format!("{label}: repair start offered must be {want}"));
             }
         }
         Ok(())

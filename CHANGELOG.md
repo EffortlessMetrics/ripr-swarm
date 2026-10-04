@@ -136,6 +136,19 @@ are scoped or reviewed.
 
 ### Added
 
+- `ripr pilot` and `ripr agent repair` now repair seams whose tests live in an
+  inline `#[cfg(test)] mod tests` inside the source file, the `cargo new --lib`
+  layout. Pilot prints the `ripr agent repair ... --phase before` command for
+  such a seam when the file has exactly one governed inline test module, and
+  the attempt confines the edit to that module: the after phase is compliant
+  only when new test functions are inserted into its body, with production
+  code, the module declaration, existing tests, and any staged or committed
+  copy of the file unchanged or equal to the validated bytes. Any other change
+  to the file fails the attempt as `outside_inline_test_region`. A file with no
+  inline test module, two candidate modules, or an out-of-line `mod tests;`
+  still gets no repair command, and the before phase refuses it with the
+  `tests/` alternative (#5210).
+
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards

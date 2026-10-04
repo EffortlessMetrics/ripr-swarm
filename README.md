@@ -124,7 +124,10 @@ their IDs belong to that run and cannot be copied from documentation.
 IDs from `check` are rejected there.
 
 Between the repair phases, the attempt refuses any new file outside the allowed
-test files, whether Git ignores it or not. Build output under a gitignored
+test files, whether Git ignores it or not. When your tests live in an inline
+`#[cfg(test)] mod tests` inside the source file (the `cargo new --lib` layout),
+the repair edits that file, but only by adding new test functions inside that
+one module; any other change to the file fails the attempt. Build output under a gitignored
 `target/` is the exception. Before starting a repair, make sure `target/` is in
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.

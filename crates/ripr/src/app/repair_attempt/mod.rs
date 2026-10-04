@@ -1378,7 +1378,14 @@ pub(crate) fn edit_cage_policy_from_packet(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
     };
-    if !is_test_surface_path(selected_target_text) {
+    // The one exception (#5210): a production Rust file may be the selected
+    // target only as its one governed inline `#[cfg(test)]` module. The
+    // policy then confines the edit to that module; the baseline capture
+    // refuses a file without exactly one such module, and the after-phase
+    // verdict admits only a pure insertion of test functions into it.
+    let inline_test_module_target = !is_test_surface_path(selected_target_text)
+        && is_inline_test_module_candidate(selected_target_text);
+    if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
             test_surface_requirement()
@@ -1404,11 +1411,14 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .as_array()
                 .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
             let mut allowed = Vec::new();
-            for entry in entries {
+            for (index, entry) in entries.iter().enumerate() {
                 let path = entry.as_str().ok_or_else(|| {
                     "repair packet allowed_edit_surface contains a non-string path".to_string()
                 })?;
-                if !is_test_surface_path(path) {
+                // Only the selected target itself may be the confined inline
+                // module file; every other allowed path is a test surface.
+                let confined_selected_target = index == 0 && inline_test_module_target;
+                if !is_test_surface_path(path) && !confined_selected_target {
                     return Err(format!(
                         "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
                     ));
@@ -1423,7 +1433,7 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
-            if !is_test_surface_path(file) {
+            if !is_test_surface_path(file) && !inline_test_module_target {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
                 ));
@@ -1474,7 +1484,17 @@ pub(crate) fn edit_cage_policy_from_packet(
         expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
         ignored_build_output,
         untracked_build_lockfile,
+        inline_test_module_target,
     })
+}
+
+/// A non-test-surface selected target that may still be routed as its inline
+/// test module: a Rust source file. Whether it has exactly one governed inline
+/// `#[cfg(test)]` module is decided by the edit cage's baseline capture, which
+/// reads the file; this predicate only keeps every other production path
+/// (any non-Rust file) refused here.
+fn is_inline_test_module_candidate(path: &str) -> bool {
+    Path::new(path).extension() == Some(std::ffi::OsStr::new("rs"))
 }
 
 /// Adds an explicit store outside `target/ripr` to the cage's operational
@@ -2813,11 +2833,12 @@ mod tests {
     fn cage_policy_refuses_a_non_test_selected_edit_target_before_any_cage() -> Result<(), String> {
         // A gap route's path-shaped `target_file` (`src/...`) can arrive as
         // the packet's allowed surface; the positive test-surface gate must
-        // refuse it with a named diagnostic before any cage policy exists,
-        // so a production file can never become the authored edit target.
+        // refuse a non-Rust production file with a named diagnostic before
+        // any cage policy exists. A production Rust file is the one exception
+        // (#5210), and only as an inline-module-confined target (below).
         let packet = serde_json::json!({
             "seam_id": "seam:sample",
-            "allowed_edit_surface": ["src/production.rs"],
+            "allowed_edit_surface": ["src/production.py"],
             "forbidden_files": []
         });
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
@@ -2830,7 +2851,7 @@ mod tests {
             }
         };
         for needle in [
-            "src/production.rs",
+            "src/production.py",
             "is not a test surface",
             "no edit cage is constructed",
         ] {
@@ -2841,13 +2862,62 @@ mod tests {
         // The recommended-test construction route is gated identically.
         let packet = serde_json::json!({
             "seam_id": "seam:sample",
-            "recommended_test": { "file": "src/production.rs" }
+            "recommended_test": { "file": "src/production.py" }
         });
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
         }
         Ok(())
+    }
+
+    /// #5210: a production Rust file may be the selected target only as an
+    /// inline-module-confined target, which the baseline capture and the
+    /// after-phase region validator then enforce. It never widens to a second
+    /// allowed path, and a test-surface target is never confined.
+    #[test]
+    fn cage_policy_confines_a_production_rust_target_to_its_inline_test_module()
+    -> Result<(), String> {
+        for packet in [
+            serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["src/lib.rs"],
+                "forbidden_files": []
+            }),
+            serde_json::json!({
+                "seam_id": "seam:sample",
+                "recommended_test": { "file": "src/lib.rs" }
+            }),
+        ] {
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+            if !policy.inline_test_module_target || policy.selected_target.path() != "src/lib.rs" {
+                return Err(format!(
+                    "production Rust target was not confined: {policy:?}"
+                ));
+            }
+        }
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/pricing.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        if edit_cage_policy_from_packet(&rendered, "seam:sample")?.inline_test_module_target {
+            return Err("a test-surface target must not be inline-confined".to_string());
+        }
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/lib.rs", "src/other.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error) if error.contains("src/other.rs") => Ok(()),
+            other => Err(format!(
+                "a second production path must stay refused, got {other:?}"
+            )),
+        }
     }
 
     #[test]

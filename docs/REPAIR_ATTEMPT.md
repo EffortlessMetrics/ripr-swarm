@@ -270,8 +270,15 @@ Repair attempts fail closed:
   `lang-typescript` feature, a TypeScript/JavaScript test path such as
   `*.test.ts`, `*.spec.*`, `*.cy.*`, or `__tests__`) is refused before any attempt is
   created, and before the phase writes any workflow artifact or prints a
-  completion line; inline `#[cfg(test)]` modules in production files are not
-  valid edit targets;
+  completion line. The one exception is a production Rust file whose only
+  role in the repair is its inline test module: the attempt is created only
+  when that file has exactly one governed inline `#[cfg(test)]` module (no
+  second candidate, no out-of-line `mod tests;`), and the after phase is
+  compliant only when the edit inserts new test functions (and optional `use`
+  items) into that module's body, with production code, the module
+  declaration, existing tests, and every staged or committed copy of the file
+  unchanged or equal to the validated bytes. Any other change to that file
+  fails the attempt as `outside_inline_test_region` (#5210);
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;
 - a cross-attempt packet is rejected;

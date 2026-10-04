@@ -2187,6 +2187,7 @@ mod python_repair_verification_semantics {
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            inline_test_module_target: false,
         })
     }
 

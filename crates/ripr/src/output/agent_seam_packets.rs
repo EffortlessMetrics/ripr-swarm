@@ -94,6 +94,15 @@ pub(crate) const EDIT_CAGE_PRODUCTION_STATEMENT: &str =
 /// The terminality warning carried in the packet's `must_not_change` field
 /// and the before-phase TTY narration (#4330): violating the unstated cage
 /// used to be the only way an agent learned it existed.
+/// The `must_not_change` statement for a repair confined to a production
+/// file's inline test module (#5210): the cage admits only new test functions
+/// (and `use` items) inserted into that module's body.
+pub(crate) fn inline_test_module_edit_statement(file: &str, module: &str) -> String {
+    format!(
+        "in {file}, only insert new test functions inside the existing `#[cfg(test)] mod {module}`; production code, the module declaration, and existing tests must stay byte-identical"
+    )
+}
+
 pub(crate) const EDIT_CAGE_TERMINALITY_WARNING: &str =
     "editing any file outside allowed_edit_surface fails the repair attempt terminally";
 
@@ -2109,16 +2118,13 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     // (`repair_packet_queue_visible`); under that filter the authority's
     // fail-closed flip reduces to producer route readiness.
     //
-    // The recommended target must also be a test surface (#4330 cage
-    // contract): a producer-owned inline-module proposal names a production
-    // file, and advertising it as `allowed_edit_surface` alongside the
-    // must-not-change production statement would promise an edit surface the
-    // cage's own policy text forbids. Those seams render as inspection
-    // packets, matching the evidence-record and pilot-command gating of the
-    // same check.
-    if is_safe_for_repair_packet(entry)
-        && crate::analysis::is_test_surface_path(&recommended_test_for(entry).file)
-    {
+    // The recommended target must also be one the edit cage can route
+    // (#4330 cage contract): a test surface, or the seam's own production
+    // Rust file confined to its one governed inline `#[cfg(test)]` module
+    // (#5210). Any other production file would promise an edit surface the
+    // cage refuses, so those seams render as inspection packets, matching
+    // the evidence-record and pilot-command gating of the same predicate.
+    if is_safe_for_repair_packet(entry) && recommended_test_is_repair_edit_target(entry) {
         TASK_WRITE_TARGETED_TEST
     } else {
         "inspect_static_limitation"
@@ -2234,6 +2240,17 @@ fn push_packet_json(
             json_escape(&format!(
                 "{EDIT_CAGE_TERMINALITY_WARNING} (allowed: {})",
                 allowed_edit_surface.join(", ")
+            ))
+        ));
+    }
+    if actionable
+        && let Some(module) = recommended_inline_test_module(entry, recommended.file.as_str())
+    {
+        out.push_str(&format!(
+            ", \"{}\"",
+            json_escape(&inline_test_module_edit_statement(
+                recommended.file.as_str(),
+                module
             ))
         ));
     }
@@ -2700,6 +2717,42 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Whether `ripr agent repair` can route its edit to the target that
+/// [`recommended_test_for`] names: a test surface, or the seam's own
+/// production Rust file whose one governed inline `#[cfg(test)]` module the
+/// InlineUnit producer admitted (#5210). Every surface that offers a repair
+/// start or states an allowed edit surface asks this one predicate; the edit
+/// cage re-captures the module at the before phase and enforces it at the
+/// after phase, so this projection can only under-offer, never widen.
+pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
+    let recommended = recommended_test_for(entry);
+    crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// The governed inline test module's name when `recommended_file` is the
+/// seam's own production Rust file and the InlineUnit producer admitted that
+/// file's one inline cfg-test module; `None` for a test surface or any other
+/// production file.
+pub(crate) fn recommended_inline_test_module<'a>(
+    entry: &'a ClassifiedSeam,
+    recommended_file: &str,
+) -> Option<&'a str> {
+    if recommended_file == "not_applicable"
+        || crate::analysis::is_test_surface_path(recommended_file)
+        || display_path(entry.seam.file()) != recommended_file
+    {
+        return None;
+    }
+    let region = entry
+        .evidence
+        .new_test_target
+        .as_ref()?
+        .owner_inline_region
+        .as_ref()?;
+    (display_path(&region.file) == recommended_file).then_some(region.module_name.as_str())
 }
 
 fn not_applicable_recommended_test(reason: &str) -> RecommendedTest {
@@ -5794,6 +5847,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         let recommended = recommended_test_for(&entry);
         assert_eq!(
@@ -6497,6 +6551,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         // Pin both preconditions so the demotion below is attributable to the
         // non-test recommended target, not to route readiness.
@@ -6522,6 +6577,69 @@ mod tests {
             serde_json::json!([]),
             "the inspection packet must allow no edits: {json}"
         );
+        Ok(())
+    }
+
+    /// #5210: the same inline proposal, with the owner file's one governed
+    /// inline module recorded, is actionable. The packet's edit surface is
+    /// that production file, it is no longer forbidden, and `must_not_change`
+    /// states the module confinement the cage enforces.
+    #[test]
+    fn inline_module_proposal_with_a_recorded_region_is_actionable_and_confined()
+    -> Result<(), String> {
+        use crate::analysis::new_test_target::InlineTestRegionAuthority;
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        let region = InlineTestRegionAuthority {
+            file: PathBuf::from("src/pricing.rs"),
+            module_name: "tests".to_string(),
+            parent_modules: Vec::new(),
+            body_start: 0,
+            close_brace_start: 0,
+            source_digest: String::new(),
+        };
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: Some(region.clone()),
+            blocker: None,
+            owner_inline_region: Some(region),
+        });
+        let json = render_agent_seam_packets_json(&[entry], None);
+        let value = parsed_envelope(&json)?;
+        let packet = &value["packets"][0];
+        if packet["task"] != TASK_WRITE_TARGETED_TEST {
+            return Err(format!("expected an actionable packet: {json}"));
+        }
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["src/pricing.rs"])
+        );
+        assert_eq!(packet["forbidden_files"], serde_json::json!([]));
+        let confinement = inline_test_module_edit_statement("src/pricing.rs", "tests");
+        assert!(
+            packet["must_not_change"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| entry == &confinement)),
+            "must_not_change must state the inline module confinement: {json}"
+        );
+        // The cage authority reads the same packet and confines the target.
+        let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            &json,
+            packet["seam_id"].as_str().unwrap_or_default(),
+        )?;
+        assert!(policy.inline_test_module_target);
         Ok(())
     }
 
