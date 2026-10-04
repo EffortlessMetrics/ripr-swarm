@@ -1104,7 +1104,7 @@ Deliverables:
 - [x] Hover evidence for exact finding.
 - [x] Copy context packet code action.
 - [x] Open related tests code action.
-- [x] Run deep check command.
+- [ ] Run deep check command.
 - [x] Output-channel lifecycle logs.
 
 Acceptance:
