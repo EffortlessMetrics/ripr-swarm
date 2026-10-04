@@ -84,11 +84,11 @@ are scoped or reviewed.
   of rendered seams (only seams past that are rendered per pass), and pilot
   ranking computes each seam's rank key once.
   Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
-  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.08/0.04/0.05 s,
-  `check --format json` 0.36/0.36/0.46 s -> 0.09/0.06/0.05 s, `explain`
-  0.39/0.24/0.38 s -> 0.05/0.04/0.05 s, `doctor` 0.16 s -> 0.07 s, `pilot`
-  0.93/0.30/0.35 s -> 0.38/0.15/0.13 s; cold-cache `pilot` 2.76/0.65/0.75 s
-  -> 2.09/0.50/0.54 s. Output bytes are unchanged (#5348).
+  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s,
+  `check --format json` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s, `explain`
+  0.38/0.26/0.38 s -> 0.04/0.03/0.05 s, `doctor` 0.21 s -> 0.07 s, `pilot`
+  0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
+  -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
 
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
