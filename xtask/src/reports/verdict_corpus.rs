@@ -341,29 +341,42 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
     plain.then_some(name)
 }
 
+/// The initializer of a `let` statement: the text after its first plain `=`,
+/// skipping `==`, `!=`, `<=`, `>=` and `=>`, so an `=` inside the
+/// initializer never splits it.
+fn let_initializer(statement: &str) -> Option<&str> {
+    let bytes = statement.as_bytes();
+    let at = statement.match_indices('=').map(|(at, _)| at).find(|&at| {
+        let prev = at.checked_sub(1).map(|i| bytes[i]);
+        let next = bytes.get(at + 1).copied();
+        !matches!(prev, Some(b'=' | b'!' | b'<' | b'>')) && !matches!(next, Some(b'=' | b'>'))
+    })?;
+    let init = statement[at + 1..].trim_start();
+    (!init.is_empty()).then_some(init)
+}
+
 /// Whether `evidence` is ripr's retarget relation for the `let` on the
 /// anchor line: same binding, and the relation's new initializer is the
 /// anchor statement's initializer, so a same-named `let` elsewhere in the
 /// diff is not followed. The relation does not escape backticks, so the
-/// initializer is matched from the anchor statement's side (each text after
-/// an `=`) rather than parsed out of the evidence.
+/// anchor statement's initializer is matched against the evidence rather
+/// than parsed out of it.
 fn is_anchor_relation(evidence: &str, anchor_line: &str, binding: &str) -> bool {
     let prefix = format!("binding_predicate_relation: changed binding `{binding}` initializer ");
     let Some(rest) = evidence.strip_prefix(&prefix) else {
         return false;
     };
     let statement = anchor_line.trim().trim_end_matches(';').trim_end();
-    statement.match_indices('=').any(|(at, _)| {
-        let init = statement[at + 1..].trim_start();
-        // The producer writes `` `OLD` -> `NEW` `` when the probe carries a
-        // distinct old initializer and `` `NEW` `` alone otherwise.
-        let tail = format!("`{init}` flows into ");
-        !init.is_empty()
-            && (rest.starts_with(&tail)
-                || rest
-                    .split_once(&format!("-> {tail}"))
-                    .is_some_and(|(old, _)| old.starts_with('`') && old.ends_with("` ")))
-    })
+    let Some(init) = let_initializer(statement) else {
+        return false;
+    };
+    // The producer writes `` `OLD` -> `NEW` `` when the probe carries a
+    // distinct old initializer and `` `NEW` `` alone otherwise.
+    let tail = format!("`{init}` flows into ");
+    rest.starts_with(&tail)
+        || rest
+            .split_once(&format!("-> {tail}"))
+            .is_some_and(|(old, _)| old.starts_with('`') && old.ends_with("` "))
 }
 
 /// Findings that speak for the anchored line on the candidate side. Base-side

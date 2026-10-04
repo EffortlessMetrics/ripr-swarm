@@ -138,6 +138,13 @@ fn retarget_relation_matches_an_initializer_containing_backticks() {
         "    let cut = input.rfind('`');",
         "end"
     ));
+    // Only the declaration's own initializer counts, not text after a later
+    // `=` inside it.
+    let tail_eq = "binding_predicate_relation: changed binding `ok` initializer `b` flows into predicate operand at line 13";
+    assert!(!is_anchor_relation(tail_eq, "    let ok = a == b;", "ok"));
+    assert_eq!(let_initializer("let ok = a == b"), Some("a == b"));
+    assert_eq!(let_initializer("let x: Vec<u8> = g()"), Some("g()"));
+    assert_eq!(let_initializer("let x = |a| a >= 1"), Some("|a| a >= 1"));
     // Without a distinct old initializer the relation names the new one alone.
     let single = "binding_predicate_relation: changed binding `cut` initializer `input.rfind('`')` flows into predicate operand at line 13";
     assert!(is_anchor_relation(
