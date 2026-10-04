@@ -17550,6 +17550,38 @@ fn deadline_exceeded_disclosed_in_logs_and_analysis_status_without_work_done_pro
                 "analysisStatus.failure.message must match the log warning, got {message:?}"
             ));
         }
+
+        // A later attempt must not keep the previous deadline failure.
+        if backend
+            .refresh_scheduler_for_test()
+            .finish(&request, false)
+            .is_some()
+        {
+            return Err("the dropped deadline attempt should leave no pending request".to_string());
+        }
+        let next = backend.refresh_scheduler_for_test().request(
+            PathBuf::from("/workspace"),
+            LspAnalysisConfig::default(),
+            2,
+            0,
+            RefreshScope::Interactive,
+            RefreshReason::DidSave,
+        );
+        let next = started_request(&next)?;
+        backend.mark_attempt_running_for_test(&next);
+        let running = backend.analysis_status_payload();
+        if running["state"].as_str() != Some("running") {
+            return Err(format!(
+                "the next attempt must be running, got {}",
+                running["state"]
+            ));
+        }
+        if !running["failure"].is_null() {
+            return Err(format!(
+                "promoting the next attempt must drop deadline_exceeded failure, got {}",
+                running["failure"]
+            ));
+        }
         Ok(())
     })
 }

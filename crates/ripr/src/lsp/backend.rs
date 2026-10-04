@@ -1448,6 +1448,11 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn mark_attempt_running_for_test(&self, request: &RefreshRequest) {
+        self.mark_attempt_running(request);
+    }
+
+    #[cfg(test)]
     pub(super) fn reset_analysis_health_for_test(&self) {
         self.reset_health_for_input_change();
     }
@@ -1573,6 +1578,10 @@ impl Backend {
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
         health.current_input_identity = Some(request.input_identity_id());
+        // A prior attempt's failure (including `deadline_exceeded`) is not
+        // this attempt's outcome. `mark_attempt_queued` already clears it;
+        // the in-loop pending promotion path only calls this method.
+        health.failure = None;
         if health.pending_attempt_id == Some(request.generation) {
             health.pending_attempt_id = None;
             health.pending_reason = None;
