@@ -24,9 +24,16 @@ are scoped or reviewed.
   returns directly gets a stub asserting the whole return value (was
   `field_type_unresolved`). Impls with type or const generics are refused
   as `owner_generic_impl`, and a field of a literal the owner does not
-  return as `field_not_returned`
+  return as `field_not_returned`. Test modules gated by more than
+  `cfg(test)` are never chosen, and an impl local to a function body or
+  `const` block is refused as `owner_unsupported`
   ([#5471](https://github.com/EffortlessMetrics/ripr-swarm/issues/5471)).
 
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
