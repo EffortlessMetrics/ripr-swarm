@@ -1820,6 +1820,15 @@ fn wrapped_timeout_still_converts_to_the_named_kind() -> Result<(), String> {
     let config = LspAnalysisConfig::default();
     let error = CoreError::git_invocation_timeout("git -C /workspace [\"diff\"]", 30000, true)
         .with_context("workspace analysis failed");
+    // Assert the typed projection directly: the converter's outcome kind
+    // falls back to the same spelling, so the outcome alone could not tell
+    // a lost kind from a kept one.
+    if error.git_invocation_timeout_kind() != Some(crate::core_error::GIT_INVOCATION_TIMEOUT_KIND) {
+        return Err(format!(
+            "wrapping must keep the typed kind, got {:?}",
+            error.git_invocation_timeout_kind()
+        ));
+    }
     let diagnostics =
         git_timeout_limited_diagnostics(Path::new("/workspace"), &config, false, error);
     let Some(outcome) = diagnostics.snapshot.component_outcomes.first() else {
