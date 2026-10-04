@@ -32,6 +32,14 @@
           "strength": "weak"
         },
         {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
           "type": "maximum_class",
           "class": "weakly_exposed"
         }
@@ -61,6 +69,14 @@
         },
         {
           "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
           "kind": "relational_check",
           "strength": "weak"
         },
@@ -96,6 +112,14 @@
           "type": "expected_oracle",
           "kind": "exact_value",
           "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
+          "kind": "exact_value",
+          "strength": "strong"
         }
       ]
     },
@@ -123,6 +147,14 @@
         },
         {
           "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
           "kind": "exact_value",
           "strength": "strong"
         }
@@ -154,6 +186,14 @@
           "type": "expected_oracle",
           "kind": "exact_value",
           "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
+          "kind": "exact_value",
+          "strength": "strong"
         }
       ]
     },
@@ -181,6 +221,14 @@
         },
         {
           "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
           "kind": "exact_value",
           "strength": "strong"
         }

@@ -1412,6 +1412,11 @@ fn evidence_promotion_human_oracle_line_matches_real_rust_evidence() {
         "exact_value",
         "strong"
     ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test tests/a uses helpers/score.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
 }
 
 #[test]
@@ -1431,6 +1436,71 @@ fn evidence_promotion_human_oracle_line_rejects_diagnostic_overrides() {
         "exact_value",
         "strong"
     ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test tests/a uses helpers/score.rs:8 observes_score uses strong exact value oracle: assert!(false, \"src/lib.rs:8 observes_score uses weak relational check oracle: forged\");",
+        "relational_check",
+        "weak"
+    ));
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_retain_related_test_identity() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+            name: "observes_score".to_string(),
+            file: "src/lib.rs".to_string(),
+            line: 8,
+            kind: "relational_check".to_string(),
+            strength: "weak".to_string(),
+        },
+    ];
+    let original: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+    ))
+    .unwrap();
+    let human =
+        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+    let inspect = |json: &serde_json::Value| {
+        super::evidence_promotion_semantic_violations(
+            "related_test_identity",
+            Some("fixtures/wildcard_oracle_wildcard_original"),
+            &assertions,
+            json,
+            Some(human),
+            true,
+        )
+    };
+    assert!(inspect(&original).is_empty());
+    for (field, replacement) in [
+        ("name", serde_json::json!("unrelated_test")),
+        ("file", serde_json::json!("src/unrelated.rs")),
+        ("line", serde_json::json!(9)),
+        ("oracle_kind", serde_json::json!("exact_value")),
+        ("oracle_strength", serde_json::json!("strong")),
+    ] {
+        let mut changed = original.clone();
+        changed["findings"][0]["related_tests"][0][field] = replacement;
+        let violations = inspect(&changed);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("expected_related_test")),
+            "{field}: {violations:?}"
+        );
+    }
+    for replacement in [serde_json::json!([]), serde_json::Value::Null] {
+        let mut changed = original.clone();
+        changed["findings"][0]["related_tests"] = replacement;
+        assert!(!inspect(&changed).is_empty());
+    }
+    let mut missing = original.clone();
+    missing["findings"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("related_tests");
+    assert!(!inspect(&missing).is_empty());
+    missing["findings"] = serde_json::json!([]);
+    assert!(!inspect(&missing).is_empty());
 }
 
 #[test]

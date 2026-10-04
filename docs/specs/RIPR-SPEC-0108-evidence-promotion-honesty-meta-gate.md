@@ -81,11 +81,16 @@ These synthetic charter members do not alter the selected real-Rust corpus
 denominator or establish representative-project accuracy. Golden assertions
 pin a nonzero finding count and oracle fields so empty findings cannot pass
 even when report-level scope or limitations are retained.
+The typed `expected_related_test` assertion also pins the test's file, line,
+name and oracle fields on every selected finding. Deleting that JSON evidence
+cannot pass by retaining top-level oracle fields and human prose.
 
 Oracle projection validation also accepts the renderer's anchored related-test
 sentence (`- related test ... uses weak relational check oracle: ...`, or the
 strong exact-value counterpart). The descriptor before the assertion controls
 kind and strength; diagnostic text inside the assertion cannot override it.
+The separator follows a complete path, line and test identity, so a path that
+contains ` uses ` does not hide an otherwise valid oracle projection.
 
 ## Behavior
 
@@ -152,6 +157,7 @@ kind and strength; diagnostic text inside the assertion cannot override it.
       `allowed_edit_surface`, and `forbidden_files`
     - `must_not_have_contradictory_packet_messaging`
     - `expected_oracle` with `kind` and `strength`
+    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`
     - `expected_class` with `class`
     - `maximum_class` with `class`
     - `expected_completeness` with `completeness`

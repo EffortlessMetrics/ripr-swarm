@@ -280,6 +280,13 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         kind: String,
         strength: String,
     },
+    ExpectedRelatedTest {
+        name: String,
+        file: String,
+        line: u64,
+        kind: String,
+        strength: String,
+    },
     ExpectedClass {
         class: String,
     },
@@ -652,6 +659,30 @@ fn evidence_promotion_parse_assertion(
                 case_id, index, assertion, "strength",
             )?,
         }),
+        "expected_related_test" => {
+            let line =
+                evidence_promotion_required_assertion_u64(case_id, index, assertion, "line")?;
+            if line == 0 {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: expected_related_test.line must be positive"
+                ));
+            }
+            Ok(EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+                name: evidence_promotion_required_assertion_string(
+                    case_id, index, assertion, "name",
+                )?,
+                file: evidence_promotion_required_assertion_string(
+                    case_id, index, assertion, "file",
+                )?,
+                line,
+                kind: evidence_promotion_required_assertion_string(
+                    case_id, index, assertion, "kind",
+                )?,
+                strength: evidence_promotion_required_assertion_string(
+                    case_id, index, assertion, "strength",
+                )?,
+            })
+        }
         "expected_class" => {
             let class =
                 evidence_promotion_required_assertion_class(case_id, index, assertion, "class")?;
@@ -1757,6 +1788,45 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     ));
                 }
             }
+            EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+                name,
+                file,
+                line,
+                kind,
+                strength,
+            } => {
+                if findings.is_empty() {
+                    violations.push(format!(
+                        "{case_label}: `expected_related_test` requires at least one finding"
+                    ));
+                }
+                for finding in &findings {
+                    let matched = finding
+                        .get("related_tests")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tests| {
+                            tests.iter().any(|test| {
+                                test.get("name").and_then(Value::as_str) == Some(name.as_str())
+                                    && test.get("file").and_then(Value::as_str)
+                                        == Some(file.as_str())
+                                    && test.get("line").and_then(Value::as_u64) == Some(*line)
+                                    && test.get("oracle_kind").and_then(Value::as_str)
+                                        == Some(kind.as_str())
+                                    && test.get("oracle_strength").and_then(Value::as_str)
+                                        == Some(strength.as_str())
+                            })
+                        });
+                    if !matched {
+                        let finding_id = finding
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<missing-id>");
+                        violations.push(format!(
+                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}` on finding `{finding_id}`"
+                        ));
+                    }
+                }
+            }
             EvidencePromotionSemanticAssertion::MustDiscloseWitness => {
                 let witness_lines = evidence_promotion_witness_lines(&findings);
                 if witness_lines.is_empty() {
@@ -2712,14 +2782,30 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
     let normalized = line.trim().to_ascii_lowercase();
 
     if let Some(related_test) = normalized.strip_prefix("- related test ") {
-        let Some((_, oracle)) = related_test.split_once(" uses ") else {
-            return false;
-        };
         let projection = format!(
             "{expected_strength} {} oracle:",
             expected_kind.replace('_', " ")
         );
-        return oracle.starts_with(projection.as_str());
+        for (separator, _) in related_test.match_indices(" uses ") {
+            let Some((location, test_name)) = related_test[..separator].rsplit_once(' ') else {
+                continue;
+            };
+            let Some((path, line)) = location.rsplit_once(':') else {
+                continue;
+            };
+            if path.is_empty()
+                || line.is_empty()
+                || !line.bytes().all(|byte| byte.is_ascii_digit())
+                || test_name.is_empty()
+                || !test_name
+                    .chars()
+                    .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':'))
+            {
+                continue;
+            }
+            return related_test[separator + " uses ".len()..].starts_with(projection.as_str());
+        }
+        return false;
     }
 
     if evidence_promotion_human_line_field_value(&normalized, "oracle_kind").as_deref()
@@ -4451,6 +4537,37 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod related_test_assertion_tests {
+    use super::evidence_promotion_parse_assertion;
+
+    #[test]
+    fn requires_source_identity() {
+        let original = serde_json::json!({
+            "type": "expected_related_test",
+            "name": "observes_score",
+            "file": "src/lib.rs",
+            "line": 8,
+            "kind": "relational_check",
+            "strength": "weak"
+        });
+        assert!(evidence_promotion_parse_assertion("related_test_identity", 0, &original).is_ok());
+        for field in ["name", "file", "line", "kind", "strength"] {
+            let mut missing = original.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                evidence_promotion_parse_assertion("related_test_identity", 0, &missing).is_err(),
+                "{field}"
+            );
+        }
+        let mut zero_line = original;
+        zero_line["line"] = serde_json::json!(0);
+        assert!(
+            evidence_promotion_parse_assertion("related_test_identity", 0, &zero_line).is_err()
+        );
+    }
 }
 
 #[cfg(test)]
