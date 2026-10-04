@@ -631,7 +631,7 @@ fn fetch(manifest: &Manifest, options: &Options) -> Result<(), String> {
 }
 
 /// Runs the diff-scoped `ripr check` each corpus lane starts from and records
-/// the run status per repo. A missing or unpinned checkout is a recorded
+/// the run status per repo. A missing, unpinned or modified checkout is a recorded
 /// `not_fetched` row, never a silent skip, and any row that is not a clean
 /// analysis makes the receipt `inconclusive` rather than a pass.
 fn smoke(manifest: &Manifest, options: &Options) -> Result<(), String> {
@@ -654,7 +654,9 @@ fn smoke(manifest: &Manifest, options: &Options) -> Result<(), String> {
     let mut rows = Vec::new();
     for repo in repos {
         let dir = options.root.join(&repo.id);
-        if !dir.join(".git").exists() || verify_pins(repo, &dir, timeout).is_err() {
+        // ripr reads the working tree, so a tracked edit left by another lane
+        // would be measured under the pinned repository's name.
+        if !is_clean_pinned_checkout(repo, &dir, timeout) {
             rows.push(json!({"id": repo.id, "tier": repo.tier, "profile": repo.profile.class, "status": "not_fetched"}));
             continue;
         }
@@ -725,16 +727,16 @@ fn smoke_row(
         .map(str::to_string);
     let summary = parsed.as_ref().and_then(|value| value.get("summary"));
     let count = |key: &str| summary.and_then(|s| s.get(key)).and_then(Value::as_u64);
-    let status = if timed_out {
-        "timed_out".to_string()
-    } else if parsed.is_none() {
-        "no_json".to_string()
-    } else if let Some(run_status) = &run_status {
-        run_status.clone()
-    } else if exit_code == Some(0) {
-        "analyzed".to_string()
-    } else {
-        "nonzero_exit".to_string()
+    // `analyzed` needs a clean exit and a findings count. A fail-closed
+    // run_status is reported as itself; a run that claims `analyzed` but
+    // exited non-zero or carried no summary is not counted as analyzed.
+    let status = match (&run_status, exit_code) {
+        _ if timed_out => "timed_out".to_string(),
+        _ if parsed.is_none() => "no_json".to_string(),
+        (Some(run_status), _) if run_status != "analyzed" => run_status.clone(),
+        (_, Some(0)) if count("findings").is_some() => "analyzed".to_string(),
+        (_, Some(0)) => "no_summary".to_string(),
+        _ => "nonzero_exit".to_string(),
     };
     let classes: BTreeMap<&str, Option<u64>> = SUMMARY_CLASSES
         .iter()
@@ -789,15 +791,7 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     // A lane that edited a checkout (mutation spot-checks do) must not leave
     // that edit behind as the "pinned" subject. Untracked files such as a
     // build's target/ do not count, so a built checkout is still reused.
-    if dir.join(".git").exists()
-        && verify_pins(repo, dir, timeout).is_ok()
-        && git(
-            dir,
-            &["status", "--porcelain", "--untracked-files=no"],
-            timeout,
-        )
-        .is_ok_and(|status| status.is_empty())
-    {
+    if is_clean_pinned_checkout(repo, dir, timeout) {
         return Ok(true);
     }
     if dir.exists() {
@@ -827,6 +821,19 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     )?;
     verify_pins(repo, dir, timeout)?;
     Ok(false)
+}
+
+/// A checkout counts as the pinned subject only when both pins match and no
+/// tracked file is modified.
+fn is_clean_pinned_checkout(repo: &RepoEntry, dir: &Path, timeout: Duration) -> bool {
+    dir.join(".git").exists()
+        && verify_pins(repo, dir, timeout).is_ok()
+        && git(
+            dir,
+            &["status", "--porcelain", "--untracked-files=no"],
+            timeout,
+        )
+        .is_ok_and(|status| status.is_empty())
 }
 
 fn verify_pins(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<(), String> {
@@ -1163,6 +1170,14 @@ mod tests {
         assert_eq!(row["status"], "timed_out");
         let row = smoke_row(&repo, "{}", Some(1), false, Duration::from_millis(5));
         assert_eq!(row["status"], "nonzero_exit");
+
+        let claimed = r#"{"analysis_scope":{"run_status":"analyzed"},"summary":{"findings":3}}"#;
+        let row = smoke_row(&repo, claimed, Some(2), false, Duration::from_millis(5));
+        assert_eq!(row["status"], "nonzero_exit");
+        let row = smoke_row(&repo, claimed, Some(0), false, Duration::from_millis(5));
+        assert_eq!(row["status"], "analyzed");
+        let row = smoke_row(&repo, "{}", Some(0), false, Duration::from_millis(5));
+        assert_eq!(row["status"], "no_summary");
         Ok(())
     }
 

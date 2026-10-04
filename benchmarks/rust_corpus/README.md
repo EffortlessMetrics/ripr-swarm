@@ -44,8 +44,9 @@ by an xtask unit test.
 `smoke` runs `ripr check --base <base_sha> --format json` on each fetched
 repo and writes `target/ripr/reports/rust-corpus-smoke.{json,md}` with run
 status, exit code, wall time, and finding counts per repo and profile class.
-A missing checkout, a timeout, unparseable output, or a fail-closed run
-status makes the receipt `inconclusive`. The receipt says nothing about
+A missing or modified checkout, a timeout, unparseable output, a non-zero
+exit, a missing summary, or a fail-closed run status makes the receipt
+`inconclusive`. The receipt says nothing about
 whether the verdicts are correct, and it does not measure memory.
 
 ## Tiers
