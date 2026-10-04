@@ -228,7 +228,7 @@ fn prepare_out_dir(out: &Path) -> Result<(), String> {
 /// directory, because every step runs elsewhere and a relative path would
 /// otherwise fail as "No such file or directory" from the wrong directory.
 fn resolve_ripr(ripr: &str) -> Result<String, String> {
-    if ripr.contains('/') || ripr.contains('\\') {
+    if ripr.contains('/') || (cfg!(windows) && ripr.contains('\\')) {
         Ok(absolute(Path::new(ripr))?.display().to_string())
     } else {
         Ok(ripr.to_string())
@@ -833,6 +833,11 @@ mod tests {
     fn a_relative_ripr_path_is_resolved_and_a_bare_name_is_left_for_path_lookup()
     -> Result<(), String> {
         assert_eq!(resolve_ripr("ripr")?, "ripr");
+        // A backslash separates path parts only on Windows; elsewhere it is a
+        // legal file name character and the name stays a PATH lookup.
+        if cfg!(not(windows)) {
+            assert_eq!(resolve_ripr("weird\\name")?, "weird\\name");
+        }
         let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
         assert_eq!(
             resolve_ripr("target/debug/ripr")?,
