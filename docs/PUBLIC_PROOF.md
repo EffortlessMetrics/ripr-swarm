@@ -11,7 +11,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | Receipt | Measures | Revision | Detail |
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (c6ccf9d) | runner `local-linux-x86_64-4cpu` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.2 | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.3 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -34,7 +34,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on the hand-checked verdict corpus | **31.2%** | <= 5.0% | below the bar | first receipt |
+| Trust | Wrong verdicts on the hand-checked verdict corpus | **29.4%** | <= 5.0% | below the bar | first receipt |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt |
 | Trust | Real mutants that join a ripr seam precisely enough to score | **10.0%** | >= 50.0% | below the bar | first receipt |
@@ -59,7 +59,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On the labeled corpus ripr reported a gap on 10 of 20 changes whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`.
-- **Mostly unsure.** It abstained on 18 of 32 corpus cases (56.2%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** It abstained on 19 of 34 corpus cases (55.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 174 of 1745 mutants (10.0%) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
@@ -114,17 +114,17 @@ False-gap examples, as recorded:
 
 ## Verdict corpus
 
-32 hand-labeled changes (corpus 2026-10-04.2, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+34 hand-labeled changes (corpus 2026-10-04.3, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 | Rate | Count | Share |
 | --- | --- | --- |
-| False verdicts (all cases) | 10/32 | 31.2% |
+| False verdicts (all cases) | 10/34 | 29.4% |
 | False actionable (of discriminated) | 10/20 | 50.0% |
-| False exposed (of not fully discriminated) | 0/12 | 0.0% |
-| False silent (of not fully discriminated) | 0/12 | 0.0% |
-| Ideal verdict | 4/32 | 12.5% |
-| Abstained (limited or silent where acceptable) | 18/32 | 56.2% |
-| Findings with a contradiction | 4/39 | 10.3% |
+| False exposed (of not fully discriminated) | 0/14 | 0.0% |
+| False silent (of not fully discriminated) | 0/14 | 0.0% |
+| Ideal verdict | 5/34 | 14.7% |
+| Abstained (limited or silent where acceptable) | 19/34 | 55.9% |
+| Findings with a contradiction | 4/42 | 9.5% |
 
 | Case | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -160,6 +160,8 @@ False-gap examples, as recorded:
 | `bytesize-as-kb-div` | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
 | `bytesize-as-mib-div` | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
 | `strsim-jaro-winkler-threshold-shift` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `atuin-ai-history-output-capability` | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
+| `atuin-otel-traces-suffix-not` | not_discriminated | gap | limited | infection_unknown | abstained | none |
 
 What the corpus does not claim:
 
