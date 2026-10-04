@@ -375,8 +375,10 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     const selected = await loadFixture('status-stale.json');
     const pickedId = 'repair-attempt-0bbb2222bbbb2222bbbb2222bbbb2222bbbb2222';
     // The document for the picked attempt must carry the picked identity, or
-    // the identity-binding refusal (correctly) rejects the render.
-    const pickedDoc = { ...(selected as Record<string, unknown>), attempt_id: pickedId };
+    // the identity-binding refusal (correctly) rejects the render. The id
+    // lives under `attempt`, matching the RIPR-SPEC-0217 envelope.
+    const staleDoc = selected as { attempt: Record<string, unknown> } & Record<string, unknown>;
+    const pickedDoc = { ...staleDoc, attempt: { ...staleDoc.attempt, attempt_id: pickedId } };
     const h = harness({ inventory, selected, selectedByAttempt: { [pickedId]: pickedDoc }, pickIndex: 2 });
     const controller = controllerFor(h);
 
