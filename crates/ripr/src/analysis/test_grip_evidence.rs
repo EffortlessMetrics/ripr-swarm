@@ -270,7 +270,9 @@ impl<'index> EvidencePass<'index> {
                         cancellation::checkpoint().ok()?;
                         let evidence = evidence_for_seam_with_context(seam, context);
                         let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                        if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
+                        if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
+                            || processed == seams.len()
+                        {
                             trace_latency_phase(
                                 "evidence_for_seams_progress",
                                 &format!("processed_{processed}_of_{}", seams.len()),
