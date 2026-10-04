@@ -149,6 +149,33 @@ fn receipt_document(root: &Path, id: &RepairAttemptId) -> Result<Value, String> 
         .map_err(|failure| failure.detail)
 }
 
+fn with_unavailable_git<T>(
+    root: &Path,
+    observe: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    std::fs::rename(root.join(".git"), root.join(".git-unavailable"))
+        .map_err(|error| error.to_string())?;
+    // Cargo directs TMPDIR under target/, inside the checkout. Without a
+    // local discovery barrier, Git could report the enclosing repository's
+    // valid HEAD instead of the unreadable fixture HEAD this case requires.
+    write(
+        &root.join(".git"),
+        "gitdir: .git-missing-for-freshness-test\n",
+    )?;
+    let observed = match crate::agent::artifact::current_git_head(root) {
+        Ok(head) => Err(format!(
+            "unavailable-HEAD fixture still discovered Git HEAD {head}"
+        )),
+        Err(_) => observe(),
+    };
+    // Preserve the discovery-barrier bytes in the fixture until closeout.
+    std::fs::rename(root.join(".git"), root.join(".git-unavailable-marker"))
+        .map_err(|error| error.to_string())?;
+    std::fs::rename(root.join(".git-unavailable"), root.join(".git"))
+        .map_err(|error| error.to_string())?;
+    observed
+}
+
 #[test]
 fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), String> {
     let (root, id) = prepared("descendant")?;
@@ -355,12 +382,7 @@ fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(),
         finish_and_issue(&root, &id)?;
         let before = receipt_document(&root, &id)?;
         assert_eq!(before["status"], "improved");
-        std::fs::rename(root.join(".git"), root.join(".git-unavailable"))
-            .map_err(|error| error.to_string())?;
-        let observed = parity(&root, &id, "unknown");
-        std::fs::rename(root.join(".git-unavailable"), root.join(".git"))
-            .map_err(|error| error.to_string())?;
-        let (_, receipt) = observed?;
+        let (_, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
         assert_eq!(receipt["receipt"], before["receipt"]);
         Ok(())
     })();
@@ -404,12 +426,7 @@ fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_he
 fn durable_currentness_unknown_head_never_offers_continuation() -> Result<(), String> {
     let (root, id) = prepared("unknown")?;
     let result = (|| {
-        std::fs::rename(root.join(".git"), root.join(".git-unavailable"))
-            .map_err(|error| error.to_string())?;
-        let observed = parity(&root, &id, "unknown");
-        std::fs::rename(root.join(".git-unavailable"), root.join(".git"))
-            .map_err(|error| error.to_string())?;
-        let (attempt, receipt) = observed?;
+        let (attempt, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
         assert!(attempt["next_command"].is_null());
         assert_eq!(attempt["command_routes"], json!([]));
         assert_eq!(receipt["status"], "limited");
