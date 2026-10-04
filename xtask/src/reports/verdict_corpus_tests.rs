@@ -461,6 +461,20 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
 }
 
 #[test]
+fn validator_rejects_a_case_that_borrows_another_cases_diff() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        raw["cases"][0]["diff"] = raw["cases"][1]["diff"].clone();
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("diff `cases/") && v.contains("` is not `cases/")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn validator_rejects_an_anchor_the_diff_does_not_add() -> Result<(), String> {
     let violations = tampered(|raw| {
         let line = raw["cases"][0]["anchor"]["line"].as_u64().unwrap_or(0);
@@ -945,6 +959,15 @@ fn split_moves_the_one_file_layout_into_records_without_loss() -> Result<(), Str
         refused.contains("verdict-corpus split") && refused.contains("corpus_version"),
         "{refused}"
     );
+    // An unsafe id is refused before anything is written.
+    let mut escaping = legacy.clone();
+    escaping["cases"][0]["case_id"] = json!("../escape");
+    crate::tests::write(&dir.join("corpus.json"), &format!("{escaping:#}"));
+    let err = split(&dir).err().unwrap_or_default();
+    assert!(err.contains("`../escape`"), "{err}");
+    assert!(files_under(&dir.join("cases"))?.is_empty());
+    assert!(!dir.join("escape.json").exists());
+    crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
     split(&dir)?;
     assert_eq!(corpus_value(&dir)?, before);
 

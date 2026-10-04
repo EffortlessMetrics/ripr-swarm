@@ -12047,6 +12047,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
   "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
   "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_case_that_borrows_another_cases_diff",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

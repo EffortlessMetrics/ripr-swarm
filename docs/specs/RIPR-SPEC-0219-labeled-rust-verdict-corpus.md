@@ -62,8 +62,9 @@ out, so a fix to one verdict cannot show it did not break another.
 `fixtures/rust-verdict-corpus/` (`ripr_verdict_corpus.v1`) holds
 subjects and cases. `corpus.json` carries only the corpus header; each
 subject is `subjects/<subject_id>.json` beside its retained files and each
-case is `cases/<case_id>.json` beside its diff. A record file must be named
-after the id it holds, and records load in file-name order. One file per
+case is `cases/<case_id>.json` beside its `cases/<case_id>.diff`. A record
+file must be named after the id it holds, a case's `diff` must be its own,
+and `validate` names any other file in `cases/` or `subjects/`, and records load in file-name order. One file per
 record lets parallel PRs add cases without editing a shared array, and the
 corpus carries no version line that every PR would bump.
 
@@ -284,6 +285,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `corpus_records_load_in_file_name_order_and_must_match_their_ids`
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
+- `validator_rejects_a_case_that_borrows_another_cases_diff`
 - `contradiction_counts_use_one_per_finding_unit`
 - `stored_paths_keep_vendored_rust_out_of_the_workspace`
 - `validator_holds_each_subject_origin_to_its_own_provenance`

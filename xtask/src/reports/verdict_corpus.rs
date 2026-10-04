@@ -1242,7 +1242,14 @@ fn case_dir_violations(corpus: &Corpus, dir: &Path) -> Vec<String> {
     let root = dir.join("subjects");
     match fs::read_dir(&root) {
         Ok(entries) => {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        stray.push(format!("read {}: {err}", normalize_path(&root)));
+                        continue;
+                    }
+                };
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let known = if entry.path().is_dir() {
                     subject_ids.contains(name.as_str())
@@ -1541,6 +1548,15 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
                 if mutant.failing_test.is_some() { "names" } else { "does not name" }
             ));
         }
+    }
+    // The diff sits beside its record, so no case can borrow another's diff
+    // and leave its own unscored.
+    let own_diff = format!("cases/{id}.diff");
+    if case.diff != own_diff {
+        violations.push(format!(
+            "case `{id}` diff `{}` is not `{own_diff}`",
+            case.diff
+        ));
     }
     let mut unsafe_path = false;
     for (field, path) in [("diff", &case.diff), ("anchor.file", &case.anchor.file)] {
