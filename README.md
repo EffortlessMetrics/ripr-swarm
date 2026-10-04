@@ -107,8 +107,9 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 This compiles from source: about 11 minutes on one cold Linux container in
-October 2026 (`cargo install ripr` for 0.10.0 took about 2 minutes there). Every
-`ripr` command after that takes under 3 seconds. There is no prebuilt 0.11
+October 2026 (`cargo install ripr` for 0.10.0 took about 2 minutes there). The
+walk's `doctor` and `check` runs after that each took under 3 seconds on small
+crates; `ripr pilot` takes longer on large repositories. There is no prebuilt 0.11
 download until 0.11.0 is published; the
 [first-run scoreboard](benchmarks/dx_scoreboard/README.md) tracks the install
 time so a rise shows.

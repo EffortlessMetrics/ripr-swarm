@@ -512,6 +512,20 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Value(1.0))
     );
 
+    // An install step with no duration must not pass as a faster install.
+    let mut partial = first_run_receipt(true);
+    if let Some(setup) = partial["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_extra", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&partial, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(128.0))
+    );
+
     // Without a timed install the journey metric stays unmeasured.
     let samples = parse_ingest(&first_run_receipt(false), &config)?;
     assert!(

@@ -545,15 +545,21 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
         .as_array()
         .filter(|cases| !cases.is_empty())
         .ok_or("first_run.v1 receipt needs a non-empty cases array")?;
-    let install_secs: Option<f64> = setup
+    let install_steps: Vec<&Value> = setup
         .iter()
         .filter(|step| {
             step["step"]
                 .as_str()
                 .is_some_and(|name| name.contains("install"))
         })
+        .collect();
+    let install_secs: Option<f64> = install_steps
+        .iter()
         .filter_map(|step| step["secs"].as_f64())
         .reduce(|a, b| a + b);
+    // A partial sum would let a slow install look fast, so one untimed
+    // install step leaves the row incomplete.
+    let install_timed = install_steps.iter().all(|step| step["secs"].is_number());
     let ripr = value["ripr"].as_str().unwrap_or("unknown ripr");
     let friction_in = |steps: &[Value]| -> usize {
         steps
@@ -594,7 +600,11 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
         }));
     }
     if let Some(install) = install_secs {
-        rows.push(json!({"id": "first_run.install_seconds", "value": install}));
+        rows.push(json!({
+            "id": "first_run.install_seconds",
+            "value": install,
+            "completed": install_timed,
+        }));
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
