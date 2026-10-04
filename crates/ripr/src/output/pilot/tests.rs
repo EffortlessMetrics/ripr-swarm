@@ -354,10 +354,10 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         " weak (`weakly_gripped`) src/pricing.rs:88 ",
         "- weak, weakly_gripped\n",
         "- Why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
-        "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
+        "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
         "Target placement blocked:",
-        "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand.",
+        "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -465,7 +465,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "Top recommendation:",
         "inspected seam:",
         "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
-        "focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
+        "focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "assertion: not_applicable",
         "Detailed brief:",
         "target/ripr/pilot/pilot-summary.md",
@@ -1312,6 +1312,72 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         "{json}"
     );
     assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
+    Ok(())
+}
+
+#[test]
+fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    // #5205: Rust files exist but Rust is disabled. The ranking is empty by
+    // config, not by merit, and all three surfaces say so.
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let excluded = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &[])
+        .with_unanalyzed(Vec::new(), true)
+        .with_rust_exclusion(Some(3));
+    assert_eq!(excluded.rust_exclusion(), Some(3));
+    let context = PilotSummaryContext {
+        language_routes: Some(&excluded),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains("Excluded from pilot's Rust seam scan:"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("rust: 3 files (not enabled in ripr.toml [languages])"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("Next, to rank Rust seams:"), "{terminal}");
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("## Excluded From Pilot's Rust Seam Scan"),
+        "{md}"
+    );
+    assert!(md.contains("To rank Rust seams:"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["rust_excluded_from_scope"]["file_count"],
+        3
+    );
+    assert_eq!(
+        parsed["language_routes"]["rust_excluded_from_scope"]["enabled"],
+        false
+    );
+    assert!(parsed["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
+
+    // No exclusion: the JSON shape is unchanged for Rust users.
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+        .with_rust_exclusion(None);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
     Ok(())
 }
 

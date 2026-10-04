@@ -5,7 +5,7 @@
 //! snapshot is committed; MCP never re-runs classification, ranking, or
 //! evidence production. List responses carry only the small summary document;
 //! the complete bounded evidence document is served lazily by
-//! `ripr_get_gap` / `ripr://gap/{canonical_item_id}`.
+//! `ripr_get_gap` / `ripr://gap/{canonical_id}`.
 
 use crate::domain::Finding;
 use serde_json::{Value, json};
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
-/// `ripr_get_gap` / `ripr://gap/{canonical_item_id}` never authorizes an
+/// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
 /// edit by itself: the readiness block reports the producer repair-readiness
 /// facts projected at snapshot commit time, and `ripr_prepare_repair` (#3090)
 /// is the only route that binds a repair transaction — and only when every
@@ -163,7 +163,7 @@ impl RepairReadiness {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test surface; a production file is never the authored edit target"
+                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
             None => {
@@ -224,8 +224,7 @@ impl GapItem {
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
         let evidence_core = gap_evidence_core(finding, &canonical_id)?;
-        let evidence_bytes = serialized_bytes(&evidence_core)?;
-        let evidence_sha256 = evidence_sha256(&evidence_core)?;
+        let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         let repair_readiness = RepairReadiness::from_finding(finding);
         Ok(Self {
             canonical_id,
@@ -298,6 +297,11 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
                 "oracle_strength": test.oracle_strength.as_str(),
                 "relation_reason": test.relation_reason.map(|reason| reason.as_str()),
                 "relation_confidence": test.relation_confidence.map(|confidence| confidence.as_str()),
+                "miss": test.miss.map(|miss| miss.as_str()),
+                "why": crate::output::related_test_miss::related_test_miss_reason(
+                    test,
+                    &finding.activation.missing_discriminators,
+                ),
             })
         })
         .collect::<Vec<_>>();
@@ -432,13 +436,36 @@ fn serialized_bytes(value: &Value) -> Result<usize, String> {
     Ok(writer.0)
 }
 
-/// Deterministic digest of the complete evidence document. Snapshot identity
-/// binds this so a same-outcome refresh that changes evidence text produces a
-/// new snapshot id instead of serving altered bytes under the old identity.
-fn evidence_sha256(value: &Value) -> Result<String, String> {
-    let bytes = serde_json::to_vec(value)
-        .map_err(|error| format!("serialize evidence digest input: {error}"))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+/// Count and hash the same encoded evidence bytes without retaining them or
+/// serializing twice. Snapshot identity binds the digest, so an evidence change
+/// still produces a new identity even when its encoded length is unchanged.
+fn serialized_evidence_identity(value: &impl serde::Serialize) -> Result<(usize, String), String> {
+    struct IdentityWriter {
+        bytes: usize,
+        digest: Sha256,
+    }
+
+    impl std::io::Write for IdentityWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.bytes += buffer.len();
+            self.digest.update(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = IdentityWriter {
+        bytes: 0,
+        digest: Sha256::new(),
+    };
+    // Preserve the first serialization failure's context from the previous
+    // length pass. The same Value and infallible writer supplied both passes.
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|error| format!("serialize gap item: {error}"))?;
+    Ok((writer.bytes, format!("{:x}", writer.digest.finalize())))
 }
 
 /// One fully-established candidate finding shared by the `gaps` and `repair`
@@ -500,6 +527,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             oracle_strength: crate::domain::OracleStrength::Strong,
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
+            miss: None,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
@@ -520,6 +548,76 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[test]
+    fn evidence_identity_serializes_once_and_matches_encoded_bytes() -> Result<(), String> {
+        struct Observed<'a> {
+            value: &'a Value,
+            calls: std::cell::Cell<usize>,
+        }
+
+        impl serde::Serialize for Observed<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.calls.set(self.calls.get() + 1);
+                serde::Serialize::serialize(self.value, serializer)
+            }
+        }
+
+        let item = GapItem::from_finding(&finding()?)?;
+        let values = [
+            Value::Null,
+            json!({}),
+            json!([]),
+            json!({
+                "escaped": "quote: \" backslash: \\ newline: \n",
+                "unicode": "é e\u{301} 😀",
+                "nested": [true, false, 42, -17, 0.125, null, {"empty": ""}],
+                "large": "x".repeat(65_536),
+            }),
+            item.evidence_core,
+        ];
+        for value in values {
+            let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+            let observed = Observed {
+                value: &value,
+                calls: std::cell::Cell::new(0),
+            };
+            let (length, digest) = serialized_evidence_identity(&observed)?;
+            assert_eq!(observed.calls.get(), 1, "evidence must serialize only once");
+            assert_eq!(length, bytes.len());
+            assert_eq!(digest, format!("{:x}", Sha256::digest(&bytes)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_identity_preserves_the_first_serialization_error_context() {
+        struct Refused;
+
+        impl serde::Serialize for Refused {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom(
+                    "injected evidence encoding failure",
+                ))
+            }
+        }
+
+        assert_eq!(
+            serialized_evidence_identity(&Refused),
+            Err("serialize gap item: injected evidence encoding failure".to_string())
+        );
+    }
+
+    #[test]
+    fn gap_projection_preserves_evidence_length_and_digest() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.recommended_next_step = Some("assert \"é😀\"\nwith a \\ escape".to_string());
+        let item = GapItem::from_finding(&finding)?;
+        let bytes = serde_json::to_vec(&item.evidence_core).map_err(|error| error.to_string())?;
+        assert_eq!(item.evidence_bytes, bytes.len());
+        assert_eq!(item.evidence_sha256, format!("{:x}", Sha256::digest(bytes)));
+        Ok(())
     }
 
     #[test]
@@ -688,6 +786,31 @@ mod tests {
                 "a finding without a strong directly-related test must not be repair-ready: {:?}",
                 item.repair_readiness.ineligibility
             ));
+        }
+        Ok(())
+    }
+
+    /// #5210: the non-surface refusal names the inline-test boundary, so
+    /// an MCP caller learns the permanent scope from the refusal itself.
+    #[test]
+    fn non_surface_reason_names_the_inline_test_boundary() -> Result<(), String> {
+        let readiness = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("fix_site_not_test_surface"),
+        };
+        let reason = readiness.reason();
+        for needle in [
+            "only test-surface paths can be the authored edit target",
+            "inline",
+            "#[cfg(test)]",
+            "don't qualify their file",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!(
+                    "non-surface reason must name the inline boundary ({needle}): {reason}"
+                ));
+            }
         }
         Ok(())
     }
