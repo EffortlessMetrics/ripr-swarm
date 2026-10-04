@@ -18,6 +18,7 @@ const DISCARDED: &[&str] = &[
     "expected_match = matches!(value, 2);",
     "let /* binder */ mut expected_match: bool = matches!(value, 2);",
     "matches!(matches!(expected_value, 2), true);",
+    "matches!(value, 2); // assert_eq!(unrelated, 2)",
 ];
 
 #[test]
@@ -29,6 +30,19 @@ fn discarded_matches_are_not_lexical_oracles() -> Result<(), String> {
                 "discarded computation became an oracle: {statement}: {facts:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn deeply_nested_discarded_matchers_fail_closed() -> Result<(), String> {
+    let nested = format!("{}value{}", "matches!(".repeat(1000), ", 2)".repeat(1000));
+    let body = format!("let expected_match = {nested};");
+    let facts = extract_assertions(&body, 1);
+    if !facts.is_empty() {
+        return Err(format!(
+            "deep discarded computation became an oracle: {facts:?}"
+        ));
     }
     Ok(())
 }
@@ -58,6 +72,11 @@ fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(
         ),
         (
             "matches!(result.unwrap(), 2);",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "matches!({ matches!(value, 2); unrelated.unwrap() }, 3);",
             OracleKind::SmokeOnly,
             OracleStrength::Smoke,
         ),

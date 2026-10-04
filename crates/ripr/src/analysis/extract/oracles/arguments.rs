@@ -174,6 +174,31 @@ pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, us
     Some((scrutinee, preceding_lines))
 }
 
+/// The contents of one complete executable block, keeping source line padding.
+pub(super) fn complete_block_body(text: &str) -> Option<(String, usize, usize)> {
+    let mut expression = text.trim();
+    while let Some(inner) = parenthesized_contents(expression) {
+        expression = inner.trim();
+    }
+    if !expression.starts_with('{') {
+        return None;
+    }
+    let body = delimited_contents_at(expression, 0)?;
+    if !expression[body.len() + 2..].trim().is_empty() {
+        return None;
+    }
+    let body_start = text.find(expression)? + 1;
+    let before = text[..body_start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    let after = text[body_start + body.len()..]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    Some((body, before, after))
+}
+
 /// The new scalar predicate credit requires an entire outer assertion. The
 /// older argument helper deliberately recognizes macro calls inside a line;
 /// that is not sufficient authority for this narrower classification.

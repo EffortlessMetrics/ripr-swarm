@@ -107,6 +107,9 @@ within its scrutinee, such as smoke credit for `result.unwrap()`.
 The dedicated terminal Result-guard scanner still recognizes matchers that
 participate in its failure decision. This rule does not infer boolean
 dataflow across bindings.
+Lexical projection is bounded to 16 nested matcher/block steps and omits
+oracle credit on exhaustion; parser-rejected deep source cannot recreate an
+unbounded recursive fallback.
 
 ## Non-Goals
 
@@ -260,6 +263,7 @@ Fixture coverage:
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
 - `discarded_matches_are_not_lexical_oracles`
+- `deeply_nested_discarded_matchers_fail_closed`
 - `discarded_matchers_cannot_supply_an_unrelated_observers_pattern`
 - `discarded_matches_in_a_parsed_owner_test_are_not_oracles`
 - `registered_trials_do_not_credit_discarded_matcher_computations`

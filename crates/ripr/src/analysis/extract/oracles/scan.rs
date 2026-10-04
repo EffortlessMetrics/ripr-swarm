@@ -1,7 +1,7 @@
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
-use super::arguments::{assertion_oracle_text, discarded_matcher_scrutinee};
+use super::arguments::{assertion_oracle_text, complete_block_body, discarded_matcher_scrutinee};
 use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
@@ -30,7 +30,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         if is_assertion_line(&trimmed) {
             collect_multiline_assertion(&mut trimmed, &mut lines);
             trimmed = without_discarded_matcher_computations(&trimmed);
-            if trimmed.trim().is_empty() {
+            if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
                 continue;
             }
             let preceding_lines = leading_blank_lines(&trimmed);
@@ -2082,7 +2082,7 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
         }
         collect_multiline_assertion(&mut statement, &mut lines);
         statement = without_discarded_matcher_computations(&statement);
-        if statement.trim().is_empty() {
+        if !is_line_scanned_oracle(&mask_comments_and_strings(&statement)) {
             continue;
         }
         let preceding_lines = leading_blank_lines(&statement);
@@ -2105,6 +2105,27 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
 /// Split only complete top-level statements; wrappers and failure guards stay
 /// intact. A nested scrutinee assertion/unwrap retains its own observer text.
 fn without_discarded_matcher_computations(text: &str) -> String {
+    matcher_free_text_at_depth(text, 0)
+}
+
+const MATCHER_PROJECTION_DEPTH_LIMIT: usize = 16;
+
+fn matcher_free_text_at_depth(text: &str, depth: usize) -> String {
+    // The lexical fallback also receives parser-rejected deep source. Never
+    // recreate unbounded recursion or return a favorable untouched matcher.
+    if depth >= MATCHER_PROJECTION_DEPTH_LIMIT {
+        return text
+            .chars()
+            .filter(|character| *character == '\n')
+            .collect();
+    }
+    if let Some((body, before, after)) = complete_block_body(text) {
+        let mut output = String::new();
+        output.extend(std::iter::repeat_n('\n', before));
+        output.push_str(&matcher_free_text_at_depth(&body, depth + 1));
+        output.extend(std::iter::repeat_n('\n', after));
+        return output;
+    }
     let masked = mask_comments_and_strings(text);
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -2114,13 +2135,13 @@ fn without_discarded_matcher_computations(text: &str) -> String {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             ';' if depth == 0 => {
-                append_matcher_free_statement(&text[start..=index], &mut output);
+                append_matcher_free_statement(&text[start..=index], &mut output, depth);
                 start = index + 1;
             }
             _ => {}
         }
     }
-    append_matcher_free_statement(&text[start..], &mut output);
+    append_matcher_free_statement(&text[start..], &mut output, depth);
     output
 }
 
@@ -2131,20 +2152,24 @@ fn leading_blank_lines(text: &str) -> usize {
         .count()
 }
 
-fn append_matcher_free_statement(statement: &str, output: &mut String) {
+fn append_matcher_free_statement(statement: &str, output: &mut String, depth: usize) {
     let Some((scrutinee, preceding_lines)) = discarded_matcher_scrutinee(statement) else {
         output.push_str(statement);
         return;
     };
-    let scrutinee = without_discarded_matcher_computations(&scrutinee);
+    let scrutinee = matcher_free_text_at_depth(&scrutinee, depth + 1);
     let masked = mask_comments_and_strings(&scrutinee);
-    let has_observer = assertion_oracle_text(&scrutinee).is_some()
-        || masked.contains(".unwrap(")
-        || masked.contains(".expect(")
-        || (masked.contains('(')
-            && (is_custom_assertion_helper(&masked)
-                || is_side_effect_observer_assertion(&masked)
-                || is_mock_expectation_line(&masked)));
+    let asserted = assertion_oracle_text(&scrutinee).is_some();
+    // Unknown compound scrutinees keep no matcher pin. Recognized asserting
+    // wrappers retain their own operand projection and classification.
+    let has_observer = asserted
+        || (!masked.contains("matches!")
+            && (masked.contains(".unwrap(")
+                || masked.contains(".expect(")
+                || (masked.contains('(')
+                    && (is_custom_assertion_helper(&masked)
+                        || is_side_effect_observer_assertion(&masked)
+                        || is_mock_expectation_line(&masked)))));
     let lines = statement.bytes().filter(|byte| *byte == b'\n').count();
     let remaining_lines = if has_observer {
         output.extend(std::iter::repeat_n('\n', preceding_lines));
