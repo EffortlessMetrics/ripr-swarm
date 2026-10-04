@@ -25,6 +25,8 @@ are scoped or reviewed.
   (#5744).
 - Repo-exposure snapshots retain native Unix repository root characters for
   artifact admission, including literal filename backslashes (#5744).
+- Agent verify preserves native Unix characters in its before/after input
+  paths so receipt admission can reopen the selected snapshots (#5744).
 - Preview-language refusals (parse budget, read caps, walk cap) no longer
   downgrade a diff that touches none of that language. A Rust-only change in a
   repository with an unrelated, deeply nested Python fixture (found trialing

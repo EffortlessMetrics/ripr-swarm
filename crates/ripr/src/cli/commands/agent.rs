@@ -369,8 +369,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
-        output::outcome::display_path(&options.before),
-        output::outcome::display_path(&options.after),
+        agent_verify_input_path(&options.before),
+        agent_verify_input_path(&options.after),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
@@ -384,6 +384,13 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         Some(artifact_currentness),
         &binding,
     )
+}
+
+// These inputs are re-opened by receipt admission. Preserve native filename
+// characters while retaining the report's existing leading `./` spelling.
+fn agent_verify_input_path(path: &Path) -> String {
+    let rendered = crate::agent::loop_commands::root_path_display(path);
+    rendered.strip_prefix("./").unwrap_or(&rendered).to_string()
 }
 
 /// Exact `render_agent_verify` error for drifted analysis inputs.
