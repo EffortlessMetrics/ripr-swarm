@@ -10,6 +10,9 @@ Linked issues:
 
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
   resources)
+- #5267 (every pre-initialize typed-shape violation recovers with the
+  SDK's Invalid Request answer on the same connection instead of
+  terminating the server process)
 - #3087 (parent standard MCP server epic)
 - #3088 (transport/discovery/read-only boundary slice; this slice keeps its
   SDK-owned dispatch and bounded framing)
@@ -49,8 +52,19 @@ official SDK transport:
 - Tools `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
   `ripr_get_gap`; static resource `ripr://workspace/status`; resource
   templates `ripr://snapshot/{snapshot_id}` and
-  `ripr://gap/{canonical_item_id}`. Tool names and templates follow the
+  `ripr://gap/{canonical_id}`. Tool names and templates follow the
   registry established in #3088's slice.
+- Pre-initialize typed-shape violations recover on the wire (#5267): a
+  request that arrives before `initialize` and lacks the SDK's required
+  `_meta` fields — and any other pre-initialize message the SDK refuses —
+  receives the SDK's typed Invalid Request error and ends only that
+  handshake attempt. The bounded adapter restarts the handshake on the same
+  connection (the frame reader, its already-buffered pipelined bytes, the
+  shared writer, and admission state survive across attempts), so every
+  violation is answered idempotently and the server never trades the whole
+  session for one message; a normal `initialize` still completes afterwards,
+  and stdin EOF remains the clean exit. Each attempt consumes at least one
+  inbound frame, so recovery always makes progress and never spins.
 - `ripr_workspace_status` returns the startup workspace block (root
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
@@ -91,7 +105,7 @@ official SDK transport:
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.
-- `ripr_get_gap` and `ripr://gap/{canonical_item_id}` return one canonical
+- `ripr_get_gap` and `ripr://gap/{canonical_id}` return one canonical
   item's complete bounded evidence bound to its snapshot identity:
   identity/location, changed behavior (expression, before/after, delta
   kind, probe family), causal attribution (canonical gap owner, behavior
@@ -145,6 +159,11 @@ official SDK transport:
   equality, rejection arms, and the new fail-closed control proving a
   stock-shaped client receives typed `no_snapshot` failures (and the
   resource-miss mapping) before the first refresh.
+- `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
+  recovery, and the #5267 control: repeated pre-initialize violations each
+  receive a correlated `-32602` answer, the session then completes a normal
+  `initialize` on the same connection, and stdin EOF ends it cleanly.
+  Removing the handshake-retry recovery must fail that control.
 - `cargo test -p ripr --lib lsp::diagnostic_budget` — the shared budget
   authority this slice consumes stays green.
 
@@ -172,7 +191,7 @@ official SDK transport:
    report), `ripr_list_gaps` (bounded working set with disclosed
    omissions), and `ripr_get_gap` (one complete item), or reads
    `ripr://workspace/status`, `ripr://snapshot/{snapshot_id}`, and
-   `ripr://gap/{canonical_item_id}` — no report-file, clipboard, log, or
+   `ripr://gap/{canonical_id}` — no report-file, clipboard, log, or
    LSP-protocol archaeology involved.
 2. Before any refresh, list/get/snapshot reads fail closed with typed
    `no_snapshot`; during an attempt they report `analysis_in_flight`; a

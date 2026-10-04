@@ -80,8 +80,17 @@ fn drain<R: Read + Send + 'static>(stream: Option<R>) -> thread::JoinHandle<Vec<
     })
 }
 
+/// The binary under test: `RIPR_HOSTILE_BIN` when a harness such as
+/// `cargo xtask dx-scoreboard --ripr-bin` measures a specific build, otherwise
+/// the one Cargo built for this test.
+fn ripr_bin() -> PathBuf {
+    std::env::var_os("RIPR_HOSTILE_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_ripr")))
+}
+
 fn ripr(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<Ran, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    let mut command = Command::new(ripr_bin());
     command
         .current_dir(dir)
         .args(args)
@@ -572,4 +581,41 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
         return Err(format!("expected config refusal\n{}", ran.stderr));
     }
     Ok(())
+}
+
+/// A clone of a feature branch has `origin/HEAD` tracking that branch, so the
+/// default base is the checked-out commit and the range is empty by
+/// construction. The run must say so and name `--base`, not read as clean.
+// `file://` clone URLs are POSIX-shaped; Windows needs `file:///C:/...`.
+#[cfg(unix)]
+#[test]
+fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
+    let scratch = Scratch::new("basehead")?;
+    let source = plain(&scratch, "source")?;
+    let clone = scratch.path.join("clone");
+    let url = format!("file://{}", source.display());
+    let clone_arg = clone.to_string_lossy().into_owned();
+    git(
+        &scratch.path,
+        &["clone", "-q", "-b", "feat", &url, &clone_arg],
+    )?;
+    let ran = ripr(&clone, &["check"], &[])?;
+    assert_sane(&ran, "default base equals HEAD")?;
+    if ran.code != Some(0) {
+        return Err(format!(
+            "expected an empty check to exit 0, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    if !ran.stderr.contains("each resolved to the same commit") || !ran.stderr.contains("--base") {
+        return Err(format!(
+            "expected the base-equals-HEAD warning\n{}",
+            ran.stderr
+        ));
+    }
+    // The same repository compared against a real base still finds the change.
+    assert_found_change(
+        &ripr(&clone, &["check", "--base", "origin/main"], &[])?,
+        "explicit base",
+    )
 }
