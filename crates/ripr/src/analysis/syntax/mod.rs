@@ -18,4 +18,7 @@ pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
-pub(crate) use ra::{GovernedCfgTestModule, governed_cfg_test_modules, inline_unit_module_layout};
+pub(crate) use ra::{
+    GovernedCfgTestModule, ModuleItemScopes, fn_name_binding_count, governed_cfg_test_modules,
+    inline_unit_module_layout, module_item_scopes,
+};
