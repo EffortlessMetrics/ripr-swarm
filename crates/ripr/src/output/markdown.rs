@@ -1834,7 +1834,11 @@ fn main() -> ExitCode {
             let Some((count, args)) = pwsh_recorded_argv(&line, &root)? else {
                 return Ok(());
             };
-            if count != 4 || args[1] != value {
+            let expected: Vec<String> = ["--root", value, "--base", "HEAD"]
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect();
+            if count != 4 || args != expected {
                 return Err(format!(
                     "{label}: PowerShell bound {count} arguments {args:?}, wanted the value \
                      {value:?} as one (line {line:?})"
