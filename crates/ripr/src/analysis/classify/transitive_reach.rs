@@ -1431,6 +1431,41 @@ mod tests {
         assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
     }
 
+    // (#5481 review) A type named only as a constructor argument is not the
+    // receiver's type: `Cache::new(Site::default())` binds a `Cache`. The
+    // cache test sorts first, so it would win if it counted as corroborated.
+    #[test]
+    fn given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at(
+                        "cache_wraps_site",
+                        "src/0_cache.rs",
+                        3,
+                        vec!["new", "build"],
+                    ),
+                    "let cache = Cache::new(Site::default()); cache.build();",
+                ),
+                with_body(
+                    make_test_at("site_builds", "tests/site.rs", 3, vec!["new", "build"]),
+                    "let site: Site = Site::new(); assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_builds")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
     // (#5481 review) `Site::build` calling `self.queue.build()` is a real call
     // onward, not the declaration of `build`, so a test on `Site` stays
     // corroborated when `Queue::build` is what reaches the owner.

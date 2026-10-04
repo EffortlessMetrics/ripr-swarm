@@ -2076,9 +2076,59 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// Whether the binding's own type is `type_name`: its annotation
+/// (`let x: Site = ..`) or its initializer head (`Site::new(..)`,
+/// `Site { .. }`, `&mut Site::default()`). A type named only inside nested
+/// arguments (`Cache::new(Site::default())`) is not the binding's type.
 fn let_binding_mentions_type(body: &str, binding: &str, type_name: &str) -> bool {
     last_let_statement(body, binding)
-        .is_some_and(|stmt| super::reveal::contains_as_whole_word(stmt, type_name))
+        .and_then(let_statement_type_head)
+        .is_some_and(|head| head == type_name)
+}
+
+fn let_statement_type_head(stmt: &str) -> Option<&str> {
+    let eq = stmt.find('=')?;
+    let pattern = &stmt[..eq];
+    if let Some(colon) = pattern.find(':') {
+        return type_head(&pattern[colon + 1..]).map(|(segments, _)| segments.last().copied())?;
+    }
+    let (segments, next) = type_head(&stmt[eq + 1..])?;
+    match (segments.as_slice(), next) {
+        ([.., ty, _call], Some(b'(')) => Some(ty),
+        ([.., last], Some(b'(' | b'{')) => Some(last),
+        ([.., ty, _assoc], _) => Some(ty),
+        _ => None,
+    }
+}
+
+/// Leading `a::B::c` path of `text` after `&`/`mut`/`dyn`/whitespace, and the
+/// first non-space byte after it. Generic arguments end the path.
+fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
+    let mut rest = text.trim_start();
+    loop {
+        let trimmed = rest
+            .strip_prefix('&')
+            .or_else(|| {
+                rest.strip_prefix("mut ")
+                    .or_else(|| rest.strip_prefix("dyn "))
+            })
+            .map(str::trim_start);
+        match trimmed {
+            Some(next) => rest = next,
+            None => break,
+        }
+    }
+    let bytes = rest.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() && (is_ident_byte(bytes[end]) || bytes[end] == b':') {
+        end += 1;
+    }
+    let segments: Vec<&str> = rest[..end].split("::").filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return None;
+    }
+    let next = rest[end..].trim_start().bytes().next();
+    Some((segments, next))
 }
 
 fn text_resolves_method_to_type(
