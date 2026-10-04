@@ -20,7 +20,9 @@ mod stream;
 /// Raised to 1200 in lockstep with the adapter defaults (repo-growth evidence
 /// in the guard-raise commit); the parser counts distinct changed paths while
 /// the adapter counts indexed Rust files, so both limits stay necessary.
-const DEFAULT_DIFF_FILE_LIMIT: usize = 1200;
+/// Raised to 10,000 with the adapter's memory guard once its time bound moved
+/// to the separate narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`).
+const DEFAULT_DIFF_FILE_LIMIT: usize = 10_000;
 const DIFF_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 
 pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {

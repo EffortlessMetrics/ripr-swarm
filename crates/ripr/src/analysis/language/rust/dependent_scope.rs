@@ -5,8 +5,11 @@
 //! slice C). On a large workspace that reverse closure is most of the
 //! repository: a two-file change in `bevy_reflect` selected 1,738 of 1,925
 //! files and tripped the `diff_scope_oversized` guard. By default the
-//! narrowing below runs only when that closure would exceed the index limit
-//! (see [`DependentScopeMode::Auto`]).
+//! narrowing below runs only when that closure would exceed the narrowing
+//! threshold (`RIPR_DIFF_NARROW_INDEX_FILES`, see
+//! [`DependentScopeMode::Auto`]). That threshold bounds time; the separate,
+//! higher `RIPR_MAX_DIFF_INDEX_FILES` guard bounds memory, so a narrowed
+//! selection still over the threshold runs instead of refusing.
 //!
 //! The extra packages cannot contribute related tests here. The selection
 //! is never workspace-complete, so the related-test package guard drops
@@ -36,7 +39,7 @@
 //! indexing them. The witness walks run only for `no_static_path` findings;
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
-//! when that widening would exceed the index limit.
+//! when that widening would exceed the narrowing threshold.
 //!
 //! Every admission test is a lexical superset of the parser fact it stands
 //! for: a call, definition or mention the index records is spelled in the
@@ -410,7 +413,7 @@ pub(super) fn apply_reach_search_over_limit(
     finding.evidence.push(format!(
         "ripr did not search dependent packages for a test that reaches `{owner}`: its callers \
          span at least {files} Rust files, over the {limit}-file index limit. A test there may \
-         still observe this change. Raise RIPR_MAX_DIFF_INDEX_FILES to search them."
+         still observe this change. Raise RIPR_DIFF_NARROW_INDEX_FILES to search them."
     ));
     finding.evidence.extend([
         format!(
