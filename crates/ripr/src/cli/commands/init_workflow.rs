@@ -399,13 +399,14 @@ fn generated_workflow_template() -> String {
 /// the install step always resolves (#5208). Released generators pin
 /// themselves and render byte-identical output to before.
 ///
-/// Bump only after the crates.io publication is verified, as a
-/// post-publication commit — never in the release-prep PR and never for a
-/// release candidate (Codex P1): the constant must always name a published
-/// version, or a candidate-built generator would self-pin an unresolvable
-/// version with no warning. A stale constant makes a released generator
-/// warn and pin the older release (degraded but resolvable, and loud), so
-/// forgetting the bump can never emit an unresolvable pin.
+/// Bump together with the package version in the release commit, and
+/// publish from that commit — never for a release candidate (#5208, #5244
+/// review). A constant bumped only after publication would travel behind
+/// the version it names, so the just-published generator would warn and
+/// pin its predecessor on every release. A stale constant (bump forgotten)
+/// degrades the same loud way: warn and pin the older release, always
+/// resolvable, never an unresolvable pin. See docs/RELEASE.md Post-Publish
+/// for the procedure and the release-commit-to-publication window.
 const LATEST_RELEASED_VERSION: &str = "0.10.0";
 
 /// Parse `major.minor.patch`; `None` for anything else. Unknown shapes fail
