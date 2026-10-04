@@ -4,7 +4,7 @@ use super::*;
 use crate::app::repair_attempt::{
     BeforeArtifactSource, BeginRepairAttemptOptions, RepairAttemptId, begin_repair_attempt_with,
     edit_cage_policy_from_packet, finish_repair_attempt, load_repair_attempt_manifest,
-    write_edit_cage_baseline,
+    receipt_binding_from, retain_terminal_evidence, write_edit_cage_baseline,
 };
 use std::path::PathBuf;
 
@@ -14,6 +14,15 @@ fn git(root: &Path, args: &[&str]) -> Result<(), String> {
 
 fn write(path: &Path, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|error| format!("write {}: {error}", path.display()))
+}
+
+fn snapshot(grip: &str) -> String {
+    json!({ "schema_version": "0.3", "scope": "repo", "seams": [{
+        "seam_id": "seam:freshness", "kind": "predicate_boundary",
+        "file": "src/subject.rs", "line": 1, "grip_class": grip,
+        "related_tests": [], "observed_values": [], "missing_discriminators": [],
+    }] })
+    .to_string()
 }
 
 fn prepared(label: &str) -> Result<(PathBuf, RepairAttemptId), String> {
@@ -38,11 +47,26 @@ fn prepared(label: &str) -> Result<(PathBuf, RepairAttemptId), String> {
     let before = workflow.join("before.json");
     let packet = workflow.join("packet.json");
     let baseline = workflow.join("baseline.json");
-    write(&before, "{}")?;
+    write(&before, &snapshot("weakly_gripped"))?;
+    let verify_spec = crate::agent::command_specs::agent_verify_command_spec(
+        ".",
+        "target/ripr/workflow/before.json",
+        "target/ripr/workflow/after.json",
+        None,
+    );
+    let receipt_spec = crate::agent::command_specs::agent_receipt_command_spec(
+        ".",
+        "target/ripr/workflow/agent-verify.json",
+        "seam:freshness",
+        None,
+    );
+    verify_spec.validate().map_err(|error| error.to_string())?;
+    receipt_spec.validate().map_err(|error| error.to_string())?;
     let packet_text = json!({
         "seam_id": "seam:freshness",
         "allowed_edit_surface": ["tests/target.rs"],
         "forbidden_files": [],
+        "command_specs": { "verify": verify_spec, "receipt": receipt_spec },
     })
     .to_string();
     write(&packet, &packet_text)?;
@@ -85,6 +109,23 @@ fn parity(root: &Path, id: &RepairAttemptId, expected: &str) -> Result<(Value, V
         .receipt_status_document(id.as_str(), Some(root), None)
         .map_err(|failure| failure.detail)?;
     let cli = crate::app::agent_status::build_agent_attempt_status(root, root, None, id)?;
+    // Decision assertions come before additive metadata. The old implementation
+    // must fail for offering continuation, not merely for a missing new field.
+    if matches!(expected, "historical" | "unknown") {
+        assert!(
+            attempt["next_command"].is_null(),
+            "old continuation escaped: {attempt}"
+        );
+        assert_eq!(attempt["command_routes"], json!([]));
+        assert_eq!(
+            receipt["status"],
+            if expected == "historical" {
+                "stale"
+            } else {
+                "limited"
+            }
+        );
+    }
     for document in [&attempt, &receipt] {
         assert_eq!(document["currentness"]["state"], expected);
         assert_eq!(document["currentness"]["state"], cli.attempt.currentness);
@@ -108,6 +149,7 @@ fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), St
     let result = (|| {
         let (before, _) = parity(&root, &id, "current")?;
         assert!(before["next_command"].is_string());
+        assert_eq!(before["command_routes"].as_array().map(Vec::len), Some(2));
         write(
             &root.join("tests/target.rs"),
             "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
@@ -116,6 +158,7 @@ fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), St
         git(&root, &["commit", "--no-gpg-sign", "-m", "focused edit"])?;
         let (after, receipt) = parity(&root, &id, "current")?;
         assert_eq!(after["next_command"], before["next_command"]);
+        assert_eq!(after["command_routes"], before["command_routes"]);
         assert_eq!(receipt["status"], "awaiting_edit");
         Ok(())
     })();
@@ -159,30 +202,190 @@ fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt()
 fn durable_currentness_does_not_reuse_recorded_after_admission() -> Result<(), String> {
     let (root, id) = prepared("terminal")?;
     let result = (|| {
-        write(
-            &root.join("tests/target.rs"),
-            "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
-        )?;
-        let manifest = load_repair_attempt_manifest(&root, &id)?;
-        let packet = find_manifest_artifact_by_role(&manifest, "agent_packet")
-            .ok_or_else(|| "fixture lost retained packet".to_string())?;
-        let after = finish_repair_attempt(
-            &root,
-            &id,
-            &root.join(&packet.path),
-            crate::edit_cage::HeadMovement::AdmitDescendantCommits,
-        )?;
-        assert!(after.current);
-        let terminal = load_repair_attempt_manifest(&root, &id)?;
-        assert_eq!(terminal.state, RepairAttemptState::ReadyToFinish);
+        finish_and_issue(&root, &id)?;
         let (_, before) = parity(&root, &id, "current")?;
-        assert_eq!(before["status"], "verification_pending");
+        assert_eq!(before["status"], "improved");
+        assert_eq!(before["receipt"]["status"], "issued");
         git(&root, &["add", "tests/target.rs"])?;
         git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
         let (_, receipt) = parity(&root, &id, "historical")?;
         assert_eq!(receipt["currentness"]["after_current"], true);
         assert_eq!(receipt["status"], "stale");
         assert_eq!(receipt["receipt"], before["receipt"]);
+        Ok(())
+    })();
+    if result.is_ok() {
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    }
+    result
+}
+
+fn finish_and_issue(root: &Path, id: &RepairAttemptId) -> Result<(), String> {
+    write(
+        &root.join("tests/target.rs"),
+        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+    )?;
+    let manifest = load_repair_attempt_manifest(root, id)?;
+    let packet = find_manifest_artifact_by_role(&manifest, "agent_packet")
+        .ok_or_else(|| "fixture lost retained packet".to_string())?;
+    let packet_path = root.join(&packet.path);
+    let after = finish_repair_attempt(
+        root,
+        id,
+        &packet_path,
+        crate::edit_cage::HeadMovement::AdmitDescendantCommits,
+    )?;
+    assert!(after.current);
+    assert_eq!(
+        load_repair_attempt_manifest(root, id)?.state,
+        RepairAttemptState::ReadyToFinish
+    );
+    issue_terminal_receipt(root, id, &packet_path)
+}
+
+fn issue_terminal_receipt(root: &Path, id: &RepairAttemptId, packet: &Path) -> Result<(), String> {
+    use crate::output::agent_receipt::{
+        AgentReceiptAnalysisOutcome, AgentReceiptArtifactProvenance, AgentReceiptProvenance,
+        render_agent_receipt_value_json,
+    };
+    let before_path = "target/ripr/workflow/before.json";
+    let after_path = "target/ripr/workflow/after.json";
+    let verify_path = "target/ripr/workflow/agent-verify.json";
+    let receipt_path = "target/ripr/workflow/agent-receipt.json";
+    let before =
+        std::fs::read_to_string(root.join(before_path)).map_err(|error| error.to_string())?;
+    let after = snapshot("strongly_gripped");
+    write(&root.join(after_path), &after)?;
+    let report = crate::output::outcome::targeted_test_outcome_report_from_json(
+        &before,
+        &after,
+        before_path.to_string(),
+        after_path.to_string(),
+    )?;
+    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let binding = crate::output::outcome::AgentVerifyArtifactBinding {
+        before_content_sha256: digest(before.as_bytes()),
+        after_content_sha256: digest(after.as_bytes()),
+    };
+    let verify = crate::output::outcome::render_agent_verify_json_with_currentness(
+        &report,
+        Some("current"),
+        &binding,
+    )?;
+    let verify_value: Value = serde_json::from_str(&verify).map_err(|error| error.to_string())?;
+    assert_eq!(
+        verify_value["changed_seams"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        verify_value["changed_seams"][0]["seam_id"],
+        "seam:freshness"
+    );
+    assert_eq!(verify_value["changed_seams"][0]["change"], "improved");
+    write(&root.join(verify_path), &verify)?;
+    let artifact = |path: &str, bytes: &[u8]| AgentReceiptArtifactProvenance {
+        path: path.to_string(),
+        sha256: digest(bytes),
+    };
+    let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            finding_count: 1,
+            ..Default::default()
+        },
+        Vec::new(),
+    )?;
+    let rendered = render_agent_receipt_value_json(
+        &verify_value,
+        verify_path.to_string(),
+        "seam:freshness",
+        None,
+        &[],
+        AgentReceiptProvenance {
+            ripr_version: env!("CARGO_PKG_VERSION").to_string(),
+            repo_root: ".".to_string(),
+            config_fingerprint: None,
+            command_template_version: "fixture".to_string(),
+            generated_at: "2026-10-04T00:00:00Z".to_string(),
+            workflow_artifact: None,
+            before_artifact: artifact(before_path, before.as_bytes()),
+            after_artifact: artifact(after_path, after.as_bytes()),
+            verify_artifact: artifact(verify_path, verify.as_bytes()),
+        },
+        AgentReceiptAnalysisOutcome::Present(Box::new(outcome)),
+    )?;
+    let mut receipt: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    // Exactly the CLI producer binding path, before immutable retention.
+    receipt["repair_attempt"] =
+        receipt_binding_from(root, None, "seam:freshness", packet, Some(id.as_str()))?;
+    write(&root.join(receipt_path), &receipt.to_string())?;
+    retain_terminal_evidence(
+        root,
+        id,
+        &[
+            BeforeArtifactSource {
+                role: "agent_verify",
+                path: &root.join(verify_path),
+            },
+            BeforeArtifactSource {
+                role: "agent_receipt",
+                path: &root.join(receipt_path),
+            },
+        ],
+    )?;
+    let manifest = load_repair_attempt_manifest(root, id)?;
+    assert!(matches!(
+        load_attempt_terminal_receipt(root, &manifest),
+        AttemptTerminalReceipt::Issued { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(), String> {
+    let (root, id) = prepared("issued-unknown")?;
+    let result = (|| {
+        finish_and_issue(&root, &id)?;
+        let (_, before) = parity(&root, &id, "current")?;
+        assert_eq!(before["status"], "improved");
+        std::fs::rename(root.join(".git"), root.join(".git-unavailable"))
+            .map_err(|error| error.to_string())?;
+        let observed = parity(&root, &id, "unknown");
+        std::fs::rename(root.join(".git-unavailable"), root.join(".git"))
+            .map_err(|error| error.to_string())?;
+        let (_, receipt) = observed?;
+        assert_eq!(receipt["receipt"], before["receipt"]);
+        Ok(())
+    })();
+    if result.is_ok() {
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    }
+    result
+}
+
+#[test]
+fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head()
+-> Result<(), String> {
+    let (root, id) = prepared("tampered")?;
+    let result = (|| {
+        finish_and_issue(&root, &id)?;
+        let (_, before) = parity(&root, &id, "current")?;
+        assert_eq!(before["receipt"]["status"], "issued");
+        let manifest = load_repair_attempt_manifest(&root, &id)?;
+        let verify = find_terminal_artifact_by_role(&manifest, "agent_verify")
+            .ok_or_else(|| "fixture lost retained verify".to_string())?;
+        // Deliberate negative corruption of this fixture only, never a new
+        // producer status or a replacement receipt.
+        write(&root.join(&verify.path), "{\"tampered\":true}")?;
+        git(&root, &["add", "tests/target.rs"])?;
+        git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
+        let receipt = WorkspaceSession::default()
+            .receipt_status_document(id.as_str(), Some(&root), None)
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(receipt["status"], "invalid");
+        assert_eq!(receipt["receipt"]["status"], "unavailable");
+        assert_eq!(receipt["currentness"]["state"], "historical");
         Ok(())
     })();
     if result.is_ok() {

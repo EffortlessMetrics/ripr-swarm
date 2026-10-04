@@ -173,6 +173,11 @@ HEAD. Historical or unknown applicability suppresses `next_command` and
 remain readable. `after.current` and receipt `currentness.after_current` are
 recorded finish-time admission, not live freshness or a test result. This HEAD
 check does not establish that dirty working-tree bytes still match the evidence.
+Session transactions and supersession resolve under the session lock; durable
+filesystem and Git fallback reads run on a blocking worker after releasing it.
+This preserves the async executor for timers and teardown. It does not expand
+the stdio transport's serialized request admission or promise cancellation of
+an already running Git read before its existing deadline.
 
 `ripr_get_receipt_status` (and `ripr://receipt/{receipt_id}`) projects the
 current receipt state for one attempt identity (receipt ids are

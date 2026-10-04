@@ -199,6 +199,10 @@ read-only and without execution authority (ADR 0022):
    retaining its document; invalid/limited producer results stay non-success.
    This checks HEAD applicability, not dirty-byte identity. Reads never alter
    the manifest or reconstruct evidence from a compatibility receipt.
+   Session transactions and tombstones resolve immediately under the lock;
+   only independent durable fallback runs on a blocking worker outside it.
+   Timers/teardown must not run synchronous Git on the async executor. This
+   adds no new stdio concurrency or early Git cancellation guarantee.
 
 ## Test Mapping
 
