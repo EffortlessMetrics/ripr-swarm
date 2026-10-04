@@ -90,7 +90,7 @@ to the family, which may differ.
    `return_value`). The reason appears in that finding's text.
 
    The related-test sets themselves are equal across these findings, keyed by
-   test identity (file and test function name), not by oracle row: two
+   test identity (file, module path and test function name), not by oracle row: two
    findings that list the same test with different oracle kinds or
    strengths agree on the set (rule 5 governs those differences). The sets
    may differ only for tests a family-specific rule adds or drops; each such difference is
