@@ -9064,9 +9064,10 @@ Field contract:
   candidate sources. Each entry carries `content_hash`, the `sha256:<hex>`
   of the exact bytes consumed (`null` only when the bytes could not be read;
   the read failure itself surfaces as a `config_error` or warning). Read
-  model: the pr-guidance and gap-ledger hashes are computed from the same
-  bytes their readers parsed; the advisory optional inputs hash a fresh read
-  taken at subject-build time. The auto-loaded causal artifacts are outside
+  model: every decision-affecting input hashes exactly the bytes its reader
+  parsed; only the warn-only inputs that no reader parses (`repo_exposure`,
+  `sarif_policy`, `agent_verify`, `agent_receipt`) hash a fresh read taken
+  at subject-build time. The auto-loaded causal artifacts are outside
   this block: they are workspace-durable files that self-identify (the
   canonical-delta artifact carries its own identity fields), not invocation
   inputs. `labels_sha256` appears when `--labels` strings were supplied on

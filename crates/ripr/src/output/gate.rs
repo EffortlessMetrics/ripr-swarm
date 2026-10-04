@@ -45,15 +45,15 @@ const LIMITS_NOTE: &str = "Optional policy over static RIPR evidence; advisory b
 pub(crate) fn build_gate_decision_report(
     input: &GateEvaluateInput,
 ) -> Result<GateDecisionReport, String> {
+    let mut consumed = input::ConsumedInputHashes::default();
+    let mut pr_guidance_bytes: Vec<u8> = Vec::new();
     let mut warnings = Vec::new();
     let mut config_errors = Vec::new();
-    let labels = read_labels(input, &mut warnings)?;
+    let labels = read_labels(input, &mut warnings, &mut consumed)?;
     if input.pr_guidance.is_none() && input.gap_ledger.is_none() {
         config_errors
             .push("gate evaluate requires --pr-guidance <path> or --gap-ledger <path>".to_string());
     }
-    let mut pr_guidance_bytes: Vec<u8> = Vec::new();
-    let mut gap_ledger_consumed_hash: Option<String> = None;
     let pr_guidance = match input.pr_guidance.as_ref() {
         Some(path) => {
             let pr_guidance_path = resolve_root_path(&input.root, path);
@@ -113,11 +113,7 @@ pub(crate) fn build_gate_decision_report(
         }
         None => Value::Null,
     };
-    let gap_ledger_with_hash = read_gap_ledger(input, &mut config_errors);
-    let gap_ledger = gap_ledger_with_hash.map(|(records, hash)| {
-        gap_ledger_consumed_hash = hash;
-        records
-    });
+    let gap_ledger = read_gap_ledger(input, &mut config_errors, &mut consumed);
     warn_for_optional_json(
         &input.root,
         input.repo_exposure.as_ref(),
@@ -149,9 +145,10 @@ pub(crate) fn build_gate_decision_report(
         &mut warnings,
     );
 
-    let recommendation_calibration = read_recommendation_calibration(input, &mut warnings);
-    let mutation_calibration = read_mutation_calibration(input, &mut warnings);
-    let baseline = read_baseline(input, &mut warnings, &mut config_errors);
+    let recommendation_calibration =
+        read_recommendation_calibration(input, &mut warnings, &mut consumed);
+    let mutation_calibration = read_mutation_calibration(input, &mut warnings, &mut consumed);
+    let baseline = read_baseline(input, &mut warnings, &mut config_errors, &mut consumed);
     let causal_delta = match CausalDeltaAuthority::load(&input.root) {
         Ok(authority) => authority,
         Err(error) => {
@@ -180,7 +177,13 @@ pub(crate) fn build_gate_decision_report(
         Some(path) => {
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
-            match exception_policy::load_exception_ledger(&resolved, &display) {
+            let ledger_result = consumed
+                .read_toml_text_and_record(&resolved, &display)
+                .and_then(|(text, digest)| {
+                    consumed.exception_policy = Some(digest);
+                    exception_policy::load_exception_ledger_from_text(&text, &display)
+                });
+            match ledger_result {
                 Ok(ledger) => {
                     let today = crate::output::suppressions::current_iso_date();
                     let report =
@@ -259,7 +262,7 @@ pub(crate) fn build_gate_decision_report(
         // document; the producer-subject read treats it as absent.
         (!pr_guidance.is_null()).then_some(&pr_guidance),
         (!pr_guidance_bytes.is_empty()).then_some(pr_guidance_bytes.as_slice()),
-        gap_ledger_consumed_hash,
+        &consumed,
     );
     let exception_blocking = exception_policy
         .as_ref()
@@ -317,10 +320,10 @@ pub(crate) fn build_gate_decision_report(
 /// identity plus, per consumed input, a `sha256` content hash — every
 /// CLI-supplied input that can change the decision (candidates, baseline,
 /// labels, calibration, receipts, policy ledgers) is covered, not only the
-/// candidate sources (review round 1). Where the reader returns the bytes it
-/// parsed, the hash is computed from those exact bytes; for the advisory
-/// optional inputs the hash is a fresh read at subject-build time, and the
-/// read model is documented in the output contract.
+/// candidate sources (review round 1), and each hashes exactly the bytes its
+/// reader parsed (review round 2). Only the warn-only inputs no reader
+/// parses take a fresh read at subject-build time; the read model is
+/// documented in the output contract.
 ///
 /// The auto-loaded causal artifacts are outside this block by boundary, not
 /// omission: they are workspace-durable files that self-identify (the
@@ -336,7 +339,7 @@ fn build_gate_subject(
     input: &GateEvaluateInput,
     pr_guidance: Option<&Value>,
     pr_guidance_bytes: Option<&[u8]>,
-    gap_ledger_consumed_hash: Option<String>,
+    consumed: &input::ConsumedInputHashes,
 ) -> GateSubject {
     let mut inputs = BTreeMap::new();
     for (name, path) in [
@@ -360,9 +363,21 @@ fn build_gate_subject(
         };
         // The consumed-bytes hash wins where the reader captured them; a
         // fresh read only ever backs the advisory optional inputs.
-        let content_hash = match (name, pr_guidance_bytes, &gap_ledger_consumed_hash) {
-            ("pr_guidance", Some(bytes), _) => Some(format!("sha256:{:x}", Sha256::digest(bytes))),
-            ("gap_ledger", _, Some(hash)) => Some(hash.clone()),
+        // The consumed-bytes hash wins for every reader-parsed input; the
+        // fresh read only backs the warn-only inputs no reader parses.
+        let content_hash = match name {
+            "pr_guidance" => {
+                pr_guidance_bytes.map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
+            }
+            "gap_ledger" => consumed.gap_ledger.clone(),
+            "labels_json" => consumed.labels_json.clone(),
+            "recommendation_calibration" => consumed.recommendation_calibration.clone(),
+            "mutation_calibration" => consumed.mutation_calibration.clone(),
+            "baseline" => consumed.baseline.clone(),
+            "exception_policy" => consumed.exception_policy.clone(),
+            // repo_exposure, sarif_policy, agent_verify, agent_receipt are
+            // validated readable but not parsed for decisions; they hash a
+            // fresh read at subject-build time.
             _ => {
                 let resolved = resolve_root_path(&input.root, path);
                 std::fs::read(&resolved)
@@ -426,8 +441,9 @@ fn producer_subject_from_pr_guidance(value: &Value) -> Option<GateProducerSubjec
 fn read_labels(
     input: &GateEvaluateInput,
     warnings: &mut Vec<String>,
+    consumed: &mut input::ConsumedInputHashes,
 ) -> Result<Vec<String>, String> {
-    Ok(input::read_labels_impl(input, warnings))
+    Ok(input::read_labels_impl(input, warnings, consumed))
 }
 
 fn warn_for_optional_json(
@@ -442,30 +458,34 @@ fn warn_for_optional_json(
 fn read_gap_ledger(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
-) -> Option<(Vec<GapRecord>, Option<String>)> {
-    input::read_gap_ledger_impl(input, config_errors)
+    consumed: &mut input::ConsumedInputHashes,
+) -> Option<Vec<GapRecord>> {
+    input::read_gap_ledger_impl(input, config_errors, consumed)
 }
 
 fn read_recommendation_calibration(
     input: &GateEvaluateInput,
     warnings: &mut Vec<String>,
+    consumed: &mut input::ConsumedInputHashes,
 ) -> CalibrationIndex {
-    input::read_recommendation_calibration_impl(input, warnings)
+    input::read_recommendation_calibration_impl(input, warnings, consumed)
 }
 
 fn read_mutation_calibration(
     input: &GateEvaluateInput,
     warnings: &mut Vec<String>,
+    consumed: &mut input::ConsumedInputHashes,
 ) -> CalibrationIndex {
-    input::read_mutation_calibration_impl(input, warnings)
+    input::read_mutation_calibration_impl(input, warnings, consumed)
 }
 
 fn read_baseline(
     input: &GateEvaluateInput,
     warnings: &mut Vec<String>,
     config_errors: &mut Vec<String>,
+    consumed: &mut input::ConsumedInputHashes,
 ) -> BaselineIndex {
-    input::read_baseline_impl(input, warnings, config_errors)
+    input::read_baseline_impl(input, warnings, config_errors, consumed)
 }
 
 fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
