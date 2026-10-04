@@ -110,6 +110,9 @@ dataflow across bindings.
 Lexical projection is bounded to 16 nested matcher/block steps and omits
 oracle credit on exhaustion; parser-rejected deep source cannot recreate an
 unbounded recursive fallback.
+Unrecognized compound computations with a surviving matcher and no supported
+asserting wrapper receive no oracle credit. Existing terminal Err-return and
+guarded Result failure authorities retain consumed matcher evidence.
 
 ## Non-Goals
 
@@ -269,6 +272,7 @@ Fixture coverage:
 - `registered_trials_do_not_credit_discarded_matcher_computations`
 - `asserting_wrappers_keep_consumed_pattern_oracles`
 - `consumed_matcher_failure_guards_keep_their_result_oracle`
+- `consumed_matcher_err_return_guard_keeps_its_exact_oracle`
 - `asserted_bound_matcher_keeps_the_actual_assertion`
 - `matcher_computation_and_asserted_result_have_different_runtime_grip`
 - `fixtures/infection_expected_value_literal`

@@ -19,6 +19,8 @@ const DISCARDED: &[&str] = &[
     "let /* binder */ mut expected_match: bool = matches!(value, 2);",
     "matches!(matches!(expected_value, 2), true);",
     "matches!(value, 2); // assert_eq!(unrelated, 2)",
+    "let expected_match = { matches!(value, 2) };",
+    "expected_match = { core::matches!(value, 2) };",
 ];
 
 #[test]
@@ -195,6 +197,34 @@ fn asserting_wrappers_keep_consumed_pattern_oracles() -> Result<(), String> {
             if fact.kind != kind || fact.strength != strength {
                 return Err(format!("consumed assertion changed: {statement}: {fact:?}"));
             }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn consumed_matcher_err_return_guard_keeps_its_exact_oracle() -> Result<(), String> {
+    let source = r#"
+#[test]
+fn observes_score() -> Result<(), ()> {
+    let expected_value = score(1);
+    if !matches!(expected_value, 2) {
+        return Err(());
+    }
+    Ok(())
+}
+"#;
+    let lexical = extract_assertions(source, 1);
+    let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    let [test] = parsed.tests.as_slice() else {
+        return Err("terminal Err guard must contain one parsed test".to_string());
+    };
+    for facts in [&lexical, &test.assertions] {
+        let [fact] = facts.as_slice() else {
+            return Err(format!("expected one terminal Err guard: {facts:?}"));
+        };
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!("consumed matcher Err guard changed: {fact:?}"));
         }
     }
     Ok(())

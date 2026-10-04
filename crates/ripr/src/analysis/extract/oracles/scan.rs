@@ -27,10 +27,22 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
         }
+        // Give the existing terminal-failure authority first refusal before
+        // generic name admission can join or misclassify a matcher guard.
+        if (trimmed.starts_with("if ") || trimmed.starts_with("if("))
+            && let Some(oracle) =
+                peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
+        {
+            out.push(oracle);
+            continue;
+        }
         if is_assertion_line(&trimmed) {
             collect_multiline_assertion(&mut trimmed, &mut lines);
             trimmed = without_discarded_matcher_computations(&trimmed);
             if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
+                continue;
+            }
+            if has_unasserted_matcher(&trimmed) {
                 continue;
             }
             let preceding_lines = leading_blank_lines(&trimmed);
@@ -2085,6 +2097,9 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
         if !is_line_scanned_oracle(&mask_comments_and_strings(&statement)) {
             continue;
         }
+        if has_unasserted_matcher(&statement) {
+            continue;
+        }
         let preceding_lines = leading_blank_lines(&statement);
         statement = statement.trim().to_string();
         let classification = classify_assertion(&statement);
@@ -2109,6 +2124,11 @@ fn without_discarded_matcher_computations(text: &str) -> String {
 }
 
 const MATCHER_PROJECTION_DEPTH_LIMIT: usize = 16;
+
+fn has_unasserted_matcher(text: &str) -> bool {
+    contains_macro_invocation(&mask_comments_and_strings(text), "matches!")
+        && assertion_oracle_text(text).is_none()
+}
 
 fn matcher_free_text_at_depth(text: &str, depth: usize) -> String {
     // The lexical fallback also receives parser-rejected deep source. Never
