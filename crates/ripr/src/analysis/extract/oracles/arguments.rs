@@ -90,20 +90,7 @@ fn is_wildcard_pattern(pattern: &str) -> bool {
 fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
-    let open = masked.find(['(', '[', '{'])?;
-    // Standard macro paths may have trivia between their tokens or a leading
-    // global-path separator. Only the supported complete path is accepted.
-    let path = masked[..open]
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect::<String>();
-    let matches_path = path == macro_name
-        || ["std::", "core::", "::std::", "::core::"]
-            .into_iter()
-            .any(|prefix| path.strip_prefix(prefix) == Some(macro_name));
-    if !matches_path {
-        return None;
-    }
+    let open = macro_argument_open(text, macro_name)?;
     let contents = delimited_contents_at(text, open)?;
     let after = masked.get(open + contents.len() + 2..)?;
     if !matches!(after.trim(), "" | ";") {
@@ -122,10 +109,26 @@ fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>>
     Some(arguments)
 }
 
-/// A complete standalone, let-bound or assigned matcher computes a boolean without
-/// asserting its pattern. Its scrutinee may still contain an actual observer.
-pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
-    let original = statement;
+fn macro_argument_open(text: &str, macro_name: &str) -> Option<usize> {
+    let masked = mask_comments_and_strings(text);
+    let open = masked.find(['(', '[', '{'])?;
+    // Standard macro paths may have trivia between their tokens or a leading
+    // global-path separator. Only the supported complete path is accepted.
+    let path = masked[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let matches_path = path == macro_name
+        || ["std::", "core::", "::std::", "::core::"]
+            .into_iter()
+            .any(|prefix| path.strip_prefix(prefix) == Some(macro_name));
+    if !matches_path {
+        return None;
+    }
+    Some(open)
+}
+
+fn matcher_computation_expression(statement: &str) -> &str {
     let statement = statement.trim().trim_end_matches(';').trim();
     let masked = mask_comments_and_strings(statement);
     let mut depth = 0usize;
@@ -143,7 +146,7 @@ pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, us
         }
         None
     });
-    let mut expression = match assignment {
+    match assignment {
         Some(index) if masked[..index].trim_start().starts_with("let ") => {
             statement[index + 1..].trim()
         }
@@ -157,7 +160,24 @@ pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, us
             statement[index + 1..].trim()
         }
         _ => statement,
-    };
+    }
+}
+
+/// Collect a discarded computation's continuation even when its opening line
+/// contains no assertion. This is statement ownership, not oracle admission.
+pub(super) fn starts_discarded_matcher_computation(statement: &str) -> bool {
+    let mut expression = matcher_computation_expression(statement);
+    while let Some(inner) = expression.strip_prefix('(') {
+        expression = inner.trim_start();
+    }
+    macro_argument_open(expression, "matches!").is_some()
+}
+
+/// A complete standalone, let-bound or assigned matcher computes a boolean without
+/// asserting its pattern. Its scrutinee may still contain an actual observer.
+pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
+    let original = statement;
+    let mut expression = matcher_computation_expression(statement);
     while let Some(inner) = parenthesized_contents(expression) {
         expression = inner.trim();
     }

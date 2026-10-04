@@ -1,7 +1,10 @@
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
-use super::arguments::{assertion_oracle_text, complete_block_body, discarded_matcher_scrutinee};
+use super::arguments::{
+    assertion_oracle_text, complete_block_body, discarded_matcher_scrutinee,
+    starts_discarded_matcher_computation,
+};
 use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
@@ -38,7 +41,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             out.push(oracle);
             continue;
         }
-        if is_assertion_line(&trimmed) {
+        if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
             collect_multiline_assertion(&mut trimmed, &mut lines);
             trimmed = without_discarded_matcher_computations(&trimmed);
             if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
@@ -2078,7 +2081,8 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
     let mut lines = body.lines().enumerate().peekable();
     while let Some((offset, line)) = lines.next() {
         let mut statement = line.trim().to_string();
-        if !is_line_scanned_oracle(&statement) {
+        if !is_line_scanned_oracle(&statement) && !starts_discarded_matcher_computation(&statement)
+        {
             continue;
         }
         collect_multiline_assertion(&mut statement, &mut lines);
@@ -4096,21 +4100,46 @@ mod err_guard_parity_tests {
     }
 
     #[test]
+    fn negated_matcher_err_return_guard_is_an_oracle_equal_to_its_assert_twin() {
+        // A negated matcher is structurally equivalent to its assertion
+        // twin. Classify the condition, without importing Err or diagnostics
+        // from the failure body as error-variant evidence.
+        let guard = extract_assertions(
+            "if !matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+            3,
+        );
+        let twin = extract_assertions("assert!(matches!(result, Expected::Good(_)));", 3);
+        assert_eq!(guard.len(), 1, "expected one consumed guard: {guard:?}");
+        assert_eq!(twin.len(), 1, "expected one assertion twin: {twin:?}");
+        let meaning = |facts: &[crate::analysis::facts::OracleFact]| {
+            facts
+                .first()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+        };
+        assert_eq!(meaning(&guard), meaning(&twin), "matcher twin parity");
+        assert_eq!(
+            meaning(&guard),
+            Some((OracleKind::ExactValue, OracleStrength::Strong)),
+            "the failure body's Err must not change the matcher oracle"
+        );
+    }
+
+    #[test]
     fn guard_conditions_without_structural_equivalence_stay_unrecognized() {
         // No inference from messages or opaque conditions: a guard whose
         // condition cannot be structurally negated into an assertion
         // contributes no oracle fact.
-        let opaque = extract_assertions(
-            "if !matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
-            3,
-        );
-        assert!(
-            !opaque
-                .iter()
-                .any(|fact| fact.kind == OracleKind::RelationalCheck
-                    || fact.kind == OracleKind::ExactValue),
-            "opaque guard conditions must not be guessed into oracles: {opaque:?}"
-        );
+        for body in [
+            "if opaque(result) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+            "if opaque(result) {\n    return Err(anyhow!(\"assert_eq!(actual, expected); matches!(result, Expected::Good(_))\"));\n}\n",
+            "if matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+        ] {
+            let opaque = extract_assertions(body, 3);
+            assert!(
+                opaque.is_empty(),
+                "opaque guard conditions must contribute zero facts: {body}: {opaque:?}"
+            );
+        }
     }
 }
 

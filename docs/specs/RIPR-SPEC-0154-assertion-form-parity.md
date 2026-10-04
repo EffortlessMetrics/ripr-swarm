@@ -28,9 +28,14 @@ owner's source role.
   assertion classifier, so the guard carries exactly the oracle kind and
   strength its `assert!` form would — parity by construction, not a
   parallel strength table.
-- Conditions without a structural negation (opaque predicates, method
-  calls, `matches!` shapes) produce no oracle: exactness is never
-  inferred from messages or names.
+- Conditions without a supported structural negation (an unnegated opaque
+  predicate, method call or `matches!` expression) produce no oracle:
+  exactness is never inferred from messages or names. A negated expression
+  such as `!matches!(result, Expected::Good(_))` has the supported
+  `assert!(matches!(result, Expected::Good(_)))` twin; its classification
+  comes from that assertion operand, without importing the failure body's
+  `Err` constructor or diagnostics. A discarded matcher computation has
+  no twin and remains outside assertion admission (RIPR-SPEC-0001, #5713).
 - Repo-mode probe seeding filters shapes whose owning function carries
   the test/evidence role (`FunctionFact::source_role`, the typed
   function source role), mirroring the diff
@@ -61,8 +66,10 @@ owner's source role.
   `assertion_form_parity_assert_msg` fixtures: the same owner, boundary
   value, and observable under the two equivalent forms, with identical
   oracle kind/strength, classification, and gap accounting.
-- In-crate parity pins: the guard's oracle equals its assert twin's
-  (kind and strength); opaque guards stay unrecognized.
+- In-crate parity pins: comparison and negated matcher guards equal their
+  assert twins in kind and strength, including an explicit exact/strong
+  constructor-pattern control. Opaque guards contribute zero facts, including
+  diagnostic-only assertion/matcher text and unnegated matcher controls.
 - The repo-mode leak reproduction (cfg(test) helper shapes seeded repo
   probes on main; none after the owner filter) with the production
   shapes still seeding.
@@ -84,6 +91,9 @@ owner's source role.
 
 - Accept: `if actual != expected { return Err(format!(...)) }` credits
   the same oracle as `assert!(actual == expected, ...)`.
+- Accept: `if !matches!(result, Expected::Good(_)) { return Err(...) }`
+  credits `ExactValue`/`Strong`, equal to its assertion twin; the Err-return
+  body does not make it an `ExactErrorVariant` oracle.
 - Accept: a cfg(test) helper's `if result != expected { panic!(...) }`
   seeds no repo probe while the production predicate still does.
 - Reject: a guard with an opaque condition becoming an oracle; a broad

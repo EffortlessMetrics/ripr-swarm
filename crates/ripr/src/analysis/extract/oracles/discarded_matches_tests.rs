@@ -1,4 +1,4 @@
-use super::extract_assertions;
+use super::{extract_assertions, extract_line_scanned_oracles};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{OracleKind, OracleStrength};
 use std::path::Path;
@@ -21,6 +21,8 @@ const DISCARDED: &[&str] = &[
     "matches!(value, 2); // assert_eq!(unrelated, 2)",
     "let expected_match = { matches!(value, 2) };",
     "expected_match = { core::matches!(value, 2) };",
+    "matches!(expect_value, 2);",
+    "let expect_match = matches!(value, 2);",
 ];
 
 #[test]
@@ -100,23 +102,26 @@ fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(
             ));
         }
     }
-    let multiline = extract_assertions(
-        "let expected_match = matches!(\nvalue,\n2); unrelated.unwrap();",
-        10,
-    );
-    let [fact] = multiline.as_slice() else {
-        return Err(format!(
-            "expected one surviving multiline observer: {multiline:?}"
-        ));
-    };
-    if fact.line != 12
-        || fact.text != "unrelated.unwrap();"
-        || fact.kind != OracleKind::SmokeOnly
-        || fact.strength != OracleStrength::Smoke
-    {
-        return Err(format!(
-            "surviving observer lost its actual line or grip: {fact:?}"
-        ));
+    let body = "let expected_match = matches!(\nvalue,\n2); unrelated.unwrap();";
+    for multiline in [
+        extract_assertions(body, 10),
+        extract_line_scanned_oracles(body, 10),
+    ] {
+        let [fact] = multiline.as_slice() else {
+            return Err(format!(
+                "expected one surviving multiline observer: {multiline:?}"
+            ));
+        };
+        if fact.line != 12
+            || fact.text != "unrelated.unwrap();"
+            || fact.kind != OracleKind::SmokeOnly
+            || fact.strength != OracleStrength::Smoke
+            || fact.observed_tokens != ["unrelated"]
+        {
+            return Err(format!(
+                "surviving observer lost its actual line or grip: {fact:?}"
+            ));
+        }
     }
     Ok(())
 }
