@@ -2155,15 +2155,11 @@ mod tests {
         }
         let err = match super::confirm_process_group_gone(pgid, Duration::ZERO, "zero-budget") {
             Ok(()) => {
-                let leftover = match super::process_group_live_members(pgid) {
-                    Ok(members) => members,
-                    Err(_) => Vec::new(),
-                };
                 let _ = super::signal_process_group(pgid, "-KILL");
                 let _ = child.wait();
-                return Err(format!(
-                    "zero-budget confirmation must not claim a live group is gone; leftover={leftover:?}"
-                ));
+                return Err(
+                    "zero-budget confirmation must not claim a live group is gone".to_string(),
+                );
             }
             Err(err) => err,
         };
