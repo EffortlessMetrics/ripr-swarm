@@ -556,6 +556,19 @@ fn mutation_join_totals(mutation: &Value) -> Result<(f64, f64), String> {
     Ok((precise, mutants))
 }
 
+/// Mutants that enter an agreement rate, summed over the scored families.
+fn mutation_scored_total(mutation: &Value) -> Result<f64, String> {
+    let families = field(mutation, "scored_families");
+    let Some(map) = families.as_object() else {
+        return Err("mutation-spot-check is missing scored_families".to_string());
+    };
+    let mut scored = 0.0;
+    for family in map.values() {
+        scored += req_f64(family, "mutants_scored", "mutation-spot-check family")?;
+    }
+    Ok(scored)
+}
+
 fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let baseline_rev = short(
         &req_str(
@@ -865,11 +878,14 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
     ));
 
     let (precise, mutants) = mutation_join_totals(&r.mutation)?;
+    let scored = mutation_scored_total(&r.mutation)?;
     page.line(format!(
-        "- **Thin ground truth.** Only {} of {} mutants ({}) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.",
-        num(precise),
+        "- **Thin ground truth.** Only {} of {} mutants ({}) enter an agreement rate. {} join a ripr seam precisely, and {} of those still do not enter a rate.",
+        num(scored),
         num(mutants),
-        percent(if mutants == 0.0 { 0.0 } else { precise / mutants })
+        percent(if mutants == 0.0 { 0.0 } else { scored / mutants }),
+        num(precise),
+        num(precise - scored)
     ));
 
     for bar in bars
@@ -1092,6 +1108,11 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
         text(verdicts, "corpus_version"),
         text(verdicts, "spec")
     ));
+    page.blank();
+    match field(verdicts, "analyzer_version").as_str() {
+        Some(version) => page.line(format!("Verdicts were produced by {version}.")),
+        None => page.line("This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
+    }
     page.blank();
     let labels = [
         ("false_verdict_rate", "False verdicts (all cases)"),
@@ -1618,6 +1639,46 @@ mod tests {
         mutation_section(&mut page, &recorded)?;
         assert!(page.0.contains("produced by ripr 0.11.0 (abc1234)"));
         assert!(!page.0.contains("does not record which ripr build"));
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_section_says_when_the_analyzer_build_is_unrecorded() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let mut page = Page(String::new());
+        verdict_section(&mut page, &receipts.verdicts)?;
+        assert!(
+            page.0
+                .contains("does not record which ripr build produced the observed verdicts")
+        );
+        let mut recorded = receipts.verdicts.clone();
+        if let Some(object) = recorded.as_object_mut() {
+            object.insert(
+                "analyzer_version".to_string(),
+                Value::from("ripr 0.11.0 (abc1234)"),
+            );
+        }
+        let mut page = Page(String::new());
+        verdict_section(&mut page, &recorded)?;
+        assert!(page.0.contains("produced by ripr 0.11.0 (abc1234)"));
+        assert!(!page.0.contains("does not record which ripr build"));
+        Ok(())
+    }
+
+    #[test]
+    fn thin_ground_truth_counts_scored_mutants_not_joins() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let (precise, _) = mutation_join_totals(&receipts.mutation)?;
+        let scored = mutation_scored_total(&receipts.mutation)?;
+        assert!(
+            scored < precise,
+            "scored {scored} must be below joined {precise}"
+        );
+        let mut broken = receipts.mutation.clone();
+        if let Some(object) = broken.as_object_mut() {
+            object.remove("scored_families");
+        }
+        assert!(mutation_scored_total(&broken).is_err());
         Ok(())
     }
 

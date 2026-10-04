@@ -61,7 +61,7 @@ Each line below is computed from the receipts above. Detail sections follow.
 - **Wrong gaps.** On the labeled corpus ripr reported a gap on 33 of 56 changes whose tests caught every listed mutant (58.9%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`, `pricing-gold-discount-rate`, `ledger-ship-log-push`, `ledger-receipt-remaining`, `ledger-stock-insert`, `config-missing-equals-line`, `config-log-level-warn`, `checkout-fee-err-return-guard`, `checkout-withdraw-guarded-match-pin`, `checkout-refund-matches-variant`, `checkout-daily-limit-imported-const`, `checkout-minimum-same-file-const`, `checkout-bulk-custom-assert-macro`, `checkout-region-literal-match-helper`, `tokens-recursive-label-arm`, `tokens-base-six-hop-chain`, `tokens-inner-rate-macro-reach`, `tokens-inner-bonus-test-macro-call`, `tokens-add-fee-integration-api`, `tokens-long-flag-strip-prefix`, `tokens-byte-at-unsafe-fn`, `shop-score-imported-across-crates`, `shop-discount-path-dependent-test`, `shop-gate-let-bound-input`.
 - **Mostly unsure.** It abstained on 34 of 104 corpus cases (32.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
-- **Thin ground truth.** Only 174 of 1745 mutants (10.0%) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.
+- **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
 - **Cold `ripr pilot` peak memory.** Worst repository: ripr-swarm at 3467 MB; the bar is at most 1024 MB.
 - **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 11.5 s; the bar is at most 2.0 s.
@@ -117,6 +117,8 @@ False-gap examples, as recorded:
 ## Verdict corpus
 
 104 hand-labeled changes (corpus 2026-10-04.5, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+
+This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
 | Rate | Count | Share |
 | --- | --- | --- |
