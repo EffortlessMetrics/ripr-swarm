@@ -44,9 +44,9 @@ const EXPOSURE_TIMEOUT: Duration = Duration::from_mins(15);
 const CALIBRATE_TIMEOUT: Duration = Duration::from_mins(5);
 const MUTANTS_TIMEOUT: Duration = Duration::from_hours(4);
 const SCRATCH: &str = "target/ripr/reports/mutation-spot-check";
-/// cargo-mutants options the harness sets itself or that would change what
-/// the receipt means (where outcomes land, how they are scheduled, whether the
-/// checkout is mutated in place). `--mutants-arg` is for selecting mutants.
+/// cargo-mutants options the harness sets itself, that would mutate a tree
+/// other than the analyzed checkout, or that stop cargo-mutants from writing
+/// outcomes. `--mutants-arg` is for selecting mutants.
 const HARNESS_OWNED_MUTANTS_ARGS: &[&str] = &[
     "--dir",
     "-d",
@@ -55,12 +55,19 @@ const HARNESS_OWNED_MUTANTS_ARGS: &[&str] = &[
     "--jobs",
     "-j",
     "--timeout",
+    "-t",
+    "--manifest-path",
     "--shuffle",
     "--no-shuffle",
     "--in-place",
     "--list",
+    "--list-files",
     "--check",
     "--json",
+    "--completions",
+    "--emit-schema",
+    "--version",
+    "-V",
 ];
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
 
@@ -1070,12 +1077,18 @@ mod tests {
             "hex=--file=src/lib.rs",
             "--mutants-arg",
             "hex=--re=decode",
+            "--mutants-arg",
+            "hex=--timeout-multiplier=2",
+            "--mutants-arg",
+            "hex=-Dx.diff",
         ]))?;
         assert_eq!(
             options.mutants_args.get("hex"),
             Some(&vec![
                 "--file=src/lib.rs".to_string(),
-                "--re=decode".to_string()
+                "--re=decode".to_string(),
+                "--timeout-multiplier=2".to_string(),
+                "-Dx.diff".to_string()
             ])
         );
         for (extra, expected) in [
@@ -1105,6 +1118,14 @@ mod tests {
             ),
             (
                 vec!["--run-mutants", "--mutants-arg", "hex=-j8"],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=-t5"],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=--list-files"],
                 "would override how the harness runs",
             ),
         ] {
@@ -1267,6 +1288,15 @@ mod tests {
             "s1"
         );
         assert!(report["disagreement_examples"].get("overclaim").is_none());
-        assert!(spot_check_markdown(&report).contains("**false_gap** demo `src/a.rs:3`"));
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("**false_gap** demo `src/a.rs:3`"));
+        assert!(!markdown.contains("ran cargo-mutants with"));
+
+        let mut report = report;
+        report["repos"][0]["cargo_mutants_args"] = json!(["--re=decode", "--workspace"]);
+        assert!(
+            spot_check_markdown(&report)
+                .contains("demo ran cargo-mutants with `--re=decode` `--workspace`.")
+        );
     }
 }

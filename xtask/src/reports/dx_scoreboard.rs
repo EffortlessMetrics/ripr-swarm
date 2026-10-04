@@ -884,8 +884,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
         }));
     }
-    // A run with extra cargo-mutants arguments scores the mutants those
-    // arguments selected, not the default set, so the board says so.
+    // Rates pool every repository, and a repository run with extra
+    // cargo-mutants arguments is not a default run, so the board says how
+    // many were.
     let with_args = repos
         .iter()
         .filter(|repo| {
@@ -900,7 +901,8 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     );
     if with_args > 0 {
         evidence.push_str(&format!(
-            " ({with_args} ran with cargo-mutants arguments; rates cover only the mutants those arguments selected)"
+            " ({with_args} of {} ran with cargo-mutants arguments; their rates reflect those arguments, not a default run)",
+            repos.len()
         ));
     }
     Ok(json!({

@@ -585,11 +585,20 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     let samples = parse_ingest(&receipt, &config)?;
     assert_eq!(samples.len(), 3);
 
+    let mut empty_args = receipt.clone();
+    empty_args["repos"][0]["cargo_mutants_args"] = json!([]);
+    let input = mutation_spot_check_to_input(&empty_args)?;
+    assert!(
+        !evidence(&input).contains("cargo-mutants arguments"),
+        "{}",
+        evidence(&input)
+    );
+
     let mut sampled = receipt.clone();
     sampled["repos"][0]["cargo_mutants_args"] = json!(["--re=decode"]);
     let input = mutation_spot_check_to_input(&sampled)?;
     assert!(
-        evidence(&input).contains("1 ran with cargo-mutants arguments"),
+        evidence(&input).contains("1 of 2 ran with cargo-mutants arguments"),
         "{}",
         evidence(&input)
     );
