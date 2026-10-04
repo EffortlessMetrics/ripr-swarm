@@ -219,7 +219,7 @@ fn unknown_command_error(command: &str) -> String {
 fn closest_command(command: &str) -> Option<&'static str> {
     // Scale the budget with length so short unrelated names (`bogus`) do not
     // match a command three edits away.
-    let typo_budget = match command.len() {
+    let typo_budget = match command.chars().count() {
         0..=4 => 1,
         5..=7 => 2,
         _ => 3,
