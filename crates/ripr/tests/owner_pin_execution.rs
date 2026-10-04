@@ -1587,13 +1587,21 @@ fn drop_in_crate_admission_matches_cargo_resolution() -> Result<(), String> {
             root.join("src/lib.rs"),
             &source.replace("input * 3", "input * 2"),
         )?;
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let result = Command::new(cargo)
-            .args(["test", "--offline", "--quiet", "--manifest-path"])
-            .arg(root.join("Cargo.toml"))
-            .env("CARGO_TARGET_DIR", scratch.0.join("target"))
-            .output()
-            .map_err(|error| error.to_string())?;
+        let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        let manifest_path = root.join("Cargo.toml");
+        let target_dir = scratch.0.join("target");
+        let result = run(
+            &cargo,
+            &[
+                "test".as_ref(),
+                "--offline".as_ref(),
+                "--quiet".as_ref(),
+                "--manifest-path".as_ref(),
+                manifest_path.as_os_str(),
+                "--target-dir".as_ref(),
+                target_dir.as_os_str(),
+            ],
+        )?;
         let stdout = String::from_utf8_lossy(&result.stdout);
         assert!(
             result.status.success() && stdout.contains("1 passed; 0 failed;"),

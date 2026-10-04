@@ -391,9 +391,7 @@ mod tests {
                 ("Cargo.toml", &workspace("pretty_assertions = \"1\"")),
                 (
                     "crates/a/Cargo.toml",
-                    &format!(
-                        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nworkspace = \"../../ws2\"\n\n[dev-dependencies]\npretty_assertions = {{ workspace = true }}\n"
-                    ),
+                    "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nworkspace = \"../../ws2\"\n\n[dev-dependencies]\npretty_assertions = { workspace = true }\n",
                 ),
             ],
             member,
