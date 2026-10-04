@@ -16,6 +16,12 @@ are scoped or reviewed.
   instead of leaking native backslashes. `allowed_files` and
   `forbidden_files` already used the shared normalized renderer and are
   unchanged (#5440).
+- LSP: `shutdown` publishes an empty diagnostic set for every previously
+  published URI on push clients (pull clients stay silent), matching the
+  root-change path. The terminal clear serializes with in-flight refresh
+  publication behind the shared transition guard, and a refresh cancelled
+  by shutdown no longer rolls back previous diagnostics afterward, so no
+  stale diagnostics survive shutdown (#5202).
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
@@ -29,6 +35,13 @@ are scoped or reviewed.
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
   `ripr.toml` already failed loudly.
+- The workflow from `ripr init --ci github` now explains a failed install.
+  When no prebuilt binary fits the runner and the runner has no `cargo`, the
+  Install ripr step fails with the cause and the fix (install Rust or add a
+  toolchain step) instead of a bare `cargo: command not found`. When ripr was
+  never installed, the advisory summary says so and points at that step's log
+  instead of rendering nothing.
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
@@ -59,6 +72,19 @@ are scoped or reviewed.
   the session up, discloses the `repo` or `default` fallback, and emits one
   `window/logMessage` warning naming the rejected key (#5092).
 
+- Editors: the LSP and VS Code accept the TypeScript verify commands ripr
+  emits (`npx --no-install jest <file>`, `pnpm exec vitest run <file>`,
+  `yarn ava <file>`, `bun run …`, `bun test`, `node --test`, and the
+  `npm|pnpm test --` / `yarn test` scripts), so a TypeScript repair no longer
+  reads as an unsafe command and loses its copy actions. VS Code's first-PR
+  view and actionable-gaps queue also accept the Python `python -m pytest`,
+  `pytest` and `python -m unittest` verify commands. `npx` without
+  `--no-install`, `bunx` and `dlx` stay refused, because they can fetch a
+  package from the registry. A test path that is absolute or leaves the
+  package through `..`, or a runner option such as `--config` or `-p`, is
+  refused too, since ripr's own verify commands name only package-relative
+  test paths and node ids.
+
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
   tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
@@ -88,6 +114,14 @@ are scoped or reviewed.
   cores and stops once one file already leaves every trusted macro
   unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
   (8.0s to 4.4s on two cores) with identical output.
+- The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
+  and report steps now run inside one `ripr reports ci-packet` step, which
+  keeps each old step's semantics: a log group per step, advisory failures
+  logged without stopping the rest, and the job failing only when the diff
+  capture or the gate fails, or a gate input fails under a blocking
+  `RIPR_GATE_MODE`. `--step NAME` reruns one step. The comment capture and
+  publish steps stay in YAML, so the token never reaches ripr. Regenerate the
+  workflow with `ripr init --ci github --force` to pick this up (#4696).
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
@@ -210,6 +244,13 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
+  reported as strongly gripped with every mutant missed. Neither is credited
+  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
+  reads limited. The spot-check miss on the otel line came from a build that
+  did not compile it, so its truth comes from `--features profiling-traced`.
+  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
+  #5332, #5335).
 - Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
   scoreboards (speed, ci, trust, paste, first_run) on a pinned
   real-repository corpus: cold pilot and warm check time and peak memory,
