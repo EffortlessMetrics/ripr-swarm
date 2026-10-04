@@ -250,15 +250,18 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                                 .any(|line| line.trim().starts_with("reachable_unrevealed (")),
                             "{id}: full human output must retain the exact no-observer class"
                         );
+                        let no_assertion_row =
+                            format!("{projection}none unknown oracle; misses: has no assertion");
                         assert!(
-                            human_full_text.lines().any(|line| line.trim()
-                                == "- related test src/lib.rs:8 observes_score misses: has no assertion"),
+                            human_full_text
+                                .lines()
+                                .any(|line| line.trim() == no_assertion_row),
                             "{id}: full human output must explain the absent assertion"
                         );
                         for line in human_full_text.lines().map(str::trim) {
                             if line.starts_with("- related test ") {
-                                assert!(
-                                    !line.contains(" uses "),
+                                assert_eq!(
+                                    line, no_assertion_row,
                                     "{id}: discarded-only test must have no credited human oracle"
                                 );
                             }
