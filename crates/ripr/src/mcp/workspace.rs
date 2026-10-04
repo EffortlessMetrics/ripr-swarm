@@ -304,6 +304,11 @@ pub(crate) struct WorkspaceSession {
     /// packet is pruned, without holding superseded packets in memory for
     /// the lifetime of the session.
     pub(crate) superseded_attempts: std::collections::BTreeMap<String, String>,
+    /// Insertion order of `superseded_attempts` keys, oldest first. Attempt
+    /// ids are unordered digest hex, so the map alone cannot say which
+    /// tombstone is oldest; the queue makes cap eviction drop the oldest
+    /// tombstone first and never a recent one (#6291).
+    pub(crate) superseded_order: std::collections::VecDeque<String>,
 }
 
 impl WorkspaceSession {
@@ -821,6 +826,7 @@ mod tests {
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
         })
     }
 
@@ -848,6 +854,7 @@ mod tests {
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete.list_gaps(None).map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete
@@ -1158,6 +1165,7 @@ mod tests {
                 last_failure: None,
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
+                superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items
                 .first()
