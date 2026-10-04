@@ -2,7 +2,9 @@
 //!
 //! Draft activity must not create the required `Ripr Rust Small Result` check.
 //! The native Draft -> Ready transition is the only pull-request admission
-//! event; main and explicit manual authorities remain separate.
+//! event; main and explicit manual authorities remain separate. The PR
+//! staleness watchdog is alert-only: it must never qualify a Ready head by
+//! dispatching the protected workflow on its branch (#4986).
 
 use std::fs;
 use std::path::Path;
@@ -20,14 +22,36 @@ const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.workflow }}-${{ gi
 const EXPECTED_CANCEL_IN_PROGRESS: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
+const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
+/// Executable (non-comment) fragments that would let the watchdog start or
+/// authorize a workflow run.
+const WATCHDOG_DISPATCH_FRAGMENTS: &[&str] = &["actions: write", "gh workflow run", "/dispatches"];
 
-/// Read the candidate workflow from the repository root above the xtask package.
-fn workflow_source() -> Result<String, String> {
+/// Read a workflow from the repository root above the xtask package.
+fn repo_file(path: &str) -> Result<String, String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest
         .parent()
         .ok_or_else(|| "xtask package has a repository parent".to_string())?;
-    fs::read_to_string(root.join(WORKFLOW)).map_err(|error| error.to_string())
+    fs::read_to_string(root.join(path)).map_err(|error| error.to_string())
+}
+
+/// Read the candidate workflow from the repository root above the xtask package.
+fn workflow_source() -> Result<String, String> {
+    repo_file(WORKFLOW)
+}
+
+/// Return every dispatch-capable fragment present on a non-comment line.
+fn watchdog_dispatch_fragments(source: &str) -> Vec<&'static str> {
+    let executable: Vec<&str> = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    WATCHDOG_DISPATCH_FRAGMENTS
+        .iter()
+        .copied()
+        .filter(|fragment| executable.iter().any(|line| line.contains(fragment)))
+        .collect()
 }
 
 /// Return the exact event declaration lines, excluding comments and blank lines.
@@ -170,4 +194,37 @@ fn block_scalar_decoy_cannot_hide_a_renamed_result_job() {
         terminal_context(source),
         Some("Ripr Rust Small Draft Result")
     );
+}
+
+#[test]
+fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    assert!(
+        source.contains("REQUIRED_CHECK: Ripr Rust Small Result"),
+        "watchdog must still sweep for the exact required context",
+    );
+    assert_eq!(
+        watchdog_dispatch_fragments(&source),
+        Vec::<&str>::new(),
+        "watchdog must be alert-only: a Ready head returns to Draft -> Ready",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    let changed = source
+        .replace("  contents: read\n", "  contents: read\n  actions: write\n")
+        .replace(
+            "          set -euo pipefail\n",
+            "          set -euo pipefail\n          gh workflow run routed-rust.yml --ref=\"$head_ref\"\n",
+        );
+    assert_ne!(changed, source, "dispatch mutation must engage");
+    assert_eq!(
+        watchdog_dispatch_fragments(&changed),
+        vec!["actions: write", "gh workflow run"],
+        "a restored dispatch path must violate the alert-only contract",
+    );
+    Ok(())
 }

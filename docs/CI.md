@@ -855,31 +855,22 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 #4923 ~35 minutes).
 `.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
-head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
-remedy used during the incidents — capped at 5 dispatches per sweep. The
-dispatch is recovery, not qualification (#4986): it exists for an admitted
-candidate whose Ready-triggered run was dropped before it could post its
-expected exact-head result. A head mutated after Ready has revoked its own
-admission; it must return to Draft and perform a fresh Draft -> Ready
-transaction rather than being qualified by a watchdog dispatch, and the
-watchdog must never dispatch heavy proof for Draft iteration. The required
-check, not run existence, is the discriminator: with Ready-only admission
-there is no pseudo-result path, so any `Ripr Rust Small Result` check run on
-the head SHA is a real qualification attempt on that exact head. Restricting
-the sweep to demonstrably dropped Ready attempts (versus any dark non-draft
-head) is tracked with the protected-queue work (#4985/#4988). The next
-sweep's required-check check dedupes; its racy window after a dispatch is bounded
-by the cap plus the 30-minute cadence. No PR comments are posted: the
-dispatched run itself delivers the required `Ripr Rust Small Result` check,
-and each sweep's summary table is the audit trail. The alert-only alternative
-(report the dark head instead of dispatching; zero duplicate-gate risk by
-construction) was deferred, not rejected:
-
-```text
-# To flip to alert-only (issue #4937 option ii): replace the dispatch step in
-# .github/workflows/pr-staleness-watchdog.yml with a summary-only report and
-# drop the `actions: write` permission.
-```
+head SHA, and reports them (step-summary row plus a workflow warning). It is
+alert-only (#4986; issue #4937 option ii): it never dispatches
+`routed-rust.yml` and holds no `actions: write` permission. With Ready-only
+admission, a Ready head without the required check is either a dropped
+Ready-triggered delivery or a push made after Ready, and the watchdog cannot
+tell the two apart. A head mutated after Ready has revoked its own admission
+and must not be qualified by a lighter branch-head dispatch (which skips the
+`pull_request`-scoped PR-evidence steps). The remedy for every reported head
+is the same: convert the PR to Draft and mark it Ready for review again, which
+runs the full Ready-triggered qualification on the exact head and also
+recovers a dropped delivery. The required check, not run existence, is the
+discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
+real qualification attempt on that exact head. Drafts and fork heads are
+skipped. No PR comments are posted; each sweep's summary table is the audit
+trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
+shape (no dispatch command, no `actions: write`).
 
 ### Self-Hosted Runner Placement
 
