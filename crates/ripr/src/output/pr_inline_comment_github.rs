@@ -6,8 +6,8 @@
 //! and review requests. Both live here now, so the workflow holds only the
 //! token and the `gh api` loop. Nothing here reads a token or the network.
 //!
-//! Each function mirrors the retired program's output; the replay suite
-//! runs both side by side when jq is installed.
+//! Each function mirrors the retired program's output; the tests below and
+//! `tests/generated_review_workflow.rs` hold it to that program's results.
 
 use serde_json::{Map, Value, json};
 

@@ -38,7 +38,7 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
         "ripr pr-comments requests --root . --pull-request \"${{ github.event.pull_request.number }}\" --head-sha \"${{ github.event.pull_request.head.sha }}\""
     ));
     assert!(publish.contains(
-        "gh api --method \"$method\" \"repos/${{ github.repository }}/$endpoint\" --input \"$request\" >/dev/null"
+        "gh api --method \"$method\" \"repos/${{ github.repository }}/$endpoint\" --input \"$request\" </dev/null >/dev/null"
     ));
     assert!(!workflow.contains("jq "));
 
@@ -3444,6 +3444,102 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     assert!(!rendered.contains(&format!("ripr {version}")), "{rendered}");
 
     fs::remove_dir_all(base)?;
+    Ok(())
+}
+
+/// The publish step's loop sends every request ripr wrote, in order, even
+/// when `gh` reads standard input: the loop's own stdin is the manifest, so
+/// a `gh` that drained it would silently skip every later request.
+#[cfg(unix)]
+#[test]
+fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn Error>> {
+    if !run_sh("command -v bash >/dev/null", std::env::temp_dir().as_path())?
+        .status
+        .success()
+    {
+        eprintln!("skipping generated_publish_step_sends_every_request_in_order: bash missing");
+        return Ok(());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-publish-loop-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&root)?;
+    let result = (|| -> Result<(String, String), Box<dyn Error>> {
+        let init = run_ripr_init(&root)?;
+        if !init.status.success() {
+            return Err("ripr init failed".into());
+        }
+        let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+        let block = workflow_step_block(&workflow, "Publish RIPR inline comments")
+            .ok_or("missing publish step")?;
+        let body = block
+            .split_once("\n        run: |\n")
+            .map(|(_, body)| body)
+            .ok_or("publish step has no run block")?
+            .replace("${{ github.repository }}", "ripr-test/pricing")
+            .replace("${{ github.event.pull_request.number }}", "42")
+            .replace("${{ github.event.pull_request.head.sha }}", "0123abcd");
+        let plan = serde_json::json!({
+            "summary": {"safe_to_publish": true, "publishable": 2},
+            "operations": [
+                {"operation": "update", "safe_to_publish": true, "dedupe_key": "ripr:b",
+                 "existing_comment_id": 77, "body": "card b"},
+                {"operation": "create", "safe_to_publish": true, "dedupe_key": "ripr:a",
+                 "placement": {"path": "src/lib.rs", "line": 1}, "body": "card a"}
+            ]
+        });
+        fs::create_dir_all(root.join("target/ripr/review"))?;
+        fs::write(
+            root.join("target/ripr/review/comment-publish-plan.json"),
+            plan.to_string(),
+        )?;
+        // A stand-in `gh` that logs its arguments and drains stdin, as a
+        // real one waiting on input would.
+        let bin = root.join("stand-in-bin");
+        fs::create_dir_all(&bin)?;
+        let log = root.join("gh.log");
+        fs::write(
+            bin.join("gh"),
+            format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\ncat >/dev/null\n",
+                log.display()
+            ),
+        )?;
+        let ripr_dir = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("ripr binary has no directory")?;
+        let script = format!(
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\n{body}",
+            bin = bin.display(),
+            ripr = ripr_dir.display(),
+        );
+        let run = run_sh(&script, &root)?;
+        if !run.status.success() {
+            return Err(format!(
+                "publish step failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            )
+            .into());
+        }
+        Ok((
+            fs::read_to_string(&log)?,
+            String::from_utf8_lossy(&run.stdout).to_string(),
+        ))
+    })();
+    let _ = fs::remove_dir_all(&root);
+    let (log, stdout) = result?;
+    let calls: Vec<&str> = log.lines().collect();
+    assert_eq!(
+        calls,
+        vec![
+            "api --method PATCH repos/ripr-test/pricing/pulls/comments/77 --input target/ripr/review/publish/01-patch.json",
+            "api --method POST repos/ripr-test/pricing/pulls/42/reviews --input target/ripr/review/publish/02-post.json",
+        ]
+    );
+    assert_eq!(
+        stdout,
+        "Updated RIPR inline comment: ripr:b\nCreated one RIPR review with 1 inline comment(s).\n"
+    );
     Ok(())
 }
 

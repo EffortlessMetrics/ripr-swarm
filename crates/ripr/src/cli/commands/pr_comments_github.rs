@@ -126,6 +126,15 @@ pub(super) fn parse_pr_comments_requests_options(
         }
         i += 1;
     }
+    if options
+        .out_dir
+        .to_string_lossy()
+        .contains(['\t', '\r', '\n'])
+    {
+        return Err(format!(
+            "{REQUESTS} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
+        ));
+    }
     // Both land in an API path or payload; refuse anything but the shapes
     // GitHub uses so a request can never address another endpoint.
     if options.pull_request.is_empty() || !options.pull_request.bytes().all(|b| b.is_ascii_digit())
@@ -165,12 +174,14 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
             request.method.to_ascii_lowercase()
         ));
         write_json(&options.root.join(&file), &request.payload, REQUESTS)?;
+        // The workflow splits each line on tabs, so no field may carry a tab
+        // or line break; the message is last and only ever printed.
         manifest.push_str(&format!(
             "{}\t{}\t{}\t{}\n",
             request.method,
-            request.endpoint,
-            file.display(),
-            request.message
+            manifest_field(&request.endpoint),
+            manifest_field(&file.display().to_string()),
+            manifest_field(&request.message)
         ));
     }
     let manifest_path = out_dir.join(REQUESTS_MANIFEST);
@@ -184,6 +195,10 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
         println!("{note}");
     }
     Ok(())
+}
+
+fn manifest_field(text: &str) -> String {
+    text.replace(['\t', '\r', '\n'], " ")
 }
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {

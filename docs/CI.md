@@ -1265,7 +1265,7 @@ Permissions and job settings:
   `ripr-waive` is added or removed, since the gate reads labels from the event.
   Any label change re-runs the job, and the concurrency group cancels the
   superseded run.
-- Every run step is bash (arrays, `mktemp`, `$'\t'`), so `defaults.run.shell`
+- Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
   pins bash; the steps still parse if the job moves to `windows-latest`, whose
   default shell is PowerShell.
 - One run per pull request: a newer push cancels the older run. Only the
@@ -1330,10 +1330,8 @@ fail CI. The `cargo xtask sarif-policy` baseline modes shown above are
 repo-local automation today; a public package-level policy command is a future
 adoption surface.
 
-The generated workflow always uploads `target/ripr/pilot`,
-`target/ripr/workflow`, `target/ripr/agent`, `target/ripr/reports`,
-`target/ripr/review`, and `target/ci` as a `ripr-reports` artifact when files
-exist. When `RIPR_GATE_BASELINE` is set and gate evaluation writes
+The generated workflow always uploads `target/ripr` and `target/ci` as a
+`ripr-reports` artifact when files exist. When `RIPR_GATE_BASELINE` is set and gate evaluation writes
 `target/ripr/reports/gate-decision.json`, the workflow also runs
 `ripr baseline diff`, then `ripr zero status`, and includes:
 

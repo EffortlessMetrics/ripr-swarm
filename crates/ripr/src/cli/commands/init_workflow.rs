@@ -91,7 +91,7 @@ jobs:
             if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
               echo "::error::$asset does not match its published SHA-256 (expected ${expected:-nothing}, got $actual)"; exit 1
             fi
-            tar -xzf "$asset" -C ripr-bin && echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
+            tar -xzf "$asset" -C ripr-bin; echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
           else
             why="no prebuilt ripr $version for $RUNNER_OS-$RUNNER_ARCH"; [ -z "$target" ] || why="downloading $url failed"
             if ! command -v cargo >/dev/null 2>&1; then
@@ -129,7 +129,7 @@ jobs:
         run: |
           ripr pr-comments requests --root . --pull-request "${{ github.event.pull_request.number }}" --head-sha "${{ github.event.pull_request.head.sha }}"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" >/dev/null
+            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/publish/requests.tsv
 
@@ -347,7 +347,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "8d768365b394949ba7a17976141e8b20474f09b692f08d2dd312a657d68c9da4";
+        "1126e0e4b728332ff969abb54c422f65ef238e87d8aa0bfa104a8247e5de91b8";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

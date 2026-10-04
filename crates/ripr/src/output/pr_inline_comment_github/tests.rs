@@ -119,3 +119,109 @@ fn updates_come_before_one_review_that_creates_the_new_cards() {
         vec!["RIPR inline comment already current: k4 x".to_string()]
     );
 }
+
+#[test]
+fn an_update_only_rerun_posts_a_summary_review_only_when_something_is_left_over() {
+    let update = json!({"operation": "update", "safe_to_publish": true,
+        "existing_comment_id": 9, "dedupe_key": "k", "body": "card"});
+    let plan = |summary: serde_json::Value| json!({"summary": summary, "operations": [update]});
+    let calls = |plan: &serde_json::Value| {
+        publish_requests(plan, "7", "abc")
+            .requests
+            .iter()
+            .map(|request| (request.method, request.endpoint.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    // Nothing beyond the updated card: no review, so a rerun adds no noise.
+    let quiet = plan(json!({"safe_to_publish": true, "publishable": 1}));
+    assert_eq!(
+        calls(&quiet),
+        vec![("PATCH", "pulls/comments/9".to_string())]
+    );
+
+    // Leftover recommendations or suppressions still get one summary review.
+    for summary in [
+        json!({"safe_to_publish": true, "publishable": 1, "summary_only": 2}),
+        json!({"safe_to_publish": true, "publishable": 1, "suppressed": 1}),
+    ] {
+        let plan = plan(summary);
+        let requests = publish_requests(&plan, "7", "abc");
+        assert_eq!(
+            calls(&plan),
+            vec![
+                ("PATCH", "pulls/comments/9".to_string()),
+                ("POST", "pulls/7/reviews".to_string())
+            ]
+        );
+        let review = &requests.requests[1];
+        assert_eq!(
+            review.message,
+            "Created one RIPR review summary after 1 inline comment update(s)."
+        );
+        assert!(
+            review.payload.get("comments").is_none(),
+            "{:?}",
+            review.payload
+        );
+    }
+    let suppressed = plan(json!({"safe_to_publish": true, "publishable": 1, "suppressed": 1}));
+    let body = publish_requests(&suppressed, "7", "abc").requests[1].payload["body"].clone();
+    assert_eq!(
+        body,
+        "RIPR surfaced 1 line-placed recommendation.\n\n1 suppressed recommendation remain visible there with reasons.\n\nAdvisory static evidence only; gate authority remains separate."
+    );
+}
+
+#[test]
+fn a_workflow_bot_login_from_a_user_account_is_not_an_existing_card() {
+    let pages = json!([[
+        {"id": 1, "user": {"login": "github-actions[bot]", "type": "User"},
+         "path": "a.rs", "line": 1, "body": "<!-- ripr:dedupe=k1 -->"},
+        // A compact marker whose card cannot be read back.
+        {"id": 2, "user": {"login": "github-actions[bot]", "type": "Bot"},
+         "path": "a.rs", "line": 2, "body": "lead <!-- ripr:dedupe=k2 presentation=compact-v1 -->"}
+    ]]);
+    let existing = existing_comments(&pages);
+    assert_eq!(
+        existing["comments"],
+        json!([{"comment_id": 2, "dedupe_key": "k2", "path": "a.rs", "line": 2,
+                "side": "RIGHT", "body": "__ripr_compact_presentation_unreadable__",
+                "outdated": false}])
+    );
+}
+
+#[test]
+fn the_card_runs_to_the_last_details_close_and_mixed_plans_publish_only_safe_creates() {
+    // The retired `(?<card>.*)` with flag `m` was greedy: a card that holds
+    // its own `</details>` keeps it.
+    let bot = json!({"login": "github-actions[bot]", "type": "Bot"});
+    let pages = json!([[{"id": 1, "user": bot, "path": "a.rs", "line": 1,
+        "body": "lead\n\n<details><summary>Full RIPR repair card</summary>\n\nouter\n\n</details>\n\ninner\n\n</details>\n\n<!-- ripr:dedupe=k presentation=compact-v1 -->"}]]);
+    assert_eq!(
+        existing_comments(&pages)["comments"][0]["body"],
+        "outer\n\n</details>\n\ninner"
+    );
+
+    let plan = json!({
+        "summary": {"safe_to_publish": true, "publishable": 2},
+        "operations": [
+            {"operation": "update", "safe_to_publish": true, "dedupe_key": "no-id", "body": "x"},
+            {"operation": "create", "safe_to_publish": false, "dedupe_key": "held",
+             "placement": {"path": "a.rs", "line": 1}, "body": "x"},
+            {"operation": "create", "safe_to_publish": true, "dedupe_key": "sent",
+             "placement": {"path": "a.rs", "line": 2}, "body": "x"}
+        ]
+    });
+    let requests = publish_requests(&plan, "7", "abc");
+    assert_eq!(requests.requests.len(), 1);
+    let comments = &requests.requests[0].payload["comments"];
+    assert_eq!(comments.as_array().map(Vec::len), Some(1));
+    assert_eq!(comments[0]["line"], 2);
+    assert_eq!(
+        requests.notes,
+        vec![
+            "Skipped a RIPR inline comment update without a numeric comment id: no-id".to_string()
+        ]
+    );
+}
