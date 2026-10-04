@@ -810,20 +810,20 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
 }
 
 /// Return `true` when the working tree at `root` holds uncommitted work a
-/// working-tree run would read differently from a committed-history run:
-/// a staged or unstaged edit to any tracked file, or an untracked file a
-/// language adapter routes (a new test file, for example, which the
-/// working-tree run reads as test evidence and the committed-history run
-/// treats as absent).
+/// working-tree run would read differently from a committed-history run: a
+/// staged or unstaged edit to any tracked file.
 ///
 /// This is the dirtiness signal behind `ripr check`'s default diff source
 /// (RIPR-SPEC-0116 amendment): a dirty tree is analyzed as a working tree.
-/// Untracked files the adapters ignore (scratch notes, build output that is
-/// not ignored) do not make a tree dirty. A probe that cannot run (no git,
-/// not a repository) reads as clean without a warning of its own: the run
-/// then takes the committed-history path, whose diff loader names the same
-/// git failure in ripr's voice, and whose committed-content probe still
-/// discloses any uncommitted edits it finds (RIPR-SPEC-0112).
+/// Untracked files never make a tree dirty, routed or not: the working-tree
+/// diff (`git diff <merge-base>`) covers tracked files only, so an
+/// untracked-only tree would switch to a read that still cannot see the new
+/// file. It stays on committed history, where the RIPR-SPEC-0112 note names
+/// the untracked files and the staging repair (#5258). A probe that cannot
+/// run (no git, not a repository) reads as clean without a warning of its
+/// own: the run then takes the committed-history path, whose diff loader
+/// names the same git failure in ripr's voice, and whose committed-content
+/// probe still discloses any uncommitted edits it finds (RIPR-SPEC-0112).
 pub(crate) fn working_tree_has_uncommitted_changes(root: &Path) -> bool {
     matches!(uncommitted_changes_probe(root), WorkingTreeProbe::Dirty)
 }
@@ -835,7 +835,7 @@ fn uncommitted_changes_probe(root: &Path) -> WorkingTreeProbe {
             "status",
             "--porcelain",
             "-z",
-            "--untracked-files=all",
+            "--untracked-files=no",
             "--",
             ".",
         ],
@@ -860,22 +860,14 @@ fn uncommitted_changes_probe(root: &Path) -> WorkingTreeProbe {
 
 /// Decide dirtiness from `git status --porcelain -z` records. Any record that
 /// is not untracked (`??`) is a tracked change, which ends the scan before a
-/// rename's second NUL-separated path could be misread as a record. An
-/// untracked record counts only when a language adapter routes its path.
+/// rename's second NUL-separated path could be misread as a record. The probe
+/// asks git for no untracked records; an untracked record that appears anyway
+/// is skipped, because the working-tree diff cannot include it.
 fn porcelain_z_has_uncommitted_source_work(stdout: &[u8]) -> bool {
-    for record in stdout.split(|byte| *byte == 0) {
-        if record.is_empty() {
-            continue;
-        }
-        let Some(path) = record.strip_prefix(b"?? ") else {
-            return true;
-        };
-        let path = String::from_utf8_lossy(path);
-        if crate::analysis::language::route(Path::new(path.as_ref())).is_some() {
-            return true;
-        }
-    }
-    false
+    stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .any(|record| !record.starts_with(b"?? "))
 }
 
 /// The revisions a live-repository diff analyzed, resolved to commits for
@@ -2538,12 +2530,12 @@ mod tests {
         Ok(())
     }
 
-    /// RIPR-SPEC-0116 amendment: the dirty-tree default counts a tracked
-    /// edit of any file and an untracked file a language adapter routes, but
-    /// not an untracked file no adapter reads.
+    /// RIPR-SPEC-0116 amendment: the dirty-tree default counts a staged or
+    /// unstaged edit of any tracked file, and no untracked file, routed or
+    /// not: the working-tree diff cannot contain an untracked file.
     #[test]
-    fn uncommitted_change_detector_counts_tracked_edits_and_routed_untracked_files()
-    -> std::io::Result<()> {
+    fn uncommitted_change_detector_counts_tracked_edits_not_untracked_files() -> std::io::Result<()>
+    {
         let dir = unique_fixture_root("uncommitted-change-detector")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
@@ -2561,11 +2553,9 @@ mod tests {
         dirty("untracked file no adapter reads", false)?;
         fs::create_dir_all(dir.join("tests/nested"))?;
         fs::write(dir.join("tests/nested/new.rs"), "#[test]\nfn t() {}\n")?;
-        dirty("untracked routed file in an untracked directory", true)?;
-        fs::remove_dir_all(dir.join("tests"))?;
-        dirty("untracked routed file removed", false)?;
+        dirty("untracked routed file in an untracked directory", false)?;
         fs::write(dir.join("README"), "changed\n")?;
-        dirty("tracked edit", true)?;
+        dirty("tracked edit beside an untracked routed file", true)?;
         ignore_remove_dir_all(&dir);
         Ok(())
     }
@@ -2574,7 +2564,8 @@ mod tests {
     fn porcelain_z_records_decide_dirtiness_without_misreading_rename_sources() {
         assert!(!porcelain_z_has_uncommitted_source_work(b""));
         assert!(!porcelain_z_has_uncommitted_source_work(b"?? notes.txt\0"));
-        assert!(porcelain_z_has_uncommitted_source_work(b"?? src/new.rs\0"));
+        assert!(!porcelain_z_has_uncommitted_source_work(b"?? src/new.rs\0"));
+        assert!(porcelain_z_has_uncommitted_source_work(b"A  src/new.rs\0"));
         assert!(porcelain_z_has_uncommitted_source_work(b" M README\0"));
         // A rename record is a tracked change; its second NUL field (the
         // old path) is never parsed as a record of its own.

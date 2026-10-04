@@ -765,10 +765,13 @@ pub struct AnalysisResult {
     /// check header. `None` for diff-file/stdin inputs, repo-scope runs and
     /// subject-materialized runs, whose revisions are not live refs.
     pub(crate) analyzed_revisions: Option<diff::AnalyzedRevisions>,
-    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
-    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
-    /// so the note can name the real repair (staging) instead of offering
-    /// `--worktree`. Empty when no untracked routed file exists.
+    /// Untracked routed files (#5258): on a committed-history run, the
+    /// untracked subset of [`AnalysisResult::uncommitted_source_paths`]; on
+    /// a working-tree run (RIPR-SPEC-0116), every untracked routed file,
+    /// because the working-tree diff covers tracked files only. Neither diff
+    /// analyzes them, so the note names the real repair (intent-to-add or
+    /// staging) instead of offering `--worktree`. Empty when no untracked
+    /// routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,

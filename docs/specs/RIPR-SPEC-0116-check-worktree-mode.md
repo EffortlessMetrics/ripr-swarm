@@ -47,12 +47,14 @@ head it analyzed.
   `--diff`, no `--candidate-tree`, not a repo-scope format), the default reads
   the working tree exactly as `--worktree` does when
   `working_tree_has_uncommitted_changes` reports uncommitted work: a staged or
-  unstaged edit to any tracked file, or an untracked file a language adapter
-  routes (for example a new integration test, which the working-tree run reads
-  as test evidence and a committed-history run treats as absent). A clean
-  tree, or a dirtiness probe that cannot run, keeps the committed-history
-  read `git diff <base>...HEAD`; that run's own loader names any git failure,
-  so the probe adds no second warning.
+  unstaged edit to any tracked file. Untracked files never select the working
+  tree, routed or not, because the working-tree diff (`git diff
+  <merge-base>`) covers tracked files only. A clean or untracked-only tree,
+  or a dirtiness probe that cannot run, keeps the committed-history read
+  `git diff <base>...HEAD`; that run's own loader names any git failure, so
+  the probe adds no second warning, and on an untracked-only tree the
+  RIPR-SPEC-0112 note names the untracked files and the staging repair
+  (#5258).
 - **Explicit `--base` follows the same default.** The base names where the
   diff starts, not where it ends, so `ripr check --base origin/main` on a
   dirty tree reads the working tree. CI checkouts are clean, so CI runs keep
@@ -66,10 +68,19 @@ head it analyzed.
 - **Drill-in parity.** A working-tree default run carries `--worktree` into
   its printed `explain`/`context` commands and records the worktree diff
   source in `--write-artifact`, exactly as an explicit `--worktree` run does.
-- **Untracked files.** Unchanged from `--worktree`: untracked files are not in
-  the diff until staged, and `ripr check` output does not list them (the help
-  text, `doctor`, and the LSP status name that boundary). An untracked test
-  file is still read as test evidence on a working-tree run.
+- **Untracked files.** Untracked files are not in the working-tree diff until
+  staged or marked intent-to-add, so they never flip the default (above). A
+  working-tree read, default-selected or `--worktree`, discloses the
+  untracked files a language adapter routes: the human output prints a note
+  and the GitHub stream a `ripr untracked files not analyzed` warning that
+  name them (at most three, then a count), say they are not in the
+  working-tree diff, and give the repair (`git add -N <path>` or stage them).
+  The note never suggests `--worktree`, which is already in effect. An
+  untracked test file is still read as test evidence on a working-tree run.
+- **Empty working-tree read.** When a working-tree read finds no changed
+  files, the no-scope note, safe next action and GitHub warning describe the
+  working-tree read (the merge base of the base and `HEAD` to the working
+  tree), not `<base>...HEAD`, and do not suggest `--worktree`.
 - **Analyzed base and head.** Every diff-scoped live-repository run names its
   base ref and commit and its head, either `HEAD <sha>` or
   `working tree (uncommitted changes on HEAD <sha>)`; when the merge base
@@ -227,8 +238,12 @@ that untracked source was analyzed.
    lists the same findings as `ripr check --worktree`, emits no
    `unanalyzed_working_tree`, names `head: working tree (uncommitted changes
    on HEAD <sha>)` in human output and `head.source: "working_tree"` in JSON,
-   and prints drill-ins that carry `--worktree`. An untracked test file alone
-   also selects the working tree.
+   and prints drill-ins that carry `--worktree`. An untracked file alone, even
+   a routed source or test file, does not select the working tree: the run
+   reads committed history and prints the RIPR-SPEC-0112 note naming it. A
+   working-tree read beside an untracked routed file names that file and the
+   intent-to-add repair, with no `--worktree` advice; an empty working-tree
+   read describes the merge-base-to-working-tree diff.
 10. **Clean-tree default**: bare `ripr check` on a clean tree (an untracked
    non-source file does not count) reads committed history and names
    `head: HEAD <sha>`.
@@ -311,12 +326,26 @@ that untracked source was analyzed.
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
   - clean default names `head: HEAD <sha>` and `head.source: "commit"`.
 - `crates/ripr/tests/cli_smoke.rs::check_base_reads_tests_as_committed_and_notes_only_source_changes`
-  - with an explicit `--base`, an edited or untracked test moves the default
-    result while `--committed` keeps the committed result and notes it.
+  - with an explicit `--base`, an edited test moves the default result while
+    `--committed` keeps the committed result and notes it; an untracked test
+    alone keeps the default on committed history with the same note.
+- `crates/ripr/tests/cli_smoke.rs::check_untracked_files_keep_committed_default_and_working_tree_reads_name_them`
+  - an untracked-only tree keeps the committed default and the #5258 note; a
+    tracked edit beside untracked `src/new.rs` reads the working tree and
+    names new.rs in human and GitHub output without `--worktree` advice; an
+    empty default working-tree read (a staged edit reverted in the working
+    tree) describes the working-tree diff in human and JSON output, not
+    `main...HEAD`.
+- `crates/ripr/src/output/human.rs::tests::empty_working_tree_read_describes_the_working_tree_and_names_untracked_files`
+- `crates/ripr/src/output/human.rs::tests::candidate_tree_header_names_base_and_candidate_trees`
+- `crates/ripr/src/output/github.rs::tests::render_leads_with_analyzed_base_and_head_notice`
+- `crates/ripr/src/output/github.rs::tests::working_tree_read_warns_on_untracked_files_and_describes_its_range`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_run_properties_name_analyzed_base_and_head`
+- `crates/ripr/src/app/analysis_outcome_artifact.rs::tests::validates_working_tree_head_source_against_the_working_tree_diff`
 - `crates/ripr/tests/cli_smoke.rs::check_committed_rejects_conflicting_diff_sources`
 - `crates/ripr/src/app/diff_source.rs::tests::default_reads_the_working_tree_only_when_it_is_dirty`
 - `crates/ripr/src/app/diff_source.rs::tests::forced_sources_win_without_running_the_probe`
-- `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_and_routed_untracked_files`
+- `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_not_untracked_files`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits`
 

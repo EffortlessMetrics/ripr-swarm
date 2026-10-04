@@ -1916,7 +1916,7 @@ requires no disclosure.
 
 - `scope_status` — always `"no_scope_provided"` for machine filtering
 - `category` — always `"no_scope_disclosure"` for machine filtering
-- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range; without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
+- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range (on a working-tree read, the merge-base-to-working-tree range rather than `<base>...HEAD`, RIPR-SPEC-0116); without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
 
 ### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
 
@@ -1926,8 +1926,10 @@ ALL of the following are true:
 1. The analyzed diff was committed history: `ripr check --committed` (with
    an explicit `--base <rev>` or the resolved default base). Since the
    RIPR-SPEC-0116 amendment a dirty tree is otherwise analyzed as a working
-   tree, so without `--committed` this field fires only when the dirtiness
-   probe could not run and the run fell back to committed history.
+   tree, so without `--committed` this field fires when the only uncommitted
+   changes are untracked files (they never select the working tree), or when
+   the dirtiness probe could not run and the run fell back to committed
+   history.
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
 3. At least one file a language adapter reads (a source or test file) has

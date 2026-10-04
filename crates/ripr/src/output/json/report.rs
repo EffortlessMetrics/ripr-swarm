@@ -428,7 +428,21 @@ pub(crate) fn render_with_config(
         field(&mut out, 3, "category", "no_scope_disclosure", true);
         // #4012: on an established-but-empty range the why names the
         // compared base instead of claiming no scope was provided.
-        if let Some(base) = output.base.as_deref() {
+        // RIPR-SPEC-0116: a working-tree read diffs the merge base against
+        // the working tree, so its why names that range, not `...HEAD`.
+        if let Some(base) = output.base.as_deref()
+            && crate::output::analyzed_revisions::is_working_tree_read(output)
+        {
+            field(
+                &mut out,
+                3,
+                "why",
+                &format!(
+                    "empty working-tree range: the merge base of {base} and HEAD to the working tree contains no changed tracked files; nothing was analyzed because nothing changed"
+                ),
+                false,
+            );
+        } else if let Some(base) = output.base.as_deref() {
             field(
                 &mut out,
                 3,

@@ -48,8 +48,9 @@ impl LiveDiffSource {
 /// `--candidate-tree` subject, and repo-scope formats have no live diff
 /// source to choose. With [`DiffSourceRequest::Default`], the working tree is
 /// read when [`crate::analysis::working_tree_has_uncommitted_changes`]
-/// reports uncommitted work (a tracked edit, or an untracked file a language
-/// adapter reads); a clean tree, or a probe that could not run, keeps
+/// reports uncommitted work (a staged or unstaged tracked edit; untracked
+/// files never count, because the working-tree diff cannot contain them); a
+/// clean or untracked-only tree, or a probe that could not run, keeps
 /// committed history. An explicit `--base` does not change this: the base
 /// names where the diff starts, not where it ends.
 pub(crate) fn select_live_diff_source(root: &Path, request: DiffSourceRequest) -> LiveDiffSource {

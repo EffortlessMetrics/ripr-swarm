@@ -221,6 +221,10 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     cancellation::checkpoint()?;
     let mut result =
         run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)?;
+    // RIPR-SPEC-0116: the working-tree diff covers tracked files only; name
+    // the untracked routed files it cannot contain so the output can say so.
+    result.untracked_source_paths =
+        committed_source::untracked_routed_paths(&options.root, options.git_timeout)?;
     result.analyzed_revisions = loaded.effective_base.as_deref().map(|base| {
         diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
     });

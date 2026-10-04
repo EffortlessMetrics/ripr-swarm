@@ -985,8 +985,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !committed_history_diff {
         output.unanalyzed_working_tree = false;
         // #5258: the untracked list drives the same disclosure family; a
-        // non-committed-history mode must not inherit it either.
-        output.untracked_working_tree_source_paths.clear();
+        // mode that is neither committed history nor a working-tree read
+        // must not inherit it. A working-tree read keeps it: its diff covers
+        // tracked files only, so the untracked routed files are named in a
+        // note of their own (RIPR-SPEC-0116).
+        if !worktree_run {
+            output.untracked_working_tree_source_paths.clear();
+        }
     }
     // A working-tree run (explicit `--worktree`, or the dirty-tree default)
     // carries `--worktree` into its drill-in commands, so `explain` and

@@ -1053,6 +1053,39 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0116 amendment: the run properties name the analyzed base
+    /// and head with the check JSON's field names; absent without revisions.
+    #[test]
+    fn sarif_run_properties_name_analyzed_base_and_head() -> Result<(), String> {
+        let mut output = sample_output();
+        output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            head_commit: Some("5d6e7f8a9b0c".to_string()),
+            working_tree: true,
+        });
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let properties = &sarif["runs"][0]["properties"];
+        assert_eq!(properties["base"], "origin/main");
+        assert_eq!(properties["base_commit"], "1a2b3c4d5e6f");
+        assert_eq!(properties["merge_base_commit"], "9f8e7d6c5b4a");
+        assert_eq!(
+            properties["head"],
+            serde_json::json!({ "source": "working_tree", "commit": "5d6e7f8a9b0c" })
+        );
+        output.analyzed_revisions = None;
+        let plain = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let plain_properties = &plain["runs"][0]["properties"];
+        for key in ["base", "base_commit", "merge_base_commit", "head"] {
+            assert!(
+                plain_properties.get(key).is_none(),
+                "{key}: {plain_properties}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn sarif_discloses_incomplete_zero_finding_outcome_at_run_level() -> Result<(), String> {
         let mut output = sample_output();

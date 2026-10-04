@@ -17275,19 +17275,18 @@ fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
     assert!(!noted(&default));
     run_git(&root, &["checkout", "-q", "--", "tests/ok.rs"])?;
 
-    // A new untracked test is not committed content either. It alone makes
-    // the tree dirty for the default, which then reads it as test evidence.
+    // A new untracked test is not committed content either. Untracked files
+    // alone do not make the tree dirty for the default (the working-tree diff
+    // cannot contain them), so the default stays on committed history and
+    // discloses the file like `--committed` (RIPR-SPEC-0116).
     std::fs::write(root.join("tests/new.rs"), discriminating_test)?;
     let untracked = check(&["--committed"])?;
     assert_eq!(untracked["summary"], committed["summary"]);
     assert!(noted(&untracked));
     let untracked_default = check(&[])?;
-    assert_ne!(
-        untracked_default["summary"], committed["summary"],
-        "the default must read the untracked test as evidence"
-    );
-    assert_eq!(untracked_default["head"]["source"], "working_tree");
-    assert!(!noted(&untracked_default));
+    assert_eq!(untracked_default["summary"], committed["summary"]);
+    assert_eq!(untracked_default["head"]["source"], "commit");
+    assert!(noted(&untracked_default));
     std::fs::remove_file(root.join("tests/new.rs"))?;
 
     // A README edit changes nothing an adapter reads: no note.
@@ -17437,6 +17436,179 @@ fn check_default_base_with_uncommitted_edit_analyzes_the_working_tree() -> Resul
     {
         return Err(format!(
             "--committed human output must name HEAD and disclose the excluded edit; got:\n{committed_stdout}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// RIPR-SPEC-0116 (B1 of the #5997 review): untracked files never flip the
+/// default to a working-tree read, because the working-tree diff
+/// (`git diff <merge-base>`) covers tracked files only. A working-tree read
+/// still names the untracked routed files it cannot contain, gives the
+/// intent-to-add repair instead of `--worktree` advice, and an empty
+/// working-tree read describes the merge-base-to-working-tree diff rather
+/// than `<base>...HEAD`.
+#[test]
+fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-untracked-files");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0116-untracked-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/new.rs"),
+        "pub fn fresh(value: i32) -> bool {\n    value > 3\n}\n",
+    )
+    .map_err(|err| format!("write untracked new.rs: {err}"))?;
+    let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if status.trim() != "?? src/new.rs" {
+        return Err(format!(
+            "fixture precondition: only src/new.rs is untracked; got {status:?}"
+        ));
+    }
+    let root_str = root.to_string_lossy().into_owned();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let human = |args: &[&str]| -> String {
+        let output = run_ripr(args);
+        assert_success(&output);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let worktree_advice = [
+        "add `--worktree`",
+        "pass `--worktree`",
+        "rerun `ripr check --worktree`",
+    ];
+
+    // (a) Untracked-only tree: the default stays on committed history and
+    // carries the #5258 note naming the file.
+    let untracked_only = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if untracked_only["head"]["source"] != "commit"
+        || untracked_only["unanalyzed_working_tree"] != true
+    {
+        return Err(format!(
+            "an untracked-only tree must keep the committed-history default and disclose it:\n{untracked_only}"
+        ));
+    }
+    let untracked_only_human = human(&["check", "--root", &root_str]);
+    if !untracked_only_human
+        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+    {
+        return Err(format!(
+            "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
+        ));
+    }
+
+    // (c) An empty working-tree read describes the merge-base-to-working-tree
+    // diff, not `main...HEAD`, never offers `--worktree`, and names the
+    // untracked file. A staged edit reverted in the working tree makes the
+    // tree dirty (`MM`) while `git diff <merge-base>` stays empty, so the
+    // default selects the working tree and finds nothing to analyze.
+    let base_lib = "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold + 1\n}\n",
+    )
+    .map_err(|err| format!("write staged lib.rs: {err}"))?;
+    run_git(&root, &["add", "src/lib.rs"])?;
+    std::fs::write(root.join("src/lib.rs"), base_lib)
+        .map_err(|err| format!("revert lib.rs: {err}"))?;
+    let empty_json = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    let why = empty_json["scope_disclosures"][0]["why"]
+        .as_str()
+        .unwrap_or_default();
+    if empty_json["head"]["source"] != "working_tree"
+        || !why.starts_with(
+            "empty working-tree range: the merge base of main and HEAD to the working tree",
+        )
+    {
+        return Err(format!(
+            "an empty default working-tree read must disclose the working-tree range:\n{empty_json}"
+        ));
+    }
+    let empty_worktree = human(&["check", "--root", &root_str]);
+    for expected in [
+        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Safe next action: the working tree has no changed tracked files against `main`",
+        "Untracked files (src/new.rs) are not in the working-tree diff",
+    ] {
+        if !empty_worktree.contains(expected) {
+            return Err(format!(
+                "the empty working-tree read must say {expected:?}; got:\n{empty_worktree}"
+            ));
+        }
+    }
+    if empty_worktree.contains("main...HEAD")
+        || worktree_advice
+            .iter()
+            .any(|advice| empty_worktree.contains(advice))
+    {
+        return Err(format!(
+            "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
+        ));
+    }
+
+    // (b) A tracked edit beside the untracked file flips the default to the
+    // working tree; the output names new.rs and gives no `--worktree` advice.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let mixed = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if mixed["head"]["source"] != "working_tree" || mixed.get("unanalyzed_working_tree").is_some() {
+        return Err(format!(
+            "a tracked edit must flip the default to a working-tree read:\n{mixed}"
+        ));
+    }
+    let mixed_human = human(&["check", "--root", &root_str]);
+    if !mixed_human.contains(
+        "Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only",
+    ) || !mixed_human.contains("`git add -N <path>`")
+    {
+        return Err(format!(
+            "a working-tree default run must name the untracked file and the intent-to-add repair; got:\n{mixed_human}"
+        ));
+    }
+    if worktree_advice
+        .iter()
+        .any(|advice| mixed_human.contains(advice))
+        || mixed_human.contains("were not analyzed; this run read each file as committed")
+    {
+        return Err(format!(
+            "a working-tree default run must not advise `--worktree` or print the committed note; got:\n{mixed_human}"
+        ));
+    }
+    let mixed_github = run_ripr(&["check", "--root", &root_str, "--format", "github"]);
+    assert_success(&mixed_github);
+    let mixed_github = String::from_utf8_lossy(&mixed_github.stdout);
+    if !mixed_github.contains("::warning title=ripr untracked files not analyzed::")
+        || !mixed_github.contains("src/new.rs")
+    {
+        return Err(format!(
+            "the GitHub stream must carry the untracked-files warning; got:\n{mixed_github}"
         ));
     }
 

@@ -149,9 +149,9 @@ Options:
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. This is already the default when the
-                           tree has uncommitted changes (a tracked edit, or an
-                           untracked file a language adapter reads); untracked
-                           source files stay out of the diff until staged.
+                           tree has staged or unstaged tracked edits;
+                           untracked files never select it and stay out of
+                           the diff until staged (`git add -N`).
                            Cannot be combined with --diff.
   --committed              Diff committed history only (base...HEAD) even when
                            the working tree has uncommitted changes; the

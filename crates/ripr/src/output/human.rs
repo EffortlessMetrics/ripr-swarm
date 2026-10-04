@@ -29,18 +29,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     if untracked.is_empty() {
         return UNANALYZED_WORKING_TREE_NOTE.to_string();
     }
-    const NAMED_PATHS: usize = 3;
-    let named = untracked
-        .iter()
-        .take(NAMED_PATHS)
-        .map(|path| escape_terminal_display(path))
-        .collect::<Vec<_>>();
-    let more = untracked.len().saturating_sub(NAMED_PATHS);
-    let listing = if more > 0 {
-        format!("{} and {more} more", named.join(", "))
-    } else {
-        named.join(", ")
-    };
+    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
     format!(
         "\nNote: uncommitted source and test changes were not analyzed; this run read each \
          file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
@@ -48,6 +37,26 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
          or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
          rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
     )
+}
+
+/// The working-tree disclosure for this run, if any: the RIPR-SPEC-0112
+/// note on a committed-history run with unanalyzed edits, or, on a
+/// working-tree read (RIPR-SPEC-0116), the untracked-files note naming the
+/// routed files the working-tree diff does not contain. The second never
+/// offers `--worktree`, which is already in effect.
+fn render_working_tree_disclosure(out: &mut String, output: &CheckOutput) {
+    if output.unanalyzed_working_tree {
+        out.push_str(&unanalyzed_working_tree_note(output));
+        return;
+    }
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        && let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
+            &output.untracked_working_tree_source_paths,
+            escape_terminal_display,
+        )
+    {
+        out.push_str(&format!("\nNote: {message}\n"));
+    }
 }
 
 /// Render the bounded triage report in the default human-readable CLI format.
@@ -70,6 +79,17 @@ pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConf
 /// range), name the compared base instead of claiming no scope was
 /// provided; only a run with no established base keeps the legacy note.
 fn render_no_scope_note(output: &CheckOutput) -> String {
+    // RIPR-SPEC-0116: a working-tree read diffs the merge base of the base
+    // and HEAD against the working tree, not `<base>...HEAD`.
+    if let Some(base) = output.base.as_deref()
+        && crate::output::analyzed_revisions::is_working_tree_read(output)
+    {
+        return format!(
+            "\nNote: the working tree has no changed tracked files against `{base}` (diff from \
+             the merge base of `{base}` and HEAD to the working tree), so there was nothing to \
+             analyze. An empty result here means no tracked behavior changed against it.\n",
+        );
+    }
     if let Some(base) = output.base.as_deref() {
         format!(
             "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
@@ -103,9 +123,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
         }
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
@@ -114,9 +132,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in);
     render_all_no_path_disclosure(&mut out, output);
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
@@ -160,9 +176,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
@@ -212,9 +226,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
@@ -2232,6 +2244,128 @@ mod tests {
         assert!(rendered.contains("State: nothing in scope (missing_scope)"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "main".to_string(),
+                base_commit: Some("1a2b3c4d5e6f".to_string()),
+                merge_base_commit: None,
+                head_commit: Some("1a2b3c4d5e6f".to_string()),
+                working_tree: true,
+            }),
+        }
+    }
+
+    /// RIPR-SPEC-0116: an empty working-tree read names the
+    /// merge-base-to-working-tree diff, not `main...HEAD`, never offers
+    /// `--worktree` (already in effect), and names untracked routed files the
+    /// working-tree diff cannot contain. A committed-history read keeps the
+    /// `main...HEAD` wording, so the oracle discriminates the branch.
+    #[test]
+    fn empty_working_tree_read_describes_the_working_tree_and_names_untracked_files() {
+        let mut output = empty_live_output(true);
+        output.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("head: working tree (uncommitted changes on HEAD 1a2b3c4)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("main...HEAD"), "{rendered}");
+        assert!(!rendered.contains("`--worktree`"), "{rendered}");
+
+        let mut committed = empty_live_output(true);
+        if let Some(revisions) = committed.analyzed_revisions.as_mut() {
+            revisions.working_tree = false;
+        }
+        committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let committed_rendered = render(&committed);
+        assert!(
+            committed_rendered.contains("`main...HEAD` contains no changed files"),
+            "{committed_rendered}"
+        );
+        assert!(
+            committed_rendered.contains("add `--worktree` to include uncommitted tracked edits"),
+            "{committed_rendered}"
+        );
+        assert!(
+            !committed_rendered.contains("not in the working-tree diff"),
+            "{committed_rendered}"
+        );
+    }
+
+    /// A candidate-tree subject has no live revisions; the header names its
+    /// two trees from the outcome identity.
+    #[test]
+    fn candidate_tree_header_names_base_and_candidate_trees() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+            GitCandidateSubjectIdentity,
+        };
+        let mut output = empty_live_output(false);
+        output.base = None;
+        output.analyzed_revisions = None;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            AnalysisIdentity {
+                git_candidate_subject: Some(GitCandidateSubjectIdentity {
+                    subject_kind: "tree_to_tree".to_string(),
+                    base_tree: "aaaaaaa1111111".to_string(),
+                    candidate_tree: "bbbbbbb2222222".to_string(),
+                    diff_identity: "sha256:00".to_string(),
+                }),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )?);
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("root: repo\nbase: tree aaaaaaa\nhead: candidate tree bbbbbbb\n"),
+            "{rendered}"
+        );
+        Ok(())
     }
 
     #[test]

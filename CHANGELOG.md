@@ -227,10 +227,13 @@ are scoped or reviewed.
 ### Changed
 
 - `ripr check` analyzes the working tree by default when it has uncommitted
-  changes (a staged or unstaged tracked edit, or an untracked file a language
-  adapter reads), with or without `--base`, exactly as `--worktree` does,
-  including drill-in commands that carry `--worktree`. A clean tree still
-  diffs `<base>...HEAD`. The new `--committed` flag forces the old
+  tracked changes (a staged or unstaged tracked edit), with or without
+  `--base`, exactly as `--worktree` does, including drill-in commands that
+  carry `--worktree`. A clean tree, or one whose only changes are untracked
+  files, still diffs `<base>...HEAD`. A working-tree read names untracked
+  source files its diff cannot contain and points to `git add -N`, and an
+  empty working-tree read describes the working-tree diff rather than
+  `<base>...HEAD`. The new `--committed` flag forces the old
   committed-history read; the `unanalyzed_working_tree` note now names it.
   Every diff-scoped check output names the analyzed base and head: human
   `base:`/`head:` header lines (`HEAD <sha>` or `working tree (uncommitted

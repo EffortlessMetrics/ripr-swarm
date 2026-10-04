@@ -56,6 +56,52 @@ pub(crate) fn head_source(revisions: &AnalyzedRevisions) -> &'static str {
     }
 }
 
+/// `true` when the run's diff ended at the working tree (a default-selected
+/// or `--worktree` read). Output notes use it to describe the working-tree
+/// read (merge base to working tree) instead of a `<base>...HEAD` range.
+pub(crate) fn is_working_tree_read(output: &crate::app::CheckOutput) -> bool {
+    output
+        .analyzed_revisions
+        .as_ref()
+        .is_some_and(|revisions| revisions.working_tree)
+}
+
+/// Names at most three paths, then `and N more`, after `display` escapes
+/// each one for its surface.
+pub(crate) fn name_paths(paths: &[String], display: impl Fn(&str) -> String) -> String {
+    const NAMED_PATHS: usize = 3;
+    let named = paths
+        .iter()
+        .take(NAMED_PATHS)
+        .map(|path| display(path))
+        .collect::<Vec<_>>();
+    let more = paths.len().saturating_sub(NAMED_PATHS);
+    if more > 0 {
+        format!("{} and {more} more", named.join(", "))
+    } else {
+        named.join(", ")
+    }
+}
+
+/// The disclosure for untracked routed source files on a working-tree read.
+/// `git diff <merge-base>` covers tracked files only, so these files are not
+/// in the analyzed diff; the remedy is intent-to-add or staging, never
+/// `--worktree` (already in effect). `None` when no such file exists.
+pub(crate) fn working_tree_untracked_message(
+    paths: &[String],
+    display: impl Fn(&str) -> String,
+) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let listing = name_paths(paths, display);
+    Some(format!(
+        "Untracked files ({listing}) are not in the working-tree diff, which covers tracked \
+         files only, so their behavior was not analyzed; run `git add -N <path>` (intent-to-add) \
+         or stage them, then re-run `ripr check`."
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
