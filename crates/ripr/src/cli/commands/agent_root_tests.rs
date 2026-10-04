@@ -138,35 +138,35 @@ fn first_action_for_receipt(
     root: &Path,
     receipt_path: &Path,
     receipt: &serde_json::Value,
-) -> Result<crate::output::first_useful_action::FirstUsefulActionReport, String> {
+) -> Result<serde_json::Value, String> {
     let receipt_json =
         serde_json::to_string(receipt).map_err(|error| format!("serialize receipt: {error}"))?;
-    Ok(
-        crate::output::first_useful_action::build_first_useful_action_report(
-            crate::output::first_useful_action::FirstUsefulActionInput {
-                root: root.to_string_lossy().to_string(),
-                generated_at: "2026-10-04T00:00:00Z".to_string(),
-                pr_guidance_path: None,
-                assistant_proof_path: None,
-                gap_ledger_path: None,
-                ledger_path: None,
-                baseline_delta_path: None,
-                receipt_path: Some(receipt_path.to_string_lossy().to_string()),
-                gate_decision_path: None,
-                coverage_frontier_path: None,
-                editor_context_path: None,
-                pr_guidance_json: None,
-                assistant_proof_json: None,
-                gap_ledger_json: None,
-                ledger_json: None,
-                baseline_delta_json: None,
-                receipt_json: Some(Ok(receipt_json)),
-                gate_decision_json: None,
-                coverage_frontier_json: None,
-                editor_context_json: None,
-            },
-        ),
-    )
+    let report = crate::output::first_useful_action::build_first_useful_action_report(
+        crate::output::first_useful_action::FirstUsefulActionInput {
+            root: root.to_string_lossy().to_string(),
+            generated_at: "2026-10-04T00:00:00Z".to_string(),
+            pr_guidance_path: None,
+            assistant_proof_path: None,
+            gap_ledger_path: None,
+            ledger_path: None,
+            baseline_delta_path: None,
+            receipt_path: Some(receipt_path.to_string_lossy().to_string()),
+            gate_decision_path: None,
+            coverage_frontier_path: None,
+            editor_context_path: None,
+            pr_guidance_json: None,
+            assistant_proof_json: None,
+            gap_ledger_json: None,
+            ledger_json: None,
+            baseline_delta_json: None,
+            receipt_json: Some(Ok(receipt_json)),
+            gate_decision_json: None,
+            coverage_frontier_json: None,
+            editor_context_json: None,
+        },
+    );
+    let rendered = crate::output::first_useful_action::render_first_useful_action_json(&report)?;
+    serde_json::from_str(&rendered).map_err(|error| format!("parse rendered first action: {error}"))
 }
 
 /// #6313: issue a real CLI receipt from an eligible same-HEAD dirty pair and
@@ -206,6 +206,18 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     )?;
     git(&root, &["add", "."])?;
     git(&root, &["commit", "--no-gpg-sign", "-m", "baseline"])?;
+    git(&root, &["checkout", "-B", "main"])?;
+    git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn identity(value: bool) -> bool { if value { true } else { false } }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    git(&root, &["add", "src/lib.rs"])?;
+    git(
+        &root,
+        &["commit", "--no-gpg-sign", "-m", "branch under review"],
+    )?;
     // Keep the same HEAD while changing the worktree between the two real
     // snapshot writers; both artifacts must be dirty, not historical/current.
     std::fs::write(
@@ -244,6 +256,11 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
         .ok_or("the real verify pair did not produce a routable seam")?
         .to_string();
     std::fs::write(&verify_path, &verify_text).map_err(|error| error.to_string())?;
+    let analyzed_diff = crate::analysis::load_diff(&root, Some("main"), None, None)?;
+    assert!(
+        analyzed_diff.contains("src/lib.rs"),
+        "complete outcome must analyze the committed source change"
+    );
     write_agent_analysis_outcome(&root)?;
     let analysis_path = root.join("target/ripr/workflow/analysis-outcome.json");
     let analysis_text = std::fs::read_to_string(&analysis_path).map_err(|e| e.to_string())?;
@@ -321,20 +338,21 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
         after.as_path(),
         verify_path.as_path(),
         analysis_path.as_path(),
+        receipt_path.as_path(),
     ]
     .map(|path| std::fs::read(path).map_err(|e| e.to_string()))
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
 
     let report = first_action_for_receipt(&root, &receipt_path, &receipt)?;
-    let warnings = report.warnings.join(" | ");
-    if report.status == "missing_required_artifact" && !warnings.contains("receipt repo_root") {
+    let warnings = report["warnings"].to_string();
+    if report["status"] == "missing_required_artifact" && !warnings.contains("receipt repo_root") {
         return Err(format!(
             "first-action did not reach the inherited root-provenance failure: {warnings}"
         ));
     }
     assert_eq!(
-        report.status, expected_status,
+        report["status"], expected_status,
         "eligible authentic receipt failed first-action: {warnings}"
     );
     for (field, expected) in [
@@ -364,7 +382,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
 
     let foreign =
         first_action_for_receipt(&decoy, &decoy_workflow.join("agent-receipt.json"), &receipt)?;
-    assert_eq!(foreign.status, "missing_required_artifact");
+    assert_eq!(foreign["status"], "missing_required_artifact");
     let mut changed_locator = receipt.clone();
     changed_locator["provenance"]["before_artifact"]["path"] = serde_json::Value::String(
         decoy_workflow
@@ -373,7 +391,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
             .to_string(),
     );
     assert_eq!(
-        first_action_for_receipt(&root, &receipt_path, &changed_locator)?.status,
+        first_action_for_receipt(&root, &receipt_path, &changed_locator)?["status"],
         "missing_required_artifact",
         "foreign before locator was admitted"
     );
@@ -381,7 +399,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     changed_digest["provenance"]["before_artifact"]["sha256"] =
         serde_json::Value::String("0".repeat(64));
     assert_eq!(
-        first_action_for_receipt(&root, &receipt_path, &changed_digest)?.status,
+        first_action_for_receipt(&root, &receipt_path, &changed_digest)?["status"],
         "missing_required_artifact",
         "changed content digest was admitted"
     );
@@ -393,7 +411,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
             .to_string(),
     );
     assert_eq!(
-        first_action_for_receipt(&root, &receipt_path, &changed_verify)?.status,
+        first_action_for_receipt(&root, &receipt_path, &changed_verify)?["status"],
         "missing_required_artifact",
         "foreign verify locator was admitted"
     );
@@ -402,12 +420,21 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
         after.as_path(),
         verify_path.as_path(),
         analysis_path.as_path(),
+        receipt_path.as_path(),
     ]
     .into_iter()
     .zip(retained)
     {
         assert_eq!(std::fs::read(path).map_err(|e| e.to_string())?, bytes);
     }
+    assert_eq!(
+        std::fs::read(decoy_workflow.join("agent-verify.json")).map_err(|e| e.to_string())?,
+        verify_text.as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(decoy_workflow.join("agent-receipt.json")).map_err(|e| e.to_string())?,
+        receipt_text.as_bytes()
+    );
     assert_eq!(
         std::fs::read(decoy.join("identity")).map_err(|e| e.to_string())?,
         b"different repository\n"
