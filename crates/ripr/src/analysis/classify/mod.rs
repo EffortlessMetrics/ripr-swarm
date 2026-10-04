@@ -32,13 +32,18 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use helper_transfer::resolve_chain;
 pub(in crate::analysis) use infection::infection_evidence;
-pub(in crate::analysis) use owner_pin::{OwnerPinSyntax, OwnerReturnPin};
+pub(in crate::analysis) use owner_pin::{
+    OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
+    trait_impl_self_type_names,
+};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver,
 };
-pub(in crate::analysis) use reach::{owner_may_be_reached_unseen, reach_evidence};
+pub(in crate::analysis) use reach::{
+    is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
+};
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     find_related_tests_with_candidate_index, impl_self_type_name,
@@ -58,7 +63,8 @@ pub(in crate::analysis) use text::{
 // RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
-    MACRO_WITNESS_TEST_BODY_HOST, RUST_MACRO_REACH_MESSAGE, RUST_TRANSITIVE_REACH_MESSAGE,
-    TransitiveReachIndex, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
+    RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, macro_reach_limit_kind,
+    macro_reach_limitation_detail_lines, macro_reach_witness_pointer, transitive_reach_limit_kind,
     transitive_reach_limitation_detail_lines, transitive_reach_witness_pointer,
 };

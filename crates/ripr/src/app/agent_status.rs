@@ -8,7 +8,7 @@ use crate::agent::loop_commands::{
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
     agent_status_command, agent_status_markdown_command, agent_verify_command,
     anchored_redirect_target, bound_root, check_analysis_outcome_command,
-    check_repo_exposure_command, display_path, shell_arg,
+    check_repo_exposure_command, display_path, root_path_display, shell_arg,
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
@@ -1032,6 +1032,48 @@ fn pilot_python_repair_card_message(card: &PilotPythonCard, root_display: &str) 
     message
 }
 
+/// Rust files a complete `ripr pilot` run excluded because Rust is not in
+/// the effective `[languages] enabled` set (#5205). The packet carries no
+/// seams and no routed state, so without a dedicated check status would
+/// fall through to `select_seam` and loop pilot forever.
+struct PilotRustExclusion {
+    file_count: u64,
+}
+
+fn pilot_rust_excluded_from_scope(root: &Path) -> Option<PilotRustExclusion> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let file_count = summary
+        .pointer("/language_routes/rust_excluded_from_scope/file_count")
+        .and_then(Value::as_u64)?;
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    Some(PilotRustExclusion { file_count })
+}
+
+fn pilot_rust_excluded_message(excluded: &PilotRustExclusion) -> String {
+    let files = if excluded.file_count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{} files", excluded.file_count)
+    };
+    // The shared guidance already names the config edit and the rerun, so
+    // no trailing pilot command: rerunning unchanged is exactly the loop.
+    format!(
+        "the last complete `ripr pilot` run ranked no Rust seam because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
+        crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
+    )
+}
+
 /// Python first-use statuses that record "pilot produced no repair card"
 /// (`output::pilot::types::PilotPythonFirstUseStatus`). `analysis_unavailable`
 /// is a failed analysis, not that fact, and `ready` has repair cards.
@@ -1212,6 +1254,17 @@ fn legacy_next_command(
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
                 message: pilot_routed_to_check_message(&routes, root_display),
             });
+            // #5205/#5248 review: a packet can route preview files to check
+            // AND exclude Rust (Rust disabled while preview files are
+            // present). The route warning alone would drop the exclusion's
+            // config remedy, so emit both and still stop.
+            if let Some(excluded) = pilot_rust_excluded_from_scope(root) {
+                warnings.push(AgentStatusWarning {
+                    kind: "pilot_rust_excluded_no_repair_target".to_string(),
+                    artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                    message: pilot_rust_excluded_message(&excluded),
+                });
+            }
             return None;
         }
         if let Some(card) = pilot_python_repair_card_ready(root) {
@@ -1219,6 +1272,30 @@ fn legacy_next_command(
                 kind: "pilot_python_repair_card_no_agent_repair".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
                 message: pilot_python_repair_card_message(&card, root_display),
+            });
+            // #5205/#5248 review: a Python card and a Rust exclusion
+            // coexist (Python-only workspace with Rust files present).
+            // The card stays the preferred action; the exclusion's config
+            // remedy rides alongside, as in the routed branch above.
+            if let Some(excluded) = pilot_rust_excluded_from_scope(root) {
+                warnings.push(AgentStatusWarning {
+                    kind: "pilot_rust_excluded_no_repair_target".to_string(),
+                    artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                    message: pilot_rust_excluded_message(&excluded),
+                });
+            }
+            return None;
+        }
+        // #5205 (Codex P1): a Rust-disabled packet carries no seams and no
+        // routed state, so without this it falls to `select_seam` and tells
+        // the user to rerun the same pilot indefinitely. Name the exclusion
+        // and its config-edit remedy instead. Last of the specific checks so
+        // only previously-looping packets divert here.
+        if let Some(excluded) = pilot_rust_excluded_from_scope(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_rust_excluded_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_rust_excluded_message(&excluded),
             });
             return None;
         }
@@ -1711,11 +1788,64 @@ fn attempt_currentness_label(head_current: Option<bool>) -> &'static str {
     }
 }
 
+/// Read-only selected-attempt facts and its exact next/recovery action.
+pub(crate) struct SelectedAttemptStatusReading {
+    pub(crate) view: AgentStatusRepairAttempt,
+    pub(crate) status_class: &'static str,
+    pub(crate) currentness: &'static str,
+    pub(crate) next_action: Option<AgentStatusCommand>,
+}
+
+/// One validated manifest's selected-attempt interpretation, shared by CLI
+/// status and durable MCP reads. HEAD applicability, retained receipt state
+/// and the exact next/recovery action are composed here; adapters never use
+/// the stored after command as a substitute for this decision.
+pub(crate) fn selected_attempt_status_reading(
+    root: &Path,
+    root_argument: &Path,
+    store_locator: &str,
+    store_flag: &str,
+    manifest: &RepairAttemptManifest,
+    current_head: Option<&str>,
+) -> SelectedAttemptStatusReading {
+    let command_root = bound_root(&root_path_display(root_argument));
+    let workflow_receipt = read_workflow_receipt(root);
+    let view = status_repair_attempt(
+        root,
+        &command_root,
+        store_locator,
+        store_flag,
+        manifest,
+        current_head,
+        &workflow_receipt,
+    );
+    let status_class = attempt_status_class(manifest, &view);
+    let manifest_label = format!(
+        "{}/{}/attempt.json",
+        store_locator,
+        manifest.repair_attempt_id.as_str()
+    );
+    let next_action = attempt_next_action(
+        manifest,
+        &view,
+        status_class,
+        &command_root,
+        &manifest_label,
+        store_flag,
+    );
+    SelectedAttemptStatusReading {
+        currentness: attempt_currentness_label(view.head_current),
+        view,
+        status_class,
+        next_action,
+    }
+}
+
 /// Builds the one-attempt status DTO behind `ripr agent status --attempt
 /// <id>`. Read-only: nothing here finishes, restarts, rewrites, or deletes
 /// an attempt. A store-level failure (an escaping or missing explicit store)
 /// is an error: there is no attempt view to type. A missing, malformed, or
-/// unbound attempt record is not an error either — it is the typed
+/// unbound attempt record is not an error either - it is the typed
 /// `corrupt_or_unavailable` result, so a caller scripting a resume never has
 /// to parse prose to tell "no such attempt" apart from "attempt is fine",
 /// and one malformed row never weakens or strengthens another row.
@@ -1751,30 +1881,23 @@ pub(crate) fn build_agent_attempt_status(
         }
     };
     let current_head = crate::agent::artifact::current_git_head(root).ok();
-    let workflow_receipt = read_workflow_receipt(root);
     let store_flag = resolved.quoted_store_flag();
     // #3999: restart and recovery commands bind the selected repository, not
     // the invocation spelling, so a command pasted from any working directory
     // resumes this attempt. The report's `root` field keeps the user's
     // spelling.
-    let command_root = bound_root(&root_display);
-    let view = status_repair_attempt(
+    let SelectedAttemptStatusReading {
+        view,
+        status_class,
+        currentness,
+        next_action,
+    } = selected_attempt_status_reading(
         root,
-        &command_root,
+        root_argument,
         resolved.locator(),
         &store_flag,
         &manifest,
         current_head.as_deref(),
-        &workflow_receipt,
-    );
-    let status_class = attempt_status_class(&manifest, &view);
-    let next_action = attempt_next_action(
-        &manifest,
-        &view,
-        status_class,
-        &command_root,
-        &manifest_label,
-        &store_flag,
     );
     let test_run = match &view.receipt {
         AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
@@ -1816,7 +1939,7 @@ pub(crate) fn build_agent_attempt_status(
             state: Some(repair_attempt_state_label(&manifest.state)),
             status_class,
             head_current: view.head_current,
-            currentness: attempt_currentness_label(view.head_current),
+            currentness,
             evidence_head: Some(view.evidence_head.clone()),
             receipt: Some(view.receipt.clone()),
             last_after_refusal: view.last_after_refusal.clone(),
@@ -3957,6 +4080,131 @@ mod tests {
             report.next_command.as_ref().map(|next| next.step.as_str()),
             Some("select_seam")
         );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5205 (Codex P1): a complete pilot run that excluded Rust ranks no
+    /// seam and records no routed state, which used to fall through to
+    /// `select_seam` — rerunning the same pilot forever. Status now stops
+    /// and names the config-edit remedy.
+    #[test]
+    fn agent_status_stops_when_pilot_excluded_rust_from_scope() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-rust-excluded");
+        let summary = |status: &str, seams: &str, repair: &str, excluded: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "language_routes": {{"state": "not_detected", "routes": []{excluded}}}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        // Positive: complete, no seams, no repair, exclusion present.
+        let text = summary(
+            "complete",
+            "[]",
+            "null",
+            r#", "rust_excluded_from_scope": {"language": "rust", "file_count": 3, "enabled": false, "guidance": "g"}"#,
+        );
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &text)?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "exclusion must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_rust_excluded_no_repair_target")
+            .ok_or_else(|| format!("expected an exclusion warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "ranked no Rust seam because Rust is not enabled",
+            "3 files not analyzed",
+            crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(!warning.message.contains("  "), "{}", warning.message);
+
+        // Controls: the exclusion member alone never stops an otherwise
+        // actionable packet; each control keeps routing as before.
+        let excluded = r#", "rust_excluded_from_scope": {"language": "rust", "file_count": 3, "enabled": false, "guidance": "g"}"#;
+        for control in [
+            // Missing member: the pre-#5205 shape still loops to select_seam.
+            summary("complete", "[]", "null", ""),
+            // Non-complete, ranked, or repairing packets divert elsewhere.
+            summary("timed_out", "[]", "null", excluded),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", excluded),
+            summary("complete", "[]", r#""ripr check --root .""#, excluded),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "pilot_rust_excluded_no_repair_target"),
+                "control must not raise the exclusion warning: {control}"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5205/#5248 review: a packet that routes preview files to check AND
+    /// excludes Rust keeps both warnings — the route hand-off and the
+    /// exclusion's config remedy — instead of dropping the remedy.
+    #[test]
+    fn agent_status_keeps_rust_exclusion_alongside_check_routes() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-routed-plus-excluded");
+        let text = r#"{"status": "complete", "top_actionable_seams": [], "language_routes": {"state": "required", "routes": [{"language": "python", "enabled": true, "command": "ripr check --root ."}], "rust_excluded_from_scope": {"language": "rust", "file_count": 2, "enabled": false, "guidance": "g"}}, "next": {"repair_command": null}}"#;
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "routed plus excluded must stop: {:?}",
+            report.next_command
+        );
+        for kind in [
+            "pilot_routed_to_check_no_repair_target",
+            "pilot_rust_excluded_no_repair_target",
+        ] {
+            assert!(
+                report.warnings.iter().any(|warning| warning.kind == kind),
+                "expected {kind}: {:?}",
+                report.warnings
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5205/#5248 review: a Python repair card plus a Rust exclusion keeps
+    /// the card as the preferred action and the exclusion's config remedy
+    /// alongside it.
+    #[test]
+    fn agent_status_keeps_rust_exclusion_alongside_python_card() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-card-plus-excluded");
+        let text = r#"{"status": "complete", "top_actionable_seams": [], "python_first_use": {"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "d", "verify_command": "v"}}, "language_routes": {"rust_excluded_from_scope": {"language": "rust", "file_count": 3, "enabled": false, "guidance": "g"}}, "next": {"repair_command": null}}"#;
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "card plus excluded must stop: {:?}",
+            report.next_command
+        );
+        for kind in [
+            "pilot_python_repair_card_no_agent_repair",
+            "pilot_rust_excluded_no_repair_target",
+        ] {
+            assert!(
+                report.warnings.iter().any(|warning| warning.kind == kind),
+                "expected {kind}: {:?}",
+                report.warnings
+            );
+        }
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

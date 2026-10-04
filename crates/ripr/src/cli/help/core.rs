@@ -154,19 +154,27 @@ Options:
                            diff-scoped modes (instant, draft, fast) on large
                            workspaces. See docs/CONFIGURATION.md "Analysis
                            modes".
-  --format FORMAT          Output format. Defaults to human. Groups:
+  --format FORMAT          Output format. Defaults to human.
+                           Choose by task: eye review -> human (the default);
+                           every finding with drill-in commands -> human-full;
+                           machine consumer (jq, CI scripts) -> json (--json);
+                           file annotations in Actions logs -> github; code
+                           scanning upload -> sarif; README badge ->
+                           repo-badge-shields (repo ledger); PR/CI status
+                           badge -> badge-shields (diff); whole-repo
+                           inventory -> repo-exposure-json; agent repair
+                           evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, github, sarif
                              Badge (diff-scoped, for README status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
-                             Badge (repo-scoped, from gap ledger):
-                               repo-badge-json, repo-badge-shields,
-                               repo-badge-plus-json, repo-badge-plus-shields
                              Repo-scope (full-repo analysis):
                                repo-seams-json, repo-seams-md,
                                repo-exposure-json, repo-exposure-summary-json,
-                               repo-exposure-md, repo-sarif
+                               repo-exposure-md, repo-sarif,
+                               repo-badge-json, repo-badge-shields,
+                               repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
                            badge-plus-* and repo-badge-plus-* formats read
@@ -243,7 +251,15 @@ Environment variables:
                                     index before check fails closed as
                                     diff_scope_oversized. With --json, stdout
                                     carries a non-consumable limited artifact.
+                                    Under RIPR_DIFF_DEPENDENT_SCOPE=auto a
+                                    Draft/Fast selection over it because of
+                                    dependent packages narrows instead.
                                     Default: 1200.
+  RIPR_DIFF_DEPENDENT_SCOPE         How Draft/Fast indexes packages that
+                                    depend on the changed ones: auto (whole
+                                    while under RIPR_MAX_DIFF_INDEX_FILES,
+                                    else named), named (only files that can
+                                    change a result), or full. Default: auto.
   RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
                                     returns a bounded limited_partial_scope
                                     partition with exact selected paths,
