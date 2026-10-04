@@ -73,6 +73,14 @@ pub(in crate::analysis) fn build_finding(
                 .to_string(),
         );
     }
+    // RIPR-SPEC-0240: hand the refusal scope to the gap-admission post-pass,
+    // which runs after every producer-named limit and consumes the marker.
+    if class == ExposureClass::ReachableUnrevealed
+        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+        && evidence.refusals_are_analyzer_limits
+    {
+        evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
+    }
     if invalid_propagation_witness {
         evidence_lines
             .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
@@ -599,6 +607,7 @@ mod tests {
             discriminate: yes,
             reach_ruled_out: true,
             assertion_refusal: None,
+            refusals_are_analyzer_limits: false,
         }
     }
 

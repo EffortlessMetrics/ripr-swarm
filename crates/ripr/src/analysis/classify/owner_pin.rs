@@ -48,8 +48,8 @@ use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
-    empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, trusted_macro_binding_sites,
+    attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -378,6 +378,46 @@ pub(in crate::analysis) enum AssertionRefusal {
 }
 
 impl AssertionRefusal {
+    /// Whether the refusal rests on a limit of ripr's own reading (the file,
+    /// module, test identity, or a binding that only *may* rebind), rather
+    /// than on a shape that can keep the assertion from running or rebind it
+    /// for real. Runtime controls pin the second kind as real gaps
+    /// (`tests/owner_pin_execution.rs`), so only the first kind lets
+    /// RIPR-SPEC-0240 withhold a gap.
+    pub(in crate::analysis) fn is_analyzer_limit(&self) -> bool {
+        match self {
+            Self::LexicalFallback | Self::UnresolvedModule(_) | Self::IncludedFile { .. } => true,
+            // A gated `mod` declaration may be `cfg(any())`, which never runs.
+            Self::ModuleDeclaration { .. } => false,
+            Self::Syntax(refusal) => match refusal {
+                AssertionContextRefusal::UnparsedFile
+                | AssertionContextRefusal::UnidentifiedTest
+                | AssertionContextRefusal::AsyncTest
+                | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::StaleSource => true,
+                AssertionContextRefusal::TestAttribute(attribute) => {
+                    !attribute_settles_test_outcome(attribute)
+                }
+                AssertionContextRefusal::NestedItem
+                | AssertionContextRefusal::GatedItem(_)
+                | AssertionContextRefusal::OpaqueMacro(_)
+                | AssertionContextRefusal::MacroOperandExit(_)
+                | AssertionContextRefusal::ClosureExit
+                | AssertionContextRefusal::ConditionalPath(_)
+                | AssertionContextRefusal::MacroBinding(_) => false,
+            },
+            // A definition or `use` of the name in reach is a real rebinding;
+            // a foreign glob, unresolved `#[macro_use]`, macro argument, or an
+            // unparsed file only may rebind it.
+            Self::MacroBinding { site, .. } => !site.as_ref().is_some_and(|(_, site)| {
+                matches!(
+                    site.kind,
+                    MacroBindingKind::Definition | MacroBindingKind::Import
+                )
+            }),
+        }
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         let at = |path: &Path, line: usize| {

@@ -13019,3 +13019,42 @@ outputs = []
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0240"
+name = "Unknown, not a gap"
+spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
+tests = [
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_drops_the_gap_confidence_bonus_and_never_raises_a_score",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::an_unmarked_refusal_keeps_the_gap",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_marker_without_the_refused_observe_keeps_the_gap_and_is_consumed",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::an_existing_named_limit_and_non_gap_classes_are_untouched",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_twice_adds_one_stop_reason",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
+  "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
+]
+fixtures = [
+  "fixtures/gap_withheld_feature_gated_test",
+  "fixtures/gap_kept_ignored_test",
+]
+code = [
+  "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "fixtures/gap_withheld_feature_gated_test/expected/check.json",
+  "fixtures/gap_kept_ignored_test/expected/check.json",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+  "verdict_corpus_false_actionable_rate",
+]

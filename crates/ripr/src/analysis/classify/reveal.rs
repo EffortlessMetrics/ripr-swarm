@@ -409,9 +409,7 @@ fn analyze_related_assertions(
             RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
         )
     };
-    let reach_bearing_related = related_tests
-        .iter()
-        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
+    let credits = oracle_crediting_relations(related_tests);
     // A seam callee call runs the seam's callee, not the owner (`reach.rs`
     // keeps it out of owner reach), so it cannot be the reaching test that
     // withholds a same-file match-arm confirmation below.
@@ -424,7 +422,7 @@ fn analyze_related_assertions(
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = !(reach_bearing_related && name_only(*reason));
+        let credits_oracle = credits(*reason);
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -2228,6 +2226,25 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
         Some(RelationConfidence::Low) => 1,
         Some(RelationConfidence::Opaque) | None => 0,
     }
+}
+
+/// Which relations may supply a credited oracle: a name-only relation
+/// (`WeakTokenSubstring`, `OwnerNamedTest`) may not while any related test
+/// bears reach. Shared with the RIPR-SPEC-0240 refusal scope, which must judge
+/// exactly the tests that could have credited the refused assertions.
+pub(in crate::analysis) fn oracle_crediting_relations(
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> impl Fn(RelationReason) -> bool + use<> {
+    let name_only = |reason: RelationReason| {
+        matches!(
+            reason,
+            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+        )
+    };
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
+    move |reason| !(reach_bearing_related && name_only(reason))
 }
 
 pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
@@ -6127,5 +6144,33 @@ return Err(\"typed pin\".into());
             "non-collection effect observers stay on the existing Part C path: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0240: a name-only relation stops counting once a
+    /// reach-bearing relation exists, so its refused assertion cannot decide
+    /// whether a gap is withheld; alone, it still counts.
+    #[test]
+    fn name_only_relations_stop_crediting_beside_a_reach_bearing_one() {
+        let direct = test_with_assertions("direct", Vec::new());
+        let named = test_with_assertions("named", Vec::new());
+        let mixed = [
+            (&direct, RelationReason::DirectOwnerCall),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&mixed);
+        assert!(credits(RelationReason::DirectOwnerCall));
+        assert!(!credits(RelationReason::OwnerNamedTest));
+        assert!(!credits(RelationReason::WeakTokenSubstring));
+
+        let name_only = [(&named, RelationReason::OwnerNamedTest)];
+        let credits = oracle_crediting_relations(&name_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
+
+        let proximity_only = [
+            (&direct, RelationReason::SameTestFile),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&proximity_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
     }
 }

@@ -1383,13 +1383,23 @@ fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         let findings = json["findings"].as_array().ok_or("missing findings")?;
         assert_eq!(findings.len(), 1, "{case}");
+        // RIPR-SPEC-0240: an unresolved `#[macro_use]` only may rebind
+        // `assert_eq!`, and the runtime control catches the mutant, so ripr
+        // reports the limit instead of a gap. A real rebinding stays a gap.
         assert_eq!(
             findings[0]["classification"],
             if exposed {
                 "exposed"
+            } else if runtime_catches {
+                "static_unknown"
             } else {
                 "reachable_unrevealed"
             },
+            "{case}"
+        );
+        assert_eq!(
+            findings[0]["static_limit_kind"].as_str(),
+            (!exposed && runtime_catches).then_some("rust_assertion_context_unresolved"),
             "{case}"
         );
         assert_eq!(
