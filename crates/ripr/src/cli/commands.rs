@@ -6885,7 +6885,7 @@ language = "rust"
 
         let rendered = std::fs::read_to_string(&out)
             .map_err(|err| format!("read calibration output: {err}"))?;
-        assert!(rendered.contains(r#""schema_version": "0.1""#));
+        assert!(rendered.contains(r#""schema_version": "0.2""#));
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
