@@ -196,7 +196,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{TestKind, TestTargetEvidence};
@@ -212,7 +212,10 @@ mod tests {
         seams: Vec<ClassifiedSeam>,
     }
 
-    fn related(name: &str, reason: RelationReason) -> RelatedTestGrip {
+    pub(in crate::analysis::seam_cache) fn related(
+        name: &str,
+        reason: RelationReason,
+    ) -> RelatedTestGrip {
         RelatedTestGrip {
             test_name: name.to_owned(),
             file: PathBuf::from("tests/it.rs"),
@@ -233,7 +236,10 @@ mod tests {
         }
     }
 
-    fn seam(line: usize, related_tests: Vec<RelatedTestGrip>) -> ClassifiedSeam {
+    pub(in crate::analysis::seam_cache) fn seam(
+        line: usize,
+        related_tests: Vec<RelatedTestGrip>,
+    ) -> ClassifiedSeam {
         let seam = RepoSeam::new(
             PathBuf::from("src/foo.rs"),
             "src/foo.rs::foo",

@@ -4162,6 +4162,62 @@ mod tests {
     }
 
     #[test]
+    fn full_and_sharded_envelopes_store_repeated_related_tests_once() -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+        let a = related("a", RelationReason::SameModule);
+        let b = related("b", RelationReason::SameModule);
+        let seams = vec![
+            seam(1, vec![a.clone(), b.clone()]),
+            seam(2, vec![b, a.clone()]),
+            seam(3, vec![a]),
+        ];
+        let expected = serde_json::to_value(&seams).map_err(|err| err.to_string())?;
+        // Limit 10 keeps one full envelope; limit 1 shards one seam per file.
+        for (label, limit) in [("full", 10), ("sharded", 1)] {
+            let scratch = integrity_scratch(label)?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let key = empty_state().cache_key();
+            cache.store_classified_seams_with_limit(&key, &seams, None, limit)?;
+            let mut tables = Vec::new();
+            if limit >= seams.len() {
+                tables.push(cache.entry_path(&key));
+            } else {
+                for index in 0..seams.len() {
+                    tables.push(
+                        cache
+                            .sharded_entry_dir(&key)
+                            .join(format!("shard-{index:05}.json")),
+                    );
+                }
+            }
+            let mut stored_tests = 0;
+            for path in &tables {
+                let body: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(path).map_err(|err| format!("{label} {path:?}: {err}"))?,
+                )
+                .map_err(|err| err.to_string())?;
+                stored_tests += body["classified_seams"]["related_tests"]
+                    .as_array()
+                    .ok_or_else(|| format!("{label}: missing related test table"))?
+                    .len();
+            }
+            // Full: one table of 2 distinct tests; sharded: each shard holds its own.
+            assert_eq!(stored_tests, if limit >= seams.len() { 2 } else { 5 });
+            let CacheLoad::Hit((loaded, _, _)) = cache.load_classified_seams_with_fallback(&key)
+            else {
+                return Err(format!("{label}: stored seams must load"));
+            };
+            assert_eq!(
+                serde_json::to_value(&loaded).map_err(|err| err.to_string())?,
+                expected,
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn same_key_classified_payload_and_metadata_edits_are_corrupt() -> Result<(), String> {
         for compact in [false, true] {
             let scratch = integrity_scratch(if compact { "compact" } else { "full" })?;
