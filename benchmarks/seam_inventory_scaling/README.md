@@ -13,7 +13,11 @@ fixture files. Generated workspaces are removed after the run unless
 
 The receipt (`target/ripr/reports/seam-inventory-scaling-benchmark.{json,md}`)
 records the per-size cost curve and the coarse ms-per-file slope. That curve
-is the baseline the seam-inventory construction-cap issues (#1887, #4996,
-#4997) need: a cap-during-construction fix should bend the slope, not just
+is the baseline the seam-inventory construction-cap issues (#1887, #4996, and #4997)
+need: a cap-during-construction fix should bend the slope, not just
 shift one point. Benchmark claims are limited to the recorded repository
 revision and runner class.
+
+Child runs pin `RIPR_REPO_EXPOSURE_SEAM_LIMIT=10000` (the product default),
+and each sample records the child `run_status`, so a capped run cannot pass
+silently as an uncapped baseline.

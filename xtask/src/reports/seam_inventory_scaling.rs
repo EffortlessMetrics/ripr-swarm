@@ -8,6 +8,11 @@
 //! records the per-size cost curve so a cap-during-construction fix can show
 //! a slope change on a later run. Like the other benchmark receipts, claims
 //! are limited to the recorded revision and runner class.
+//!
+//! Child runs pin `RIPR_REPO_EXPOSURE_SEAM_LIMIT` to the product default so
+//! caller environment cannot silently change the measured quantity, and each
+//! sample records the child `run_status` so a capped run cannot pass as an
+//! uncapped baseline.
 
 use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned};
 use serde_json::{Value, json};
@@ -21,6 +26,11 @@ const DEFAULT_SAMPLES: usize = 2;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MAX_SIZE: usize = 12_000;
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
+const SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+/// Product default pinned for every child run. Must match
+/// `DEFAULT_REPO_EXPOSURE_SEAM_LIMIT` in
+/// `crates/ripr/src/analysis/seam_inventory.rs`.
+const PINNED_SEAM_LIMIT: usize = 10_000;
 const SEAMS_FORMAT: &str = "repo-seams-json";
 const EXPOSURE_FORMAT: &str = "repo-exposure-json";
 
@@ -42,26 +52,62 @@ pub(crate) fn seam_inventory_scaling_benchmark(args: &[String]) -> Result<(), St
     fs::create_dir_all(&scratch)
         .map_err(|err| format!("create benchmark scratch {}: {err}", scratch.display()))?;
     let cache_dir = scratch.join("cache");
-    let envs = [(CACHE_ENV, cache_dir.to_string_lossy().into_owned())];
+    let envs = [
+        (CACHE_ENV, cache_dir.to_string_lossy().into_owned()),
+        (SEAM_LIMIT_ENV, PINNED_SEAM_LIMIT.to_string()),
+    ];
     let timeout = Duration::from_millis(options.timeout_ms);
 
+    let sizes_result = collect_sizes(&binary, &scratch, &envs, timeout, &options);
+    if options.keep_workspaces {
+        let _ = fs::remove_dir_all(&cache_dir);
+    } else {
+        let _ = fs::remove_dir_all(&scratch);
+    }
+    let sizes = sizes_result?;
+
+    let report = build_report(&options, &sizes, &binary);
+    let json_text = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("serialize seam inventory scaling benchmark: {err}"))?;
+    crate::write_report(
+        "seam-inventory-scaling-benchmark.json",
+        &format!("{json_text}\n"),
+    )?;
+    crate::write_report(
+        "seam-inventory-scaling-benchmark.md",
+        &benchmark_markdown(&report),
+    )?;
+    println!("Wrote target/ripr/reports/seam-inventory-scaling-benchmark.json");
+    println!("Wrote target/ripr/reports/seam-inventory-scaling-benchmark.md");
+    Ok(())
+}
+
+/// Run the per-size sampling loop. The caller owns scratch cleanup so a
+/// failed sample cannot leave generated workspaces behind.
+fn collect_sizes(
+    binary: &Path,
+    scratch: &Path,
+    envs: &[(&str, String)],
+    timeout: Duration,
+    options: &Options,
+) -> Result<Vec<SizeReport>, String> {
     let mut sizes = Vec::new();
     for files in &options.sizes {
-        let workspace = generate_workspace(&scratch, *files)?;
+        let workspace = generate_workspace(scratch, *files)?;
         let seams = run_format_series(
-            &binary,
+            binary,
             &workspace,
             SEAMS_FORMAT,
-            &envs,
+            envs,
             timeout,
             options.samples,
             parse_seams_count,
         )?;
         let exposure = run_format_series(
-            &binary,
+            binary,
             &workspace,
             EXPOSURE_FORMAT,
-            &envs,
+            envs,
             timeout,
             options.samples,
             parse_exposure_count,
@@ -77,22 +123,7 @@ pub(crate) fn seam_inventory_scaling_benchmark(args: &[String]) -> Result<(), St
             })?;
         }
     }
-    let _ = fs::remove_dir_all(&cache_dir);
-
-    let report = build_report(&options, &sizes);
-    let json_text = serde_json::to_string_pretty(&report)
-        .map_err(|err| format!("serialize seam inventory scaling benchmark: {err}"))?;
-    crate::write_report(
-        "seam-inventory-scaling-benchmark.json",
-        &format!("{json_text}\n"),
-    )?;
-    crate::write_report(
-        "seam-inventory-scaling-benchmark.md",
-        &benchmark_markdown(&report),
-    )?;
-    println!("Wrote target/ripr/reports/seam-inventory-scaling-benchmark.json");
-    println!("Wrote target/ripr/reports/seam-inventory-scaling-benchmark.md");
-    Ok(())
+    Ok(sizes)
 }
 
 const USAGE: &str = "usage: cargo xtask seam-inventory-scaling-benchmark [--sizes <n,n,n>] [--samples <n>] [--timeout-ms <n>] [--keep-workspaces]";
@@ -239,6 +270,7 @@ struct Sample {
     seam_count: Option<u64>,
     stdout_bytes: usize,
     detail: Option<String>,
+    run_status: Option<String>,
 }
 
 struct SizeReport {
@@ -285,16 +317,33 @@ fn run_format_series(
             "fail"
         };
         let stdout_bytes = output.stdout.len();
-        let (seam_count, detail) = if status == "pass" {
+        let (seam_count, detail, run_status) = if status == "pass" {
             match serde_json::from_str::<Value>(&output.stdout) {
-                Ok(value) => (parse_count(&value), None),
+                Ok(value) => {
+                    let child_status = value
+                        .pointer("/run_status")
+                        .and_then(|node| node.as_str())
+                        .map(str::to_string);
+                    let count = parse_count(&value);
+                    match require_nonempty_inventory(format, count) {
+                        Ok(count) => (Some(count), None, child_status),
+                        Err(detail) => {
+                            status = "empty_inventory";
+                            (count, Some(detail), child_status)
+                        }
+                    }
+                }
                 Err(err) => {
                     status = "invalid_receipt";
-                    (None, Some(format!("{format} JSON parse failed: {err}")))
+                    (
+                        None,
+                        Some(format!("{format} JSON parse failed: {err}")),
+                        None,
+                    )
                 }
             }
         } else {
-            (None, Some(summarize_output(&output.stderr)))
+            (None, Some(summarize_output(&output.stderr)), None)
         };
         out.push(Sample {
             status: status.to_string(),
@@ -302,6 +351,7 @@ fn run_format_series(
             seam_count,
             stdout_bytes,
             detail,
+            run_status,
         });
     }
     Ok(out)
@@ -316,6 +366,19 @@ fn parse_seams_count(value: &Value) -> Option<u64> {
 
 fn parse_exposure_count(value: &Value) -> Option<u64> {
     value.pointer("/metrics/seams_total")?.as_u64()
+}
+
+/// Generated workspaces always contain probeable functions, so a zero or
+/// missing seam count means discovery or extraction regressed, not a
+/// genuinely empty corpus. Reject it instead of recording a passing
+/// sample over an empty analysis.
+fn require_nonempty_inventory(format: &str, count: Option<u64>) -> Result<u64, String> {
+    match count {
+        Some(count) if count > 0 => Ok(count),
+        _ => Err(format!(
+            "{format} reported no seams for a generated workspace with probeable functions"
+        )),
+    }
 }
 
 fn clear_env_cache(envs: &[(&str, String)]) -> Result<(), String> {
@@ -363,6 +426,7 @@ fn series_json(samples: &[Sample]) -> Value {
             "status": sample.status,
             "duration_ms": sample.duration_ms,
             "seam_count": sample.seam_count,
+            "run_status": sample.run_status,
             "stdout_bytes": sample.stdout_bytes,
             "detail": sample.detail,
         })).collect::<Vec<_>>()
@@ -384,7 +448,7 @@ fn slope_ms_per_file(sizes: &[SizeReport], select: fn(&SizeReport) -> &[Sample])
     )
 }
 
-fn build_report(options: &Options, sizes: &[SizeReport]) -> Value {
+fn build_report(options: &Options, sizes: &[SizeReport], binary: &Path) -> Value {
     let complete = sizes
         .iter()
         .all(|size| all_pass(&size.seams) && all_pass(&size.exposure));
@@ -395,8 +459,13 @@ fn build_report(options: &Options, sizes: &[SizeReport]) -> Value {
         "status": if complete { "pass" } else { "inconclusive" },
         "revision": git_revision(),
         "runner_class": runner_class(),
-        "analyzer_version": analyzer_version(&crate::ripr_debug_binary()),
+        "analyzer_version": analyzer_version(binary),
         "cache_policy": "isolated RIPR_CACHE_DIR cleared before every sample (cold inventory)",
+        "seam_limit": {
+            "control": SEAM_LIMIT_ENV,
+            "value": PINNED_SEAM_LIMIT,
+            "source": "pinned_product_default"
+        },
         "generator": "deterministic synthetic workspace: N production modules, 3 small fns each, no tests directory",
         "sizes": options.sizes,
         "samples": options.samples,
@@ -413,6 +482,7 @@ fn build_report(options: &Options, sizes: &[SizeReport]) -> Value {
         "comparison": {
             "seams_slope_ms_per_file": slope_ms_per_file(sizes, |size| &size.seams),
             "exposure_slope_ms_per_file": slope_ms_per_file(sizes, |size| &size.exposure),
+            "slope_samples_per_size": options.samples,
         },
         "claim_boundary": "Static cold-inventory wall time on synthetic workspaces for the recorded revision and runner class only; not peak memory, not a gate, not universal latency. Compare runs only on the same runner class."
     })
@@ -433,7 +503,7 @@ fn benchmark_markdown(report: &Value) -> String {
         }
     }
     format!(
-        "# Seam Inventory Scaling Benchmark\n\nStatus: `{}`\n\nRevision: `{}`\nRunner: `{}`\nAnalyzer: `{}`\n\n| Files | Seams p50 (ms) | Seams p95 (ms) | Exposure p50 (ms) | Exposure p95 (ms) |\n| ---: | ---: | ---: | ---: | ---: |\n{}\nSeams slope: {} ms/file; exposure slope: {} ms/file.\n\nClaim boundary: {}\n",
+        "# Seam Inventory Scaling Benchmark\n\nStatus: `{}`\n\nRevision: `{}`\nRunner: `{}`\nAnalyzer: `{}`\n\n| Files | Seams p50 (ms) | Seams p95 (ms) | Exposure p50 (ms) | Exposure p95 (ms) |\n| ---: | ---: | ---: | ---: | ---: |\n{}\nSeams slope: {} ms/file; exposure slope: {} ms/file (p50 of {} samples per size, endpoint sizes).\n\nClaim boundary: {}\n",
         report["status"].as_str().unwrap_or("unknown"),
         report["revision"].as_str().unwrap_or("unavailable"),
         report["runner_class"].as_str().unwrap_or("unknown"),
@@ -441,6 +511,7 @@ fn benchmark_markdown(report: &Value) -> String {
         rows,
         report["comparison"]["seams_slope_ms_per_file"],
         report["comparison"]["exposure_slope_ms_per_file"],
+        report["comparison"]["slope_samples_per_size"],
         report["claim_boundary"].as_str().unwrap_or("unknown"),
     )
 }
@@ -504,5 +575,127 @@ mod tests {
     #[test]
     fn empty_series_has_no_slope() {
         assert_eq!(slope_ms_per_file(&[], |size| &size.seams), None);
+    }
+
+    fn sample(status: &str, duration_ms: u128) -> Sample {
+        Sample {
+            status: status.to_string(),
+            duration_ms,
+            seam_count: Some(100),
+            stdout_bytes: 10,
+            detail: None,
+            run_status: Some("complete".to_string()),
+        }
+    }
+
+    #[test]
+    fn percentile_ranks_match_sorted_positions() {
+        assert_eq!(percentile(&mut [10, 20, 30, 40], 50), 20);
+        assert_eq!(percentile(&mut [10, 20, 30, 40], 95), 40);
+        assert_eq!(percentile(&mut [7], 50), 7);
+        let empty: &mut [u128] = &mut [];
+        assert_eq!(percentile(empty, 50), 0);
+    }
+
+    #[test]
+    fn slope_uses_endpoint_p50_and_rejects_failures() -> Result<(), String> {
+        let passing = vec![
+            SizeReport {
+                files: 100,
+                seams: vec![sample("pass", 100), sample("pass", 120)],
+                exposure: Vec::new(),
+            },
+            SizeReport {
+                files: 200,
+                seams: vec![sample("pass", 300), sample("pass", 320)],
+                exposure: Vec::new(),
+            },
+        ];
+        match slope_ms_per_file(&passing, |size| &size.seams) {
+            Some(slope) if (slope - 2.0).abs() < f64::EPSILON => {}
+            other => return Err(format!("expected slope 2.0, got {other:?}")),
+        }
+        let failing = vec![
+            SizeReport {
+                files: 100,
+                seams: vec![sample("pass", 100), sample("fail", 120)],
+                exposure: Vec::new(),
+            },
+            SizeReport {
+                files: 200,
+                seams: vec![sample("pass", 300)],
+                exposure: Vec::new(),
+            },
+        ];
+        if slope_ms_per_file(&failing, |size| &size.seams).is_some() {
+            return Err("slope must be None when an endpoint series fails".to_string());
+        }
+        if slope_ms_per_file(&passing[..1], |size| &size.seams).is_some() {
+            return Err("slope must be None for a single size".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nonempty_inventory_rejects_zero_and_missing() -> Result<(), String> {
+        assert_eq!(require_nonempty_inventory("repo-seams-json", Some(12))?, 12);
+        for bad in [None, Some(0)] {
+            if require_nonempty_inventory("repo-exposure-json", bad).is_ok() {
+                return Err(format!(
+                    "require_nonempty_inventory({bad:?}) unexpectedly succeeded"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn all_pass_rejects_empty_inventory_status() {
+        assert!(!all_pass(&[sample("empty_inventory", 5)]));
+        assert!(all_pass(&[sample("pass", 5)]));
+    }
+
+    fn temp_root(label: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-xtask-scalebench-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+        Ok(root)
+    }
+
+    #[test]
+    fn generate_workspace_writes_expected_modules() -> Result<(), String> {
+        let root = temp_root("workspace")?;
+        let workspace = generate_workspace(&root, 3)?;
+        let mut missing = Vec::new();
+        for name in [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/m0.rs",
+            "src/m1.rs",
+            "src/m2.rs",
+        ] {
+            if !workspace.join(name).is_file() {
+                missing.push(name);
+            }
+        }
+        let lib = fs::read_to_string(workspace.join("src/lib.rs"))
+            .map_err(|err| format!("read generated lib.rs: {err}"))?;
+        let module = fs::read_to_string(workspace.join("src/m1.rs"))
+            .map_err(|err| format!("read generated m1.rs: {err}"))?;
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {}: {err}", root.display()))?;
+        if !missing.is_empty() {
+            return Err(format!("generated workspace is missing {missing:?}"));
+        }
+        if !lib.contains("mod m0;") || !module.contains("pub fn f1_a") {
+            return Err("generated modules do not match the fixed template".to_string());
+        }
+        Ok(())
     }
 }
