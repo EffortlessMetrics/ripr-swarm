@@ -21,7 +21,7 @@ use crate::config::OraclePolicy;
 use crate::domain::ExposureClass;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod static_limit;
@@ -190,7 +190,7 @@ impl LanguageAdapter for PerlAdapter {
         &self,
         options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
-        _changed_files: &[ChangedFile],
+        changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
         // Read the packet from the configured path. When absent, return empty
         // (the pipeline's non-abort contract records this as `unavailable`).
@@ -206,8 +206,10 @@ impl LanguageAdapter for PerlAdapter {
         })?;
         let packet = self.consume_fact_packet(&packet_text, options)?;
 
-        // C2: convert the packet into Findings.
-        let findings = packet_to_findings(&packet);
+        // C2: convert the packet into Findings, each located on its changed
+        // line when the diff settles which line that is.
+        let change_lines = change_lines_from_diff(&packet, changed_files);
+        let findings = packet_to_findings_at(&packet, &change_lines);
         let changed_files = packet
             .changes
             .iter()
@@ -371,6 +373,58 @@ fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::Or
 }
 
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
+    packet_to_findings_at(packet, &BTreeMap::new())
+}
+
+/// The one-based new-file line of each packet change, settled against the
+/// diff ripr itself parsed.
+///
+/// SPEC-0064 says packet ranges are one-based, but the real `perl-ripr-facts`
+/// producer emits zero-based lines (`zero_based_coordinates` in
+/// `fixtures/perl_packet_contract_migration`; #3221 owns making the basis
+/// explicit). The packet does not declare which it used, so a change's line is
+/// taken only when exactly one reading of its first line is an added line in
+/// the diff. Otherwise the change is left out and its finding stays on the
+/// owner's declaration, as before. This only places the finding; probe and
+/// gap identity do not use it.
+fn change_lines_from_diff(
+    packet: &PerlFactPacket,
+    changed_files: &[ChangedFile],
+) -> BTreeMap<String, usize> {
+    let mut lines = BTreeMap::new();
+    for change in &packet.changes {
+        let Some(file) = packet.file(&change.file_id) else {
+            continue;
+        };
+        let path = normalize_repo_relative(&file.path);
+        let Some(diff_file) = changed_files
+            .iter()
+            .find(|diff_file| normalize_repo_relative(&diff_file.path.to_string_lossy()) == path)
+        else {
+            continue;
+        };
+        let added: BTreeSet<usize> = diff_file.added_lines.iter().map(|l| l.line).collect();
+        let one_based = change.range.start_line;
+        let zero_based = change.range.start_line + 1;
+        match (added.contains(&one_based), added.contains(&zero_based)) {
+            (true, false) => {
+                lines.insert(change.change_id.clone(), one_based);
+            }
+            (false, true) => {
+                lines.insert(change.change_id.clone(), zero_based);
+            }
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// [`packet_to_findings`], placing each finding on the line `change_lines`
+/// settles for its change (see [`change_lines_from_diff`]).
+fn packet_to_findings_at(
+    packet: &PerlFactPacket,
+    change_lines: &BTreeMap<String, usize>,
+) -> Vec<crate::domain::Finding> {
     use crate::domain::{
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
         FindingCanonicalGap, LanguageId as DomainLanguageId, LanguageStatus,
@@ -615,11 +669,14 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         );
         let probe = Probe {
             id: ProbeId(probe_id.clone()),
-            location: SourceLocation::new(
-                std::path::PathBuf::from(&file.path),
-                owner.range.start_line,
-                owner.range.start_column,
-            ),
+            location: match change_lines.get(&change.change_id) {
+                Some(&line) => SourceLocation::new(std::path::PathBuf::from(&file.path), line, 1),
+                None => SourceLocation::new(
+                    std::path::PathBuf::from(&file.path),
+                    owner.range.start_line,
+                    owner.range.start_column,
+                ),
+            },
             owner: owner
                 .name
                 .as_ref()

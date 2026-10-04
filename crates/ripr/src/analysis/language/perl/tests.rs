@@ -3995,3 +3995,79 @@ fn streamed_file_digest_matches_in_memory_digest() -> Result<(), String> {
     }
     Ok(())
 }
+
+fn real_producer_packet() -> Result<PerlFactPacket, String> {
+    let packet_text = include_str!(
+        "../../../../../../fixtures/perl_packet_contract_migration/producer-packets/v1/ordinary_discount.json"
+    );
+    let mut options = packet_test_options();
+    options.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/perl_packet_contract_migration/producer-inputs/ordinary_discount");
+    PerlAdapter.consume_fact_packet(packet_text, &options)
+}
+
+fn diff_adding(path: &str, lines: &[usize]) -> crate::analysis::diff::ChangedFile {
+    crate::analysis::diff::ChangedFile {
+        path: std::path::PathBuf::from(path),
+        added_lines: lines
+            .iter()
+            .map(|&line| crate::analysis::diff::ChangedLine {
+                line,
+                text: String::new(),
+                new_side_line: line,
+            })
+            .collect(),
+        removed_lines: Vec::new(),
+    }
+}
+
+/// The real producer's change sits on zero-based line 8; the diff adds
+/// one-based line 9. The finding moves from the owner's declaration to the
+/// changed line, and its probe id keeps the owner-based identity.
+#[test]
+fn perl_finding_lands_on_the_changed_line_the_diff_confirms() -> Result<(), String> {
+    let packet = real_producer_packet()?;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]);
+    assert_eq!(lines.get(change_id), Some(&9));
+    let located = packet_to_findings_at(&packet, &lines);
+    let unlocated = packet_to_findings(&packet);
+    assert_eq!(located.len(), 1);
+    assert_eq!(located[0].probe.location.line, 9);
+    assert_eq!(
+        unlocated[0].probe.location.line, 5,
+        "owner declaration fallback"
+    );
+    assert_eq!(located[0].probe.id, unlocated[0].probe.id);
+
+    // A one-based producer reading: the diff adds line 8 instead.
+    let one_based = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]);
+    assert_eq!(one_based.get(change_id), Some(&8));
+    Ok(())
+}
+
+/// Fail closed: when both readings are added lines, neither is, or the diff
+/// does not name the file, the change gets no line and its finding stays on
+/// the owner's declaration.
+#[test]
+fn perl_finding_line_stays_on_the_owner_when_the_diff_cannot_settle_it() -> Result<(), String> {
+    let packet = real_producer_packet()?;
+    for diff in [
+        vec![diff_adding("lib/App/Discount.pm", &[8, 9])],
+        vec![diff_adding("lib/App/Discount.pm", &[20])],
+        vec![diff_adding("lib/App/Other.pm", &[9])],
+        Vec::new(),
+    ] {
+        let lines = change_lines_from_diff(&packet, &diff);
+        assert!(lines.is_empty(), "{diff:?} must not settle a line");
+        assert_eq!(
+            packet_to_findings_at(&packet, &lines)[0]
+                .probe
+                .location
+                .line,
+            5
+        );
+    }
+    Ok(())
+}
