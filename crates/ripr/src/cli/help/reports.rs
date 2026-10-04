@@ -202,7 +202,8 @@ Options:
 
 The calibration report is advisory. It imports already-produced runtime
 mutation data and joins it to static seam evidence by seam_id first, then by
-the innermost seam span that contains the mutant's columns, then by
-unambiguous file/line for seams without a span. It does not run mutation
-testing, alter static classifications, or configure CI policy.
+the unique innermost seam span that contains the mutant's span, then by
+unambiguous file/line where no span decides. Equal or crossing spans stay
+ambiguous. It does not run mutation testing, alter static classifications, or
+configure CI policy.
 "#;

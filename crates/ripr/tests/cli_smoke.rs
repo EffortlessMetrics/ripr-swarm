@@ -14316,7 +14316,7 @@ fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
 
     let json =
         std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
-    assert!(json.contains(r#""schema_version": "0.1""#));
+    assert!(json.contains(r#""schema_version": "0.2""#));
     assert!(json.contains(r#""status": "advisory""#));
     assert!(json.contains(r#""agreement""#));
     assert!(json.contains(r#""matches""#));
@@ -14465,6 +14465,148 @@ fn calibration_runtime_fixture_v3_matches_checked_reports() -> Result<(), String
         "runtime-only signal must stay calibration context without creating a static gap"
     );
 
+    Ok(())
+}
+
+/// #5486 Atuin regression: every record the line-only join left ambiguous
+/// leaves `ambiguous_file_line` once spans are imported, and what stays
+/// ambiguous is a genuine equal-span tie.
+#[test]
+fn calibration_span_containment_atuin_fixture_matches_checked_reports() -> Result<(), String> {
+    let root = workspace_root();
+    let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-atuin");
+    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
+
+    assert_eq!(value["schema_version"], "0.2");
+    assert_eq!(value["metrics"]["mutants_total"], 27);
+    assert_eq!(
+        value["metrics"]["join_method_counts"]["span_containment"],
+        8
+    );
+    assert_eq!(value["metrics"]["join_method_counts"]["file_line"], 5);
+    assert_eq!(value["metrics"]["ambiguous_file_line_total"], 0);
+    assert_eq!(value["metrics"]["ambiguous_span_overlap_total"], 6);
+    assert_eq!(
+        value["metrics"]["unmatched_reason_counts"]["no_containing_seam"],
+        8
+    );
+    for record in value["ambiguous_span_overlap_matches"]
+        .as_array()
+        .ok_or("missing ambiguous_span_overlap_matches")?
+    {
+        let spans = record["candidates"]
+            .as_array()
+            .ok_or("missing candidates")?
+            .iter()
+            .map(|seam| {
+                (
+                    seam["line"].clone(),
+                    seam["column"].clone(),
+                    seam["end_line"].clone(),
+                    seam["end_column"].clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(spans.len() > 1 && spans.iter().all(|span| *span == spans[0]));
+        assert!(!spans[0].1.is_null(), "overlap candidates carry spans");
+        assert!(!record["runtime"]["end_column"].is_null());
+    }
+
+    // The same records without span ends are line-only evidence: the
+    // pre-#5486 join, with 16 ambiguous file/line records.
+    let mut line_only: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.join("runtime-mutants.json"))
+            .map_err(|e| format!("read runtime mutants: {e}"))?,
+    )
+    .map_err(|e| format!("parse runtime mutants: {e}"))?;
+    for outcome in line_only["outcomes"]
+        .as_array_mut()
+        .ok_or("missing outcomes")?
+    {
+        outcome["scenario"]["Mutant"]["span"]
+            .as_object_mut()
+            .ok_or("missing mutant span")?
+            .remove("end");
+    }
+    let dir = unique_temp_workspace("calibrate-atuin-line-only");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
+    let line_only_path = dir.join("runtime-mutants.json");
+    std::fs::write(&line_only_path, line_only.to_string())
+        .map_err(|e| format!("write line-only mutants: {e}"))?;
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &line_only_path.display().to_string(),
+        "--repo-exposure-json",
+        &fixture.join("repo-exposure.json").display().to_string(),
+        "--format",
+        "json",
+    ]);
+    assert_success(&output);
+    let before: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("parse line-only calibration: {e}"))?;
+    assert_eq!(before["metrics"]["ambiguous_file_line_total"], 16);
+    let mutant_ids = |items: &serde_json::Value, pointer: &str| {
+        items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.pointer(pointer).and_then(|id| id.as_str()))
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let formerly_ambiguous =
+        mutant_ids(&before["ambiguous_file_line_matches"], "/runtime/mutant_id");
+    let joined = mutant_ids(&value["matches"], "/runtime/mutant_id");
+    let overlaps = mutant_ids(
+        &value["ambiguous_span_overlap_matches"],
+        "/runtime/mutant_id",
+    );
+    let unmatched = mutant_ids(&value["unmatched_mutants"], "/mutant_id");
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| joined.contains(*id))
+            .count(),
+        9
+    );
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| overlaps.contains(*id))
+            .count(),
+        6
+    );
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| unmatched.contains(*id))
+            .count(),
+        1
+    );
+
+    ignore_remove_dir_all(&dir);
+    Ok(())
+}
+
+/// #5336 semver `display.rs:20`: a `+` mutant beside a call seam on the same
+/// line is not joined to the call seam.
+#[test]
+fn calibration_span_containment_semver_display_refuses_same_line_pairing() -> Result<(), String> {
+    let root = workspace_root();
+    let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-semver-display");
+    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
+
+    assert_eq!(value["metrics"]["matched_total"], 0);
+    assert_eq!(value["metrics"]["unmatched_mutants_total"], 2);
+    for record in value["unmatched_mutants"]
+        .as_array()
+        .ok_or("missing unmatched_mutants")?
+    {
+        assert_eq!(record["unmatched_reason"], "no_containing_seam");
+        assert_eq!(record["column"], 17);
+    }
     Ok(())
 }
 

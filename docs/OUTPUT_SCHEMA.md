@@ -16771,7 +16771,7 @@ JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "scope": "repo",
   "status": "advisory",
   "metrics": {
@@ -16779,7 +16779,11 @@ JSON shape:
     "mutants_total": 8,
     "matched_total": 6,
     "ambiguous_file_line_total": 1,
+    "ambiguous_span_overlap_total": 0,
     "unmatched_mutants_total": 1,
+    "unmatched_reason_counts": {
+      "no_containing_seam": 1
+    },
     "static_without_runtime_total": 113,
     "runtime_outcome_counts": {
       "caught": 5,
@@ -16912,34 +16916,53 @@ JSON shape:
       ]
     }
   ],
-  "unmatched_mutants": [],
+  "ambiguous_span_overlap_matches": [],
+  "unmatched_mutants": [
+    {
+      "mutant_id": "src/display.rs:20:17: replace + with - in fmt",
+      "seam_id": null,
+      "file": "src/display.rs",
+      "line": 20,
+      "column": 17,
+      "end_line": 20,
+      "end_column": 18,
+      "mutation_operator": "BinaryOperator",
+      "runtime_outcome": "caught",
+      "duration": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    }
+  ],
   "static_without_runtime_sample": []
 }
 ```
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`.
+- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
+  `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
 - `metrics.mutants_total` — count of runtime mutation records imported from the
   supplied JSON.
 - `metrics.matched_total` — runtime records joined to a static seam.
-- `metrics.ambiguous_file_line_total` — runtime records that matched multiple
-  static seams and were therefore not assigned to a single seam: several
-  span-less seams on the record's line, several innermost seam spans that tie
-  (identical or partially overlapping ranges), or an innermost containing span
-  that starts on the record's line next to a seam without a span.
+- `metrics.ambiguous_file_line_total` — runtime records the file/line
+  fallback could not assign: several line-only candidates on the record's
+  line and no seam span containing the record.
+- `metrics.ambiguous_span_overlap_total` — runtime records contained by two or
+  more innermost seam spans that are equal or cross, so no unique seam holds
+  the mutated range.
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
-  by `seam_id`, span containment, or file/line. This includes mutants on a line
-  whose spanned seams do not contain them.
+  by `seam_id`, span containment, or file/line.
+- `metrics.unmatched_reason_counts` — unmatched records keyed by
+  `unmatched_reason`.
 - `metrics.static_without_runtime_total` — static seams with no definitive or
   ambiguous runtime record in this import.
 - `metrics.runtime_outcome_counts` — counts keyed by normalized runtime outcome
   label from the imported data.
-- `metrics.join_method_counts` — counts for `seam_id`, `span`, and `file_line`
-  joins.
+- `metrics.join_method_counts` — counts for `seam_id`, `span_containment`,
+  and `file_line` joins.
 - `agreement.static_gap_and_runtime_signal` — static gap seams that also have at
   least one matched runtime gap signal in this import.
 - `agreement.static_gap_without_runtime_signal` — static gap seams with no
@@ -16969,19 +16992,21 @@ Field contract:
   static gap joined only to runtime-clean labels, or `no_runtime_data` when no
   usable runtime signal was available for the static gap in this import.
 - `matches[].join_method` — `seam_id` when the runtime record carries a matching
-  seam/probe ID; otherwise `span` when the runtime record carries a start column
-  (cargo-mutants `span.start.column`) and exactly one innermost seam span in
-  the same file contains the mutated range; otherwise `file_line` when
-  normalized path and line match exactly one seam without a span. A spanned
-  seam that does not contain the mutated range is never joined to it, even on
-  the same line. A seam without a span on the mutant's line (a match arm) keeps
-  its `file_line` join when every innermost containing span starts on an
-  earlier line; when a containing span starts on the mutant's line, both are
-  ambiguous. Runtime records without a column join by file and line over
-  every seam on the line.
-- `matches[].static.column`, `end_line`, `end_column` and
-  `matches[].runtime.column`, `end_line`, `end_column` — 1-based character
-  columns with an exclusive end, present only when that side carries a span.
+  seam/probe ID; otherwise `span_containment` when the runtime record carries a
+  complete cargo-mutants span and exactly one innermost seam span in the same
+  file contains it (half-open, compared as `(line, column)`, on any line of a
+  multi-line seam); otherwise `file_line` when no seam span contains the
+  record and normalized path and line match exactly one seam without a span.
+  Span-less seams never displace a containment match, and a seam span that
+  does not contain the record is never joined to it by sharing its line.
+  Runtime records without a complete span join by file and line over every
+  seam on the line. See RIPR-SPEC-0006 for the precedence.
+- `matches[].static.column`, `end_line`, `end_column` and the same fields on
+  runtime rows — 1-based character columns with an exclusive end, present
+  only when that side carries a complete span.
+- runtime rows' `span_status` — `"conflicting_runtime_spans"` when merged
+  records for one mutant carried different complete spans; the span is
+  dropped and the record joins as line-only evidence.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
   and missing discriminators.
@@ -16993,15 +17018,21 @@ Field contract:
   `contradicts_static_clean`, or `no_runtime_data`. Runtime-inconclusive labels
   map to `no_runtime_data` because they provide no usable support or
   contradiction for the static claim.
-- `ambiguous_file_line_matches[]` — runtime records that matched multiple
-  static seams: several seams without a span on the record's line, several
-  innermost containing seam spans that tie, or a containing span that starts
-  on the record's line next to a seam without a span. These records are intentionally not
-  assigned to `matches[]` without a stronger seam/probe ID.
-- `ambiguous_file_line_matches[].confidence_label` — always
+- `ambiguous_file_line_matches[]` — runtime records the file/line fallback
+  matched to several line-only seams. These records are intentionally not
+  assigned to `matches[]` without a stronger seam/probe ID or span.
+- `ambiguous_span_overlap_matches[]` — runtime records contained by equal or
+  crossing innermost seam spans, with the runtime span and every candidate
+  seam's span. No candidate is chosen by order, length or ID.
+- `ambiguous_file_line_matches[].confidence_label` and
+  `ambiguous_span_overlap_matches[].confidence_label` — always
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for
   any candidate seam.
 - `unmatched_mutants[]` — runtime records that did not match a static seam.
+- `unmatched_mutants[].unmatched_reason` — `no_location` (no file),
+  `no_seam_on_line` (no seam on the line and no seam span to compare), or
+  `no_containing_seam` (complete spans on both sides and none contains the
+  record).
 - `static_without_runtime_sample[]` — capped sample of static seams with no
   definitive or ambiguous runtime data in this import. Use
   `static_without_runtime_total` for the full count.

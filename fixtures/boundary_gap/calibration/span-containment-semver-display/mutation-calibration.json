@@ -1,0 +1,105 @@
+{
+  "agreement": {
+    "runtime_inconclusive": 0,
+    "runtime_signal_without_static_gap": 0,
+    "static_clean_and_runtime_clean": 0,
+    "static_gap_and_runtime_signal": 0,
+    "static_gap_without_runtime_signal": 1
+  },
+  "ambiguous_file_line_matches": [],
+  "ambiguous_span_overlap_matches": [],
+  "matches": [],
+  "metrics": {
+    "ambiguous_file_line_total": 0,
+    "ambiguous_span_overlap_total": 0,
+    "join_method_counts": {},
+    "matched_total": 0,
+    "mutants_total": 2,
+    "runtime_outcome_counts": {
+      "caught": 2
+    },
+    "static_seams_total": 1,
+    "static_without_runtime_total": 1,
+    "unmatched_mutants_total": 2,
+    "unmatched_reason_counts": {
+      "no_containing_seam": 2
+    }
+  },
+  "missed_runtime_signals": [],
+  "precision_notes": [
+    "runtime gap signals are imported runtime labels such as missed, survived, not_caught, or uncaught",
+    "runtime clean signals are imported runtime labels such as caught or timeout",
+    "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
+    "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
+    "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+  ],
+  "schema_version": "0.2",
+  "scope": "repo",
+  "static_only_findings": [
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 19,
+        "end_column": 37,
+        "end_line": 20,
+        "file": "src/display.rs",
+        "line": 20,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "8828427428828b64",
+        "seam_kind": "call_presence"
+      }
+    }
+  ],
+  "static_without_runtime_sample": [
+    {
+      "column": 19,
+      "end_column": 37,
+      "end_line": 20,
+      "file": "src/display.rs",
+      "line": 20,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "8828427428828b64",
+      "seam_kind": "call_presence"
+    }
+  ],
+  "status": "advisory",
+  "unmatched_mutants": [
+    {
+      "column": 17,
+      "duration": null,
+      "end_column": 18,
+      "end_line": 20,
+      "file": "src/display.rs",
+      "line": 20,
+      "mutant_id": "src/display.rs:20:17: replace + with * in <impl Display for Version>::fmt",
+      "mutation_operator": "*",
+      "runtime_outcome": "caught",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 17,
+      "duration": null,
+      "end_column": 18,
+      "end_line": 20,
+      "file": "src/display.rs",
+      "line": 20,
+      "mutant_id": "src/display.rs:20:17: replace + with - in <impl Display for Version>::fmt",
+      "mutation_operator": "-",
+      "runtime_outcome": "caught",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    }
+  ]
+}

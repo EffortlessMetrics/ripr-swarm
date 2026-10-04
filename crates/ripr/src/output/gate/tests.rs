@@ -1950,7 +1950,8 @@ fn gate_calibration_can_keep_candidates_advisory() -> Result<(), String> {
               "static_only_findings": [
                 {"static": {"seam_id": "8f7fa8644fd12280"}}
               ],
-              "ambiguous_file_line_matches": [{"file":"src/lib.rs","line":7}]
+              "ambiguous_file_line_matches": [{"file":"src/lib.rs","line":7}],
+              "ambiguous_span_overlap_matches": [{"file":"src/lib.rs","line":9}]
             }"#,
     )?;
     let mut input = fixture_input(GateMode::CalibratedGate)?;
@@ -1973,6 +1974,12 @@ fn gate_calibration_can_keep_candidates_advisory() -> Result<(), String> {
             .warnings
             .iter()
             .any(|warning| warning.contains("ambiguous file/line"))
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("ambiguous span overlaps"))
     );
     ignore_remove_dir_all(dir);
     Ok(())

@@ -1,0 +1,1377 @@
+{
+  "agreement": {
+    "runtime_inconclusive": 6,
+    "runtime_signal_without_static_gap": 10,
+    "static_clean_and_runtime_clean": 0,
+    "static_gap_and_runtime_signal": 7,
+    "static_gap_without_runtime_signal": 9
+  },
+  "ambiguous_file_line_matches": [],
+  "ambiguous_span_overlap_matches": [
+    {
+      "candidates": [
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "000f706384b63df2",
+          "seam_kind": "predicate_boundary"
+        },
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "f17a02397c93826a",
+          "seam_kind": "return_value"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 47,
+        "end_line": 40,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 40,
+        "mutant_id": "crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with false",
+        "mutation_operator": "false",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "000f706384b63df2",
+          "seam_kind": "predicate_boundary"
+        },
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "f17a02397c93826a",
+          "seam_kind": "return_value"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 47,
+        "end_line": 40,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 40,
+        "mutant_id": "crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with true",
+        "mutation_operator": "true",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "000f706384b63df2",
+          "seam_kind": "predicate_boundary"
+        },
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "f17a02397c93826a",
+          "seam_kind": "return_value"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 30,
+        "duration": null,
+        "end_column": 32,
+        "end_line": 40,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 40,
+        "mutant_id": "crates/atuin-ai/src/context.rs:40:30: replace && with || in history_output_capability_available",
+        "mutation_operator": "||",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "a2a1825a2a7a3178",
+          "seam_kind": "return_value"
+        },
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "cb384a36e083789a",
+          "seam_kind": "call_presence"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 68,
+        "end_line": 85,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 85,
+        "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![\"xyzzy\".into()]",
+        "mutation_operator": "vec![\"xyzzy\".into()]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "a2a1825a2a7a3178",
+          "seam_kind": "return_value"
+        },
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "cb384a36e083789a",
+          "seam_kind": "call_presence"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 68,
+        "end_line": 85,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 85,
+        "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![String::new()]",
+        "mutation_operator": "vec![String::new()]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "a2a1825a2a7a3178",
+          "seam_kind": "return_value"
+        },
+        {
+          "column": 9,
+          "end_column": 68,
+          "end_line": 85,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 85,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "cb384a36e083789a",
+          "seam_kind": "call_presence"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 68,
+        "end_line": 85,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 85,
+        "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![]",
+        "mutation_operator": "vec![]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    }
+  ],
+  "matches": [
+    {
+      "confidence_label": "contradicts_static_clean",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 11,
+        "end_line": 73,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 73,
+        "mutant_id": "crates/atuin-ai/src/context.rs:73:9: replace && with || in capability_strings",
+        "mutation_operator": "||",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 8,
+        "end_column": 62,
+        "end_line": 73,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 72,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "33f2fc9a4bfabc2e",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "contradicts_static_clean",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 79,
+        "duration": null,
+        "end_column": 80,
+        "end_line": 78,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 78,
+        "mutant_id": "crates/atuin-ai/src/context.rs:78:79: delete ! in capability_strings",
+        "mutation_operator": "unknown",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 9,
+        "end_column": 94,
+        "end_line": 78,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 78,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "9b3a32b1fdffede4",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 28,
+        "duration": null,
+        "end_column": 30,
+        "end_line": 101,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 101,
+        "mutant_id": "crates/atuin-ai/src/context.rs:101:28: replace == with != in ClientContext::detect",
+        "mutation_operator": "!=",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 25,
+        "end_column": 38,
+        "end_line": 101,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 101,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "f49c5d86e1d4a8fe",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "file_line",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 6,
+        "end_line": 149,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 144,
+        "mutant_id": "crates/atuin-ai/src/context.rs:144:5: replace detect_os -> String with \"xyzzy\".into()",
+        "mutation_operator": "\"xyzzy\".into()",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 144,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "2d733edde2d4a212",
+        "seam_kind": "match_arm"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "file_line",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 6,
+        "end_line": 149,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 144,
+        "mutant_id": "crates/atuin-ai/src/context.rs:144:5: replace detect_os -> String with String::new()",
+        "mutation_operator": "String::new()",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 144,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "2d733edde2d4a212",
+        "seam_kind": "match_arm"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "file_line",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 15,
+        "end_line": 43,
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 29,
+        "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:29:9: replace Rebuild::run -> Result<()> with Ok(())",
+        "mutation_operator": "Ok(())",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 29,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "activation_unknown",
+        "seam_id": "25a88f39b588c3f3",
+        "seam_kind": "match_arm"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "file_line",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 36,
+        "end_line": 82,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 38,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:38:9: replace OtelCtx::try_enable -> Result<Option<Self>, OtelCtxEnableError> with Ok(None)",
+        "mutation_operator": "Ok(None)",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 38,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "3a2cc8888f55e1c1",
+        "seam_kind": "match_arm"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "file_line",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 36,
+        "end_line": 82,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 38,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:38:9: replace OtelCtx::try_enable -> Result<Option<Self>, OtelCtxEnableError> with Ok(Some(Default::default()))",
+        "mutation_operator": "Ok(Some(Default::default()))",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 38,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "3a2cc8888f55e1c1",
+        "seam_kind": "match_arm"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 32,
+        "duration": null,
+        "end_column": 34,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:32: replace == with != in OtelCtx::try_enable",
+        "mutation_operator": "!=",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 14,
+        "end_column": 41,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ae7b3b349a0b2660",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 63,
+        "duration": null,
+        "end_column": 65,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:63: replace == with != in OtelCtx::try_enable",
+        "mutation_operator": "!=",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 45,
+        "end_column": 73,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ae7ec0349a0e3e36",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 42,
+        "duration": null,
+        "end_column": 44,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:42: replace || with && in OtelCtx::try_enable",
+        "mutation_operator": "&&",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 12,
+        "end_column": 74,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ae7b3d349a0b29c6",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 12,
+        "duration": null,
+        "end_column": 13,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:12: delete ! in OtelCtx::try_enable",
+        "mutation_operator": "unknown",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 12,
+        "end_column": 74,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ae7b3d349a0b29c6",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "contradicts_static_clean",
+      "join_method": "span_containment",
+      "runtime": {
+        "column": 12,
+        "duration": null,
+        "end_column": 13,
+        "end_line": 62,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 62,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:62:12: delete ! in OtelCtx::try_enable",
+        "mutation_operator": "unknown",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 12,
+        "end_column": 52,
+        "end_line": 62,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 62,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "a72597349643e206",
+        "seam_kind": "predicate_boundary"
+      }
+    }
+  ],
+  "metrics": {
+    "ambiguous_file_line_total": 0,
+    "ambiguous_span_overlap_total": 6,
+    "join_method_counts": {
+      "file_line": 5,
+      "span_containment": 8
+    },
+    "matched_total": 13,
+    "mutants_total": 27,
+    "runtime_outcome_counts": {
+      "missed": 26,
+      "unviable": 1
+    },
+    "static_seams_total": 26,
+    "static_without_runtime_total": 12,
+    "unmatched_mutants_total": 8,
+    "unmatched_reason_counts": {
+      "no_containing_seam": 8
+    }
+  },
+  "missed_runtime_signals": [
+    {
+      "confidence_label": "contradicts_static_clean",
+      "reason": "runtime gap signal joined to a static-clean seam",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 11,
+        "end_line": 73,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 73,
+        "mutant_id": "crates/atuin-ai/src/context.rs:73:9: replace && with || in capability_strings",
+        "mutation_operator": "||",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 8,
+        "end_column": 62,
+        "end_line": 73,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 72,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "33f2fc9a4bfabc2e",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "contradicts_static_clean",
+      "reason": "runtime gap signal joined to a static-clean seam",
+      "runtime": {
+        "column": 79,
+        "duration": null,
+        "end_column": 80,
+        "end_line": 78,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 78,
+        "mutant_id": "crates/atuin-ai/src/context.rs:78:79: delete ! in capability_strings",
+        "mutation_operator": "unknown",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 9,
+        "end_column": 94,
+        "end_line": 78,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 78,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "9b3a32b1fdffede4",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "contradicts_static_clean",
+      "reason": "runtime gap signal joined to a static-clean seam",
+      "runtime": {
+        "column": 12,
+        "duration": null,
+        "end_column": 13,
+        "end_line": 62,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 62,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:62:12: delete ! in OtelCtx::try_enable",
+        "mutation_operator": "unknown",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 12,
+        "end_column": 52,
+        "end_line": 62,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 62,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "strongly_gripped",
+        "seam_id": "a72597349643e206",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 9,
+        "end_line": 80,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 56,
+        "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![\"xyzzy\".into()]",
+        "mutation_operator": "vec![\"xyzzy\".into()]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 9,
+        "end_line": 80,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 56,
+        "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![String::new()]",
+        "mutation_operator": "vec![String::new()]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 5,
+        "duration": null,
+        "end_column": 9,
+        "end_line": 80,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 56,
+        "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![]",
+        "mutation_operator": "vec![]",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 12,
+        "end_line": 138,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 117,
+        "mutant_id": "crates/atuin-ai/src/context.rs:117:9: replace ClientContext::to_json -> serde_json::Value with Default::default()",
+        "mutation_operator": "Default::default()",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 15,
+        "end_line": 67,
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 53,
+        "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:53:9: replace Rebuild::rebuild_history -> Result<()> with Ok(())",
+        "mutation_operator": "Ok(())",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 15,
+        "end_line": 83,
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 71,
+        "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:71:9: replace Rebuild::rebuild_scripts -> Result<()> with Ok(())",
+        "mutation_operator": "Ok(())",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    },
+    {
+      "confidence_label": "runtime_only_signal",
+      "reason": "runtime gap signal did not join to a static seam",
+      "runtime": {
+        "column": 9,
+        "duration": null,
+        "end_column": 10,
+        "end_line": 107,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 99,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:99:9: replace <impl Drop for OtelCtx>::drop with ()",
+        "mutation_operator": "()",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": null
+    }
+  ],
+  "precision_notes": [
+    "runtime gap signals are imported runtime labels such as missed, survived, not_caught, or uncaught",
+    "runtime clean signals are imported runtime labels such as caught or timeout",
+    "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
+    "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
+    "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+  ],
+  "schema_version": "0.2",
+  "scope": "repo",
+  "static_only_findings": [
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 9,
+        "end_column": 68,
+        "end_line": 85,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 85,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "a2a1825a2a7a3178",
+        "seam_kind": "return_value"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 9,
+        "end_column": 68,
+        "end_line": 85,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 85,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "cb384a36e083789a",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 18,
+        "end_column": 29,
+        "end_line": 99,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 99,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "1026575689c7153b",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 15,
+        "end_column": 32,
+        "end_line": 29,
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 29,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "activation_unknown",
+        "seam_id": "418947cf842e6ee5",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 30,
+        "end_column": 84,
+        "end_line": 71,
+        "file": "crates/atuin/src/command/client/store/rebuild.rs",
+        "line": 71,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ba5d32401a508d4d",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 46,
+        "end_column": 73,
+        "end_line": 38,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 38,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "69c30532868c4586",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 14,
+        "end_column": 31,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "6f6d7e4d5197a1de",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 13,
+        "end_column": 28,
+        "end_line": 62,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 62,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "662e474d4c303fcb",
+        "seam_kind": "call_presence"
+      }
+    },
+    {
+      "confidence_label": "no_runtime_data",
+      "reason": "static gap seam has no matched runtime record in this import",
+      "static": {
+        "column": 27,
+        "end_column": 54,
+        "end_line": 99,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 99,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "weakly_gripped",
+        "seam_id": "eef0358604b2e8fa",
+        "seam_kind": "call_presence"
+      }
+    }
+  ],
+  "static_without_runtime_sample": [
+    {
+      "column": 12,
+      "end_column": 62,
+      "end_line": 73,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 73,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "strongly_gripped",
+      "seam_id": "ad0475b208359476",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 21,
+      "end_column": 37,
+      "end_line": 78,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "strongly_gripped",
+      "seam_id": "9b3732b1fdfdb80d",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 46,
+      "end_column": 54,
+      "end_line": 78,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "strongly_gripped",
+      "seam_id": "9b2cb7b1fdf49287",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 80,
+      "end_column": 92,
+      "end_line": 78,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "strongly_gripped",
+      "seam_id": "9b22a3b1fdec1c06",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 18,
+      "end_column": 29,
+      "end_line": 99,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 99,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "1026575689c7153b",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 15,
+      "end_column": 32,
+      "end_line": 29,
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 29,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "activation_unknown",
+      "seam_id": "418947cf842e6ee5",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 30,
+      "end_column": 84,
+      "end_line": 71,
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 71,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "ba5d32401a508d4d",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 46,
+      "end_column": 73,
+      "end_line": 38,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 38,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "69c30532868c4586",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 14,
+      "end_column": 31,
+      "end_line": 58,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 58,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "6f6d7e4d5197a1de",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 13,
+      "end_column": 28,
+      "end_line": 62,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 62,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "ungripped",
+      "seam_id": "662e474d4c303fcb",
+      "seam_kind": "call_presence"
+    },
+    {
+      "column": 12,
+      "end_column": 54,
+      "end_line": 99,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 99,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "strongly_gripped",
+      "seam_id": "8a8382794c05b62b",
+      "seam_kind": "predicate_boundary"
+    },
+    {
+      "column": 27,
+      "end_column": 54,
+      "end_line": 99,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 99,
+      "missing_discriminators": [],
+      "observed_values": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "seam_grip_class": "weakly_gripped",
+      "seam_id": "eef0358604b2e8fa",
+      "seam_kind": "call_presence"
+    }
+  ],
+  "status": "advisory",
+  "unmatched_mutants": [
+    {
+      "column": 5,
+      "duration": null,
+      "end_column": 9,
+      "end_line": 80,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 56,
+      "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![\"xyzzy\".into()]",
+      "mutation_operator": "vec![\"xyzzy\".into()]",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 5,
+      "duration": null,
+      "end_column": 9,
+      "end_line": 80,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 56,
+      "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![String::new()]",
+      "mutation_operator": "vec![String::new()]",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 5,
+      "duration": null,
+      "end_column": 9,
+      "end_line": 80,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 56,
+      "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![]",
+      "mutation_operator": "vec![]",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 9,
+      "duration": null,
+      "end_column": 35,
+      "end_line": 106,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 99,
+      "mutant_id": "crates/atuin-ai/src/context.rs:99:9: replace ClientContext::detect -> Self with Default::default()",
+      "mutation_operator": "Default::default()",
+      "runtime_outcome": "unviable",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 9,
+      "duration": null,
+      "end_column": 12,
+      "end_line": 138,
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 117,
+      "mutant_id": "crates/atuin-ai/src/context.rs:117:9: replace ClientContext::to_json -> serde_json::Value with Default::default()",
+      "mutation_operator": "Default::default()",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 9,
+      "duration": null,
+      "end_column": 15,
+      "end_line": 67,
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 53,
+      "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:53:9: replace Rebuild::rebuild_history -> Result<()> with Ok(())",
+      "mutation_operator": "Ok(())",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 9,
+      "duration": null,
+      "end_column": 15,
+      "end_line": 83,
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 71,
+      "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:71:9: replace Rebuild::rebuild_scripts -> Result<()> with Ok(())",
+      "mutation_operator": "Ok(())",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    },
+    {
+      "column": 9,
+      "duration": null,
+      "end_column": 10,
+      "end_line": 107,
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 99,
+      "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:99:9: replace <impl Drop for OtelCtx>::drop with ()",
+      "mutation_operator": "()",
+      "runtime_outcome": "missed",
+      "seam_id": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam"
+    }
+  ]
+}

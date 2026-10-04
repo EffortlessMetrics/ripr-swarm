@@ -126,6 +126,7 @@ fn mutation_outcome_record_from_object(
         file: identity.file,
         line: identity.line,
         span: identity.span,
+        span_conflict: false,
         mutation_operator: details.mutation_operator,
         runtime_outcome: details.runtime_outcome,
         duration: details.duration,
@@ -182,31 +183,23 @@ impl<'a> OutcomeObjectContext<'a> {
     /// back to. Read only when that span's start line agrees with the record
     /// line, so a column is never paired with a different line. cargo-mutants
     /// records 1-based character columns with an exclusive end, the same
-    /// geometry `repo-exposure-json` seams carry.
+    /// geometry `repo-exposure-json` seams carry. The span is atomic: a
+    /// missing, zero, partial or inverted coordinate drops the whole span and
+    /// leaves the record as line-only evidence.
     fn runtime_span(&self) -> Option<RuntimeSpan> {
         let span = self.span?;
         let start = nested_object(span, "start")?;
-        let line = usize_field_any(start, LINE_KEYS)?;
-        let column = usize_field_any(start, COLUMN_KEYS)?;
-        if self.line() != Some(line) || column == 0 {
-            return None;
-        }
-        // A partial or inverted end is malformed: drop the whole span so the
-        // record falls back to the file/line join instead of a point span.
-        let end = match nested_object(span, "end") {
-            Some(end) => {
-                let end = (
-                    usize_field_any(end, LINE_KEYS)?,
-                    usize_field_any(end, COLUMN_KEYS)?,
-                );
-                (end >= (line, column)).then_some(Some(end))?
-            }
-            None => None,
-        };
-        Some(RuntimeSpan {
-            start: (line, column),
-            end,
-        })
+        let end = nested_object(span, "end")?;
+        let start = (
+            usize_field_any(start, LINE_KEYS)?,
+            usize_field_any(start, COLUMN_KEYS)?,
+        );
+        let end = (
+            usize_field_any(end, LINE_KEYS)?,
+            usize_field_any(end, COLUMN_KEYS)?,
+        );
+        let complete = self.line() == Some(start.0) && start.1 > 0 && end.1 > 0 && start <= end;
+        complete.then_some(RuntimeSpan { start, end })
     }
 
     fn runtime_details(&self) -> RuntimeDetails {
@@ -447,7 +440,13 @@ mod tests {
   {"name": "src/a.rs:4:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
    "span": {"start": {"line": 4, "column": 7}, "end": {"line": 4, "column": 2}}, "summary": "MissedMutant"},
   {"name": "src/a.rs:5:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
-   "span": {"start": {"line": 5, "column": 7}, "end": {"line": 5}}, "summary": "MissedMutant"}
+   "span": {"start": {"line": 5, "column": 7}, "end": {"line": 5}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:6:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 6, "column": 7}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:7:1: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 7, "column": 0}, "end": {"line": 7, "column": 4}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:8:9: replace match guard with true in f", "file": "src/a.rs", "genre": "MatchArmGuard",
+   "span": {"start": {"line": 8, "column": 9}, "end": {"line": 10, "column": 3}}, "summary": "MissedMutant"}
 ]"#,
         )?;
 
@@ -461,12 +460,22 @@ mod tests {
             span_of(3),
             Some(Some(RuntimeSpan {
                 start: (3, 7),
-                end: Some((3, 8)),
+                end: (3, 8),
             })),
             "the mutant span, not function.span"
         );
         assert_eq!(span_of(4), Some(None), "an inverted end drops the span");
         assert_eq!(span_of(5), Some(None), "a partial end drops the span");
+        assert_eq!(span_of(6), Some(None), "a start-only span is not a span");
+        assert_eq!(span_of(7), Some(None), "a zero column drops the span");
+        assert_eq!(
+            span_of(8),
+            Some(Some(RuntimeSpan {
+                start: (8, 9),
+                end: (10, 3),
+            })),
+            "a multiline span keeps its character columns"
+        );
         Ok(())
     }
 

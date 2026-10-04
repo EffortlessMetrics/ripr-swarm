@@ -37,15 +37,17 @@ are scoped or reviewed.
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
   was still a discovery dead end (#5266 residual).
-- Calibration: `ripr calibrate cargo-mutants` joins a mutant to the seam
-  whose span contains it when both sides carry columns (cargo-mutants
-  `span.start/end` and `repo-exposure-json` 0.4 seam spans). The innermost
-  containing seam wins, so a line holding several seams no longer leaves its
-  mutants ambiguous, and a mutant outside every spanned seam on its line is
-  no longer paired with one of them. Matches report `join_method: "span"`;
-  span-less seams and column-less runtime records keep the file/line join.
-  `cargo xtask mutation-spot-check` scores operator mutants that span-join a
-  predicate or return seam (#5336).
+- Calibration: `ripr calibrate cargo-mutants` keeps each cargo-mutants
+  mutant's complete source span and joins it to the seam whose
+  `repo-exposure-json` 0.4 span contains it (`join_method:
+  "span_containment"`). The unique innermost containing seam wins, so a line
+  holding several seams no longer leaves its mutants ambiguous; equal or
+  crossing spans are reported as `ambiguous_span_overlap_matches`; a mutant
+  that no seam span contains is unmatched with `unmatched_reason:
+  "no_containing_seam"` instead of being paired with a seam that only shares
+  its line. Span-less seams and span-less runtime records keep the file/line
+  join. The calibration report is `schema_version` 0.2 (#5336, #5485,
+  #5486).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as

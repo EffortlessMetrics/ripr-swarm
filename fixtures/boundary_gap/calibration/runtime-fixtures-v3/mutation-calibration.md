@@ -12,6 +12,7 @@ This report joins static seam evidence to supplied cargo-mutants runtime data. R
 | mutants_total | 7 |
 | matched_total | 5 |
 | ambiguous_file_line_total | 1 |
+| ambiguous_span_overlap_total | 0 |
 | unmatched_mutants_total | 1 |
 | static_without_runtime_total | 1 |
 
@@ -30,8 +31,8 @@ Precision notes:
 - runtime gap signals are imported runtime labels such as missed, survived, not_caught, or uncaught
 - runtime clean signals are imported runtime labels such as caught or timeout
 - static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import
-- runtime records with a column join by span containment to the innermost static seam whose span contains the mutated range; seams without a span, and runtime records without a column, join by file and line
-- ambiguous runtime gap signals (several seams share the line without spans, or several innermost seam spans tie) are counted as runtime_inconclusive until a seam_id or unambiguous location is available
+- runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line
+- ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available
 
 ### Runtime signals without static gaps
 
@@ -70,11 +71,15 @@ Precision notes:
 | --- | --- | --- | --- | --- |
 | `m-v3-ambiguous-builder` | src/ambiguous_builder.rs:72 | missed | `ambiguous_runtime_join` | `cal-v3-ambiguous-builder-a`, `cal-v3-ambiguous-builder-b` |
 
+## Ambiguous Span Overlaps
+
+No runtime mutant span was contained by equal or crossing innermost seam spans.
+
 ## Unmatched Runtime Mutants
 
-| Location | Mutation operator | Runtime outcome | Test command |
-| --- | --- | --- | --- |
-| src/runtime_only_v3.rs:99 | replace runtime-only observed value | missed | cargo test runtime_only_v3_observer |
+| Location | Mutation operator | Runtime outcome | Reason | Test command |
+| --- | --- | --- | --- | --- |
+| src/runtime_only_v3.rs:99 | replace runtime-only observed value | missed | `no_seam_on_line` | cargo test runtime_only_v3_observer |
 
 ## Static Seams Without Runtime Data
 

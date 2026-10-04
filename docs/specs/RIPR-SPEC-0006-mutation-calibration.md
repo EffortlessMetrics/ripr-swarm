@@ -30,11 +30,18 @@ The report should:
   are available;
 - import span-based cargo-mutants locations when generated mutant records carry
   a `span` object instead of a flat `line` field;
+- retain the complete cargo-mutants source span of each runtime record (see
+  Runtime Source Spans);
 - join records by `seam_id` when present;
-- fall back to normalized file + line matching when `seam_id` is absent;
-- report file/line matches as ambiguous when multiple static seams share the
-  same normalized file and line;
-- report unmatched runtime mutants separately;
+- otherwise join by span containment when the runtime record and static seams
+  carry complete spans (see Join Precedence);
+- fall back to normalized file + line matching only where span comparison is
+  unavailable;
+- report file/line matches as ambiguous when multiple line-only candidates
+  share the same normalized file and line;
+- report equal or crossing containing spans as ambiguous span overlaps;
+- report unmatched runtime mutants separately, with the reason they did not
+  join;
 - summarize static/runtime agreement in advisory buckets;
 - label imported static/runtime agreement as confidence context without changing
   static classifications;
@@ -63,7 +70,7 @@ Each matched calibration row should carry:
 - runtime outcome
 - duration, when provided by the runtime data
 - test command, when provided by the runtime data
-- join method (`seam_id` or `file_line`)
+- join method (`seam_id`, `span_containment` or `file_line`)
 - confidence label, one of:
   - `supports_static_gap`
   - `contradicts_static_gap`
@@ -76,8 +83,70 @@ candidate seams without assigning the runtime outcome to any single seam. These
 rows should carry `ambiguous_runtime_join` so consumers know not to raise
 confidence from that runtime record.
 
+Ambiguous span overlaps follow the same rule. Both ambiguity lists carry the
+runtime span and every candidate seam with its span, so the decision can be
+reproduced from the report.
+
 Unmatched runtime mutants should preserve their location, mutation operator,
-runtime outcome, duration, and test command when available.
+runtime outcome, duration, and test command when available, plus an
+`unmatched_reason`:
+
+- `no_location`: the runtime record names no file;
+- `no_seam_on_line`: no static seam starts on the record's line and no seam
+  span in the file could be compared;
+- `no_containing_seam`: the record has a complete span, the file has seam
+  spans, none contains the mutated range, and no span-less seam starts on the
+  record's line.
+
+## Runtime Source Spans
+
+cargo-mutants records each mutant's location as `span.start` / `span.end`
+with 1-based line and character columns and an exclusive end. The importer
+keeps that range as one atomic value:
+
+- the span is present only when `start.line`, `start.column`, `end.line` and
+  `end.column` are all present, columns are at least 1, `start <= end`, and
+  `start.line` agrees with the record's `line`;
+- a partial, zero, inverted or inconsistent span is dropped whole and the
+  record stays line-only evidence; coordinates are never synthesized or mixed
+  between sources;
+- `function.span` is never the mutant's span;
+- when `mutants.json` and `outcomes.json` records for one mutant merge, a
+  complete span fills an absent one; two different complete spans drop the
+  span and mark the record `span_status: "conflicting_runtime_spans"` rather
+  than choosing one;
+- the span is rendered on runtime rows as `column`, `end_line` and
+  `end_column` next to `line`.
+
+## Join Precedence
+
+1. **Explicit `seam_id`.** A runtime `seam_id` naming a static seam joins it.
+2. **Span containment.** When the runtime record has a complete span, every
+   static seam in the same normalized file with a complete span
+   (`repo-exposure-json` 0.4 `column`, `end_line`, `end_column`) is compared,
+   whatever line the seam starts on. Positions compare lexicographically as
+   `(line, column)` with exclusive ends; a seam contains the mutant when
+   `seam.start <= mutant.start`, `mutant.start < seam.end` and
+   `mutant.end <= seam.end`.
+   - Exactly one containing seam, or a unique innermost one (strictly inside
+     every other containing seam), joins with `join_method =
+     span_containment`.
+   - Equal or crossing innermost spans are a true overlap: the record goes to
+     `ambiguous_span_overlap_matches` with every innermost candidate. Source
+     order, seam order, span length and ID never break the tie.
+   - Span-less seams do not compete with a containment match and are never
+     reported as span-precise.
+3. **File and line fallback.** With no containing span, span-less seams on the
+   record's start line join by `file_line` (unique) or go to
+   `ambiguous_file_line_matches` (several). A record without a complete span
+   uses this fallback over every seam on its line, as before spans existed.
+   A seam span that disproves containment is never rescued by sharing the
+   line.
+
+Candidate lists are ordered by seam line, column, end line, end column and
+seam ID, independent of snapshot order.
+
+`SeamId` generation does not change: geometry is join evidence, not identity.
 
 Runtime gap signals that cannot be joined to a static seam should carry
 `runtime_only_signal`; they are calibration context only and must not create a
@@ -133,6 +202,37 @@ when ripr calibrate cargo-mutants runs,
 then the report lists the runtime mutant under unmatched_mutants.
 ```
 
+### Span containment picks the seam holding the mutated token
+
+```text
+Given a predicate seam at src/context.rs:40:12-40:25 nested in a return seam
+at src/context.rs:40:5-40:40,
+and a cargo-mutants record replacing `&&` at src/context.rs:40:18-40:20,
+when ripr calibrate cargo-mutants runs,
+then the report joins the record to the predicate seam with
+join_method = span_containment.
+```
+
+### A same-line seam that does not contain the mutant is not joined
+
+```text
+Given a call seam around `digits(self.minor)` at src/display.rs:20:19-20:37,
+and cargo-mutants records replacing the `+` at src/display.rs:20:17-20:18,
+when ripr calibrate cargo-mutants runs,
+then the records are listed under unmatched_mutants with
+unmatched_reason = no_containing_seam.
+```
+
+### Equal spans stay a true overlap
+
+```text
+Given a predicate seam and a return seam that both span src/context.rs:40:5-40:47,
+and a cargo-mutants record inside that range,
+when ripr calibrate cargo-mutants runs,
+then the report lists the record under ambiguous_span_overlap_matches with
+both candidates and their spans, and joins neither.
+```
+
 ### Ambiguous file and line match stays unassigned
 
 ```text
@@ -174,6 +274,13 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_parses_repo_exposure_and_cargo_mutants_json`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_merges_mutants_and_outcomes_by_id`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_reports_are_advisory_and_structured`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_refuses_a_same_line_seam_that_does_not_contain_the_mutant`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_scores_multi_seam_lines_on_the_innermost_containing_seam`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reports_equal_and_crossing_overlaps_and_multiline_containment`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_ranks_containment_over_line_fallback_and_seam_id_over_both`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::merging_runtime_records_keeps_complete_spans_and_refuses_conflicts`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end`
+- `crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::reads_mutant_span_columns_and_drops_malformed_ends`
 - `crates/ripr/src/cli/commands.rs::tests::calibrate_parses_required_inputs_format_and_out`
 - `crates/ripr/src/cli/commands.rs::tests::calibrate_command_writes_json_file`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_prints_markdown_by_default`
@@ -181,6 +288,8 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports`
 - `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports`
 - `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports`
+- `crates/ripr/tests/cli_smoke.rs::calibration_span_containment_atuin_fixture_matches_checked_reports`
+- `crates/ripr/tests/cli_smoke.rs::calibration_span_containment_semver_display_refuses_same_line_pairing`
 - `xtask/src/main.rs::mutation_calibration_args_parse_root_and_input_paths`
 - `xtask/src/main.rs::mutation_calibration_imports_static_seams_and_runtime_outcomes`
 - `xtask/src/main.rs::mutation_calibration_merges_mutants_and_outcomes_by_mutant_id`
@@ -213,6 +322,14 @@ Checked fixture-backed samples:
   creation, and preserves `no_runtime_data` for a checked static gap without
   runtime data.
 
+- `fixtures/boundary_gap/calibration/span-containment-atuin/` pins 27 real
+  cargo-mutants outcomes from Atuin `90f590b9` against reduced seam metadata:
+  8 `span_containment` joins, 5 `file_line` fallbacks, 6 equal-span overlaps,
+  8 `no_containing_seam` records, and none of the 16 line-only ambiguities
+  left in `ambiguous_file_line`.
+- `fixtures/boundary_gap/calibration/span-containment-semver-display/` pins
+  the semver `display.rs:20` wrong same-line pairing as `no_containing_seam`.
+
 Planned tests:
 
 - end-to-end smoke around a real cargo-mutants output artifact when runtime cost
@@ -242,7 +359,9 @@ advisory and does not make calibration a public library API.
 - `mutants_total`
 - `matched_total`
 - `ambiguous_file_line_total`
+- `ambiguous_span_overlap_total`
 - `unmatched_mutants_total`
+- unmatched reason counts
 - `static_without_runtime_total`
 - `static_gap_and_runtime_signal`
 - `static_gap_without_runtime_signal`
