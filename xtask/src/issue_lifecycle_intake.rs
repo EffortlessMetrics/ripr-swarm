@@ -1075,12 +1075,14 @@ mod tests {
             })
             .collect::<Result<_, _>>()?;
         for (row, projection) in corpus.rows.iter().zip(projections.iter()) {
-            let snapshot_body = fs::read_to_string(intake_root().join(
-                row.snapshot
-                    .snapshot_path
-                    .clone()
-                    .ok_or_else(|| format!("row `{}` has no snapshot path", row.id))?,
-            ))
+            let snapshot_body = fs::read_to_string(
+                intake_root().join(
+                    row.snapshot
+                        .snapshot_path
+                        .clone()
+                        .ok_or_else(|| format!("row `{}` has no snapshot path", row.id))?,
+                ),
+            )
             .map_err(|error| format!("read snapshot for selection-signal check: {error}"))?;
             let snapshot: serde_json::Value = serde_json::from_str(&snapshot_body)
                 .map_err(|error| format!("parse snapshot for selection-signal check: {error}"))?;

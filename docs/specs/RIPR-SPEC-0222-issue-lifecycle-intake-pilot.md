@@ -17,7 +17,8 @@ Linked issues:
 
 Support-tier impact:
 
-- None. The pilot is an offline typed projection over committed, captured
+- None.
+- The pilot is an offline typed projection over committed, captured
   issue snapshots; it launches no agent, selects no work, edits nothing,
   calls no provider and reads no live GitHub state at validation time.
 
