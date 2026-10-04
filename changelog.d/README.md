@@ -32,7 +32,8 @@ Allowed sections are the ones in `docs/CHANGELOG_POLICY.md`: `Added`,
 
 ## Fold at the release cut
 
-At the release cut, in the same step that resolves `CHANGELOG.md`, append each
-fragment's body (every `*.md` here except this `README.md`) under the matching `Unreleased` section in file-name order,
-then delete the folded fragment files in that commit. The fold happens once, in
-the release-copy step, never inside an ordinary PR.
+At the release cut, in the same step that resolves `CHANGELOG.md`, take every
+`*.md` here except this `README.md` in file-name order and append its entry
+(everything after the `<!-- section: ... -->` line) under the matching
+`Unreleased` section. Delete the folded fragment files in that commit. The fold
+happens once, in the release-copy step, never inside an ordinary PR.
