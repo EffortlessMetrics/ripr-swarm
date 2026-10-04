@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (3)
+
+Reason:
+RIPR-SPEC-0229 merged with RIPR-SPEC-0224 (#5424): the named unselected arm and weak infection now carry into the examined-test miss reason
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -88,7 +88,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify(Mode::Warm), 1);",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `Mode::Frozen`"
         }
       ],
       "stop_reasons": [],

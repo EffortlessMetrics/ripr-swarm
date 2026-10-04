@@ -260,11 +260,22 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
 ## Pending — match_arm_blind (8)
 
 Reason:
-RIPR-SPEC-0093: match-arm selection (#5432) - every related owner call selects another arm, so the changed arm is named as the missing discriminator and infection reads weak; class unchanged
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_blind --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_blind (9)
+
+Reason:
+RIPR-SPEC-0229 merged with RIPR-SPEC-0224 (#5424): the named unselected arm and weak infection now carry into the examined-test miss reason
 
 Command:
 `cargo xtask goldens bless match_arm_blind --reason "..."`

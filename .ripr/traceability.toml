@@ -903,6 +903,8 @@ tests = [
   "crates/ripr/src/output/pilot/tests.rs::pilot_markdown_and_terminal_use_python_repair_card_when_no_seam_ranked",
   "crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages",
   "crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_names_rust_exclusion_instead_of_silently_ranking_nothing",
+  "crates/ripr/tests/cli_smoke.rs::pilot_excludes_rust_when_disabled_in_language_config",
   "crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture",
   "crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config",
   "crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff",
@@ -1136,6 +1138,7 @@ tests = [
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_does_not_restart_a_seam_that_finished",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_never_redirects_into_a_missing_workflow_directory",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_stops_when_pilot_routed_changed_code_to_check",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_status_stops_when_pilot_excluded_rust_from_scope",
   "crates/ripr/tests/cli_smoke.rs::agent_status_routes_a_fresh_workspace_to_pilot",
   "crates/ripr/tests/cli_smoke.rs::agent_status_resumes_the_current_awaiting_repair_attempt",
   "crates/ripr/tests/cli_smoke.rs::agent_status_resumes_only_the_current_attempt_and_refuses_to_guess",
@@ -11739,6 +11742,8 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::sdk_server_declares_snapshot_and_gap_resource_templates",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure",
   "crates/ripr/src/mcp/server_tests.rs::get_gap_rejects_bad_arguments_at_the_dispatch_edge",
+  "crates/ripr/src/mcp/server_tests.rs::get_gap_accepts_canonical_id_at_the_dispatch_edge",
+  "crates/ripr/src/mcp/server_tests.rs::gap_resource_templates_spell_the_identity_canonical_id",
   "crates/ripr/src/mcp/server.rs::tests",
   "crates/ripr/src/mcp/transport.rs::tests",
   "crates/ripr/tests/mcp_sdk.rs",
@@ -12059,6 +12064,27 @@ outputs = [
   "docs/OUTPUT_SCHEMA.md",
   "docs/REPAIR_ATTEMPT.md",
 ]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0224"
+name = "Examined-test miss evidence"
+spec = "docs/specs/RIPR-SPEC-0224-examined-test-miss-evidence.md"
+tests = [
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::reveal_evidence_lists_a_test_whose_assertions_do_not_match_as_a_miss",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_matched_test_ranks_ahead_of_an_examined_miss_and_keeps_its_window_slot",
+  "crates/ripr/src/output/related_test_miss.rs::tests",
+]
+code = [
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/output/related_test_miss.rs",
+  "crates/ripr/src/output/human/explain.rs",
+]
+outputs = []
 metrics = [
   "unit_test_pass_rate",
 ]

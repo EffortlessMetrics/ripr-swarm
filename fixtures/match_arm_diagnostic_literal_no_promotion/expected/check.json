@@ -98,7 +98,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(route(\"focused-test\"), \"proof\", \"sensor\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `\"sensor\"`"
         }
       ],
       "stop_reasons": [],
