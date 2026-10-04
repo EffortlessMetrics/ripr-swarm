@@ -172,6 +172,15 @@ pub(crate) enum MutantOutcome {
     TestsPassed,
 }
 
+impl MutantOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TestsFailed => "tests_failed",
+            Self::TestsPassed => "tests_passed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Expected {
@@ -295,8 +304,10 @@ pub(crate) fn anchored_findings<'a>(check: &'a Value, anchor: &Anchor) -> Vec<&'
         .unwrap_or_default()
 }
 
-/// A gap anywhere on the line routes repair work, so it outranks credit;
-/// credit outranks a limitation because it claims a discriminator exists.
+/// Line-level precedence is this corpus's own policy, not the triage
+/// ranking (which orders findings by where to start). A gap anywhere on the
+/// line routes repair work, so it outranks credit; credit outranks a
+/// limitation because it claims a discriminator exists.
 pub(crate) fn case_verdict(findings: &[&Value]) -> Verdict {
     let verdicts: BTreeSet<Verdict> = findings.iter().map(|f| finding_verdict(f)).collect();
     if verdicts.is_empty() {
@@ -369,6 +380,26 @@ pub(crate) fn summary_contradictions(check: &Value) -> Vec<String> {
     let summary_total = check.pointer("/summary/findings").and_then(Value::as_u64);
     if summary_total.is_some_and(|total| total != findings.len() as u64) {
         codes.push("summary_findings_count_mismatch".to_string());
+    }
+    // Under a suppression policy ripr's per-class buckets count unsuppressed
+    // findings only, while `findings` lists every finding; buckets plus
+    // `suppressed_by_policy` must add back up to the list instead.
+    if let Some(suppressed) = check
+        .pointer("/summary/suppressed_by_policy")
+        .and_then(Value::as_u64)
+    {
+        let buckets: u64 = SUMMARY_CLASSES
+            .iter()
+            .filter_map(|class| {
+                check
+                    .pointer(&format!("/summary/{class}"))
+                    .and_then(Value::as_u64)
+            })
+            .sum();
+        if buckets + suppressed != findings.len() as u64 {
+            codes.push("summary_suppression_count_mismatch".to_string());
+        }
+        return codes;
     }
     for class in SUMMARY_CLASSES {
         let counted = findings
@@ -785,8 +816,8 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         match fs::read(root.join(&file.path)) {
             Ok(bytes) if sha256_hex(&bytes) == file.sha256 => {}
             Ok(_) => violations.push(format!(
-                "subject `{id}` file `{}` does not match its pinned sha256",
-                file.path
+                "subject `{id}` file `{}` does not match its pinned sha256; restore the upstream bytes from {} at {}, or re-pin the sha256 if the pin moved deliberately",
+                file.path, subject.upstream, subject.commit
             )),
             Err(err) => violations.push(format!(
                 "subject `{id}` file `{}` is unreadable: {err}",
@@ -833,7 +864,7 @@ fn files_under(root: &Path) -> Result<BTreeSet<String>, String> {
     Ok(found)
 }
 
-fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
+pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     let id = &case.case_id;
     for (field, value) in [
@@ -861,7 +892,9 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
         .as_deref()
         .is_some_and(|note| note.trim().is_empty())
     {
-        violations.push(format!("case `{id}` hard_case is present but empty"));
+        violations.push(format!(
+            "case `{id}` hard_case is present but empty; say why the case is hard or remove the field"
+        ));
     }
     if case.labeling_observation.excerpt_parity != "matched" {
         violations.push(format!(
@@ -898,7 +931,8 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
     }
     if case.edit_kind == EditKind::BehaviorChange && mutants.len() != 1 {
         violations.push(format!(
-            "case `{id}` is a behavior_change; its one mutant is the edit itself"
+            "case `{id}` is a behavior_change with {} mutants; it must list exactly one, the edit itself",
+            mutants.len()
         ));
     }
     let failing = mutants
@@ -927,13 +961,23 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
         }
         if (mutant.outcome == MutantOutcome::TestsFailed) != mutant.failing_test.is_some() {
             violations.push(format!(
-                "case `{id}` mutant `{}` names a failing test only when the tests failed",
-                mutant.replacement
+                "case `{id}` mutant `{}` is `{}` but {} a failing test; name the failing test exactly when the outcome is tests_failed",
+                mutant.replacement,
+                mutant.outcome.as_str(),
+                if mutant.failing_test.is_some() { "names" } else { "does not name" }
             ));
         }
     }
-    if !safe_relative(&case.diff) || !safe_relative(&case.anchor.file) {
-        violations.push(format!("case `{id}` diff or anchor path is unsafe"));
+    let mut unsafe_path = false;
+    for (field, path) in [("diff", &case.diff), ("anchor.file", &case.anchor.file)] {
+        if !safe_relative(path) {
+            violations.push(format!(
+                "case `{id}` {field} `{path}` is unsafe; use a relative path without `..`"
+            ));
+            unsafe_path = true;
+        }
+    }
+    if unsafe_path {
         return violations;
     }
     if !subject
@@ -948,6 +992,18 @@ fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
     }
     match read(&dir.join(&case.diff)).and_then(|text| parse_patch(&text)) {
         Ok(patches) => {
+            // Every patched path must be a retained file, so applying the
+            // diff can only touch the run-owned copy of the subject.
+            for patch in &patches {
+                if !safe_relative(&patch.path)
+                    || !subject.retained_files.iter().any(|f| f.path == patch.path)
+                {
+                    violations.push(format!(
+                        "case `{id}` diff patches `{}`, which is unsafe or not retained by subject `{}`; patch only retained files",
+                        patch.path, subject.subject_id
+                    ));
+                }
+            }
             let touches = patches.iter().any(|patch| {
                 patch.path == case.anchor.file && patch.added_lines().contains(&case.anchor.line)
             });
@@ -996,60 +1052,114 @@ impl FilePatch {
     }
 }
 
-fn hunk_starts(header: &str) -> Option<(usize, usize)> {
+/// `@@ -a[,b] +c[,d] @@` as (old_start, old_count, new_start, new_count).
+fn hunk_header(header: &str) -> Option<(usize, usize, usize, usize)> {
     let body = header.strip_prefix("@@ -")?;
     let (old, rest) = body.split_once(" +")?;
     let (new, _) = rest.split_once(" @@")?;
-    let start = |range: &str| range.split(',').next()?.parse::<usize>().ok();
-    Some((start(old)?, start(new)?))
+    let range = |range: &str| -> Option<(usize, usize)> {
+        match range.split_once(',') {
+            Some((start, count)) => Some((start.parse().ok()?, count.parse().ok()?)),
+            None => Some((range.parse().ok()?, 1)),
+        }
+    };
+    let (old_start, old_count) = range(old)?;
+    let (new_start, new_count) = range(new)?;
+    Some((old_start, old_count, new_start, new_count))
 }
 
 /// Minimal unified-diff reader for the corpus's edit-in-place patches: one or
-/// more existing files, no renames, creations or deletions.
+/// more existing files, no renames, creations or deletions. Each hunk body is
+/// read to exactly the line counts its header declares, and each hunk's new
+/// start must follow from its old start and the earlier hunks' size changes,
+/// so an anchor read from `added_lines` names the line the edit really adds.
 pub(crate) fn parse_patch(text: &str) -> Result<Vec<FilePatch>, String> {
     let mut patches: Vec<FilePatch> = Vec::new();
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
+    let mut offset: i64 = 0;
+    let mut lines = text.lines().enumerate().peekable();
+    while let Some((idx, line)) = lines.next() {
+        let at = idx + 1;
         if let Some(old) = line.strip_prefix("--- ") {
             let new = lines
                 .next()
-                .and_then(|l| l.strip_prefix("+++ "))
-                .ok_or("`---` header without `+++`")?;
-            let old = old.strip_prefix("a/").ok_or("old path lacks `a/`")?;
-            let new = new.strip_prefix("b/").ok_or("new path lacks `b/`")?;
+                .and_then(|(_, l)| l.strip_prefix("+++ "))
+                .ok_or_else(|| format!("diff line {at}: `---` header is not followed by `+++`"))?;
+            let old = old
+                .strip_prefix("a/")
+                .ok_or_else(|| format!("diff line {at}: old path `{old}` lacks the `a/` prefix"))?;
+            let new = new.strip_prefix("b/").ok_or_else(|| {
+                format!(
+                    "diff line {}: new path `{new}` lacks the `b/` prefix",
+                    at + 1
+                )
+            })?;
             if old != new {
-                return Err(format!("rename `{old}` -> `{new}` is not supported"));
+                return Err(format!(
+                    "diff line {at}: rename `{old}` -> `{new}` is not supported; edit one file in place"
+                ));
             }
             patches.push(FilePatch {
                 path: new.to_string(),
                 hunks: Vec::new(),
             });
+            offset = 0;
         } else if line.starts_with("@@") {
-            let (old_start, new_start) =
-                hunk_starts(line).ok_or_else(|| format!("bad hunk header `{line}`"))?;
-            let patch = patches.last_mut().ok_or("hunk before file header")?;
+            let (old_start, old_count, new_start, new_count) = hunk_header(line)
+                .ok_or_else(|| format!("diff line {at}: bad hunk header `{line}`"))?;
+            if old_count > 0 && new_count > 0 && new_start as i64 != old_start as i64 + offset {
+                return Err(format!(
+                    "diff line {at}: hunk new start {new_start} does not follow from old start {old_start} and earlier hunks (expected {}); regenerate the diff",
+                    old_start as i64 + offset
+                ));
+            }
+            let patch = patches.last_mut().ok_or_else(|| {
+                format!("diff line {at}: hunk before any `---`/`+++` file header")
+            })?;
             let mut hunk = Hunk {
                 old_start,
                 new_start,
                 lines: Vec::new(),
             };
-            while let Some(next) = lines.peek() {
-                let Some(kind) = next.chars().next() else {
-                    break;
+            let (mut old_seen, mut new_seen) = (0usize, 0usize);
+            while old_seen < old_count || new_seen < new_count {
+                let Some((body_idx, next)) = lines.next() else {
+                    return Err(format!(
+                        "diff line {at}: hunk ends early ({old_seen}/{old_count} old and {new_seen}/{new_count} new lines); regenerate the diff"
+                    ));
                 };
-                if !matches!(kind, ' ' | '+' | '-' | '\\') {
-                    break;
+                let kind = next.chars().next().unwrap_or(' ');
+                match kind {
+                    ' ' => {
+                        old_seen += 1;
+                        new_seen += 1;
+                    }
+                    '-' => old_seen += 1,
+                    '+' => new_seen += 1,
+                    '\\' => continue,
+                    _ => {
+                        return Err(format!(
+                            "diff line {}: `{next}` is not a hunk body line; the hunk header declares more lines than follow",
+                            body_idx + 1
+                        ));
+                    }
                 }
-                if kind != '\\' {
-                    hunk.lines.push((kind, next[1..].to_string()));
-                }
+                hunk.lines
+                    .push((kind, next.get(1..).unwrap_or_default().to_string()));
+            }
+            if old_seen != old_count || new_seen != new_count {
+                return Err(format!(
+                    "diff line {at}: hunk body has {old_seen} old and {new_seen} new lines but the header declares {old_count} and {new_count}"
+                ));
+            }
+            if lines.peek().is_some_and(|(_, l)| l.starts_with('\\')) {
                 lines.next();
             }
+            offset += new_count as i64 - old_count as i64;
             patch.hunks.push(hunk);
         }
     }
     if patches.is_empty() {
-        return Err("no file patches".to_string());
+        return Err("diff has no `---`/`+++` file patches".to_string());
     }
     Ok(patches)
 }
@@ -1122,9 +1232,21 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
     }
     copy_tree(&dir.join("subjects").join(&case.subject_id), &work)?;
     let diff_path = dir.join(&case.diff);
-    for patch in parse_patch(&read(&diff_path)?)? {
+    let context = |err: String| {
+        format!(
+            "case `{}` ({}): {err}; the retained excerpt and the case diff disagree, so restore the excerpt or regenerate the diff",
+            case.case_id,
+            normalize_path(&diff_path)
+        )
+    };
+    for patch in parse_patch(&read(&diff_path)?).map_err(context)? {
+        // validate() already refuses these; refuse again here so no caller
+        // can write outside the run-owned copy.
+        if !safe_relative(&patch.path) {
+            return Err(context(format!("patch path `{}` is unsafe", patch.path)));
+        }
         let target = work.join(&patch.path);
-        let patched = apply_patch(&read(&target)?, &patch)?;
+        let patched = apply_patch(&read(&target)?, &patch).map_err(context)?;
         fs::write(&target, patched)
             .map_err(|err| format!("write {}: {err}", normalize_path(&target)))?;
     }
@@ -1156,6 +1278,11 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<Value, String> 
         )
     })?;
     relativize_probe_files(&mut check, &work);
+    // ripr may report the canonical root (macOS `/var` is `/private/var`);
+    // strip that spelling too so findings still land on their anchors.
+    if let Ok(canonical) = fs::canonicalize(&work) {
+        relativize_probe_files(&mut check, &canonical);
+    }
     Ok(check)
 }
 
@@ -1222,6 +1349,12 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
     }
     match sub {
         "validate" => {
+            if args.len() > 1 {
+                return Err(
+                    "verdict-corpus validate takes no options; `--out` applies to report and check"
+                        .to_string(),
+                );
+            }
             let corpus = validated_corpus(dir)?;
             println!(
                 "verdict-corpus: {} cases across {} subjects are valid",
@@ -1235,11 +1368,22 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             // Read the golden before writing anything, so an `--out` that
             // aliases the expected directory cannot make the check pass.
             let expected_path = dir.join("expected").join("report.json");
+            let expected_md_path = dir.join("expected").join("report.md");
             let expected = if sub == "check" {
-                Some(read(&expected_path)?)
+                Some((read(&expected_path)?, read(&expected_md_path)?))
             } else {
                 None
             };
+            let resolve = |p: &Path| {
+                std::path::absolute(p)
+                    .map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
+            };
+            if sub == "check" && resolve(&out)? == resolve(&dir.join("expected"))? {
+                return Err(format!(
+                    "verdict-corpus: --out {} is the expected-report directory; use `report --out` there to re-bless deliberately when a verdict change is intended",
+                    normalize_path(&out)
+                ));
+            }
             let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
             let json = render_report_json(&report)?;
             let markdown = render_report_markdown(&report);
@@ -1259,7 +1403,17 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 report.contradiction_rate.denominator,
                 normalize_path(&out)
             );
-            if let Some(expected) = expected
+            if let Some((_, expected_md)) = &expected
+                && *expected_md != markdown
+            {
+                return Err(format!(
+                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report --out {}`",
+                    normalize_path(&expected_md_path),
+                    first_differing_line(expected_md, &markdown),
+                    normalize_path(&dir.join("expected"))
+                ));
+            }
+            if let Some((expected, _)) = expected
                 && expected != json
             {
                 return Err(format!(

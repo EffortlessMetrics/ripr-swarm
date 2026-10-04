@@ -5,7 +5,7 @@
   "corpus_version": "2026-10-04.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout, the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or breaks them (behavior_change), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
-  "verdict_projection": "Only candidate_current findings on the anchor file and line count. exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. This mirrors the per-finding reading in crates/ripr/src/output/human/triage.rs.",
+  "verdict_projection": "Only candidate_current findings on the anchor file and line count. exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
     "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
@@ -679,7 +679,7 @@
           "limited"
         ]
       },
-      "reasoning": "No test parses a requirement at the 31/32 comparator limit, so tightening the limit by one survives. ripr limits on the public API path, an acceptable abstention.",
+      "reasoning": "No test parses a requirement at the 31/32 comparator limit, so tightening the limit by one keeps the tests passing. ripr limits on the public API path, an acceptable abstention.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "limited",
@@ -866,7 +866,7 @@
           "limited"
         ]
       },
-      "reasoning": "Only the too-short buffer is tested, so accepting a too-long buffer survives. ripr's gap verdict is ideal, though its stated reason (unestablished assertion context) is not the real gap.",
+      "reasoning": "Only the too-short buffer is tested, so accepting a too-long buffer keeps the tests passing. ripr's gap verdict is ideal, though its stated reason (unestablished assertion context) is not the real gap.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "gap",
@@ -915,7 +915,7 @@
           "limited"
         ]
       },
-      "reasoning": "Only the too-long buffer is tested, so silent truncation into a short buffer survives. ripr's gap verdict is ideal.",
+      "reasoning": "Only the too-long buffer is tested, so silent truncation into a short buffer keeps the tests passing. ripr's gap verdict is ideal.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "gap",
@@ -964,7 +964,7 @@
           "limited"
         ]
       },
-      "reasoning": "The test! cases format 0, MIN and MAX values whose tail never lands on 9 or 10, so both mutants survive. ripr's no_static_path is an acceptable abstention; a gap would be ideal.",
+      "reasoning": "The test! cases format 0, MIN and MAX values whose tail never lands on 9 or 10, so the tests still pass under both mutants. ripr's no_static_path is an acceptable abstention; a gap would be ideal.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "limited",
@@ -1019,7 +1019,7 @@
           "limited"
         ]
       },
-      "reasoning": "word_byte asserts only is_word_byte(b'a') and !is_word_byte(b'-'), so dropping '_' or 'Z' survives. ripr's weakly_exposed gap is ideal.",
+      "reasoning": "word_byte asserts only is_word_byte(b'a') and !is_word_byte(b'-'), so dropping '_' or 'Z' keeps the tests passing. ripr's weakly_exposed gap is ideal.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "gap",
@@ -1312,7 +1312,7 @@
           "limited"
         ]
       },
-      "reasoning": "No test value leaves exactly 999 or 1000 for the loop, so both mutants survive. ripr limits, an acceptable abstention.",
+      "reasoning": "No test value leaves exactly 999 or 1000 for the loop, so the tests still pass under both mutants. ripr limits, an acceptable abstention.",
       "labeling_observation": {
         "ripr_commit": "a7a089e",
         "full_checkout_verdict": "limited",

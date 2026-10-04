@@ -94,8 +94,11 @@ The observed verdict reads only candidate-current findings on the anchor:
 `exposed` is credited; a named `static_limit_kind` or a `no_static_path`,
 `infection_unknown`, `propagation_unknown`, or `static_unknown` class is
 limited; any other class is a gap; no anchored finding is silent. A gap on
-the line outranks credit, and credit outranks a limit. This mirrors the
-per-finding reading of the human "Start here" triage.
+the line outranks credit, and credit outranks a limit. The per-finding
+reading mirrors the human "Start here" triage. The line-level precedence is
+this corpus's own policy, not triage's ranking: triage orders findings to
+pick where to start, while the corpus asks which verdict a developer reading
+the line would act on, and a gap there routes repair work.
 
 Each case scores as `ideal`, `abstained` (acceptable but not ideal),
 `false_actionable` (a gap where tests discriminate), `false_exposed` (credit
@@ -117,7 +120,9 @@ summary counts that disagree with the findings list.
   reader that refuses drifted context, runs `ripr check --json`, and writes
   `report.json` and `report.md`.
 - `check [--out <dir>]` does the same and fails when `report.json` differs
-  from `fixtures/rust-verdict-corpus/expected/report.json`.
+  from `fixtures/rust-verdict-corpus/expected/report.json` or `report.md`
+differs from `expected/report.md`. It refuses an
+  `--out` that is the expected directory, so it cannot replace its golden.
 
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
@@ -159,9 +164,9 @@ the distinct codes seen in that case's run.
   four semver tests fail, so the tests discriminate the change. ripr 0.10's
   `reachable_unrevealed` would score `false_actionable`; the current
   `infection_unknown` scores `abstained`.
-- itoa `remain > 9` rewritten as `remain >= 10`: both mutants survive the
-  macro-generated tests, so a gap is ideal and ripr's `no_static_path`
-  scores `abstained`.
+- itoa `remain > 9` rewritten as `remain >= 10`: the macro-generated tests
+  still pass under both mutants, so a gap is ideal and ripr's
+  `no_static_path` scores `abstained`.
 - semver `op()` at 1.0.23 `src/parse.rs:272`: ripr says a related test
   reaches `op` while `related_tests_total` is 0, recorded as
   `reach_yes_without_related_tests`.
@@ -176,10 +181,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `case_verdict_ranks_gap_over_credit_over_limit`
 - `contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding`
 - `summary_contradictions_compare_counts_with_the_findings_list`
+- `summary_contradictions_account_for_suppressed_findings`
 - `ratio_text_is_fixed_precision_and_names_an_empty_denominator`
 - `apply_patch_rewrites_the_anchored_line_and_reports_it_as_added`
 - `apply_patch_refuses_drifted_context`
 - `parse_patch_refuses_renames_and_empty_input`
+- `parse_patch_holds_hunks_to_their_declared_counts_and_starts`
 - `relativize_probe_files_strips_only_the_run_root`
 - `committed_corpus_is_valid_and_measures_both_error_directions`
 - `validator_rejects_a_label_that_contradicts_its_mutant_outcomes`
@@ -187,6 +194,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_rejects_a_retained_file_whose_digest_moved`
 - `validator_rejects_an_anchor_the_diff_does_not_add`
 - `validator_rejects_ids_that_are_not_one_safe_path_segment`
+- `validator_rejects_a_diff_that_patches_an_unretained_path`
 - `validator_requires_both_truth_directions`
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`

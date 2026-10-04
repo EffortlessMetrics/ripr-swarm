@@ -213,7 +213,61 @@ fn parse_patch_refuses_renames_and_empty_input() {
     let rename_error = parse_patch(rename).err().unwrap_or_default();
     assert!(rename_error.contains("rename"), "{rename_error}");
     let empty_error = parse_patch("").err().unwrap_or_default();
-    assert!(empty_error.contains("no file patches"), "{empty_error}");
+    assert!(
+        empty_error.contains("no `---`/`+++` file patches"),
+        "{empty_error}"
+    );
+}
+
+#[test]
+fn parse_patch_holds_hunks_to_their_declared_counts_and_starts() {
+    // A new start that does not follow from the old start would move the
+    // anchor off the line the edit really adds.
+    let shifted = PATCH.replace("+2,3 @@", "+52,3 @@");
+    let shifted_error = parse_patch(&shifted).err().unwrap_or_default();
+    assert!(
+        shifted_error.contains("does not follow from old start 2"),
+        "{shifted_error}"
+    );
+    // A truncated hunk is refused rather than applied partially.
+    let truncated = PATCH.strip_suffix(" three\n").unwrap_or_default();
+    let truncated_error = parse_patch(truncated).err().unwrap_or_default();
+    assert!(
+        truncated_error.contains("hunk ends early"),
+        "{truncated_error}"
+    );
+    // A second file header is never swallowed as a removed line.
+    let two_files = format!(
+        "{}--- a/src/two.rs\n+++ b/src/two.rs\n@@ -1 +1 @@\n-x\n+y\n",
+        PATCH
+    );
+    let patches = parse_patch(&two_files).unwrap_or_default();
+    assert_eq!(
+        patches.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
+        vec!["src/lib.rs", "src/two.rs"]
+    );
+}
+
+#[test]
+fn summary_contradictions_account_for_suppressed_findings() {
+    let suppressed = json!({
+        "summary": {"findings": 2, "reachable_unrevealed": 1, "exposed": 0, "suppressed_by_policy": 1},
+        "findings": [
+            finding("reachable_unrevealed", 10, "candidate_current"),
+            finding("reachable_unrevealed", 11, "candidate_current"),
+        ],
+    });
+    assert!(
+        summary_contradictions(&suppressed).is_empty(),
+        "{:?}",
+        summary_contradictions(&suppressed)
+    );
+    let mut drifted = suppressed.clone();
+    drifted["summary"]["suppressed_by_policy"] = json!(0);
+    assert_eq!(
+        summary_contradictions(&drifted),
+        vec!["summary_suppression_count_mismatch".to_string()]
+    );
 }
 
 #[test]
@@ -333,6 +387,44 @@ fn validator_rejects_ids_that_are_not_one_safe_path_segment() -> Result<(), Stri
         violations
             .iter()
             .any(|v| v.contains("subject id `a/b` is not a single safe path segment")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_rejects_a_diff_that_patches_an_unretained_path() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let mut raw: Value =
+        serde_json::from_str(&read(&dir.join("corpus.json"))?).map_err(|err| err.to_string())?;
+    let case_diff = raw["cases"][0]["diff"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let original = read(&dir.join(&case_diff))?;
+    let escape = "diff --git a/../../Cargo.toml b/../../Cargo.toml\n--- a/../../Cargo.toml\n+++ b/../../Cargo.toml\n@@ -1,1 +1,1 @@\n-[workspace]\n+[package]\n";
+    let scratch =
+        std::env::temp_dir().join(format!("verdict-corpus-escape-{}", std::process::id()));
+    fs::create_dir_all(scratch.join("cases")).map_err(|err| err.to_string())?;
+    fs::write(
+        scratch.join("cases/escape.diff"),
+        format!("{original}{escape}"),
+    )
+    .map_err(|err| err.to_string())?;
+    raw["cases"][0]["diff"] = json!("cases/escape.diff");
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    let case = &corpus.cases[0];
+    let subject = corpus
+        .subjects
+        .iter()
+        .find(|s| s.subject_id == case.subject_id)
+        .ok_or("subject")?;
+    let violations = case_violations(case, subject, &scratch);
+    let _ = fs::remove_dir_all(&scratch);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("diff patches `../../Cargo.toml`, which is unsafe or not retained")),
         "{violations:#?}"
     );
     Ok(())
