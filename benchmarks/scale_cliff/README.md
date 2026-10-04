@@ -15,7 +15,9 @@ cargo xtask scale-cliff-benchmark --repo /path/to/rust --base HEAD~3 --timeout-m
 ```
 
 `--mode` and `--base` apply to `check` only; `pilot` always analyzes the whole
-repository. `--sizes` is ignored when `--repo` is given.
+repository. `--sizes` is ignored when `--repo` is given. The target HEAD and
+`--base` are resolved to commit IDs before sampling; `check` receives that
+base SHA. If HEAD moves during the run, the receipt is `failed`.
 
 The receipt (`target/ripr/reports/scale-cliff-benchmark.{json,md}`) records
 wall time, peak RSS (GNU `time -v`, Linux runners only; `null` elsewhere),
@@ -24,10 +26,10 @@ check finding counts, and a log-log scaling exponent across synthetic sizes
 is a plain failure (bad `--base`, missing `git`, binary error); `timeout` and
 `refused_oversized` remain `cliff_observed` and name the next flag
 (`--timeout-ms` or `--index-cap`). With `--repo`, `revision` and
-`base_revision` are the target repository HEAD and the resolved `--base`, not
-the xtask checkout. The index cap is raised to 1,000,000 by default so the
-run measures analysis cost instead of the refusal; pass `--index-cap product`
-to measure the shipped behavior.
+`base_revision` are captured from the target repository before sampling, not
+from the xtask checkout and not from a later moving ref. The index cap is
+raised to 1,000,000 by default so the run measures analysis cost instead of
+the refusal; pass `--index-cap product` to measure the shipped behavior.
 
 ## Why synthetic is not enough
 
