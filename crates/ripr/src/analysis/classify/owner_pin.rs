@@ -50,6 +50,7 @@ use crate::analysis::syntax::{
     owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
+use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -95,11 +96,15 @@ impl OwnerPinSyntax {
 
     fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
+        // Parses every workspace file once per run, so on a warm `ripr check`
+        // of a large workspace this scan dominated wall time (37% on
+        // ripr-swarm). Files are independent and the result is a set, so the
+        // scan runs on the rayon pool with an order-independent answer.
         let ambiguous = ambiguous.get_or_insert_with(|| {
             index
                 .files
-                .values()
-                .flat_map(|facts| {
+                .par_iter()
+                .flat_map_iter(|(_, facts)| {
                     trusted_macro_binding_ambiguities(
                         &facts.source,
                         &index.package_names,

@@ -16,7 +16,9 @@ are scoped or reviewed.
   default 30s deadline keeps going instead of restarting. On a 4-core Linux
   host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
   ripgrep and 114s to 27s on regex, with byte-identical pilot artifacts. An
-  explicit `--timeout-ms` remains a hard limit.
+  explicit `--timeout-ms` remains a hard limit. A warm `ripr check` scans
+  workspace files for shadowed assertion macros on all cores, cutting a
+  one-line check of ripr-swarm from 7.5s to 5.6s with identical output.
 
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
