@@ -398,7 +398,8 @@ fn write_repo_exposure_json_document<W: io::Write>(
         generated_skip,
     } = disclosures;
     let metrics = ExposureMetrics::from(classified);
-    let canonical_gaps = canonical_gap_identities(classified);
+    // Only seams without a prerendered entry need gap identities.
+    let canonical_gaps = std::cell::OnceCell::new();
 
     writeln!(out, "{{")?;
     writeln!(
@@ -634,6 +635,8 @@ fn write_repo_exposure_json_document<W: io::Write>(
             Some(seam_json) => out.write_all(seam_json.as_bytes())?,
             None => {
                 let mut seam_json = String::new();
+                let canonical_gaps =
+                    canonical_gaps.get_or_init(|| canonical_gap_identities(classified));
                 push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
                 out.write_all(seam_json.as_bytes())?;
             }
