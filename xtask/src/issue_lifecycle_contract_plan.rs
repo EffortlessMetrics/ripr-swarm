@@ -52,8 +52,7 @@ pub(crate) const DEFAULT_CONTRACT_PLAN_CORPUS_DIR: &str = "fixtures/issue_lifecy
 pub(crate) const REQUIRED_ISSUE_LIFECYCLE_CONTRACT_PLAN_CATEGORIES: [&str; 2] =
     ["contract_required", "narrow_accepted_contract_bug"];
 
-pub(crate) const ISSUE_LIFECYCLE_CONTRACT_PLAN_CLAIM_BOUNDARY: &str =
-    "Read-only contract/plan pilot receipt: two exact real issue snapshots \
+pub(crate) const ISSUE_LIFECYCLE_CONTRACT_PLAN_CLAIM_BOUNDARY: &str = "Read-only contract/plan pilot receipt: two exact real issue snapshots \
  traverse the contract/plan decision boundary with distinct author, adversary \
  and root fixture identities; it claims no decision correctness beyond these \
  two rows, no implementation, no plan execution and no parent acceptance.";
@@ -527,7 +526,10 @@ pub(crate) fn build_contract_plan_projection(
         issue_ref: row.snapshot.issue_ref.clone(),
         category: row.category.clone(),
         current_main: row.current_main.clone(),
-        contract_state: row.contract.as_ref().map(|contract| contract.contract_state),
+        contract_state: row
+            .contract
+            .as_ref()
+            .map(|contract| contract.contract_state),
         root_disposition: row
             .contract
             .as_ref()
@@ -536,9 +538,10 @@ pub(crate) fn build_contract_plan_projection(
             .contract
             .as_ref()
             .map_or_else(Vec::new, |contract| contract.open_decisions.clone()),
-        adversary_findings: row.contract.as_ref().map_or_else(Vec::new, |contract| {
-            contract.adversary.findings.clone()
-        }),
+        adversary_findings: row
+            .contract
+            .as_ref()
+            .map_or_else(Vec::new, |contract| contract.adversary.findings.clone()),
         adversary_none_found: row
             .contract
             .as_ref()
@@ -1110,14 +1113,10 @@ mod tests {
             ));
         }
         if row.attempt.contract_artifacts.acceptance.is_some() {
-            return Err(
-                "no acceptance artifact may exist while open decisions remain".to_string(),
-            );
+            return Err("no acceptance artifact may exist while open decisions remain".to_string());
         }
         if row.planning.acceptance_omitted.is_empty() {
-            return Err(
-                "the contract plan must disclose its omitted acceptance rows".to_string(),
-            );
+            return Err("the contract plan must disclose its omitted acceptance rows".to_string());
         }
         Ok(())
     }
@@ -1256,8 +1255,7 @@ mod tests {
         }
         if matches!(
             row.attempt.disposition,
-            IssueLifecycleDispositionV1::Completed
-                | IssueLifecycleDispositionV1::QualifiedOnePr
+            IssueLifecycleDispositionV1::Completed | IssueLifecycleDispositionV1::QualifiedOnePr
         ) {
             return Err("open decisions must block implementation-ready dispositions".to_string());
         }
@@ -1294,28 +1292,21 @@ mod tests {
                 "the rejected-campaign control must land on one_pr with its rationale".to_string(),
             );
         }
-        if !campaign_rejected
-            .row
-            .planning
-            .shape_rationale
-            .contains("rejected")
-        {
-            return Err("the rejected-campaign control must record the rejection rationale".to_string());
+        if !campaign_rejected.row.planning.shape_rationale.contains("rejected") {
+            return Err(
+                "the rejected-campaign control must record the rejection rationale".to_string(),
+            );
         }
-        let one_pr_rejected =
-            control_by_id(&controls, "control_one_pr_rejected_when_incoherent")?;
+        let one_pr_rejected = control_by_id(&controls, "control_one_pr_rejected_when_incoherent")?;
         if one_pr_rejected.row.planning.shape_decision != IssueLifecyclePlanShapeV1::Campaign {
             return Err(
                 "the rejected-one-PR control must land on campaign with its rationale".to_string(),
             );
         }
-        if !one_pr_rejected
-            .row
-            .planning
-            .shape_rationale
-            .contains("rejected")
-        {
-            return Err("the rejected-one-PR control must record the rejection rationale".to_string());
+        if !one_pr_rejected.row.planning.shape_rationale.contains("rejected") {
+            return Err(
+                "the rejected-one-PR control must record the rejection rationale".to_string(),
+            );
         }
         // The real contract row considered and rejected a campaign on the
         // record: its shape rationale must name the rejection.
@@ -1324,11 +1315,7 @@ mod tests {
         if contract_row.planning.shape_decision != IssueLifecyclePlanShapeV1::OnePr {
             return Err("the real contract row must land on one_pr".to_string());
         }
-        if !contract_row
-            .planning
-            .shape_rationale
-            .contains("rejected")
-        {
+        if !contract_row.planning.shape_rationale.contains("rejected") {
             return Err("the real contract row must record the campaign rejection".to_string());
         }
         Ok(())
@@ -1367,9 +1354,8 @@ mod tests {
         }
         // Plan law: a plan minting behavior authority fails closed.
         let mut mutated_plan = row.clone();
-        mutated_plan.planning.shape_rationale = format!(
-            "implements {draft_identity} as the behavior authority"
-        );
+        mutated_plan.planning.shape_rationale =
+            format!("implements {draft_identity} as the behavior authority");
         let failures = assess_contract_plan_row(&mutated_plan);
         if !failures
             .iter()
@@ -1401,8 +1387,7 @@ mod tests {
             }
         }
         let mut mutated = row_by_category(&corpus, "narrow_accepted_contract_bug")?.clone();
-        mutated.planning.portfolio_placement =
-            "writes active.toml to select this work".to_string();
+        mutated.planning.portfolio_placement = "writes active.toml to select this work".to_string();
         let failures = assess_contract_plan_row(&mutated);
         if !failures
             .iter()
