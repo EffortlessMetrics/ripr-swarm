@@ -68,6 +68,7 @@ fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<
         "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\nclass ScoreChecks(unittest.TestCase):\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n",
         "import pytest as pt\nfrom src.subject import score\n@pt.mark.skip(reason='disabled')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
         "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('disabled')\ndef test_score():\n    assert score(0) == 8\n",
+        "from pytest import mark as marks\nfrom src.subject import score\n@marks.skip(reason='disabled')\nclass Mixin:\n    def test_score(self):\n        assert score(0) == 8\nclass TestScore(Mixin):\n    pass\n",
     ] {
         let finding = classify_case(
             "def score(value):\n    return 8\n",

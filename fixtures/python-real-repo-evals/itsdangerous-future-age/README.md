@@ -56,7 +56,8 @@ the resulting production/test digests. `evidence/native.json` retains 13 native
 rows, source/driver/lock identities and JUnit with nonempty subjects and zero
 setup errors. Four skip rows execute no bodies; the expected-failure row runs
 its body despite pytest using its skipped result bucket. The public JUnit text
-is a labeled projection replacing only the absolute run-directory text. Raw
+is a labeled decoded-text projection that normalizes CRLF to LF and replaces
+the absolute run-root text with `[RUN_ROOT]`. Raw
 stdout/stderr/JUnit bytes remain in task-owned proof storage and their original
 SHA-256 values are retained; no public raw-artifact availability is claimed.
 
