@@ -2289,7 +2289,7 @@ fn two_workspace_folders_warn_a_generic_client_at_startup() -> Result<(), String
             "expected one workspace_ambiguous window/showMessage, got: {notifications:?}"
         ));
     }
-    if !warning_names_both_workspace_folders(&shown[0], &first.path, &second.path) {
+    if !warning_names_both_workspace_folders(shown[0], &first.path, &second.path) {
         return Err(format!("warning must name the folders, got: {}", shown[0]));
     }
     if !messages_of(&notifications, "window/logMessage")
