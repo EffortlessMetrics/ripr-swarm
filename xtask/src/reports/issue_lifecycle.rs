@@ -13,12 +13,11 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::issue_lifecycle_attempt::{
-    ISSUE_LIFECYCLE_CLAIM_BOUNDARY, ISSUE_LIFECYCLE_FIXTURE_CORPUS_SCHEMA_VERSION,
-    ISSUE_LIFECYCLE_CORPUS_SCHEMA_VERSION, ISSUE_LIFECYCLE_SCORECARD_SCHEMA_VERSION,
+    ISSUE_LIFECYCLE_CLAIM_BOUNDARY, ISSUE_LIFECYCLE_CORPUS_SCHEMA_VERSION,
+    ISSUE_LIFECYCLE_FIXTURE_CORPUS_SCHEMA_VERSION, ISSUE_LIFECYCLE_SCORECARD_SCHEMA_VERSION,
     IssueLifecycleDispositionV1, IssueLifecycleFixtureCorpusV1, IssueLifecycleRowAssessmentV1,
-    assess_issue_lifecycle_attempt, issue_lifecycle_row_digest,
-    load_issue_lifecycle_corpus, load_issue_lifecycle_fixture_corpus,
-    missing_issue_lifecycle_required_scenarios,
+    assess_issue_lifecycle_attempt, issue_lifecycle_row_digest, load_issue_lifecycle_corpus,
+    load_issue_lifecycle_fixture_corpus, missing_issue_lifecycle_required_scenarios,
 };
 
 const DEFAULT_CAPTURED_PATH: &str = "fixtures/issue_lifecycle_attempts/corpus.json";
@@ -195,7 +194,9 @@ pub(crate) fn build_issue_lifecycle_scorecard(
             });
             continue;
         }
-        let disposition = row.disposition.unwrap_or(IssueLifecycleDispositionV1::NotRun);
+        let disposition = row
+            .disposition
+            .unwrap_or(IssueLifecycleDispositionV1::NotRun);
         if row.synthetic {
             synthetic_lifecycles += 1;
             continue;
@@ -306,8 +307,7 @@ pub(crate) fn assess_issue_lifecycle_fixture_corpus(
 }
 
 fn parse_captured_arg(args: &[String]) -> Result<String, String> {
-    const USAGE: &str =
-        "usage: cargo xtask issue-lifecycle-scorecard [--captured <corpus.json>]";
+    const USAGE: &str = "usage: cargo xtask issue-lifecycle-scorecard [--captured <corpus.json>]";
     let mut captured = None;
     let mut index = 0;
     while index < args.len() {
@@ -337,9 +337,7 @@ pub(crate) fn issue_lifecycle_scorecard_report(args: &[String]) -> Result<(), St
     let schema_version = parsed
         .get("schema_version")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            format!("issue lifecycle corpus {captured} is missing `schema_version`")
-        })?;
+        .ok_or_else(|| format!("issue lifecycle corpus {captured} is missing `schema_version`"))?;
     let (scorecard, failures) = match schema_version {
         ISSUE_LIFECYCLE_FIXTURE_CORPUS_SCHEMA_VERSION => {
             let corpus = load_issue_lifecycle_fixture_corpus(&body)?;
@@ -395,9 +393,7 @@ pub(crate) fn issue_lifecycle_scorecard_json(
     Ok(format!("{body}\n"))
 }
 
-pub(crate) fn issue_lifecycle_scorecard_markdown(
-    scorecard: &IssueLifecycleScorecardV1,
-) -> String {
+pub(crate) fn issue_lifecycle_scorecard_markdown(scorecard: &IssueLifecycleScorecardV1) -> String {
     let mut body = String::new();
     body.push_str("# Issue lifecycle scorecard\n\n");
     body.push_str(&format!("Claim boundary: {}\n\n", scorecard.claim_boundary));
@@ -454,12 +450,12 @@ mod tests {
     use crate::issue_lifecycle_attempt::{
         ISSUE_LIFECYCLE_ATTEMPT_SCHEMA_VERSION, IssueLifecycleAttemptV1,
         IssueLifecycleBaseAttemptRefV1, IssueLifecycleBurnDownStateV1, IssueLifecycleBurnDownV1,
-        IssueLifecycleClaimEventKindV1, IssueLifecycleClaimEventV1,
-        IssueLifecycleCloseoutStateV1, IssueLifecycleCloseoutV1, IssueLifecycleContextV1,
-        IssueLifecycleContractArtifactsV1, IssueLifecycleContractDecisionV1,
-        IssueLifecycleEvidenceRefV1, IssueLifecycleExecutionRefsV1, IssueLifecycleInitialV1,
-        IssueLifecycleInformationCompletenessV1, IssueLifecycleIntakeV1,
-        IssueLifecycleIssueSnapshotV1, IssueLifecyclePlanV1, IssueLifecycleProgressV1,
+        IssueLifecycleClaimEventKindV1, IssueLifecycleClaimEventV1, IssueLifecycleCloseoutStateV1,
+        IssueLifecycleCloseoutV1, IssueLifecycleContextV1, IssueLifecycleContractArtifactsV1,
+        IssueLifecycleContractDecisionV1, IssueLifecycleEvidenceRefV1,
+        IssueLifecycleExecutionRefsV1, IssueLifecycleInformationCompletenessV1,
+        IssueLifecycleInitialV1, IssueLifecycleIntakeV1, IssueLifecycleIssueSnapshotV1,
+        IssueLifecyclePlanV1, IssueLifecycleProgressV1,
     };
 
     fn hex64(fill: char) -> String {
@@ -906,7 +902,9 @@ mod tests {
             match parse_captured_arg(&args) {
                 Err(_error) => {}
                 Ok(path) => {
-                    return Err(format!("malformed arguments were accepted as {path}: {args:?}"));
+                    return Err(format!(
+                        "malformed arguments were accepted as {path}: {args:?}"
+                    ));
                 }
             }
         }

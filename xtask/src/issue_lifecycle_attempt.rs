@@ -567,9 +567,7 @@ pub(crate) fn assess_issue_lifecycle_attempt(
             return base(
                 false,
                 None,
-                vec![format!(
-                    "intake evidence {index} is malformed: zero bytes"
-                )],
+                vec![format!("intake evidence {index} is malformed: zero bytes")],
             );
         }
     }
@@ -604,9 +602,7 @@ pub(crate) fn assess_issue_lifecycle_attempt(
     if disposition == IssueLifecycleDispositionV1::QualifiedOnePr
         && row.contract_decision.spec_required
     {
-        reasons.push(
-            "spec_required decision blocks a qualified_one_pr qualification".to_string(),
-        );
+        reasons.push("spec_required decision blocks a qualified_one_pr qualification".to_string());
         disposition = IssueLifecycleDispositionV1::QualifiedSpecRequired;
     }
 
@@ -673,8 +669,7 @@ pub(crate) fn assess_issue_lifecycle_attempt(
                 &mut reasons,
             );
         }
-        if !row.burn_down.uncovered_rows.is_empty() || !row.burn_down.contradicted_rows.is_empty()
-        {
+        if !row.burn_down.uncovered_rows.is_empty() || !row.burn_down.contradicted_rows.is_empty() {
             record_closeout_downgrade(
                 &mut disposition,
                 if merged {
