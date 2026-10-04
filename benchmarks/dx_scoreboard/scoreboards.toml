@@ -184,6 +184,7 @@ regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
 source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_verdict_rate"
+pending_reason = "the hand-checked verdict corpus report lands with #5318"
 
 [[metric]]
 id = "trust.verdict_corpus_false_actionable"
@@ -196,6 +197,7 @@ regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
 source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_actionable_rate"
+pending_reason = "the hand-checked verdict corpus report lands with #5318"
 
 [[metric]]
 id = "trust.verdict_corpus_abstention"
@@ -208,6 +210,7 @@ regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
 source = "file:fixtures/rust-verdict-corpus/expected/report.json#abstention_rate"
+pending_reason = "the hand-checked verdict corpus report lands with #5318"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"
@@ -355,9 +358,11 @@ title = "Seconds for the scripted walk on one crate, setup excluded"
 unit = "s"
 direction = "lower_is_better"
 target = 10
-# The walk's own rule: fail above 1.5x the last accepted run plus 0.5 s.
+# The walk's own rule: fail above 1.5x the last accepted run plus 0.5 s,
+# checked for every case against the same case in the baseline.
 regression_pct = 50
 regression_floor = 0.5
+regression_additive = true
 runner_dependent = true
 per_repo = true
 source = "ingest:first-run"

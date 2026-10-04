@@ -575,7 +575,9 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"secs","value":0.5,"budget":5,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict","value":"infection_unknown","budget":null,"better":"review_on_change"}"#,
@@ -583,6 +585,7 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":2,"budget":0,"better":"equal"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"friction_count","value":2,"budget":0,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
     ]
     .join("\n");
     let value = parse_ingest_text(&text).unwrap_or_default();
@@ -705,5 +708,156 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
     assert!(
         validate_corpus(&[entry("a", full), entry("a", full)])
             .is_err_and(|e| e.contains("duplicate"))
+    );
+}
+
+#[test]
+fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
+    let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
+    let convert =
+        |text: String| parse_ingest_text(&text).and_then(|value| first_run_rows_to_input(&value));
+    // A bare row and a non-numeric exit reject the file instead of counting 0.
+    assert!(convert(row(r#""ripr":"r""#)).is_err_and(|e| e.contains("non-empty `case`")));
+    assert!(
+        convert(row(
+            r#""case":"a","step":"check","metric":"exit","value":"2""#
+        ))
+        .is_err_and(|e| e.contains("value must be a number"))
+    );
+    // Only setup rows: nothing was walked.
+    assert!(
+        convert(row(
+            r#""case":"_setup","step":"fetch","metric":"exit","value":0"#
+        ))
+        .is_err_and(|e| e.contains("no case rows"))
+    );
+    // A step cut off before its exit row counts as failed.
+    let cut = [
+        row(r#""case":"a","step":"check","metric":"exit","value":0"#),
+        row(r#""case":"a","step":"pilot","metric":"secs","value":3.0"#),
+    ]
+    .join("\n");
+    let failed = convert(cut).map(|input| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|r| r["id"] == "first_run.failed_steps")
+                    .cloned()
+            })
+            .unwrap_or_default()
+    });
+    assert!(failed.is_ok_and(
+        |row| row["value"] == json!(1) && row["evidence"] == json!("a/pilot no exit recorded")
+    ));
+}
+
+#[test]
+fn first_useful_result_stops_at_the_first_check_that_exits_zero() -> Result<(), String> {
+    let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
+    // Summary rows first, as the walk's export writes them.
+    let text = [
+        row(r#""case":"a","step":"check","metric":"verdict","value":"infection_unknown""#),
+        row(r#""case":"a","step":"init_ci","metric":"workflow_lines","value":1154,"budget":1500"#),
+        row(r#""case":"_setup","step":"install","metric":"secs","value":10.0"#),
+        row(r#""case":"_setup","step":"install","metric":"exit","value":0"#),
+        row(r#""case":"a","step":"check","metric":"secs","value":1.0"#),
+        row(r#""case":"a","step":"check","metric":"exit","value":1"#),
+        row(r#""case":"a","step":"fix","metric":"secs","value":2.0"#),
+        row(r#""case":"a","step":"fix","metric":"exit","value":0"#),
+        row(r#""case":"a","step":"check","metric":"secs","value":4.0"#),
+        row(r#""case":"a","step":"check","metric":"exit","value":0"#),
+    ]
+    .join("\n");
+    let input = first_run_rows_to_input(&parse_ingest_text(&text)?)?;
+    let first = input["metrics"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r["id"] == "first_run.time_to_first_useful_result_s")
+        })
+        .ok_or("time to first useful result missing")?;
+    assert_eq!(first["value"], json!(17.0));
+    assert_eq!(first["completed"], json!(true));
+    Ok(())
+}
+
+#[test]
+fn gate_compares_every_repository_not_just_the_worst() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let samples = |a: f64, b: f64| {
+        vec![
+            sample("speed.warm_check_ms", Some("a"), SampleOutcome::Value(a)),
+            sample("speed.warm_check_ms", Some("b"), SampleOutcome::Value(b)),
+        ]
+    };
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &samples(4000.0, 100.0),
+        &context("r"),
+        None,
+        false,
+    );
+    // The worst repository is unchanged; `b` grew 30x.
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &samples(4000.0, 3000.0),
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    let repos = &metric(&report, "speed.warm_check_ms")?["baseline"]["regressed_repos"];
+    assert_eq!(repos[0]["repo"], json!("b"));
+    assert!(gate_failure_message(&report).contains("b: baseline 100"));
+    Ok(())
+}
+
+#[test]
+fn additive_margin_allows_pct_plus_floor() -> Result<(), String> {
+    let mut config = parse_config(MINIMAL)?;
+    let def = config
+        .metric
+        .iter_mut()
+        .find(|m| m.id == "speed.warm_check_ms")
+        .ok_or("metric missing")?;
+    def.regression_pct = 50.0;
+    def.regression_floor = 0.5;
+    def.regression_additive = true;
+    // 1.5x plus 0.5 of a 2.0 baseline is 3.5.
+    assert!(allowed_worsening(def, 2.0) > 1.49 && allowed_worsening(def, 2.0) < 1.51);
+    def.regression_additive = false;
+    assert!(allowed_worsening(def, 2.0) > 0.99 && allowed_worsening(def, 2.0) < 1.01);
+    Ok(())
+}
+
+#[test]
+fn baseline_must_be_a_scoreboard_report() {
+    assert!(check_baseline(json!({"metrics": []})).is_err_and(|e| e.contains("schema_version")));
+    assert!(
+        check_baseline(json!({"schema_version": "ripr-dx-scoreboard-v1"}))
+            .is_err_and(|e| e.contains("metrics"))
+    );
+}
+
+#[test]
+fn malformed_mutation_and_generic_receipts_are_rejected() {
+    assert!(
+        mutation_spot_check_to_input(&json!({"repos": []}))
+            .is_err_and(|e| e.contains("scored_families"))
+    );
+    let receipt = json!({
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 1},
+            "claims_no_discriminator": {"agreement_rate": 0.5, "mutants_scored": 1},
+        },
+        "repos": [{"pairings": {"seam_precise": 5}}],
+    });
+    assert!(mutation_spot_check_to_input(&receipt).is_err_and(|e| e.contains("mutants_total")));
+    assert!(
+        first_run_to_input(&json!({"schema_version": "first_run.v1", "cases": []}))
+            .is_err_and(|e| e.contains("non-empty"))
     );
 }
