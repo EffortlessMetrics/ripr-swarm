@@ -259,6 +259,10 @@ impl PrEvidenceInput {
     }
 }
 
+/// Summary fields the producer always writes; absent ones must not default to
+/// "no mutation needed".
+const ROUTING_FIELDS: [&str; 2] = ["ripr_severe_gap", "requires_targeted_mutation"];
+
 /// Refuses to route mutation from labels alone: a missing or non-JSON PR
 /// evidence file would yield `fast_only`, which reads as "no mutation needed"
 /// when the real state is "evidence not seen". CI runs `ripr-pr` first, which
@@ -266,7 +270,26 @@ impl PrEvidenceInput {
 fn require_pr_evidence(repo: &Path, relative: &str) -> Result<PrEvidenceInput, String> {
     let input = load_pr_evidence(repo, relative);
     match &input.state {
-        InputState::Present => Ok(input),
+        InputState::Present => {
+            let missing: Vec<&str> = ROUTING_FIELDS
+                .into_iter()
+                .filter(|field| {
+                    !input
+                        .value
+                        .as_ref()
+                        .and_then(|value| value.pointer(&format!("/summary/{field}")))
+                        .is_some_and(Value::is_boolean)
+                })
+                .collect();
+            if missing.is_empty() {
+                Ok(input)
+            } else {
+                Err(format!(
+                    "impacted-evidence: PR evidence {relative} lacks boolean summary.{}; a packet without routing fields would read as \"no mutation needed\". Regenerate it with `cargo xtask ripr-pr`.",
+                    missing.join(" and summary.")
+                ))
+            }
+        }
         InputState::Missing => Err(format!(
             "impacted-evidence: PR evidence {relative} is missing or unreadable; refusing to route mutation from labels alone. Run `cargo xtask ripr-pr` first or pass --pr-evidence <path>."
         )),
@@ -279,23 +302,35 @@ fn require_pr_evidence(repo: &Path, relative: &str) -> Result<PrEvidenceInput, S
 /// Removes a previous run's outputs so a failed run cannot leave a stale
 /// `latest.*` that a later reader mistakes for this run's routing. Returns the
 /// paths actually removed.
-fn discard_stale_outputs(repo: &Path) -> Vec<&'static str> {
-    [IMPACTED_JSON, IMPACTED_MD]
-        .into_iter()
-        .filter(|relative| fs::remove_file(repo.join(relative)).is_ok())
-        .collect()
+fn discard_stale_outputs(repo: &Path) -> (Vec<&'static str>, Vec<String>) {
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for relative in [IMPACTED_JSON, IMPACTED_MD] {
+        match fs::remove_file(repo.join(relative)) {
+            Ok(()) => removed.push(relative),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => failed.push(format!("{relative}: {err}")),
+        }
+    }
+    (removed, failed)
 }
 
 fn refuse_with_stale_cleanup(repo: &Path, err: String, check: bool) -> String {
     if check {
         return err;
     }
-    let removed = discard_stale_outputs(repo);
-    if removed.is_empty() {
-        err
-    } else {
-        format!("{err} Removed stale {}.", removed.join(" and "))
+    let (removed, failed) = discard_stale_outputs(repo);
+    let mut message = err;
+    if !removed.is_empty() {
+        message.push_str(&format!(" Removed stale {}.", removed.join(" and ")));
     }
+    if !failed.is_empty() {
+        message.push_str(&format!(
+            " Could not remove stale output, so it may be out of date: {}.",
+            failed.join("; ")
+        ));
+    }
+    message
 }
 
 fn load_pr_evidence(repo: &Path, relative: &str) -> PrEvidenceInput {
@@ -683,7 +718,17 @@ mod tests {
             .ok_or_else(|| "invalid evidence must be refused".to_string())?;
         assert!(invalid.contains("not valid JSON"), "{invalid}");
 
-        write_file(&repo, "ok.json", "{}")?;
+        write_file(&repo, "empty.json", "{}")?;
+        let empty = require_pr_evidence(&repo, "empty.json")
+            .err()
+            .ok_or_else(|| "evidence without routing fields must be refused".to_string())?;
+        assert!(empty.contains("summary.ripr_severe_gap"), "{empty}");
+
+        write_file(
+            &repo,
+            "ok.json",
+            r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
+        )?;
         require_pr_evidence(&repo, "ok.json")?;
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))
     }
@@ -701,6 +746,21 @@ mod tests {
         let cleaned = refuse_with_stale_cleanup(&repo, "boom.".to_string(), false);
         assert!(cleaned.contains("Removed stale"), "{cleaned}");
         assert!(!repo.join(IMPACTED_JSON).exists() && !repo.join(IMPACTED_MD).exists());
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))
+    }
+
+    #[test]
+    fn failed_stale_removal_is_reported() -> Result<(), String> {
+        let repo = temp_repo("impacted-undeletable")?;
+        // A directory where the file belongs makes remove_file fail without NotFound.
+        fs::create_dir_all(repo.join(IMPACTED_JSON))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        let message = refuse_with_stale_cleanup(&repo, "boom.".to_string(), false);
+        assert!(
+            message.contains("Could not remove stale output"),
+            "{message}"
+        );
+        assert!(message.contains(IMPACTED_JSON), "{message}");
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))
     }
 
