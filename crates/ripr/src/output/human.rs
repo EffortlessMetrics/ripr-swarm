@@ -1,6 +1,7 @@
 use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
+use crate::terminal_text::needs_terminal_escape;
 use std::collections::BTreeSet;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
@@ -511,19 +512,6 @@ pub(crate) fn terminal_safe(text: String) -> String {
         }
     }
     out
-}
-
-pub(crate) fn needs_terminal_escape(ch: char) -> bool {
-    match ch {
-        '\n' | '\t' => false,
-        c if c.is_control() => true,
-        // Arabic letter mark, LRM/RLM, embeddings/overrides (LRE..RLO), and
-        // isolates (LRI..PDI): they reorder text without any visible glyph.
-        '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
-            true
-        }
-        _ => false,
-    }
 }
 
 /// Emit an advisory note when every finding is no-path or unknown (zero

@@ -1,5 +1,7 @@
-use crate::output::human::needs_terminal_escape;
+#[path = "../terminal_text.rs"]
+mod terminal_text;
 use std::path::{Component, Path, PathBuf};
+use terminal_text::needs_terminal_escape;
 
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
