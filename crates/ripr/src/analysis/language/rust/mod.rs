@@ -1367,9 +1367,11 @@ impl RustAdapter {
         // With the open files the full selection can already span the
         // workspace, which turns on the workspace-complete admits.
         let full_selection = selection_with_open_files(&index_files, &open_index_files);
+        // Parsed before any guard so an invalid override always names itself.
+        let scope_mode = dependent_scope::DependentScopeMode::from_env()?;
         if !dependent_package_roots.is_empty()
             && full_selection < analyzable_rust_files.len()
-            && dependent_scope::DependentScopeMode::from_env()?.narrows(full_selection, scope_limit)
+            && scope_mode.narrows(full_selection, scope_limit)
         {
             let seeded_changed_files = analyzable_changed_files
                 .iter()
@@ -3143,13 +3145,13 @@ mod tests {
     }
 
     /// #5320: the reach scan reads a name next to a non-ASCII byte (a
-    /// curly-quoted doc mention) as a whole word, which keeps reach
+    /// typographic-quoted doc mention) as a whole word, which keeps reach
     /// undecided in the full index. The admission spelling must agree, or
     /// the narrowed run would rule reach out and report `no_static_path`.
     #[test]
-    fn dependent_scope_admits_a_curly_quoted_mention() -> Result<(), String> {
+    fn dependent_scope_admits_a_typographic_quoted_mention() -> Result<(), String> {
         use dependent_scope::DependentScopeMode;
-        let root = temp_root("dependent-scope-curly-mention")?;
+        let root = temp_root("dependent-scope-quoted-mention")?;
         write_dependent_scope_workspace(
             &root,
             "/// Wraps “quarble_gauge” for callers.\npub fn unrelated() -> u8 {\n    1\n}\n",
@@ -3163,7 +3165,7 @@ mod tests {
         let main = slash_paths(&named_main.ok_or("the named mode must narrow")?);
         assert!(
             main.contains(&"e/src/lib.rs".to_string()),
-            "the curly-quoted mention must be admitted: {main:?}"
+            "the typographic-quoted mention must be admitted: {main:?}"
         );
         Ok(())
     }
