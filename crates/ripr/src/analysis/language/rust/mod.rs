@@ -835,6 +835,7 @@ fn apply_rust_no_static_path_limit(
     probe: &Probe,
     index: &RustIndex,
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
+    transitive_reach: &classify::TransitiveReachIndex<'_>,
 ) {
     if !needs_no_static_path_limit(finding) {
         return;
@@ -844,7 +845,7 @@ fn apply_rust_no_static_path_limit(
         return;
     };
 
-    if let Some(witness) = classify::find_transitive_witness(&owner_name, index) {
+    if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         finding.static_limit_kind = Some(transitive_reach_limit_kind(&witness.test_file));
         finding
@@ -862,7 +863,7 @@ fn apply_rust_no_static_path_limit(
                 &witness,
                 &owner_name,
             ));
-    } else if let Some(witness) = classify::find_macro_reach_witness(&owner_name, index) {
+    } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         finding.static_limit_kind = Some(macro_reach_limit_kind(&witness.macro_host));
         finding.stop_reasons.push(StopReason::MacroReachUnresolved);
@@ -1480,6 +1481,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
+        let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -1662,6 +1664,7 @@ impl RustAdapter {
                         &probe,
                         &index,
                         &property_macro_mentions,
+                        &transitive_reach,
                     ),
                     dependent_scope::ReachIndex::Widened(reach_index) => {
                         // A withheld file that spells the owner can hold the
@@ -1673,6 +1676,7 @@ impl RustAdapter {
                             &probe,
                             reach_index,
                             &reach_property_macro_mentions,
+                            &classify::TransitiveReachIndex::new(reach_index),
                         );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
@@ -2070,6 +2074,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
+        let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let mut findings = Vec::new();
         let mut parser_spans = BTreeMap::new();
@@ -2115,6 +2120,7 @@ impl RustAdapter {
                     &probe,
                     &index,
                     &property_macro_mentions,
+                    &transitive_reach,
                 );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
                 push_retained_finding(&mut findings, finding);
