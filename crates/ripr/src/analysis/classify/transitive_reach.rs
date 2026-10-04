@@ -205,6 +205,62 @@ impl<'a> ReachGraph<'a> {
         }
         reaching
     }
+
+    /// Whether `test_body` gives a name-only reason to believe its call to
+    /// `entry` lands on a function that reaches the owner, rather than on an
+    /// unrelated function that shares the name (#5481: a unit test calling
+    /// `Cache::build` while the path runs through `Site::build`).
+    ///
+    /// The entry is corroborated when some production function named `entry`
+    /// that calls the owner or a reaching name is a free function, or is an
+    /// associated function whose `impl` self type the test body names. When
+    /// no such function is found (an index without impl segments, or a depth
+    /// edge), the entry counts as corroborated, which keeps the plain
+    /// file-order selection. This only ranks witnesses; it never removes one
+    /// or changes the classification.
+    fn entry_is_corroborated(
+        &self,
+        entry: &str,
+        test_body: &str,
+        reaching: &HashSet<&str>,
+        owner_name: &str,
+    ) -> bool {
+        let mut saw_reaching_function = false;
+        for function in self.by_name.get(entry).into_iter().flatten() {
+            // A call fact naming the function itself (its own signature or
+            // recursion) is no evidence that it leads anywhere: without this,
+            // `Cache::build` would "reach" through the name `build` (#5481).
+            let reaches = calls_of(function).iter().any(|call| {
+                !is_macro_call(&call.name)
+                    && call.name != function.name
+                    && (call.name == owner_name || reaching.contains(call.name.as_str()))
+            });
+            if !reaches {
+                continue;
+            }
+            saw_reaching_function = true;
+            match impl_self_type_name(&function.id.0) {
+                None => return true,
+                Some(self_type) if contains_identifier(test_body, self_type) => return true,
+                Some(_) => {}
+            }
+        }
+        !saw_reaching_function
+    }
+}
+
+/// The bare self-type name of the `impl` block a function symbol id names, or
+/// `None` for a free function. Ids look like `src/lib.rs::impl Site::build`
+/// or `src/lib.rs::impl Display for Site<T>::fmt`; this returns `Site`.
+fn impl_self_type_name(id: &str) -> Option<&str> {
+    let (prefix, _name) = id.rsplit_once("::")?;
+    let impl_start = prefix.rfind("::impl ")? + "::impl ".len();
+    let header = prefix.get(impl_start..)?;
+    let self_type = header.rsplit_once(" for ").map_or(header, |(_, ty)| ty);
+    let self_type = self_type.split('<').next().unwrap_or(self_type);
+    let self_type = self_type.rsplit("::").next().unwrap_or(self_type).trim();
+    let self_type = self_type.trim_start_matches(['&', '*']).trim_start_matches("mut ").trim();
+    (!self_type.is_empty()).then_some(self_type)
 }
 
 impl<'a> TransitiveReachIndex<'a> {
@@ -233,13 +289,17 @@ impl<'a> TransitiveReachIndex<'a> {
             return None;
         }
 
-        // One witness per test: the lexicographically-smallest entry symbol
-        // from that test which reaches the owner. Collected as a sortable
-        // 4-tuple so the named witness is stable across index iteration order
+        // One witness per test: its best entry symbol that reaches the owner,
+        // where an entry the test body corroborates (see
+        // `ReachGraph::entry_is_corroborated`) beats a bare name match, then
+        // the lexicographically-smallest name. Collected as a sortable tuple
+        // with the corroboration rank first, so a test calling an unrelated
+        // type's same-named method cannot win on file order alone (#5481),
+        // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
-        let mut witnesses: Vec<(PathBuf, usize, String, String)> = Vec::new();
+        let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
         for test in &graph.all_tests {
-            let mut entry: Option<&str> = None;
+            let mut entry: Option<(bool, &str)> = None;
             for callee in &test.calls {
                 // Skip macro invocations.
                 if is_macro_call(&callee.name) {
@@ -251,14 +311,22 @@ impl<'a> TransitiveReachIndex<'a> {
                     continue;
                 }
                 if reaching.contains(callee.name.as_str()) {
+                    let uncorroborated = !graph.entry_is_corroborated(
+                        callee.name.as_str(),
+                        &test.body,
+                        &reaching,
+                        owner_name,
+                    );
+                    let candidate = (uncorroborated, callee.name.as_str());
                     match entry {
-                        Some(current) if current <= callee.name.as_str() => {}
-                        _ => entry = Some(callee.name.as_str()),
+                        Some(current) if current <= candidate => {}
+                        _ => entry = Some(candidate),
                     }
                 }
             }
-            if let Some(symbol) = entry {
+            if let Some((uncorroborated, symbol)) = entry {
                 witnesses.push((
+                    uncorroborated,
                     test.file.clone(),
                     test.start_line,
                     test.name.clone(),
@@ -272,7 +340,7 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         witnesses.sort();
         let other_test_count = witnesses.len() - 1;
-        let (test_file, test_line, test_name, entry_symbol) = witnesses.into_iter().next()?;
+        let (_, test_file, test_line, test_name, entry_symbol) = witnesses.into_iter().next()?;
         Some(TransitiveWitness {
             test_name,
             test_file,
@@ -1230,6 +1298,87 @@ mod tests {
             Some("test_a")
         );
         assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
+    fn make_method(self_type: &str, name: &str, calls: Vec<&str>) -> FunctionSummary {
+        let mut function = make_fn(name, calls);
+        function.id = SymbolId(format!("src/lib.rs::impl {self_type}::{name}"));
+        function
+    }
+
+    fn with_body(mut test: TestFact, body: &str) -> TestFact {
+        test.body = body.to_string();
+        test
+    }
+
+    // (#5481) A unit test calling an unrelated type's same-named method must
+    // not win on file order over the integration test whose body names the
+    // type that reaches the owner. Only the ranking moves: both tests stay
+    // candidates, so the count of others is unchanged.
+    #[test]
+    fn given_same_named_method_on_other_type_then_corroborated_witness_is_named() {
+        let site_build = make_method("Site", "build", vec!["full_build"]);
+        // Call facts include the function's own name; that must not count
+        // as a path onward.
+        let cache_build = make_method("Cache", "build", vec!["build"]);
+        let index = index_with(
+            vec![site_build, cache_build],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/render.rs", 24, vec!["new", "build"]),
+                    "let mut c = Cache::new(); c.build(); assert!(c.is_built());",
+                ),
+                with_body(
+                    make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+                    "let site = Site { langs: Vec::new() }; assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("atom_written")
+        );
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_file.clone()),
+            Some(PathBuf::from("tests/site.rs"))
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+
+        // Control: with no body naming `Site`, neither test is corroborated
+        // and file order decides, as before.
+        let uncorroborated = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                make_method("Cache", "build", vec![]),
+            ],
+            vec![
+                make_test_at("cache_builds", "src/render.rs", 24, vec!["build"]),
+                make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+            ],
+        );
+        assert_eq!(
+            find_transitive_witness("full_build", &uncorroborated)
+                .as_ref()
+                .map(|w| w.test_name.as_str()),
+            Some("cache_builds")
+        );
+    }
+
+    #[test]
+    fn impl_self_type_name_reads_inherent_trait_generic_and_path_impls() {
+        assert_eq!(impl_self_type_name("src/lib.rs::impl Site::build"), Some("Site"));
+        assert_eq!(
+            impl_self_type_name("src/lib.rs::m::impl Display for Site<T>::fmt"),
+            Some("Site")
+        );
+        assert_eq!(
+            impl_self_type_name("src/lib.rs::impl crate::site::Site::build#L4"),
+            Some("Site")
+        );
+        assert_eq!(impl_self_type_name("src/lib.rs::m::build"), None);
+        assert_eq!(impl_self_type_name("build"), None);
     }
 
     // The witness pointer names the test/entry symbol with candidate language
