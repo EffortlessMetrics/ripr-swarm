@@ -22,6 +22,7 @@ use crate::app::repair_attempt::{
     find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
     load_attempt_terminal_receipt, repair_attempt_state_label,
 };
+use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state_from_receipt_value;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -160,32 +161,35 @@ pub(crate) fn command_spec_document(spec: &crate::domain::CommandSpec) -> Value 
     document
 }
 
-/// Derive the wire status for one validated terminal receipt document. The
-/// producer's actual movement is read before the lossy presence lifecycle:
-/// a `regressed` movement must surface as `regressed`, never collapse into
-/// the shared fail-closed `receipt_missing` bucket and read as
-/// `after_pending` (review finding on #5155).
+/// Project one authentic terminal receipt through the same semantic reading
+/// as CLI status. Authentic bytes establish receipt presence, not producer
+/// completeness or gap closure; static movement remains separate evidence.
 fn terminal_receipt_status(value: &Value) -> &'static str {
-    let movement_regressed = value
-        .pointer("/provenance/movement")
-        .or(value.pointer("/static_movement/state"))
-        .and_then(Value::as_str)
-        .is_some_and(|movement| movement.trim().eq_ignore_ascii_case("regressed"));
-    if movement_regressed {
+    let reading = AgentReceiptReading::from_value(value);
+    if reading.status.as_deref() == Some("invalid") {
+        return "invalid";
+    }
+    if reading.shows_gap_closed() {
+        return "improved";
+    }
+    if !reading.is_advisory() {
+        return "limited";
+    }
+    if reading.leaves_gap_open() && reading.movement.as_deref() == Some("regressed") {
         return "regressed";
     }
-    receipt_status_from_lifecycle(&receipt_lifecycle_state_from_receipt_value(value))
+    receipt_status_from_lifecycle(&reading.receipt_state)
 }
 
-/// Map the shared receipt-lifecycle vocabulary onto the receipt-status
-/// vocabulary this slice exposes. Unrecognized producer states stay
-/// non-claimed (`limited`), never an affirmative status.
+/// Project the lifecycle only as a non-closure fallback. Affirmative static
+/// improvement is earned above through the shared receipt reading, never
+/// through presence or a movement token alone.
 fn receipt_status_from_lifecycle(normalized: &str) -> &'static str {
     use crate::output::receipt_lifecycle as lifecycle;
     match normalized {
-        lifecycle::RECEIPT_MOVEMENT_IMPROVED => "improved",
+        lifecycle::RECEIPT_MOVEMENT_IMPROVED => "limited",
         lifecycle::RECEIPT_MOVEMENT_UNCHANGED => "unchanged",
-        lifecycle::RECEIPT_FOUND => "closed",
+        lifecycle::RECEIPT_FOUND => "limited",
         lifecycle::RECEIPT_STALE => "stale",
         lifecycle::RECEIPT_GAP_MISMATCH => "invalid",
         lifecycle::RECEIPT_MISSING => "after_pending",
@@ -473,10 +477,8 @@ fn durable_receipt_document(
                 ("invalid", receipt)
             }
             AttemptTerminalReceipt::Issued { path, value } => {
-                // The producer's actual movement is read before the lossy
-                // presence lifecycle: a `regressed` movement must surface as
-                // `regressed`, never collapse into the shared fail-closed
-                // `receipt_missing` bucket and read as `after_pending`.
+                // Preserve the presence lifecycle and original producer
+                // document, while the shared reading owns semantic strength.
                 let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
                 let status = terminal_receipt_status(&value);
                 let binding = find_terminal_artifact_by_role(
