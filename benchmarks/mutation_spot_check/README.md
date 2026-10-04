@@ -30,6 +30,17 @@ cargo xtask mutation-spot-check --repo semver=../corpus/semver --run-mutants --j
 
 The receipt is `target/ripr/reports/mutation-spot-check.{json,md}`.
 
+Large repositories take hours to mutate in full. `--mutants-arg <name>=<arg>`
+passes one argument to that repository's cargo-mutants run, and can be
+repeated to sample a subset. The receipt records the arguments, so the sample
+can be reproduced. Multi-crate workspaces also need `--workspace` or
+`--package`, because cargo-mutants mutates only the root package by default:
+
+```bash
+cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
+  --mutants-arg zola=--workspace --mutants-arg zola=--file=components/site/src/queue.rs
+```
+
 ## What is scored
 
 The calibration join is file plus line, so many joins pair a seam with a
