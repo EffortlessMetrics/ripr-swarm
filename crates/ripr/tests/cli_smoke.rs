@@ -19607,7 +19607,11 @@ fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<
     )
     .map_err(|err| err.to_string())?;
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(!output.status.success(), "must exit nonzero:\n{stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing evidence must be an operational failure:\n{stderr}"
+    );
     assert!(stderr.contains("missing.json"), "{stderr}");
     assert!(
         !dir.join("target").exists(),
