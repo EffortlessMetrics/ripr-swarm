@@ -393,6 +393,11 @@ fn classify_replay_separates_bound_unbound_and_split_roots() {
         classify_replay(false, None, None, root).0,
         PasteVerdict::Unsafe
     );
+    // Reaching ripr with the root intact is not enough if the line then fails.
+    assert_eq!(
+        classify_replay(false, Some(bound.as_bytes()), Some("/tmp/caller"), root).0,
+        PasteVerdict::Unbound
+    );
 }
 
 #[test]
@@ -916,4 +921,76 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
         first_run_to_input(&json!({"schema_version": "first_run.v1", "cases": []}))
             .is_err_and(|e| e.contains("non-empty"))
     );
+}
+
+#[test]
+fn a_step_without_a_duration_leaves_the_walk_incomplete() -> Result<(), String> {
+    let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
+    let text = [
+        row(r#""case":"_setup","step":"install","metric":"secs","value":10.0"#),
+        row(r#""case":"_setup","step":"install","metric":"exit","value":0"#),
+        row(r#""case":"a","step":"doctor","metric":"secs","value":1.0"#),
+        row(r#""case":"a","step":"doctor","metric":"exit","value":0"#),
+        // `check` exited 0 but its secs row was lost.
+        row(r#""case":"a","step":"check","metric":"exit","value":0"#),
+    ]
+    .join("\n");
+    let input = first_run_rows_to_input(&parse_ingest_text(&text)?)?;
+    let get = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["id"] == id).cloned())
+            .unwrap_or_default()
+    };
+    assert_eq!(get("first_run.walk_secs")["completed"], json!(false));
+    assert_eq!(
+        get("first_run.walk_secs")["evidence"],
+        json!("no secs row for: check")
+    );
+    assert_eq!(
+        get("first_run.time_to_first_useful_result_s")["completed"],
+        json!(false)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_baseline_repo_missing_from_the_run_is_listed_not_passed() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let base = vec![
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Value(1000.0),
+        ),
+        sample(
+            "speed.warm_check_ms",
+            Some("b"),
+            SampleOutcome::Value(1000.0),
+        ),
+    ];
+    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let current = vec![sample(
+        "speed.warm_check_ms",
+        Some("a"),
+        SampleOutcome::Value(1000.0),
+    )];
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    let uncompared = report["gate"]["uncompared"]
+        .as_array()
+        .ok_or("uncompared list missing")?;
+    assert!(uncompared.iter().any(|item| {
+        item["metric"] == "speed.warm_check_ms"
+            && item["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.ends_with("not measured this run: b"))
+    }));
+    Ok(())
 }

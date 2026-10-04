@@ -191,6 +191,19 @@ fn measure_corpus_entry(
 
     let cache = scratch.join(format!("cache-{}", entry.id));
     let out = scratch.join(format!("pilot-{}", entry.id));
+    // Clear earlier ripr state, but never through a symlink: a checkout that
+    // ships `target` or `target/ripr` as a link would point the delete
+    // outside the checkout.
+    let is_link =
+        |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if is_link(&checkout.join("target")) || is_link(&checkout.join("target/ripr")) {
+        let reason =
+            "checkout has a symlinked target/ or target/ripr; refusing to clear it".to_string();
+        for metric in corpus_metrics {
+            samples.push(sample(metric, SampleOutcome::Failed, reason.clone()));
+        }
+        return json!({"id": entry.id, "sha": entry.sha, "status": "failed", "reason": reason});
+    }
     let _ = fs::remove_dir_all(checkout.join("target/ripr"));
     let cache_text = cache.display().to_string();
     let envs = [(CACHE_ENV, cache_text.as_str())];
@@ -209,6 +222,8 @@ fn measure_corpus_entry(
         "--quiet".to_string(),
     ];
     let mut contradictions: Option<(usize, Vec<String>)> = None;
+    // Both documents must be scanned; one alone would undercount.
+    let mut missing_sources: Vec<&str> = Vec::new();
     match capture_output_measured(
         &binary.display().to_string(),
         &pilot_args,
@@ -247,13 +262,17 @@ fn measure_corpus_entry(
                 &sample,
                 "speed.cold_pilot_peak_rss_mb",
                 &measured,
+                complete,
             ));
             if let Some(exposure) = read_json_file(&out.join("repo-exposure.json")) {
                 let found = repo_exposure_contradictions(&exposure);
                 contradictions = Some(merge_contradictions(contradictions, found));
+            } else {
+                missing_sources.push("pilot repo-exposure.json");
             }
         }
         Err(err) => {
+            missing_sources.push("pilot repo-exposure.json");
             samples.push(sample(
                 "speed.cold_pilot_ms",
                 SampleOutcome::Failed,
@@ -324,15 +343,19 @@ fn measure_corpus_entry(
                 &sample,
                 "speed.warm_check_peak_rss_mb",
                 &measured,
+                ok,
             ));
             if let Some(json) = parsed {
                 contradictions = Some(merge_contradictions(
                     contradictions,
                     check_contradictions(&json),
                 ));
+            } else {
+                missing_sources.push("warm check JSON");
             }
         }
         Err(err) => {
+            missing_sources.push("warm check JSON");
             samples.push(sample(
                 "speed.warm_check_ms",
                 SampleOutcome::Failed,
@@ -347,6 +370,11 @@ fn measure_corpus_entry(
     }
 
     samples.push(match contradictions {
+        Some((count, _)) if !missing_sources.is_empty() => sample(
+            "trust.self_contradictions",
+            SampleOutcome::Incomplete(count as f64),
+            format!("not scanned: {}", missing_sources.join(", ")),
+        ),
         Some((count, examples)) => sample(
             "trust.self_contradictions",
             SampleOutcome::Value(count as f64),
@@ -647,6 +675,15 @@ fn measure_bad_input(binary: &Path, scratch: &Path) -> Sample {
             Ok(measured) if exited_zero(&measured) => {
                 false_clean.push(format!("`ripr {}`", shown.join(" ")));
             }
+            // A probe that hangs never refused anything.
+            Ok(measured) if measured.output.timed_out => {
+                return Sample {
+                    metric: "trust.false_clean_on_bad_input".to_string(),
+                    repo: None,
+                    outcome: SampleOutcome::Failed,
+                    detail: format!("`ripr {}` timed out instead of refusing", shown.join(" ")),
+                };
+            }
             Ok(_) => {}
             Err(err) => {
                 return Sample {
@@ -903,6 +940,12 @@ pub(crate) fn classify_replay(
     };
     let cwd = cwd.map(str::trim).unwrap_or_default();
     if args.iter().any(|arg| under_root(arg)) || under_root(cwd) {
+        if !exit_ok {
+            return (
+                PasteVerdict::Unbound,
+                "reached ripr with the root intact, but the pasted line then failed".to_string(),
+            );
+        }
         return (PasteVerdict::Bound, "root intact".to_string());
     }
     // A `--root` whose value is not the root, or a fragment of the hostile
@@ -1061,13 +1104,26 @@ fn rss_sample(
     sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
     metric: &str,
     measured: &MeasuredOutput,
+    complete: bool,
 ) -> Sample {
     match measured.peak_rss_bytes {
-        Some(bytes) => sample(
-            metric,
-            SampleOutcome::Value(bytes as f64 / (1024.0 * 1024.0)),
-            "VmHWM sampled every 10 ms".to_string(),
-        ),
+        // The peak of a run that stopped early is not the workload's peak.
+        Some(bytes) => {
+            let mb = bytes as f64 / (1024.0 * 1024.0);
+            if complete {
+                sample(
+                    metric,
+                    SampleOutcome::Value(mb),
+                    "VmHWM sampled every 10 ms".to_string(),
+                )
+            } else {
+                sample(
+                    metric,
+                    SampleOutcome::Incomplete(mb),
+                    "VmHWM of a run that did not complete".to_string(),
+                )
+            }
+        }
         None => sample(
             metric,
             SampleOutcome::NotMeasured,

@@ -742,6 +742,10 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         .filter(|s| s.case == "_setup" && s.step.contains("install"))
         .map(|s| s.secs.unwrap_or(0.0))
         .reduce(|a, b| a + b);
+    let install_timed = steps
+        .iter()
+        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .all(|s| s.secs.is_some());
     let list = |items: &[String]| {
         if items.is_empty() {
             "none".to_string()
@@ -758,12 +762,26 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     ];
     for case in &cases {
         let mine: Vec<&Step> = steps.iter().filter(|s| &s.case == case).collect();
-        let walk: f64 = mine.iter().map(|s| s.secs.unwrap_or(0.0)).sum();
-        out.push(json!({"id": "first_run.walk_secs", "repo": case, "value": walk}));
+        // A step without a `secs` row has no duration; summing it as zero
+        // would make the walk look faster, so the sample stays incomplete.
+        let untimed: Vec<&str> = mine
+            .iter()
+            .filter(|s| s.secs.is_none())
+            .map(|s| s.step.as_str())
+            .collect();
+        let walk: f64 = mine.iter().filter_map(|s| s.secs).sum();
+        let mut row = json!({"id": "first_run.walk_secs", "repo": case, "value": walk});
+        if !untimed.is_empty() {
+            row["completed"] = json!(false);
+            row["evidence"] = json!(format!("no secs row for: {}", untimed.join(", ")));
+        }
+        out.push(row);
         if let Some(install) = install {
             let mut elapsed = install;
             let mut reached = false;
+            let mut timed = install_timed;
             for step in &mine {
+                timed &= step.secs.is_some();
                 elapsed += step.secs.unwrap_or(0.0);
                 if step.step == "check" && step.exit == Some(0.0) {
                     reached = true;
@@ -774,7 +792,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                 "id": "first_run.time_to_first_useful_result_s",
                 "repo": case,
                 "value": elapsed,
-                "completed": reached,
+                "completed": reached && timed,
             }));
         }
     }
@@ -1021,6 +1039,22 @@ pub(crate) fn build_report(
                 && (!row["baseline"]["value"].is_null() || !row["value"].is_null())
         })
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
+        .chain(metrics.iter().filter_map(|row| {
+            let missing: Vec<&str> = row["baseline"]["missing_repos"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            (!missing.is_empty()).then(|| {
+                json!({
+                    "metric": row["id"],
+                    "reason": format!(
+                        "baseline repositories not measured this run: {}",
+                        missing.join(", ")
+                    ),
+                })
+            })
+        }))
         .collect();
     let review: Vec<Value> = metrics
         .iter()
@@ -1401,6 +1435,7 @@ pub(crate) fn compare_with_baseline(
     };
     let allowed = allowed_worsening(def, base);
     let by_repo = repo_regressions(def, row, base_row);
+    let missing = missing_repos(row, base_row);
     json!({
         "comparable": true,
         "value": round(base),
@@ -1408,7 +1443,28 @@ pub(crate) fn compare_with_baseline(
         "allowed_worsening": round(allowed),
         "regressed": worsening(def, base, current) > allowed || !by_repo.is_empty(),
         "regressed_repos": by_repo,
+        "missing_repos": missing,
     })
+}
+
+/// Repositories the baseline measured that this run has no value for. Their
+/// absence cannot regress the aggregate, so they are listed instead of being
+/// silently passed.
+fn missing_repos(row: &Value, base_row: &Value) -> Vec<String> {
+    let measured = |r: &Value| -> Vec<String> {
+        r["samples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|s| !s["value"].is_null())
+            .filter_map(|s| s["repo"].as_str().map(str::to_string))
+            .collect()
+    };
+    let now = measured(row);
+    measured(base_row)
+        .into_iter()
+        .filter(|repo| !now.contains(repo))
+        .collect()
 }
 
 fn status_counts(rows: &[&Value]) -> Value {
