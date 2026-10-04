@@ -48323,11 +48323,58 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
     assert_eq!((*user_source, *system_source), (1234, 56));
     assert_eq!((*user_ms, *system_ms), (12_340, 560));
 
+    // The Windows-observed shape must carry through on the same terms: its
+    // unit names a different rate, and its peak is already bytes rather than
+    // kibibytes. Without this the consumer's Windows path is unproven on the
+    // host that actually produces it.
+    let windows = repo_exposure_latency_run_from_output(
+        "repo-exposure-json",
+        TimedOutput {
+            status: Some(success_exit_status()),
+            stdout: "{}".to_string(),
+            stderr: format!(
+                "ripr_resource_cost_receipt {}\n",
+                windows_observed_resource_cost_receipt()
+            ),
+            duration: Duration::from_millis(80),
+            timed_out: false,
+        },
+    );
+    let windows_cost = windows
+        .resource_cost
+        .as_ref()
+        .ok_or("observed Windows resource cost was dropped")?;
+    assert_eq!(windows_cost.host_os, "windows");
+    assert_eq!(
+        windows_cost.peak_resident_bytes,
+        RepoExposureMeasurement::Observed { value: 15_069_184 }
+    );
+    let RepoExposureCpuCost::Observed {
+        source_unit,
+        source_unit_per_second,
+        user_source,
+        system_source,
+        user_ms,
+        system_ms,
+    } = &windows_cost.cpu
+    else {
+        return Err("observed Windows CPU was not carried through".to_string());
+    };
+    assert_eq!(source_unit, "windows_hundred_nanoseconds");
+    assert_eq!(*source_unit_per_second, 10_000_000);
+    assert_eq!((*user_source, *system_source), (156_250, 625_000));
+    assert_eq!((*user_ms, *system_ms), (15, 62));
+    // The millisecond fields must be recomputable from the raw source and the
+    // named rate, on the Windows unit as well as the Linux one.
+    for (source, ms) in [(*user_source, *user_ms), (*system_source, *system_ms)] {
+        assert_eq!(ms, source.saturating_mul(1000) / 10_000_000);
+    }
+
     let report = RepoExposureLatencyReport {
         status: "pass".to_string(),
         timeout_ms: 30_000,
         binary: "target/debug/ripr".to_string(),
-        runs: vec![run],
+        runs: vec![run, windows],
     };
     let value: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("latency JSON should parse: {err}"))?;
@@ -48363,6 +48410,24 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
         markdown.contains("Peak resident: 41943040 bytes."),
         "{markdown}"
     );
+    // The Windows-observed run must be rendered with its own host and unit,
+    // so a renderer that hardcoded the Linux rate cannot pass.
+    assert!(
+        markdown.contains("Observed on `windows`/`x86_64`"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("source unit `windows_hundred_nanoseconds` at 10000000 per second"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("user 15 ms (156250 source units)"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("Peak resident: 15069184 bytes."),
+        "{markdown}"
+    );
     Ok(())
 }
 
@@ -48391,13 +48456,13 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
     assert_eq!(
         cost.cpu,
         RepoExposureCpuCost::Unavailable {
-            reason: "machine_wide_or_unsafe_only".to_string()
+            reason: "platform_not_supported".to_string()
         }
     );
     assert_eq!(
         cost.peak_resident_bytes,
         RepoExposureMeasurement::Unavailable {
-            reason: "machine_wide_or_unsafe_only".to_string()
+            reason: "platform_not_supported".to_string()
         }
     );
 
@@ -48431,7 +48496,7 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
     );
     assert_eq!(
         value["runs"][0]["resource_cost"]["cpu"]["reason"],
-        "machine_wide_or_unsafe_only"
+        "platform_not_supported"
     );
     assert!(
         value["runs"][0]["resource_cost"]["cpu"]
@@ -48455,7 +48520,7 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
 
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(
-        markdown.contains("CPU unavailable: `machine_wide_or_unsafe_only`"),
+        markdown.contains("CPU unavailable: `platform_not_supported`"),
         "{markdown}"
     );
     assert!(
@@ -48469,13 +48534,11 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
     Ok(())
 }
 
-/// #5213: malformed and misattributed receipts are named, never accepted as
-/// a measurement.
 /// #5213: the consumer must refuse a receipt that answers an unavailable
 /// observation with a zero number. A receipt carrying `"value": 0` where the
-/// producer emits an explicit unavailable object parses as the wrong shape and
-/// is rejected; if a future wire change made it parse, `state` would no longer
-/// be `unavailable` and the Markdown would stop naming the reason.
+/// producer emits an explicit unavailable object is the wrong shape and is
+/// rejected; the same shape with a genuine zero *observation* must survive, so
+/// the rejection cannot pass by refusing everything.
 #[test]
 fn repo_exposure_latency_report_rejects_a_zero_standing_in_for_unavailable() -> Result<(), String> {
     let mut dishonest: Value = serde_json::from_str(&unavailable_resource_cost_receipt())
@@ -48511,6 +48574,51 @@ fn repo_exposure_latency_report_rejects_a_zero_standing_in_for_unavailable() -> 
     assert_eq!(
         cost.map(|cost| cost.peak_resident_bytes),
         Some(RepoExposureMeasurement::Observed { value: 0 })
+    );
+    Ok(())
+}
+
+/// #5213: the CPU arm is refused on its own evidence. A zero `user_ms` smuggled
+/// beside the `unavailable` state must not be accepted and silently dropped,
+/// which is the same dishonesty the measurement arm guards against. Kept as a
+/// separate test from the measurement arm so neither can mask the other.
+#[test]
+fn repo_exposure_latency_report_rejects_a_zero_in_the_unavailable_cpu_arm() -> Result<(), String> {
+    let mut dishonest: Value = serde_json::from_str(&unavailable_resource_cost_receipt())
+        .map_err(|err| format!("honest receipt must be valid JSON: {err}"))?;
+    // A real Windows receipt reports CPU in hundred-nanosecond units, so a
+    // smuggled `user_source` is the number a wrong producer would emit.
+    dishonest["cpu"]["user_source"] = Value::from(0);
+    let zeroed = dishonest.to_string();
+    assert_ne!(
+        zeroed,
+        unavailable_resource_cost_receipt(),
+        "the control must actually differ from the honest receipt"
+    );
+    let (cost, limitation) =
+        repo_exposure_resource_cost_from_stderr(&format!("ripr_resource_cost_receipt {zeroed}\n"));
+    assert!(
+        cost.is_none(),
+        "the unavailable CPU arm must not carry a number at all: {zeroed}"
+    );
+    assert_eq!(
+        limitation.as_deref(),
+        Some("malformed_resource_cost_receipt"),
+        "{zeroed}"
+    );
+
+    // An honest unavailable CPU arm still parses, so the rejection above is
+    // caused by the smuggled field and nothing else.
+    let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
+        "ripr_resource_cost_receipt {}\n",
+        unavailable_resource_cost_receipt()
+    ));
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(
+        cost.map(|cost| cost.cpu),
+        Some(RepoExposureCpuCost::Unavailable {
+            reason: "platform_not_supported".to_string()
+        })
     );
     Ok(())
 }
@@ -48737,16 +48845,39 @@ fn observed_resource_cost_receipt() -> String {
 }
 
 /// The same receipt from a host with no safe per-process source. The numbers
-/// are absent, not zero.
+/// are absent, not zero. `macos` is unwired; Linux and Windows both observe.
 fn unavailable_resource_cost_receipt() -> String {
+    serde_json::json!({
+        "schema_version": "0.1",
+        "observer": "ripr_process_self",
+        "observer_pid": 4242,
+        "host_os": "macos",
+        "host_arch": "x86_64",
+        "cpu": {"state": "unavailable", "reason": "platform_not_supported"},
+        "peak_resident_bytes": {"state": "unavailable", "reason": "platform_not_supported"},
+    })
+    .to_string()
+}
+
+/// The Windows-observed receipt shape: CPU in 100-nanosecond units at
+/// 10 000 000 per second, peak working set already in bytes.
+fn windows_observed_resource_cost_receipt() -> String {
     serde_json::json!({
         "schema_version": "0.1",
         "observer": "ripr_process_self",
         "observer_pid": 4242,
         "host_os": "windows",
         "host_arch": "x86_64",
-        "cpu": {"state": "unavailable", "reason": "machine_wide_or_unsafe_only"},
-        "peak_resident_bytes": {"state": "unavailable", "reason": "machine_wide_or_unsafe_only"},
+        "cpu": {
+            "state": "observed",
+            "source_unit": "windows_hundred_nanoseconds",
+            "source_unit_per_second": 10_000_000,
+            "user_source": 156_250,
+            "system_source": 625_000,
+            "user_ms": 15,
+            "system_ms": 62,
+        },
+        "peak_resident_bytes": {"state": "observed", "value": 15_069_184},
     })
     .to_string()
 }

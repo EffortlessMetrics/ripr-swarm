@@ -6625,26 +6625,31 @@ schemas.
   "runs": [
     {
       "format": "repo-exposure-json",
-      "status": "timeout",
-      "duration_ms": 30082,
-      "exit_code": 1,
-      "stdout_bytes": 0,
+      "status": "pass",
+      "duration_ms": 842,
+      "exit_code": 0,
+      "stdout_bytes": 21874,
       "stderr_bytes": 152,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
       "resource_cost": {
         "schema_version": "0.1",
         "observer": "ripr_process_self",
-        "observer_pid": 4242,
+        "observer_pid": 27044,
         "host_os": "windows",
         "host_arch": "x86_64",
         "cpu": {
-          "state": "unavailable",
-          "reason": "machine_wide_or_unsafe_only"
+          "state": "observed",
+          "source_unit": "windows_hundred_nanoseconds",
+          "source_unit_per_second": 10000000,
+          "user_source": 156250,
+          "system_source": 625000,
+          "user_ms": 15,
+          "system_ms": 62
         },
         "peak_resident_bytes": {
-          "state": "unavailable",
-          "reason": "machine_wide_or_unsafe_only"
+          "state": "observed",
+          "value": 15069184
         }
       },
       "resource_cost_limitation": null,
@@ -6665,10 +6670,28 @@ schemas.
           "duration_ms": 328
         }
       ]
+    },
+    {
+      "format": "repo-exposure-md",
+      "status": "pass",
+      "duration_ms": 771,
+      "exit_code": 0,
+      "stdout_bytes": 19003,
+      "stderr_bytes": 138,
+      "file_fact_cache": null,
+      "file_fact_cache_limitation": "cache_phase_not_observed",
+      "resource_cost": null,
+      "resource_cost_limitation": "resource_cost_receipt_not_observed",
+      "trace": []
     }
   ]
 }
 ```
+
+A timed-out or skipped format never carries a populated `resource_cost`:
+the analyzer was killed before it could emit its receipt, so `resource_cost` is
+`null` with the named limitation. The example above shows the completed-run
+shape; the second run stands for any format that produced no receipt.
 
 Field contract:
 
@@ -6717,15 +6740,28 @@ Field contract:
   `system_source`, and the derived `user_ms` and `system_ms`, so the
   millisecond figures can be recomputed rather than trusted.
   `peak_resident_bytes` is in bytes.
-- Observed and unavailable are **separate shapes**, never a bare number. A
+- Supported hosts are **Linux** and **Windows**, both of which observe. Linux
+  reads `/proc/self/stat` `utime`/`stime` in `USER_HZ` clock ticks
+  (`source_unit_per_second` 100) and `/proc/self/status` `VmHWM` in kibibytes.
+  Windows reads `GetProcessTimes` (kernel time is `system_source`, user time is
+  `user_source`, both in 100-nanosecond intervals, so
+  `source_unit_per_second` is 10000000) and `GetProcessMemoryInfo`'s
+  `PeakWorkingSetSize`, which is already in bytes. Both go through the safe
+  `winsafe` wrappers; the `unsafe` lives inside that crate.
+- Observed and unavailable are **separate shapes**, never a bare number, and
+  both the producer and this consumer refuse an unknown key on either shape. A
   measurement reads `{"state": "observed", "value": ...}`; an absent one reads
   `{"state": "unavailable", "reason": "..."}` and carries no value at all, so a
-  zero is never inferred. Reasons are `platform_not_supported` (no safe
-  dependency-free per-process source on this host), `machine_wide_or_unsafe_only`
-  (the host offers only a machine-wide aggregate or an `unsafe` call this
-  crate's `unsafe_code = "forbid"` policy excludes - the current Windows
-  position, since `winsafe` 0.0.29 wraps no per-process counter),
-  `source_unreadable`, `source_field_missing`, and `source_value_malformed`.
+  zero is never inferred. Reasons are `platform_not_supported` (this build
+  wires no safe per-process source for the host platform),
+  `source_query_failed` (the per-process counter was queried and the query
+  failed - the capability is present, the read did not succeed),
+  `source_unreadable`, `source_field_missing`, `source_value_malformed` (the
+  value could not be interpreted in its documented unit or does not fit the
+  reported range; no saturated substitute is emitted), and
+  `receipt_serialization_failed` (the receipt itself could not be serialized,
+  so every number is unavailable under that reason rather than the receipt
+  disappearing).
 - `runs[].resource_cost_limitation` - `null` when the cost block is present;
   otherwise a named state: `resource_cost_receipt_not_observed`,
   `duplicate_resource_cost_receipt`, `malformed_resource_cost_receipt`,

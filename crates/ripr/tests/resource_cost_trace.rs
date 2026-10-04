@@ -190,56 +190,97 @@ fn tracing_on_emits_one_attributed_receipt_on_stderr() -> Result<(), String> {
         }
     }
 
-    if std::env::consts::OS == "linux" {
-        let cpu = &receipt["cpu"];
-        if cpu["state"] != serde_json::json!("observed") {
-            return Err(format!("linux must observe its own CPU time: {receipt}"));
-        }
-        // An observed CPU must carry the raw source, its unit, and the rate,
-        // so the millisecond fields can be recomputed rather than trusted.
-        for field in [
-            "source_unit",
-            "source_unit_per_second",
-            "user_source",
-            "system_source",
-            "user_ms",
-            "system_ms",
-        ] {
-            if cpu.get(field).is_none() {
-                return Err(format!("observed CPU omits `{field}`: {receipt}"));
+    // Linux and Windows are both wired hosts, so both must observe. This is
+    // the branch that would otherwise have papered over a missing Windows
+    // implementation behind an "unavailable" state.
+    let expected_unit = match std::env::consts::OS {
+        "linux" => "linux_user_hz_clock_ticks",
+        "windows" => "windows_hundred_nanoseconds",
+        // An unwired target must name the reason rather than print zeros.
+        other => {
+            for field in ["cpu", "peak_resident_bytes"] {
+                if receipt[field]["state"] != serde_json::json!("unavailable")
+                    || receipt[field]["reason"] != serde_json::json!("platform_not_supported")
+                {
+                    return Err(format!(
+                        "{other} must report {field} as platform_not_supported: {receipt}"
+                    ));
+                }
             }
+            // The rendered analysis document is unchanged by the receipt: it
+            // lives only on stderr.
+            assert_stdout_is_the_document(&traced)?;
+            return Ok(());
         }
-        if receipt["peak_resident_bytes"]["state"] != serde_json::json!("observed") {
-            return Err(format!(
-                "linux must observe its own peak resident set: {receipt}"
-            ));
-        }
-    } else {
-        // This host has no safe per-process source; the receipt must say so
-        // rather than print zeros.
-        let expected = if std::env::consts::OS == "windows" {
-            "machine_wide_or_unsafe_only"
-        } else {
-            "platform_not_supported"
-        };
-        for field in ["cpu", "peak_resident_bytes"] {
-            if receipt[field]["state"] != serde_json::json!("unavailable") {
-                return Err(format!(
-                    "{} must report {field} unavailable: {receipt}",
-                    std::env::consts::OS
-                ));
-            }
-            if receipt[field]["reason"] != serde_json::json!(expected) {
-                return Err(format!(
-                    "{} must name `{expected}` for {field}: {receipt}",
-                    std::env::consts::OS
-                ));
-            }
+    };
+    let cpu = &receipt["cpu"];
+    if cpu["state"] != serde_json::json!("observed") {
+        return Err(format!(
+            "{} must observe its own CPU time: {receipt}",
+            std::env::consts::OS
+        ));
+    }
+    // An observed CPU must carry the raw source, its unit, and the rate, so
+    // the millisecond fields can be recomputed rather than trusted.
+    for field in [
+        "source_unit",
+        "source_unit_per_second",
+        "user_source",
+        "system_source",
+        "user_ms",
+        "system_ms",
+    ] {
+        if cpu.get(field).is_none() {
+            return Err(format!("observed CPU omits `{field}`: {receipt}"));
         }
     }
+    if cpu["source_unit"] != serde_json::json!(expected_unit) {
+        return Err(format!(
+            "{} must name `{expected_unit}` as its CPU source unit: {receipt}",
+            std::env::consts::OS
+        ));
+    }
+    // Recompute the millisecond fields from the raw source and the named
+    // rate. A producer that emitted a plausible-looking number the raw value
+    // does not support fails here.
+    let rate = cpu["source_unit_per_second"]
+        .as_u64()
+        .ok_or_else(|| format!("source_unit_per_second must be a number: {receipt}"))?;
+    for (source_field, ms_field) in [("user_source", "user_ms"), ("system_source", "system_ms")] {
+        let source = cpu[source_field]
+            .as_u64()
+            .ok_or_else(|| format!("{source_field} must be a number: {receipt}"))?;
+        let reported = cpu[ms_field]
+            .as_u64()
+            .ok_or_else(|| format!("{ms_field} must be a number: {receipt}"))?;
+        let expected_ms = source.saturating_mul(1000) / rate.max(1);
+        if reported != expected_ms {
+            return Err(format!(
+                "{ms_field} must equal {source_field} * 1000 / {rate}, got {reported}, expected {expected_ms}: {receipt}"
+            ));
+        }
+    }
+    if receipt["peak_resident_bytes"]["state"] != serde_json::json!("observed") {
+        return Err(format!(
+            "{} must observe its own peak resident set: {receipt}",
+            std::env::consts::OS
+        ));
+    }
+    // A peak of zero would pass the state checks above while reporting nothing.
+    let peak = receipt["peak_resident_bytes"]["value"]
+        .as_u64()
+        .ok_or_else(|| format!("peak_resident_bytes must carry a byte count: {receipt}"))?;
+    if peak == 0 {
+        return Err(format!(
+            "peak resident set must be a real byte count: {receipt}"
+        ));
+    }
 
-    // The rendered analysis document is unchanged by the presence of the
-    // receipt: it lives only on stderr.
+    assert_stdout_is_the_document(&traced)?;
+    Ok(())
+}
+
+fn assert_stdout_is_the_document(traced: &Run) -> Result<(), String> {
     if !traced.stdout.starts_with(b"{") {
         return Err(format!(
             "stdout must remain the analysis document, got: {}",
