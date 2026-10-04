@@ -181,6 +181,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             artifacts: &artifacts,
             python_first_use: None,
             language_routes: None,
+            seam_limit: None,
         };
         write_pilot_file(
             &artifacts.pilot_summary_json,
@@ -244,6 +245,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
+        seam_limit: limit_info.as_ref(),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);

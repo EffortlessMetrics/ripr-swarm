@@ -187,9 +187,18 @@ pub(crate) fn render_pilot_summary_md(
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
     out.push_str(&format!(
-        "- Actionable seams: {} total, showing up to {}\n\n",
+        "- Actionable seams: {} total, showing up to {}\n",
         actionable_total, context.max_seams
     ));
+    // #6602: a seam limit cut the classified list before ranking, so every
+    // count below covers only the seams that were kept.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "- Seam limit reached: ranked the first {} of {} seams; counts below cover those only\n",
+            limit.analyzed, limit.total
+        ));
+    }
+    out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
     if top.is_empty() {
@@ -255,7 +264,12 @@ pub(crate) fn render_pilot_summary_md(
                 .saturating_sub(top.iter().filter(|shown| same_owner(shown)).count());
             if first_of_owner && unlisted > 0 {
                 out.push_str(&format!(
-                    "   - Also in this function: {} more actionable {} not listed here\n",
+                    "   - Also in this function: {}{} more actionable {} not listed here\n",
+                    if context.seam_limit.is_some() {
+                        "at least "
+                    } else {
+                        ""
+                    },
                     unlisted,
                     if unlisted == 1 { "seam" } else { "seams" }
                 ));

@@ -12552,6 +12552,12 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         before.get("artifact").is_none(),
         "a budget-truncated pilot snapshot must not carry the comparable identity"
     );
+    // #6602: the summary says the budget cut the ranked population.
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        summary.contains("- Seam limit reached: ranked the first 1 of "),
+        "{summary}"
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
