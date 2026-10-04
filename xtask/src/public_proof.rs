@@ -1420,7 +1420,7 @@ fn corpus_section(page: &mut Page, r: &Receipts) -> Result<(), String> {
     page.line("## The corpus behind the numbers");
     page.blank();
     page.line(format!(
-        "{} real repositories are pinned to exact upstream commits (corpus {}): {} well-maintained, {} legacy, {} ordinary. The class is a judgment recorded per repository, not a measurement. Scoreboards run on subsets of it, so a number above describes the subset named in its section.",
+        "{} real repositories are pinned to exact upstream commits (corpus {}): {} well-maintained, {} legacy, {} ordinary. The class is a judgment recorded per repository, not a measurement. The scoreboards were run on the repositories named in their own sections, which are not all in this manifest at these revisions, so a number above describes only the repositories its section names.",
         repos.len(),
         text(&r.corpus, "corpus_version"),
         class_count("good"),

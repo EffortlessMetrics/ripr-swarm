@@ -234,7 +234,7 @@ Across the runs: fix success 1, stale re-check cycles 3, white-box tests written
 
 ## The corpus behind the numbers
 
-34 real repositories are pinned to exact upstream commits (corpus 2026-10-04.5): 15 well-maintained, 9 legacy, 10 ordinary. The class is a judgment recorded per repository, not a measurement. Scoreboards run on subsets of it, so a number above describes the subset named in its section.
+34 real repositories are pinned to exact upstream commits (corpus 2026-10-04.5): 15 well-maintained, 9 legacy, 10 ordinary. The class is a judgment recorded per repository, not a measurement. The scoreboards were run on the repositories named in their own sections, which are not all in this manifest at these revisions, so a number above describes only the repositories its section names.
 
 Repositories the speed scoreboard ran on:
 
