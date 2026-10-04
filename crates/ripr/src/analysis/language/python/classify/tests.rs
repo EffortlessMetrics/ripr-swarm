@@ -27,21 +27,37 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
+        "unittest.skipIf(False, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
+        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let tests = format!(
             "import unittest\nimport pytest\nfrom src.subject import score\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
         );
         let finding = classify_case(
-            "def score(value):\n    return 8\n", &tests, 2, "    return 7", "    return 8",
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
         )?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
-        assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes, "{decorator}");
-        assert!(finding.evidence.iter().any(|line| line.contains("test activation")), "{decorator}");
+        assert_ne!(
+            finding.ripr.reveal.discriminate.state,
+            StageState::Yes,
+            "{decorator}"
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("test activation")),
+            "{decorator}"
+        );
     }
     Ok(())
 }
@@ -53,7 +69,13 @@ fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<
         "import pytest as pt\nfrom src.subject import score\n@pt.mark.skip(reason='disabled')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
         "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('disabled')\ndef test_score():\n    assert score(0) == 8\n",
     ] {
-        let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
     }
     Ok(())
@@ -62,20 +84,198 @@ fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<
 #[test]
 fn active_python_oracle_keeps_credit_beside_a_disabled_test() -> Result<(), String> {
     let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0) == 8\n";
-    let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
-    let disabled = finding.related_tests.iter().find(|test| test.name == "test_disabled_score")
+    let disabled = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "test_disabled_score")
         .ok_or_else(|| "disabled test pointer must remain visible".to_string())?;
-    assert_eq!(disabled.oracle_strength, crate::domain::OracleStrength::Unknown);
+    assert_eq!(
+        disabled.oracle_strength,
+        crate::domain::OracleStrength::Unknown
+    );
     Ok(())
 }
 
 #[test]
 fn disabled_exact_python_oracle_cannot_lend_credit_to_an_active_smoke_test() -> Result<(), String> {
     let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0)\n";
-    let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
     assert_ne!(finding.class, ExposureClass::Exposed);
     assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn unrelated_python_decorator_names_do_not_disable_active_oracles() -> Result<(), String> {
+    let tests = "from src.subject import score\n\ndef skip_notes(f):\n    return f\n\n@skip_notes\ndef test_score():\n    assert score(0) == 8\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn disabled_python_boundary_input_cannot_activate_an_active_neighbor_oracle() -> Result<(), String>
+{
+    let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(10) == 1\n\ndef test_active_score():\n    assert score(11) == 1\n";
+    let finding = classify_case(
+        "def score(value):\n    return 1 if value >= 10 else 0\n",
+        tests,
+        2,
+        "    return 1 if value > 10 else 0",
+        "    return 1 if value >= 10 else 0",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// Keep the exact non-credit wording separate from the positive control below.
+#[test]
+fn disabled_python_import_alias_cannot_supply_an_active_tests_observer_identity()
+-> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import score\n\nclass TestDisabled:\n    @unittest.skip('disabled')\n    def test_score(self):\n        from src.subject import score as observer\n        assert observer(0) == 8\n\nclass TestActive:\n    def test_score(self):\n        from other import observer\n        score(0)\n        assert observer(0) == 8\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn skipped_python_base_class_controls_an_overridden_test() -> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\nclass Base(unittest.TestCase):\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n\nclass Child(Base):\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn python_test_body_imports_cannot_rebind_definition_scope_activation() -> Result<(), String> {
+    for tests in [
+        "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\ndef test_score():\n    from other import disabled\n    assert score(0) == 8\n",
+        "import unittest as control\nfrom src.subject import score\n@control.skip('skip')\ndef test_score():\n    import other as control\n    assert score(0) == 8\n",
+        "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\nclass TestScore:\n    from other import disabled\n    def test_score(self):\n        assert score(0) == 8\n",
+    ] {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+    }
+    // The inverse body alias must not retroactively turn a transparent
+    // definition-scope decorator into a skip.
+    for tests in [
+        "from other import disabled\nfrom src.subject import score\n@disabled('note')\ndef test_score():\n    from unittest import skip as disabled\n    assert score(0) == 8\n",
+        "from src.subject import score\nclass TestScore:\n    from unittest import skip as disabled\n    @disabled('skip')\n    def test_score(self):\n        from other import disabled\n        assert score(0) == 8\n",
+    ].into_iter().enumerate() {
+        let (index, tests) = tests;
+        let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+        assert_eq!(finding.class, if index == 0 { ExposureClass::Exposed } else { ExposureClass::StaticUnknown }, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn disabled_python_mock_cannot_suppress_an_independent_active_oracle() -> Result<(), String> {
+    let tests = "import unittest\nfrom unittest.mock import patch\nfrom src.subject import score\n@unittest.skip('disabled')\n@patch('src.subject.score')\ndef test_disabled_score(fake):\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0) == 8\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn python_method_body_does_not_use_class_local_owner_imports() -> Result<(), String> {
+    for tests in [
+        "from other import score\nclass TestScore:\n    from src.subject import score\n    def test_score(self):\n        assert score(0) == 8\n",
+        "from other import score\nclass Mixin:\n    from src.subject import score\n    def test_score(self):\n        assert score(0) == 8\nclass TestScore(Mixin):\n    pass\n",
+    ] {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
+    }
+    let tests = "from src.subject import score\nclass TestScore:\n    from other import score\n    def test_score(self):\n        assert score(0) == 8\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn python_later_imports_cannot_rewrite_applied_activation_controls() -> Result<(), String> {
+    for tests in [
+        "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\ndef test_score():\n    assert score(0) == 8\nfrom other import disabled\n",
+        "from unittest import skip as disabled\nfrom src.subject import score\nclass TestScore:\n    @disabled('skip')\n    def test_score(self):\n        assert score(0) == 8\n    from other import disabled\n",
+        "import unittest\nfrom unittest import skip as disabled\nfrom src.subject import score\n@disabled('skip')\nclass Base(unittest.TestCase):\n    pass\nfrom other import disabled\nclass Child(Base):\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n",
+        "from unittest import skip as disabled\nfrom src.subject import score\nclass Mixin:\n    @disabled('skip')\n    def test_score(self):\n        assert score(0) == 8\nfrom other import disabled\nclass TestScore(Mixin):\n    pass\n",
+    ] {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+    }
+    let tests = "from other import disabled\nfrom src.subject import score\nclass TestScore:\n    @disabled('note')\n    def test_score(self):\n        assert score(0) == 8\n    from unittest import skip as disabled\n";
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
 

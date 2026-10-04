@@ -86,6 +86,27 @@ RIPR-SPEC-0026 owner-kind vocabulary explicitly adds a class value.
 
 ## Test and Assertion Facts
 
+Known unittest skip/expected-failure decorators and pytest skip/skipif/xfail
+marks on tests or their enclosing collected classes retain a related pointer
+but cannot contribute an oracle or boundary input. The relation is
+`test_activation_unestablished`. Conditions are not evaluated: even a visible
+false conditional skip remains uncertain within this bounded static contract.
+Imported decorator aliases use the declaration-time module/class scope, before
+test-body imports or later imports can shadow them. Method body lookup keeps
+its separate module/global scope; class-local imports are not method globals.
+When no independent eligible test supplies a relation, report
+`decorator_indirection` with the test activation reason and emit no repair
+packet. A separate active test can still supply its own evidence. Module-level
+`pytestmark`, dynamic `skipTest`, custom decorator semantics and imported-base
+activation remain outside this rule.
+
+Curated upstream `native_cases` in the existing Python real-repo corpus record
+independent behavior/test-understanding controls without implying an analyzer
+run. The ItsDangerous future-age case retains immutable upstream source/license,
+the real defect/fix, original pytest fixture closure, a weak alternate observer,
+skip and expected-failure controls. Native evidence does not establish current
+static classifications, installed journeys, or support-tier promotion.
+
 Test discovery:
 
 - `pytest` test functions with the default `test` name prefix at module level
