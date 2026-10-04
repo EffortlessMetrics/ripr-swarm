@@ -366,4 +366,10 @@ Lower-level `start`, `brief`, `packet`, `verify`, `receipt`, `status`, and
 `review-summary` commands remain available for explicit control and debugging.
 The repair command does not generate or apply tests, execute mutation testing,
 or declare the repository safe to merge.
+
+Repair scope: the edit target must be a dedicated test file, never a
+production file. Repositories whose only tests are inline `#[cfg(test)]`
+modules in production files are permanently out of repair scope: the edit
+cage authorizes whole files, so a production file can never be the edit
+target. The before phase refuses such seams before creating anything.
 "#;

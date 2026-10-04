@@ -297,3 +297,27 @@ RIPR does not select “the latest” attempt, reconstruct an attempt from mutab
 ## Boundary
 
 A repair attempt prepares and verifies evidence. RIPR does not author or apply the focused test edit, call an external model provider, run mutation testing, prove test adequacy or correctness, authorize merge, or turn static evidence into runtime proof.
+
+### Inline-only repositories are out of repair scope (#5210)
+
+A repository whose only tests live in inline `#[cfg(test)]` modules inside
+production files can never start a bounded repair, on any surface. This is a
+permanent scope boundary, not a missing feature queued behind other work: the
+edit cage authorizes whole file paths only, so allow-listing the production
+file would also authorize production edits, and no syntax-scoped
+(test-module-only) cage rule exists. Refusals stay loud and typed on every
+surface; no surface promises what another refuses:
+
+- CLI: `ripr agent repair --phase before` refuses with `has no test file
+  ripr can route a repair to` and names the packet field below;
+- MCP: `ripr_prepare_repair` returns `repair_packet_ready: false` with
+  ineligibility `fix_site_not_test_surface` and creates nothing;
+- pilot: the summary ranks seams for inspection by hand with no repair
+  start, and the focused-test line names the missing test target;
+- packet: `recommended_test.file` is `"not_applicable"` with an empty
+  `allowed_edit_surface` and the production file under `forbidden_files`.
+
+To gain a repair target, add the focused test as a separate test file (a
+`tests/` or `test/` path, `*_test.rs` / `*_tests.rs`) in the crate that owns
+the seam, then rerun pilot. Until then, inspect the ranked seams by hand:
+they are still worth reading, just not repairable through RIPR.
