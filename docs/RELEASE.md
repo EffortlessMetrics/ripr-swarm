@@ -218,6 +218,12 @@ byte lengths and require ordinary files. Initial archive/executable capture and
 archive decompression retain their separate, currently unbounded memory surface;
 the reread bound is not a total package/install memory or storage budget.
 
+The [0.11 preparation packet at observed d7c3](handoffs/2026-10-04-0.11-candidate-preparation-d7c3.md)
+retains the complete Git range, current PR snapshot, proposed engineering
+dispositions and missing acceptance/execution inputs for #2766/#2768/#3807.
+It is inactive review input: no candidate, accepted record-set digest, pin,
+admission generation or qualification is established by that packet.
+
 For `0.11.0`, the Rust gap-repair support claim remains `usable alpha`.
 Fixture, installed-package, packaged-editor, bounded test-only transaction, and
 before/after receipt paths are proved when a valid route exists. The governed
@@ -356,6 +362,19 @@ Cargo may time out while polling the registry index after upload. If that
 happens, check crates.io manually before retrying.
 
 ## Post-Publish
+
+The release commit bumps the package version and
+`LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs`
+together to the release version, and publication runs from that commit —
+never for a release candidate (#5208). The constant must travel with the
+version it names: `init --ci github` self-pins generators at or below it,
+so a constant bumped only after publication would make the just-published
+generator pin its predecessor with a spurious "not released" warning, on
+every release, permanently. The first post-release commit moves the package
+version to the next development version while the constant stays. Between
+the release commit and verified publication, a dev-built generator self-pins
+a version whose archive is not up yet — publish promptly, and refresh CI
+with the previous release until publication verifies.
 
 ```bash
 cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force

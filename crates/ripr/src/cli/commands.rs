@@ -22,6 +22,8 @@ pub(crate) mod agent_card;
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
 mod agent_gap_packet;
+#[path = "commands/agent_stub.rs"]
+pub(crate) mod agent_stub;
 #[path = "commands/cache.rs"]
 mod cache_command;
 #[path = "commands/config.rs"]
@@ -6536,7 +6538,7 @@ language = "rust"
             crate::config::CheckInputExplicit::default(),
         );
         let output = crate::app::check_workspace_with_config(input, &config)?;
-        let rendered = crate::output::json::render_with_config(&output, &config);
+        let rendered = crate::output::json::render_with_config(&output, &config, None);
         serde_json::from_str(&rendered).map_err(|err| format!("check JSON did not parse: {err}"))
     }
 
@@ -7287,6 +7289,8 @@ language = "rust"
 
     #[test]
     fn init_generated_github_workflow_matches_smoke_fixture() -> Result<(), String> {
+        use super::init_workflow::workflow_install_version;
+
         let workflow = generated_github_actions_workflow();
         let fixture = generated_workflow_smoke_fixture();
         // The analysis steps run inside `ripr reports ci-packet` (#4696). Its
@@ -7338,9 +7342,11 @@ language = "rust"
         assert!(cache.contains("          path: ${{ runner.temp }}/ripr-cache\n"));
         // The job token has write scopes, so the action is pinned to a SHA.
         assert!(!workflow.contains("actions/cache@v"));
+        // #5208: the cache key pins the installed version — the generator
+        // itself when released, the latest release when unreleased.
         assert!(cache.contains(&format!(
             "          key: ripr-cache-{}-${{{{ runner.os }}}}-",
-            env!("CARGO_PKG_VERSION")
+            workflow_install_version(env!("CARGO_PKG_VERSION"))
         )));
         let cache_at = workflow
             .find("      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")

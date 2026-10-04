@@ -87,6 +87,7 @@ fn related_test(name: &str, file: &str, line: usize) -> RelatedTest {
         oracle_strength: OracleStrength::Weak,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }
 }
 
@@ -105,6 +106,7 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         language_runs: Vec::new(),
         no_scope_provided: false,
         unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
@@ -1666,6 +1668,7 @@ fn check_output_with_preview_advisory(
         language_runs: Vec::new(),
         no_scope_provided: false,
         unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,

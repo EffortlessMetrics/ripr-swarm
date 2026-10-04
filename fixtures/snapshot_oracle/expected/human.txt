@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if code <= 299 {
   Missing discriminator (1 of 2): code == 299
-  Related test: tests/rendering.rs:4 renders_error_status_snapshot
+  Related test: tests/rendering.rs:4 renders_error_status_snapshot (no test input reaches `code == 299`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach render_status: renders_error_status_snapshot
@@ -25,6 +25,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/snapshot_oracle/input --diff fixtures/snapshot_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:7f019e84
   ripr context --root fixtures/snapshot_oracle/input --diff fixtures/snapshot_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:7f019e84
+Write a test for it:
+  ripr agent stub --root fixtures/snapshot_oracle/input --at src/lib.rs:2
 
 More:
   Full evidence: rerun with --format human-full

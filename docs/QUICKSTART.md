@@ -47,6 +47,15 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
+Either route compiles from source, which took about 11 minutes on one cold Linux
+container in October 2026; a prebuilt 0.11 archive exists only after 0.11.0 is
+published.
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
+`cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
+published, and compiles from source when it is not. Releases before 0.11.0 carry
+no binstall metadata. See [Install channels](INSTALL_CHANNELS.md) for what
+each channel serves today.
 
 For another installation method or a pinned server, see
 [Server provisioning](SERVER_PROVISIONING.md).
@@ -247,13 +256,15 @@ PR-facing packet. It does not run analysis or repair the code. See
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
 | ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. |
-| `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged edits. Otherwise inspect a committed change using your installed version's supported options. |
+| `check` sees no change after an edit. | In a development build, use `--worktree` for staged and unstaged tracked edits. Otherwise inspect a committed change using your installed version's supported options. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
 | Editor diagnostics are missing or stale. | Check `ripr: Show Status`, save the file, and use the extension's refresh action. |
 | The editor cannot start its server. | Check [Server provisioning](SERVER_PROVISIONING.md), especially the version and remote host. |
 | An attempt cannot continue. | Run `ripr agent status --root .` and follow [repair recovery](REPAIR_ATTEMPT.md). |
 | Analysis is partial or limited. | Read the limitation and suggested retry. Missing evidence is not a successful empty result. |
+
+Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml) with your `ripr --version`.
 
 ## Known Limits
 
