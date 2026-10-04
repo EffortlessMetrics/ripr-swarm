@@ -7391,6 +7391,8 @@ language = "rust"
 
     #[test]
     fn init_generated_github_workflow_matches_smoke_fixture() {
+        use super::init_workflow::workflow_install_version;
+
         let workflow = generated_github_actions_workflow();
         let fixture = generated_workflow_smoke_fixture();
 
@@ -7433,9 +7435,11 @@ language = "rust"
         assert!(cache.contains("          path: ${{ runner.temp }}/ripr-cache\n"));
         // The job token has write scopes, so the action is pinned to a SHA.
         assert!(!workflow.contains("actions/cache@v"));
+        // #5208: the cache key pins the installed version — the generator
+        // itself when released, the latest release when unreleased.
         assert!(cache.contains(&format!(
             "          key: ripr-cache-{}-${{{{ runner.os }}}}-",
-            env!("CARGO_PKG_VERSION")
+            workflow_install_version(env!("CARGO_PKG_VERSION"))
         )));
         let cache_at = workflow
             .find("      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
