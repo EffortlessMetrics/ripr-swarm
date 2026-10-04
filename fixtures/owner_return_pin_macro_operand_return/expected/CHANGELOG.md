@@ -76,3 +76,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_macro_operand_return (7)
+
+Reason:
+RIPR-SPEC-0197: a return inside an assert_eq! argument is named as such, not as an opaque macro
+
+Command:
+`cargo xtask goldens bless owner_return_pin_macro_operand_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

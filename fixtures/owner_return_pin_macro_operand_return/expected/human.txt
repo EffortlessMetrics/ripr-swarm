@@ -13,9 +13,9 @@ Start here:
   File: fixtures/owner_return_pin_macro_operand_return/input/src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
-  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:5: the test calls
-    `assert_eq!`, whose expansion ripr cannot see, so a hidden `return` or `?` could skip the
-    assertion
+  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:5: an argument of
+    `assert_eq!` contains a `return`, `?` or nested macro that may leave the test before the
+    comparison
   Changed behavior: input * 3
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Related test: tests/weight_tests.rs:4 checks_weight

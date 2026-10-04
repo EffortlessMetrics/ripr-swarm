@@ -940,6 +940,10 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
         format!("mod helpers {{ #[macro_export] {shadow} }}"),
         format!("fn helper() {{ #[macro_export] {shadow} }}"),
         format!("mod helpers {{ #[cfg_attr(test, macro_export)] {shadow} }}"),
+        // Raw identifiers spell the same attributes.
+        format!("mod helpers {{ #[r#macro_export] {shadow} }}"),
+        format!("fn helper() {{ #[cfg_attr(all(), r#macro_export)] {shadow} }}"),
+        format!("#[r#macro_use] mod helpers {{ {shadow} }}"),
     ] {
         assert!(
             matches!(
@@ -965,6 +969,86 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
         "use demo::weight;\nmod tests {{\n    {shadow}\n}}\n#[test]\nfn weighs() {{ assert_eq!(weight(4), 12); }}\n"
     );
     assert_eq!(weight_refusal(&after, &[]), None);
+}
+
+#[test]
+fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() {
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // rust-hex's `mod tests { use pretty_assertions::assert_eq; .. }` shape,
+    // with a macro ripr does not trust.
+    for other in [
+        "mod tests { use similar::assert_eq; }".to_string(),
+        "mod tests { use proptest::prelude::*; }".to_string(),
+        "fn helper() { use similar::assert_eq; }".to_string(),
+        "mod a { mod tests { use other::assert_eq as assert_eq; } }".to_string(),
+    ] {
+        assert_eq!(
+            weight_refusal(outside, &[("src/other.rs", &other)]),
+            None,
+            "{other}"
+        );
+    }
+    // A file-level or re-exported import, or one a child file could reach
+    // through `super`, stays ambiguous everywhere.
+    for other in [
+        "use similar::assert_eq;".to_string(),
+        "mod tests { pub use similar::assert_eq; }".to_string(),
+        "mod tests { pub(crate) use similar::assert_eq; }".to_string(),
+        "mod tests { use similar::assert_eq; mod child; }".to_string(),
+        "mod tests { use proptest::prelude::*; mod child; }".to_string(),
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(outside, &[("src/other.rs", &other)]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other}"
+        );
+    }
+    let inside = "use demo::weight;\nmod tests {\n    use super::*;\n    use similar::assert_eq;\n    #[test]\n    fn weighs() { assert_eq!(weight(4), 12); }\n}\n";
+    assert!(matches!(
+        weight_refusal(inside, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    let after = "use demo::weight;\nmod tests {\n    use similar::assert_eq;\n}\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    assert_eq!(weight_refusal(after, &[]), None);
+}
+
+#[test]
+fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    for other in [
+        "use pretty_assertions::assert_eq;",
+        "use ::pretty_assertions::assert_eq;",
+        "use pretty_assertions::{assert_eq, assert_ne};",
+        "use pretty_assertions::assert_eq as assert_eq;",
+    ] {
+        assert_eq!(
+            weight_refusal(outside, &[("src/other.rs", other)]),
+            None,
+            "{other}"
+        );
+    }
+    for other in [
+        "use pretty_assertions::assert_ne as assert_eq;",
+        "use pretty_assertions::inner::assert_eq;",
+        "use other::pretty_assertions::assert_eq;",
+        "use similar::assert_eq;",
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(outside, &[("src/other.rs", other)]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other}"
+        );
+    }
 }
 
 #[test]
@@ -1002,6 +1086,12 @@ fn each_refusal_names_the_gate_that_failed() {
         refusal(&format!("t!(x); {pin}"), ""),
         Some(AssertionRefusal::Syntax(
             AssertionContextRefusal::OpaqueMacro("t".to_string())
+        ))
+    );
+    assert_eq!(
+        refusal("assert_eq!(weight({ return; 4 }), 12);", ""),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroOperandExit("assert_eq".to_string())
         ))
     );
     assert_eq!(

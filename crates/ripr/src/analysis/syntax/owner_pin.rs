@@ -9,7 +9,7 @@ use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasName},
+    ast::{self, HasArgList, HasAttrs, HasName, HasVisibility},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,6 +54,9 @@ pub(crate) enum AssertionContextRefusal {
     /// The body invokes a macro whose expansion ripr cannot see, so a hidden
     /// `return` or `?` could skip the assertion.
     OpaqueMacro(String),
+    /// An argument of this trusted macro holds a `return`, `?` or nested
+    /// macro, which may leave the test before the comparison runs.
+    MacroOperandExit(String),
     /// A closure in the body can exit early (`return`, `?`) or the body
     /// yields.
     ClosureExit,
@@ -114,8 +117,8 @@ impl OwnerPinAssertions {
     }
 }
 
-/// Visible bindings that may shadow trusted macros. Visibility and namespace
-/// are intentionally not resolved; each test consults only names it uses.
+/// Visible bindings that may shadow trusted macros. Namespace is
+/// intentionally not resolved; each test consults only names it uses.
 /// Unknown macro imports affect all trusted names, including cross-file scope.
 ///
 /// `module_resolved(line, "mod name;")` says whether this file's out-of-line
@@ -124,22 +127,11 @@ impl OwnerPinAssertions {
 /// `macro_rules!` items whose definitions every scanned file already
 /// reports, so it adds no unseen binding. Any other `#[macro_use]` (an
 /// `extern crate`, an unresolved module) stays ambiguous for every name.
-pub(crate) fn trusted_macro_binding_ambiguities(
-    source: &str,
-    packages: &BTreeSet<String>,
-    trusted: &[&str],
-    module_resolved: &dyn Fn(usize, &str) -> bool,
-) -> BTreeSet<String> {
-    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
-        .into_iter()
-        .filter(|(_, site)| site.scope.is_none())
-        .map(|(name, _)| name)
-        .collect()
-}
-
+///
 /// Every binding site the scan finds, in source order, including
-/// definitions whose textual scope is one inline module or function
-/// ([`MacroBindingSite::scope`]); callers apply those only to tests inside it.
+/// definitions and private imports confined to one inline module, function
+/// or block ([`MacroBindingSite::scope`]); callers apply those only to tests
+/// inside it.
 pub(crate) fn trusted_macro_binding_sites(
     source: &str,
     packages: &BTreeSet<String>,
@@ -242,6 +234,16 @@ fn macro_binding_ambiguities(
             .get_or_init(|| LineIndex::new(source))
             .line(node.text_range().start())
     };
+    let scope_of = |item: Option<SyntaxNode>| {
+        item.map(|item| {
+            let range = item.text_range();
+            let lines = lines.get_or_init(|| LineIndex::new(source));
+            (
+                lines.line(range.start()),
+                lines.line_for_range_end(range.end()),
+            )
+        })
+    };
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
@@ -253,14 +255,7 @@ fn macro_binding_ambiguities(
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
                 let line = line_of(&node);
-                let scope = textual_scope(&node).map(|item| {
-                    let range = item.text_range();
-                    let lines = lines.get_or_init(|| LineIndex::new(source));
-                    (
-                        lines.line(range.start()),
-                        lines.line_for_range_end(range.end()),
-                    )
-                });
+                let scope = scope_of(textual_scope(&node));
                 ambiguous.push((
                     name.to_string(),
                     MacroBindingSite {
@@ -279,11 +274,14 @@ fn macro_binding_ambiguities(
                 .collect();
             if words
                 .iter()
-                .any(|token| token.text() == "no_implicit_prelude")
+                .any(|token| token.text().trim_start_matches("r#") == "no_implicit_prelude")
             {
                 return all(line_of(&node), MacroBindingKind::NoImplicitPrelude);
             }
-            if words.iter().any(|token| token.text() == "macro_use") {
+            if words
+                .iter()
+                .any(|token| token.text().trim_start_matches("r#") == "macro_use")
+            {
                 let module = attr.syntax().parent().and_then(ast::Module::cast);
                 let resolved = module.as_ref().is_some_and(|module| {
                     module.item_list().is_some()
@@ -357,13 +355,22 @@ fn macro_binding_ambiguities(
                     .any(|package| package.replace('-', "_") == root);
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some() && !own {
-                    let path = item
-                        .syntax()
-                        .ancestors()
-                        .find(|node| ast::Use::can_cast(node.kind()))
-                        .map(|node| node.text().to_string())
-                        .unwrap_or_default();
-                    return all(line_of(&node), MacroBindingKind::ForeignGlob(path));
+                    let path = import.syntax().text().to_string();
+                    let Some(scope) = scope_of(import_scope(&import)) else {
+                        return all(line_of(&node), MacroBindingKind::ForeignGlob(path));
+                    };
+                    let line = line_of(&node);
+                    ambiguous.extend(trusted.iter().map(|name| {
+                        (
+                            (*name).to_string(),
+                            MacroBindingSite {
+                                line,
+                                kind: MacroBindingKind::ForeignGlob(path.clone()),
+                                scope: Some(scope),
+                            },
+                        )
+                    }));
+                    continue;
                 }
                 let name = if let Some(rename) = item.rename() {
                     rename.name().map(|name| name.text().to_string())
@@ -377,14 +384,14 @@ fn macro_binding_ambiguities(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
-                    if trusted.contains(&name) {
+                    if trusted.contains(&name) && !is_drop_in_assertion(&item, name) {
                         let line = line_of(&node);
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
                                 line,
                                 kind: MacroBindingKind::Import,
-                                scope: None,
+                                scope: scope_of(import_scope(&import)),
                             },
                         ));
                     }
@@ -393,6 +400,41 @@ fn macro_binding_ambiguities(
         }
     }
     ambiguous
+}
+
+/// `pretty_assertions` exports `assert_eq!`/`assert_ne!` as drop-in
+/// replacements that panic exactly when the standard macros do (they only
+/// format the diff differently), so importing one under its own name keeps
+/// the assertion's meaning. Renaming one onto another trusted name does not.
+const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    if !matches!(name, "assert_eq" | "assert_ne") {
+        return false;
+    }
+    // Ancestor trees run inner to outer; reverse each path, then the whole.
+    let mut segments: Vec<String> = item
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|tree| tree.path())
+        .flat_map(|path| {
+            let mut names: Vec<_> = path
+                .syntax()
+                .descendants()
+                .filter_map(ast::NameRef::cast)
+                .map(|name| name.text().to_string())
+                .collect();
+            names.reverse();
+            names
+        })
+        .collect();
+    segments.reverse();
+    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    matches!(
+        segments.as_slice(),
+        [root, imported] if DROP_IN_ASSERTION_CRATES.contains(root) && *imported == name
+    )
 }
 
 /// The inline module or function body that bounds a `macro_rules!`
@@ -409,7 +451,7 @@ fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
         attr.syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .any(|token| token.text() == "macro_export")
+            .any(|token| token.text().trim_start_matches("r#") == "macro_export")
     }) {
         return None;
     }
@@ -422,7 +464,7 @@ fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
             attr.syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
-                .any(|token| token.text() == "macro_use")
+                .any(|token| token.text().trim_start_matches("r#") == "macro_use")
         })
     };
     if definition
@@ -432,6 +474,28 @@ fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
     {
         return None;
     }
+    if scope
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.item_list().is_none())
+    {
+        return None;
+    }
+    Some(scope)
+}
+
+/// The inline module or block that bounds a private `use`: the import is
+/// visible there and in its descendants only. `None` (workspace-wide) for a
+/// file-level or `pub`-visible import, and when the scope holds an
+/// out-of-line `mod name;` whose file could reach it through `super`.
+fn import_scope(import: &ast::Use) -> Option<SyntaxNode> {
+    if import.visibility().is_some() {
+        return None;
+    }
+    let scope = import.syntax().ancestors().skip(1).find(|node| {
+        ast::BlockExpr::can_cast(node.kind())
+            || ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_some())
+    })?;
     if scope
         .descendants()
         .filter_map(ast::Module::cast)
@@ -838,7 +902,7 @@ fn has_escape(
                 .token_tree()
                 .is_some_and(|tree| opaque_macro_operand(&tree))
             {
-                return Some(AssertionContextRefusal::OpaqueMacro(path));
+                return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
         }
 

@@ -48,7 +48,7 @@ use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     empty_macro_binding_ambiguities, local_empty_macro_names, owner_pin_assertions,
-    trusted_macro_binding_ambiguities, trusted_macro_binding_sites,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use std::cell::{OnceCell, RefCell};
@@ -181,18 +181,26 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            index
-                .files()
-                .iter()
-                .flat_map(|(path, facts)| {
-                    trusted_macro_binding_ambiguities(
-                        &facts.source,
-                        index.macro_scope_crates(),
-                        NON_RETURNING_MACROS,
-                        &|line, declaration| module_resolved(path, line, declaration),
-                    )
-                })
-                .collect()
+            // One scan per run: workspace-wide sites feed the shared set,
+            // scoped ones (an inline module or block) are kept per file.
+            let mut global = BTreeSet::new();
+            let mut scoped = ScopedMacroBindings::new();
+            for (path, facts) in index.files().iter() {
+                for (name, site) in trusted_macro_binding_sites(
+                    &facts.source,
+                    index.macro_scope_crates(),
+                    NON_RETURNING_MACROS,
+                    &|line, declaration| module_resolved(path, line, declaration),
+                ) {
+                    if site.scope.is_some() {
+                        scoped.entry(path.clone()).or_default().push((name, site));
+                    } else {
+                        global.insert(name);
+                    }
+                }
+            }
+            *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+            global
         });
         let Some(facts) = index
             .files()
@@ -225,7 +233,7 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
-        ambiguous.extend(self.scoped_names_for(test, index, &module_resolved));
+        ambiguous.extend(self.scoped_names_for(test));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
@@ -271,35 +279,13 @@ impl OwnerPinSyntax {
 type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
 
 impl OwnerPinSyntax {
-    /// Trusted names that a scoped definition makes ambiguous for `test`.
-    fn scoped_names_for(
-        &self,
-        test: &TestSummary,
-        index: &RustIndex,
-        module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
-    ) -> Vec<String> {
-        let mut scoped = self.scoped_macro_bindings.borrow_mut();
-        let scoped = scoped.get_or_insert_with(|| {
-            index
-                .files()
-                .iter()
-                .filter(|(_, facts)| facts.source.contains("macro_rules"))
-                .filter_map(|(path, facts)| {
-                    let sites: Vec<_> = trusted_macro_binding_sites(
-                        &facts.source,
-                        index.macro_scope_crates(),
-                        NON_RETURNING_MACROS,
-                        &|line, declaration| module_resolved(path, line, declaration),
-                    )
-                    .into_iter()
-                    .filter(|(_, site)| site.scope.is_some())
-                    .collect();
-                    (!sites.is_empty()).then(|| (path.clone(), sites))
-                })
-                .collect()
-        });
-        scoped
-            .get(&test.file)
+    /// Trusted names that a scoped definition or import makes ambiguous for
+    /// `test`. Filled by the workspace scan in `refusal`.
+    fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
+        self.scoped_macro_bindings
+            .borrow()
+            .as_ref()
+            .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
             .filter(|(_, site)| site_covers(site, test))
@@ -391,6 +377,9 @@ impl AssertionRefusal {
                 ),
                 AssertionContextRefusal::OpaqueMacro(name) => format!(
                     "the test calls `{name}!`, whose expansion ripr cannot see, so a hidden `return` or `?` could skip the assertion"
+                ),
+                AssertionContextRefusal::MacroOperandExit(name) => format!(
+                    "an argument of `{name}!` contains a `return`, `?` or nested macro that may leave the test before the comparison"
                 ),
                 AssertionContextRefusal::ClosureExit => {
                     "a closure in the test can return early, or the test yields".into()
