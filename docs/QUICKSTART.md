@@ -48,10 +48,10 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
 
-Starting with 0.11.0, `cargo binstall ripr` downloads the prebuilt release
-archive instead of compiling, if [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
-is installed. Releases before 0.11.0 carry no binstall metadata, so binstall
-builds them from source. See [Install channels](INSTALL_CHANNELS.md) for what
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
+`cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
+published, and compiles from source when it is not. Releases before 0.11.0 carry
+no binstall metadata. See [Install channels](INSTALL_CHANNELS.md) for what
 each channel serves today.
 
 For another installation method or a pinned server, see

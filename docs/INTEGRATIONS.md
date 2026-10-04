@@ -77,7 +77,7 @@ ripr:
   allow_failure: true
 ```
 
-The same four steps (fetch full history, install, verify, `ripr check --base`)
+The example covers merge requests from branches in the same project; a fork's pipeline runs in the fork, so fetch the target project's branch (`git fetch <target-url> <branch>`) and pass that ref to `--base`. The same four steps (fetch full history, install, verify, `ripr check --base`)
 apply to Buildkite, CircleCI and Jenkins. Not run on a GitLab runner. The
 shallow-clone note comes from ripr's own exit-2 message, which names the fix.
 

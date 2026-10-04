@@ -33,10 +33,10 @@ body:
     id: output
     attributes:
       label: What ripr printed
-      description: Paste the finding. `ripr check --json` is welcome when you can share it.
+      description: Paste the finding if there was one. For a missed gap there may be none; paste the command you ran instead. `ripr check --json` is welcome when you can share it.
       render: text
     validations:
-      required: true
+      required: false
   - type: textarea
     id: expected
     attributes:

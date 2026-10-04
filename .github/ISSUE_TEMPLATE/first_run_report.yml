@@ -7,9 +7,9 @@ body:
     id: version
     attributes:
       label: ripr version
-      description: Output of `ripr --version`.
+      description: Output of `ripr --version`. Leave blank if installation failed, and say what failed below.
     validations:
-      required: true
+      required: false
   - type: dropdown
     id: channel
     attributes:
@@ -38,14 +38,14 @@ body:
       label: Time from install start to the first `ripr check` result
       placeholder: "about 40 seconds"
     validations:
-      required: true
+      required: false
   - type: textarea
     id: relevance
     attributes:
       label: Was the first finding about code you changed, and would you add the suggested test?
-      description: If not, say what was wrong or missing.
+      description: If not, say what was wrong or missing. If install or the first check failed, paste the error here instead.
     validations:
-      required: true
+      required: false
   - type: textarea
     id: unclear
     attributes:
