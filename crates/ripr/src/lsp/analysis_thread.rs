@@ -9,9 +9,10 @@
 //! at ~635 MB. Running every refresh on one thread keeps it in one arena.
 //!
 //! Refreshes are already serialized by the scheduler's execution gate, so a
-//! single thread costs no concurrency. A job that panics takes the thread
-//! down with it; its caller sees a task failure, as with `spawn_blocking`,
-//! and the next job starts a fresh thread.
+//! single thread costs no concurrency. A job that panics fails only its own
+//! caller, as with `spawn_blocking`: the thread catches the unwind and goes on
+//! to the jobs queued behind it. If the thread is ever gone, the next job
+//! starts a fresh one.
 
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -46,8 +47,8 @@ impl AnalysisThread {
         }))?;
         result.await.map_err(|stopped| {
             format!(
-                "the analysis thread stopped before returning a result ({stopped}; the analysis \
-                 panicked); the next refresh starts a new analysis thread"
+                "the analysis job ended without a result ({stopped}; the analysis panicked); \
+                 save again to retry, and report the panic if it repeats"
             )
         })
     }
@@ -60,7 +61,7 @@ impl AnalysisThread {
         let job = match sender.as_ref() {
             Some(live) => match live.send(job) {
                 Ok(()) => return Ok(()),
-                // The previous thread ended after a panic: start another.
+                // The previous thread is gone: start another.
                 Err(mpsc::SendError(job)) => job,
             },
             None => job,
@@ -70,7 +71,10 @@ impl AnalysisThread {
             .name("ripr-lsp-analysis".to_owned())
             .spawn(move || {
                 while let Ok(job) = jobs.recv() {
-                    job();
+                    // A panicking job drops its result sender while unwinding,
+                    // so its own caller still sees the failure; the jobs queued
+                    // behind it keep running on this thread and arena.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
                 }
             })
             .map_err(|err| {
@@ -110,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn a_panicking_job_fails_its_caller_and_the_next_job_still_runs() -> Result<(), String> {
+    fn a_panicking_job_fails_only_its_caller_and_the_thread_keeps_running() -> Result<(), String> {
         let worker = AnalysisThread::default();
         runtime()?.block_on(async {
             let before = worker.run(|| std::thread::current().id()).await?;
@@ -128,11 +132,28 @@ mod tests {
             };
             assert!(err.contains("analysis panicked"), "{err}");
             let after = worker.run(|| std::thread::current().id()).await?;
-            assert_ne!(
-                before, after,
-                "a fresh thread replaces the one that panicked"
+            assert_eq!(before, after, "the thread survives the panic");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_job_queued_behind_a_panicking_job_still_runs() -> Result<(), String> {
+        let worker = AnalysisThread::default();
+        let out_of_bounds = std::env::args_os().count() + 1;
+        runtime()?.block_on(async {
+            // `join!` submits both jobs before either finishes: the second
+            // waits in the channel while the first sleeps and then panics.
+            let (failed, queued) = tokio::join!(
+                worker.run(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let slots = [0u8];
+                    slots[out_of_bounds]
+                }),
+                worker.run(|| 7u8),
             );
-            assert_eq!(worker.run(|| 7).await?, 7);
+            assert!(failed.is_err(), "the panicking job reports a failure");
+            assert_eq!(queued?, 7);
             Ok(())
         })
     }
