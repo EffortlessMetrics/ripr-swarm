@@ -18,7 +18,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 .ok_or("missing control invocation identity")?,
         );
     let result = (|| {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_mins(2);
         let run = |args: &[&str]| {
             let budget = deadline
                 .saturating_duration_since(std::time::Instant::now())
