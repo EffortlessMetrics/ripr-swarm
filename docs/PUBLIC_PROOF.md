@@ -67,11 +67,13 @@ Each line below is computed from the receipts above. Detail sections follow.
 - **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 11.5 s; the bar is at most 2.0 s.
 - **Warm `ripr check` peak memory.** Worst repository: ripr-swarm at 1187 MB; the bar is at most 512 MB.
 - **First-run verdicts are unresolved.** 3 of 3 first-run crates ended in an `*_unknown` verdict on ripr 0.11.0 (a7a089e); 1 of 3 did on ripr 0.10.0.
-- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates, out of 34 pinned in the corpus.
+- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates. The corpus manifest pins 34 repositories; 0 of the scoreboard's repositories appear in it at the same revision, so the two sets are not the same measurement.
 
 ## Mutation agreement
 
 Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure. Status of this receipt: `advisory`.
+
+This receipt does not record which ripr build produced the static classifications, only the checkout revisions and the cargo-mutants version. The agreement rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
 | Verdict class | Seams | Mutants | Agree | Overclaim | False gap | Agreement |
 | --- | --- | --- | --- | --- | --- | --- |

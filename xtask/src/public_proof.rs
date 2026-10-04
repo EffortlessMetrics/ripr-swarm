@@ -905,10 +905,20 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         ));
     }
 
-    let swarm_dx = items(&r.dx, "repos").len();
-    let manifest_repos = items(&r.corpus, "repos").len();
+    let dx_repos = items(&r.dx, "repos");
+    let manifest = items(&r.corpus, "repos");
+    let on_manifest = dx_repos
+        .iter()
+        .filter(|repo| {
+            manifest.iter().any(|entry| {
+                text(entry, "id") == text(repo, "id") && text(entry, "sha") == text(repo, "sha")
+            })
+        })
+        .count();
     page.line(format!(
-        "- **Narrow coverage.** The speed scoreboard measured {swarm_dx} repositories and the first-run walk {cases_now} crates, out of {manifest_repos} pinned in the corpus."
+        "- **Narrow coverage.** The speed scoreboard measured {} repositories and the first-run walk {cases_now} crates. The corpus manifest pins {} repositories; {on_manifest} of the scoreboard's repositories appear in it at the same revision, so the two sets are not the same measurement.",
+        dx_repos.len(),
+        manifest.len(),
     ));
     page.blank();
     Ok(())
@@ -948,6 +958,11 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
         req_str(mutation, "claim_boundary", ctx)?,
         req_str(mutation, "status", ctx)?
     ));
+    page.blank();
+    match field(mutation, "analyzer_version").as_str() {
+        Some(version) => page.line(format!("Static classifications were produced by {version}.")),
+        None => page.line("This receipt does not record which ripr build produced the static classifications, only the checkout revisions and the cargo-mutants version. The agreement rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
+    }
     page.blank();
     let families = field(mutation, "scored_families");
     let mut family_rows: Vec<Vec<String>> = Vec::new();
@@ -1577,6 +1592,26 @@ mod tests {
         let result = receipt_drift(&dir);
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         assert!(result.is_err_and(|err| err.contains("manifest.json")));
+        Ok(())
+    }
+
+    #[test]
+    fn mutation_section_says_when_the_analyzer_build_is_unrecorded() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let mut page = Page(String::new());
+        mutation_section(&mut page, &receipts.mutation)?;
+        assert!(page.0.contains("does not record which ripr build produced"));
+        let mut recorded = receipts.mutation.clone();
+        if let Some(object) = recorded.as_object_mut() {
+            object.insert(
+                "analyzer_version".to_string(),
+                Value::from("ripr 0.11.0 (abc1234)"),
+            );
+        }
+        let mut page = Page(String::new());
+        mutation_section(&mut page, &recorded)?;
+        assert!(page.0.contains("produced by ripr 0.11.0 (abc1234)"));
+        assert!(!page.0.contains("does not record which ripr build"));
         Ok(())
     }
 
