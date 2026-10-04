@@ -741,8 +741,14 @@ fn missing_discriminator_facts(
         missing.push(fact);
     }
     if matches!(probe.family, ProbeFamily::MatchArm)
-        && let Some(fact) =
-            missing_match_arm_discriminator(probe, owner_fn, related_tests, flow_sinks)
+        && let Some(fact) = missing_match_arm_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            index,
+            workspace_complete,
+        )
     {
         missing.push(fact);
     }
@@ -998,13 +1004,24 @@ fn missing_match_arm_discriminator(
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
-    if related_tests.is_empty() {
+    let owner = owner_fn?;
+    // A same-named function elsewhere makes a direct call ambiguous, and a
+    // partial index cannot show that the name is unique.
+    if related_tests.is_empty()
+        || !workspace_complete
+        || !super::helper_transfer::callee_is_unique(&owner.name, index)
+    {
         return None;
     }
-    let selector = super::arm_selection::ArmSelector::establish(probe, owner_fn?)?;
+    let selector = super::arm_selection::ArmSelector::establish(probe, owner)?;
     let mut inputs = Vec::new();
     for test in related_tests {
+        if may_reach_owner_unread(test, &owner.name, index) {
+            return None;
+        }
         let observed = selector.observed_inputs(test)?;
         if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
             return None;
@@ -1030,6 +1047,62 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+    })
+}
+
+/// Whether the test may run the owner through something its own body does
+/// not show: a call to an indexed function whose body names the owner (a
+/// helper such as `check_none()`), or a macro other than the standard
+/// assertion and formatting macros, whose expansion is not read.
+fn may_reach_owner_unread(
+    test: &TestSummary,
+    owner: &str,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    const READ_MACROS: &[&str] = &[
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "vec",
+        "format",
+        "print",
+        "println",
+        "eprint",
+        "eprintln",
+        "dbg",
+        "panic",
+        "matches",
+    ];
+    // The test's own `fn name()` header reads as a call to itself; only a
+    // different indexed function is a helper.
+    let helper_call = test.body_calls().any(|call| {
+        call.name != owner
+            && index.functions().iter().any(|function| {
+                function.name == call.name
+                    && !(function.name == test.name && function.file == test.file)
+                    && super::reveal::contains_as_whole_word(&function.body, owner)
+            })
+    });
+    if helper_call {
+        return true;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes.get(offset + 1).copied();
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let name_start = masked[..offset]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &masked[name_start..offset];
+        !name.is_empty() && !READ_MACROS.contains(&name)
     })
 }
 

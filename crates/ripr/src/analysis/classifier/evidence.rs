@@ -1,10 +1,10 @@
 use crate::analysis::classify::{
     ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
-    ReturnOracleAdmission, activation_evidence_with_value_facts, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    ReturnOracleAdmission, activation_evidence_with_value_facts, callee_is_unique, classify,
+    confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -98,9 +98,16 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+        // A same-named function elsewhere (a trait method on another enum
+        // with the same variant names) makes a direct call ambiguous; a
+        // partial index cannot show the name is unique.
         let arm_selector = context
             .owner_fn
-            .filter(|_| matches!(context.probe.family, ProbeFamily::MatchArm))
+            .filter(|owner| {
+                matches!(context.probe.family, ProbeFamily::MatchArm)
+                    && context.workspace_complete
+                    && callee_is_unique(&owner.name, context.index)
+            })
             .and_then(|owner| ArmSelector::establish(context.probe, owner));
         let package_defeats_by_file = FileDefeatMemo::default();
         let owner_locals = context

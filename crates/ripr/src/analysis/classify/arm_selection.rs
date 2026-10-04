@@ -53,6 +53,10 @@ pub(in crate::analysis) struct ArmSelector {
     earlier: Vec<Option<Vec<PatternHead>>>,
     pattern_text: String,
     scrutinee: String,
+    /// The scrutinee's type name (`Mode` for `mode: Mode`, the impl's self
+    /// type for `self`), when the signature or impl names one. A qualified
+    /// input must be qualified by it.
+    scrutinee_type: Option<String>,
     binding: ScrutineeBinding,
     owner: String,
     method: bool,
@@ -121,22 +125,35 @@ impl ArmSelector {
             .iter()
             .map(|pattern| earlier_arm(pattern))
             .collect::<Vec<_>>();
-        let binding = if method && matches!(scrutinee.as_str(), "self" | "*self") {
-            ScrutineeBinding::Receiver
-        } else {
-            let index = function_parameters(owner)
-                .iter()
-                .position(|parameter| parameter_name(parameter) == scrutinee)?;
-            if rebinds_before_match(owner, &scrutinee, probe.location.line) {
+        let (binding, scrutinee_type) = if method && matches!(scrutinee.as_str(), "self" | "*self")
+        {
+            if receiver_may_change(owner) {
                 return None;
             }
-            ScrutineeBinding::Parameter(index)
+            let self_type = match &owner.impl_context {
+                crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
+                    Some(self_type.clone())
+                }
+                _ => None,
+            };
+            (ScrutineeBinding::Receiver, self_type)
+        } else {
+            let parameters = function_parameters(owner);
+            let index = parameters
+                .iter()
+                .position(|parameter| parameter_name(parameter) == scrutinee)?;
+            let declared = parameter_declaration(owner, &scrutinee)?;
+            if parameter_may_change(owner, &scrutinee, declared.mutable) {
+                return None;
+            }
+            (ScrutineeBinding::Parameter(index), declared.type_name)
         };
         Some(Self {
             alternatives,
             earlier,
             pattern_text,
             scrutinee,
+            scrutinee_type,
             binding,
             owner: owner.name.clone(),
             method,
@@ -222,6 +239,14 @@ impl ArmSelector {
     /// not. Not matching the changed arm's own pattern is enough for
     /// `SelectsOther`, whatever the earlier arms are.
     fn judge(&self, input: &str) -> ArmSelection {
+        // `Priority::Low` is not `Level::Low`: a qualifier other than the
+        // scrutinee's type (or `Self`) names another enum's variant.
+        if let Some(qualifier) = input_qualifier(input)
+            && qualifier != "Self"
+            && self.scrutinee_type.as_deref() != Some(qualifier)
+        {
+            return ArmSelection::Unknown;
+        }
         let input = input_head(input);
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
@@ -311,6 +336,10 @@ fn judge_alternative(alternative: &PatternHead, input: &PatternHead) -> ArmSelec
 /// never established here.
 fn arm_pattern_text(expression: &str) -> Option<String> {
     let arrow = find_fat_arrow(expression)?;
+    // Two arms on one line: which one changed is not known.
+    if find_fat_arrow(&expression[arrow + 2..]).is_some() {
+        return None;
+    }
     let pattern = without_comments(&expression[..arrow])?;
     let pattern = pattern.trim();
     let masked = mask_comments_and_strings(pattern);
@@ -470,10 +499,13 @@ fn payload_is_irrefutable(payload: &str) -> bool {
             .or_else(|| binding.strip_prefix("mut "))
             .unwrap_or(binding)
             .trim();
-        binding.is_empty()
-            || binding == "_"
-            || binding == ".."
-            || (is_identifier(binding) && binding.starts_with(|ch: char| ch.is_ascii_lowercase()))
+        // `true`/`false` are literals, and a path (`limits::MAX`) is a
+        // constant, not a binding: both refute.
+        let is_binding = is_identifier(binding)
+            && binding.starts_with(|ch: char| ch.is_ascii_lowercase())
+            && !matches!(binding, "true" | "false");
+        !entry.contains("::")
+            && (binding.is_empty() || binding == "_" || binding == ".." || is_binding)
     })
 }
 
@@ -703,6 +735,10 @@ fn arm_expression_end(masked: &str, from: usize, end: usize) -> Option<usize> {
                 }
             }
             b',' if depth == 0 => return Some(index + 1),
+            // A block-like body (`match`, `if .. else`, `unsafe`, a labeled
+            // block) may end without a comma; a second `=>` before the
+            // comma means the next arm was swallowed.
+            b'=' if depth == 0 && !block && bytes.get(index + 1) == Some(&b'>') => return None,
             _ => {}
         }
         index += 1;
@@ -710,31 +746,114 @@ fn arm_expression_end(masked: &str, from: usize, end: usize) -> Option<usize> {
     None
 }
 
-/// Any occurrence before the arm that could bind or assign the name makes
-/// the scrutinee something other than the caller's argument: a `let` or
-/// `if let`/`while let` pattern (`let x`, `Some(x) =`, `(a, x)`), a closure
-/// parameter, `ref`/`mut`/`@` bindings, or an assignment. Plain reads such
-/// as `x.is_some()` do not. A read inside a call's arguments (`f(x)`) is
-/// also refused: telling it from a pattern position needs a parser.
-fn rebinds_before_match(owner: &FunctionSummary, name: &str, arm_line: usize) -> bool {
+/// The type segment before the variant in a qualified input path
+/// (`Mode` in `Mode::Hot`, `Mode::Hot(1)`), or `None` when unqualified.
+fn input_qualifier(input: &str) -> Option<&str> {
+    let input = input.trim();
+    let path_end = input
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+        .unwrap_or(input.len());
+    let mut segments = input[..path_end].rsplit("::");
+    segments.next()?;
+    segments.next()
+}
+
+struct ParameterDeclaration {
+    mutable: bool,
+    type_name: Option<String>,
+}
+
+/// How `name` is declared in the owner's one-line signature: whether it is
+/// `mut name` or `&mut T`, and the last path segment of its type with
+/// references and generic arguments dropped (`Option` for `Option<i32>`).
+fn parameter_declaration(owner: &FunctionSummary, name: &str) -> Option<ParameterDeclaration> {
+    let signature = owner.body.lines().next()?;
+    let open = signature.find('(')?;
+    let close = matching_parenthesis(signature, open)?;
+    let entries = split_top_level_arguments(&signature[open + 1..close])?;
+    let entry = entries.into_iter().find(|entry| {
+        entry
+            .split_once(':')
+            .is_some_and(|(pattern, _)| parameter_name(pattern) == name)
+    })?;
+    let (pattern, ty) = entry.split_once(':')?;
+    let ty = ty.trim();
+    let mutable = pattern.trim().starts_with("mut ")
+        || ty.starts_with("&mut")
+        || ty.starts_with("&'") && ty.contains(" mut ");
+    let base = ty.trim_start_matches('&');
+    let base = match base.strip_prefix('\'') {
+        Some(rest) => rest.split_once(' ').map_or("", |(_, rest)| rest),
+        None => base,
+    };
+    let base = base.trim().strip_prefix("mut ").unwrap_or(base.trim());
+    let base = base.split('<').next().unwrap_or(base).trim();
+    let type_name = base
+        .rsplit("::")
+        .next()
+        .filter(|name| is_identifier(name))
+        .map(str::to_string);
+    Some(ParameterDeclaration { mutable, type_name })
+}
+
+/// The owner's body after its signature line, masked.
+fn owner_body_after_signature(owner: &FunctionSummary) -> String {
     let masked = mask_comments_and_strings(&owner.body);
-    let relative = arm_line.saturating_sub(owner.start_line);
-    let before = masked
-        .split_inclusive('\n')
-        .take(relative)
-        .collect::<String>();
-    // Skip the signature line: the parameter itself is not a rebinding.
-    let body = before.split_once('\n').map_or("", |(_, rest)| rest);
-    whole_word_offsets(body, name).into_iter().any(|offset| {
+    masked
+        .split_once('\n')
+        .map_or(String::new(), |(_, rest)| rest.to_string())
+}
+
+/// Whether the parameter may hold something other than the caller's
+/// argument when the match reads it. The whole body is read, not only the
+/// part before the arm, because a loop can reassign it after the match. A
+/// binding position (`let x`, `Some(x) =`, `for x in`, `|x|`, `W { f: x }`),
+/// an assignment, or, for a `mut`/`&mut` parameter, any method call or
+/// further use refuses. Plain reads of an immutable parameter do not. A use
+/// inside call arguments (`f(x)`) also refuses: telling it from a pattern
+/// position needs a parser.
+fn parameter_may_change(owner: &FunctionSummary, name: &str, mutable: bool) -> bool {
+    let body = owner_body_after_signature(owner);
+    whole_word_offsets(&body, name).into_iter().any(|offset| {
         let prefix = body[..offset].trim_end();
         let suffix = body[offset + name.len()..].trim_start();
-        ["let", "mut", "ref", "|", "(", ",", "{", "@", "["]
+        if prefix.ends_with("match") && suffix.starts_with('{') {
+            return false;
+        }
+        mutable
+            || [
+                "let", "mut", "ref", "for", "|", "(", ",", "{", "@", "[", "&",
+            ]
             .iter()
             .any(|marker| prefix.ends_with(marker))
+            || (prefix.ends_with(':') && !prefix.ends_with("::"))
             || (suffix.starts_with('=') && !suffix.starts_with("=="))
-            || ["+=", "-=", "*=", "/=", "@", ":"]
-                .iter()
-                .any(|marker| suffix.starts_with(marker) && !suffix.starts_with("::"))
+            || [
+                "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>=", "@", "in ",
+            ]
+            .iter()
+            .any(|marker| suffix.starts_with(marker))
+            || (suffix.starts_with(':') && !suffix.starts_with("::"))
+    })
+}
+
+/// Whether a `mut self`/`&mut self` method may change `self` before or
+/// between reads of the match: any use of `self` other than the match's own
+/// scrutinee refuses. An immutable receiver cannot be reassigned.
+fn receiver_may_change(owner: &FunctionSummary) -> bool {
+    let signature = owner.body.lines().next().unwrap_or_default();
+    let masked_signature = mask_comments_and_strings(signature);
+    let mutable = whole_word_offsets(&masked_signature, "self")
+        .into_iter()
+        .any(|offset| masked_signature[..offset].trim_end().ends_with("mut"));
+    if !mutable {
+        return false;
+    }
+    let body = owner_body_after_signature(owner);
+    whole_word_offsets(&body, "self").into_iter().any(|offset| {
+        let prefix = body[..offset].trim_end().trim_end_matches('*').trim_end();
+        let suffix = body[offset + "self".len()..].trim_start();
+        !(prefix.ends_with("match") && suffix.starts_with('{'))
     })
 }
 
@@ -775,12 +894,12 @@ fn owner_calls_in<'a>(text: &'a str, owner: &str, method: bool) -> Vec<OwnerCall
             let Some(receiver_end) = prefix.strip_suffix('.').map(str::len) else {
                 continue;
             };
-            let receiver_start = masked[..receiver_end]
-                .rfind(|ch: char| {
-                    !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || ch == '"')
-                })
-                .map_or(0, |index| index + 1);
-            let receiver = text[receiver_start..receiver_end].trim();
+            let receiver_start = path_start(&masked[..receiver_end]);
+            // Masking keeps byte length but not character boundaries inside
+            // strings and comments, so the original text is sliced checked.
+            let Some(receiver) = text.get(receiver_start..receiver_end).map(str::trim) else {
+                continue;
+            };
             let preceding = masked[..receiver_start].trim_end();
             if receiver.is_empty() || preceding.ends_with(['.', ')', ']', '?']) {
                 continue;
@@ -795,9 +914,7 @@ fn owner_calls_in<'a>(text: &'a str, owner: &str, method: bool) -> Vec<OwnerCall
                 continue;
             }
             let start = if prefix.ends_with("::") {
-                masked[..prefix.len()]
-                    .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
-                    .map_or(0, |index| index + 1)
+                path_start(&masked[..prefix.len()])
             } else {
                 offset
             };
@@ -809,6 +926,15 @@ fn owner_calls_in<'a>(text: &'a str, owner: &str, method: bool) -> Vec<OwnerCall
         }
     }
     calls
+}
+
+/// Where the ASCII path (`a::B`) that ends `text` starts: just past the last
+/// character outside `[A-Za-z0-9_:]`, on a character boundary.
+fn path_start(text: &str) -> usize {
+    text.char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_' || *ch == ':'))
+        .map_or(0, |(index, ch)| index + ch.len_utf8())
 }
 
 fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
@@ -964,9 +1090,13 @@ mod tests {
     #[test]
     fn receiver_scrutinee_reads_glob_imported_variants() -> Result<(), String> {
         let body = "pub fn apply_to_variant(self, variant: &str) -> String {\n    match self {\n        None | PascalCase => variant.to_owned(),\n        LowerCase => str::to_ascii_lowercase(variant),\n        UpperCase => variant.to_ascii_uppercase(),\n    }\n}\n";
+        let mut apply = owner(body, "apply_to_variant");
+        apply.impl_context = crate::analysis::facts::FunctionImplContext::Impl {
+            self_type: "RenameRule".to_string(),
+        };
         let selector = ArmSelector::establish(
             &arm_probe("LowerCase => str::to_ascii_lowercase(variant),", 4),
-            &owner(body, "apply_to_variant"),
+            &apply,
         )
         .ok_or_else(|| "premise: the arm reads its scrutinee from self".to_string())?;
         assert!(
@@ -978,6 +1108,10 @@ mod tests {
         assert!(
             !selector.assertion_selects("assert_eq!(UpperCase.apply_to_variant(original), upper);")
         );
+        // A same-named variant of another enum is not this scrutinee's input.
+        assert!(!selector.assertion_selects(
+            "assert_eq!(OtherRule::LowerCase.apply_to_variant(original), lower);"
+        ));
         // A computed receiver is not an input this module reads.
         assert!(
             !selector.assertion_selects("assert_eq!(rule().apply_to_variant(original), lower);")
@@ -1105,6 +1239,85 @@ mod tests {
         assert!(selector.assertion_selects("assert_eq!(width(2), 20);"));
         // The changed line must start an arm of the enclosing match.
         assert!(ArmSelector::establish(&arm_probe("10", 4), &owner(plain, "width")).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn non_ascii_receivers_and_mut_self_methods_are_read_safely() -> Result<(), String> {
+        let body = "pub fn flip(&mut self, mode: Mode) -> u8 {\n    match mode {\n        Mode::Cold => 0,\n        Mode::Hot => 1,\n    }\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("Mode::Hot => 1,", 4), &owner(body, "flip"))
+                .ok_or_else(|| "premise: the Hot arm reads its scrutinee from mode".to_string())?;
+        // `&mut self` is not counted: `mode` is the call's first argument.
+        assert_eq!(selector.binding, ScrutineeBinding::Parameter(0));
+        assert!(selector.assertion_selects("assert_eq!(obj.flip(Mode::Hot), 1);"));
+        // A non-ASCII receiver is read on character boundaries.
+        assert!(selector.assertion_selects("assert_eq!(café.flip(Mode::Hot), 1);"));
+        assert!(!selector.assertion_selects("assert_eq!(\"é\".flip(Mode::Cold), 0);"));
+        assert_eq!(
+            selector
+                .observed_inputs(&test_with(
+                    "fn t() {\n    let mut café = Thing;\n    assert_eq!(café.flip(Mode::Cold), 0);\n}\n"
+                ))
+                .map(|observed| observed.selection),
+            Some(ArmSelection::SelectsOther)
+        );
+        Ok(())
+    }
+
+    /// Review findings on #5638: each shape below once read as `Selects`
+    /// for an input Rust routes to a different arm.
+    #[test]
+    fn review_false_credit_shapes_stay_unjudged() -> Result<(), String> {
+        // `true`/`false` in a payload refute; they are not bindings.
+        let bools = "fn f(x: Option<bool>) -> u8 {\n    match x {\n        Some(true) => 1,\n        Some(false) => 2,\n        None => 0,\n    }\n}\n";
+        let some_true =
+            ArmSelector::establish(&arm_probe("Some(true) => 1,", 3), &owner(bools, "f"))
+                .ok_or_else(|| "premise: the Some(true) arm is readable".to_string())?;
+        assert!(!some_true.assertion_selects("assert_eq!(f(Some(false)), 2);"));
+        // A comma-less block-like body must not swallow the guard arm after it.
+        let swallowed = "fn f(n: u8, flag: bool) -> u8 {\n    match n {\n        0 => match flag { true => 1, false => 2 }\n        x if x > 5 => 9,\n        7 => 70,\n        _ => 0,\n    }\n}\n";
+        let seven = ArmSelector::establish(&arm_probe("7 => 70,", 5), &owner(swallowed, "f"));
+        assert!(
+            seven.is_none_or(|selector| !selector.assertion_selects("assert_eq!(f(7, true), 9);"))
+        );
+        // A `for` loop, a field-rename destructure, or a mutating method
+        // rebinds or changes the parameter.
+        for body in [
+            "fn f(x: Option<u8>, xs: Vec<Option<u8>>) -> u8 {\n    for x in xs {\n        match x {\n            Some(v) => v,\n            None => 100,\n        };\n    }\n    1\n}\n",
+            "fn f(x: Option<u8>, w: W) -> u8 {\n    let W { inner: x } = w;\n    match x {\n        Some(v) => v,\n        None => 100,\n    }\n}\n",
+            "fn f(mut x: Option<u8>) -> u8 {\n    let _ = x.take();\n    match x {\n        Some(v) => v,\n        None => 100,\n    }\n}\n",
+        ] {
+            let line = body
+                .lines()
+                .position(|line| line.contains("None => 100"))
+                .unwrap_or(0)
+                + 1;
+            assert!(
+                ArmSelector::establish(&arm_probe("None => 100,", line), &owner(body, "f"))
+                    .is_none(),
+                "{body}"
+            );
+        }
+        // A loop that reassigns the scrutinee after the match.
+        let looped = "fn run(mut s: State) -> u8 {\n    loop {\n        match s {\n            Start => return 1,\n            Idle => s = Start,\n        }\n    }\n}\n";
+        assert!(
+            ArmSelector::establish(&arm_probe("Start => return 1,", 4), &owner(looped, "run"))
+                .is_none()
+        );
+        // A `&mut self` method that assigns `*self` before the match.
+        let reassigned = "fn f(&mut self) -> u8 {\n    *self = Mode::Off;\n    match self {\n        On => 1,\n        Off => 0,\n    }\n}\n";
+        assert!(
+            ArmSelector::establish(&arm_probe("On => 1,", 4), &owner(reassigned, "f")).is_none()
+        );
+        // Two arms on one line: which one changed is not known.
+        assert!(ArmSelector::establish(&arm_probe("None => 0, Some(v) => v + 1,", 3), &owner("fn f(x: Option<u8>) -> u8 {\n    match x {\n        None => 0, Some(v) => v + 1,\n    }\n}\n", "f")).is_none());
+        // Another enum's variant with the same name is not this one's.
+        let typed = "fn f(level: Level) -> u8 {\n    match level {\n        Level::Low => 1,\n        Level::High => 2,\n    }\n}\n";
+        let low = ArmSelector::establish(&arm_probe("Level::Low => 1,", 3), &owner(typed, "f"))
+            .ok_or_else(|| "premise: the Low arm is readable".to_string())?;
+        assert!(low.assertion_selects("assert_eq!(f(Level::Low), 1);"));
+        assert!(!low.assertion_selects("assert_eq!(f(Priority::Low), 1);"));
         Ok(())
     }
 }

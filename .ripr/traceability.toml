@@ -6608,7 +6608,9 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::refutable_or_unprovable_patterns_stay_unknown",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::computed_or_rebound_scrutinee_establishes_nothing",
-  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_earlier_arm_that_may_match_blocks_selection"
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_earlier_arm_that_may_match_blocks_selection",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::non_ascii_receivers_and_mut_self_methods_are_read_safely",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::review_false_credit_shapes_stay_unjudged"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
