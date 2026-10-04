@@ -1425,11 +1425,11 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
             }
         }
 
-        // Versioned-shape contract: schema_version 1, nonempty sections, and a
+        // Versioned-shape contract: schema_version 2, nonempty sections, and a
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(1) {
+        if value["schema_version"] != serde_json::json!(2) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -1449,6 +1449,20 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
             if row.get("relation").is_none() || row.get("discovery").is_none() {
                 return Err(format!(
                     "help --json command row {} lost its relation/discovery projection",
+                    row["id"]
+                )
+                .into());
+            }
+            let Some(exit) = row.get("exit") else {
+                return Err(format!(
+                    "help --json command row {} lost its typed exit contract",
+                    row["id"]
+                )
+                .into());
+            };
+            if exit.get("kind").is_none() || exit.get("completed") != Some(&serde_json::json!(0)) {
+                return Err(format!(
+                    "help --json command row {} exit object is not a typed 0/2/3 contract: {exit}",
                     row["id"]
                 )
                 .into());
@@ -2708,6 +2722,26 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         "stderr should still report failed analysis: {stderr}"
     );
     Ok(())
+}
+
+/// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
+/// diff has no dependent packages to narrow.
+#[test]
+fn check_rejects_an_invalid_dependent_scope_without_dependents() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr_with_env(
+        &["check", "--root", &root, "--diff", &diff, "--json"],
+        &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
+    );
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+        ),
+        "stderr should name the invalid override: {stderr}"
+    );
 }
 
 #[test]
@@ -17157,10 +17191,12 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
         ));
     }
     // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change".
-    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+    // uncommitted edits, not only "make a change". "tracked" per #5258: the
+    // runtime wording must match `check --help` and cannot promise that
+    // `--worktree` covers untracked files.
+    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
         return Err(format!(
-            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
