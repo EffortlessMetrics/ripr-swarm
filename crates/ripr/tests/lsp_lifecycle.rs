@@ -909,6 +909,23 @@ fn exit_without_shutdown_exits_nonzero() -> Result<(), String> {
     ))
 }
 
+#[test]
+fn shutdown_notification_then_exit_still_exits_nonzero() -> Result<(), String> {
+    // `shutdown` is an LSP request, not a notification: an ID-less
+    // `shutdown` frame must not authorize a clean exit (#6253 review).
+    let mut session = LspSession::spawn()?;
+    handshake(&mut session)?;
+    session.notify("shutdown", None)?;
+    session.notify("exit", None)?;
+    let status = session.wait_exit(EXIT_TIMEOUT)?;
+    if status.code() == Some(2) {
+        return Ok(());
+    }
+    Err(format!(
+        "expected exit code 2 for exit after a shutdown notification (no request), got: {status}"
+    ))
+}
+
 // ── 8. EOF / malformed transport cleanup ──
 
 #[test]
@@ -1378,11 +1395,22 @@ fn shutdown_and_eof_during_request_load_exits_zero() -> Result<(), String> {
     // must stay serviceable and the process must terminate cleanly. The
     // shutdown request is required: bare `exit` exits 2 per LSP §exit
     // (#5249), so omitting it would confuse the load assertion with the
-    // shutdown-order contract. Queued hover responses are drained first so
-    // the shutdown response is not interleaved with them.
-    collect_responses(&mut session, &hover_ids, RESPONSE_TIMEOUT)?;
-    let shutdown = session.request("shutdown", serde_json::Value::Null)?;
-    expect_result(&shutdown, "shutdown under load")?;
+    // shutdown-order contract. The shutdown request fires while the hovers
+    // are still queued and its response is collected with theirs, so the
+    // test keeps its load condition (#6253 review).
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let mut all_ids = hover_ids.clone();
+    all_ids.push(shutdown_id);
+    let responses = collect_responses(&mut session, &all_ids, RESPONSE_TIMEOUT)?;
+    let shutdown = responses
+        .iter()
+        .find(|response| {
+            response.get("id").and_then(serde_json::Value::as_u64) == Some(shutdown_id)
+        })
+        .ok_or_else(|| {
+            format!("shutdown response id {shutdown_id} missing under load: {responses:?}")
+        })?;
+    expect_result(shutdown, "shutdown under load")?;
     session.notify("exit", None)?;
     let status = session.wait_exit(EXIT_TIMEOUT)?;
     if status.success() {

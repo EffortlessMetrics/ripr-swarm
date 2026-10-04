@@ -152,10 +152,16 @@ impl ShutdownExitOrder {
     }
 }
 
-/// Records `shutdown`/`exit` receipt before delegating, so `serve_streams`
-/// can exit nonzero when `exit` arrives without a prior `shutdown` (#5249).
-/// Observes only; the inner service's answers pass through untouched, and
-/// the existing `$/`-request layer keeps its position outside this one.
+/// Records `shutdown`/`exit` order so `serve_streams` can exit nonzero when
+/// `exit` arrives without a prior `shutdown` (#5249). `exit` is a
+/// notification, so its receipt alone counts; `shutdown` is a request, so
+/// only a processed request authorizes a clean exit — an ID-less `shutdown`
+/// notification never does (#6253 review). tower-lsp-server 0.23 exposes no
+/// `id()` getter (only the consuming `into_parts`), so `shutdown` is
+/// recorded on the response path: the inner service answers a real request
+/// with `Some` and drops a notification to `None`. Observes only; answers
+/// pass through untouched, and the existing `$/`-request layer keeps its
+/// position outside this one.
 struct RecordShutdownExit<S> {
     inner: S,
     order: ShutdownExitOrder,
@@ -181,11 +187,22 @@ where
     }
 
     fn call(&mut self, request: Request) -> Self::Future {
-        // Receipt is what LSP section exit conditions on, so the method is
-        // recorded before delegation: even if the inner service errors or
-        // the call is cancelled, the message arrived.
-        self.order.record(request.method());
-        Box::pin(self.inner.call(request))
+        let method = request.method().to_owned();
+        // `exit` arrives as a notification, so its receipt alone counts:
+        // even if the inner service errors or the call is cancelled, the
+        // message arrived. `shutdown` records on the response path below.
+        if method == "exit" {
+            self.order.record("exit");
+        }
+        let future = self.inner.call(request);
+        let order = self.order.clone();
+        Box::pin(async move {
+            let response = future.await?;
+            if method == "shutdown" && response.is_some() {
+                order.record("shutdown");
+            }
+            Ok(response)
+        })
     }
 }
 
