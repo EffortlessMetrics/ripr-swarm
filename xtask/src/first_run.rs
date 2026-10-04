@@ -141,8 +141,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut setup_steps = Vec::new();
     let ripr = if options.install_published {
         let root = out.join("install-root");
+        // Outside the repository so its rust-toolchain and cargo config do not
+        // decide how the published crate builds.
         let step = timed(
-            &out,
+            &std::env::temp_dir(),
             "install_published",
             "cargo",
             &[
@@ -198,6 +200,17 @@ fn prepare_out_dir(out: &Path) -> Result<(), String> {
         if !owned && !empty {
             return Err(format!(
                 "{} exists and was not created by `cargo xtask first-run`, so it is not cleared\npass --out <new or empty directory>",
+                out.display()
+            ));
+        }
+        // Clearing the directory the command runs from would leave every child
+        // process in a deleted working directory.
+        let canonical = out
+            .canonicalize()
+            .map_err(|err| format!("failed to resolve {}: {err}", out.display()))?;
+        if std::env::current_dir().is_ok_and(|cwd| cwd.starts_with(&canonical)) {
+            return Err(format!(
+                "{} contains the current directory, so it is not cleared\npass --out <a directory elsewhere>",
                 out.display()
             ));
         }
@@ -259,6 +272,18 @@ fn step_result(
     }
 }
 
+/// The `[workspace]` table keeps cargo from adopting this scratch package into
+/// the repository's workspace when `--out` sits inside it (the default does).
+fn fetch_manifest() -> String {
+    let mut manifest = String::from(
+        "[package]\nname = \"first-run-fetch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\n",
+    );
+    for case in &CASES {
+        manifest.push_str(&format!("{} = \"={}\"\n", case.krate, case.version));
+    }
+    manifest
+}
+
 /// Fetches the pinned crates through cargo itself (registry, proxy and
 /// credentials as the developer's machine already configures them), so the walk
 /// adds no network client of its own.
@@ -268,12 +293,7 @@ fn fetch_sources(out: &Path) -> Result<StepResult, String> {
         .map_err(|err| format!("failed to create the fetch project: {err}"))?;
     fs::write(project.join("src").join("lib.rs"), "")
         .map_err(|err| format!("failed to write the fetch project: {err}"))?;
-    let mut manifest = String::from(
-        "[package]\nname = \"first-run-fetch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\n",
-    );
-    for case in &CASES {
-        manifest.push_str(&format!("{} = \"={}\"\n", case.krate, case.version));
-    }
+    let manifest = fetch_manifest();
     fs::write(project.join("Cargo.toml"), manifest)
         .map_err(|err| format!("failed to write the fetch manifest: {err}"))?;
     let step = timed(
@@ -288,7 +308,7 @@ fn fetch_sources(out: &Path) -> Result<StepResult, String> {
     )?;
     if step.exit != Some(0) {
         return Err(format!(
-            "could not fetch the pinned crates (exit {:?}):\n{}\nthe walk needs registry access; run it where `cargo fetch` works",
+            "could not fetch the pinned crates (exit {:?}):\n{}\nread the cargo error above; the usual causes are no registry access (check that `cargo fetch` works here) or a changed registry configuration",
             step.exit, step.stderr
         ));
     }
@@ -300,7 +320,7 @@ fn run_checked(cwd: &Path, program: &str, args: &[&str]) -> Result<CapturedOutpu
     let captured = capture_output_in_dir(program, &owned, cwd, program)?;
     if !captured.status.success() {
         return Err(format!(
-            "`{program} {}` failed in {}: {}",
+            "`{program} {}` failed in {}: {}\n`first-run` needs git on PATH with a working `git commit` (set user.name and user.email if git asks)",
             args.join(" "),
             cwd.display(),
             captured.stderr.trim()
@@ -364,26 +384,32 @@ fn prepare_case(out: &Path, case: &Case) -> Result<PathBuf, String> {
     let target = work.join(case.file);
     let source = fs::read_to_string(&target)
         .map_err(|err| format!("failed to read {}: {err}", target.display()))?;
-    let mut edited = String::new();
-    let mut matched = 0usize;
-    for (index, line) in source.split_inclusive('\n').enumerate() {
-        if index + 1 == case.line && line.contains(case.from) {
-            edited.push_str(&line.replacen(case.from, case.to, 1));
-            matched += 1;
-        } else {
-            edited.push_str(line);
-        }
-    }
-    if matched != 1 {
+    let Some(edited) = apply_edit(&source, case) else {
         return Err(format!(
-            "{name}: expected `{}` on {}:{}; the pinned source no longer matches the recorded edit",
+            "{name}: expected exactly one `{}` on {}:{}; the pinned source no longer matches the recorded edit\nupdate the `Case` record in xtask/src/first_run.rs for the pinned version, or restore the pinned source",
             case.from, case.file, case.line
         ));
-    }
+    };
     fs::write(&target, edited)
         .map_err(|err| format!("failed to write {}: {err}", target.display()))?;
     run_checked(&work, "git", &["commit", "-q", "-a", "-m", "change"])?;
     Ok(work)
+}
+
+/// The source with the recorded edit applied, or None unless `from` occurs
+/// exactly once on the recorded line.
+fn apply_edit(source: &str, case: &Case) -> Option<String> {
+    let mut edited = String::new();
+    let mut matched = false;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == case.line && line.matches(case.from).count() == 1 {
+            edited.push_str(&line.replacen(case.from, case.to, 1));
+            matched = true;
+        } else {
+            edited.push_str(line);
+        }
+    }
+    matched.then_some(edited)
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
@@ -436,6 +462,7 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
         .map(str::trim)
         .find(|line| line.starts_with("ripr explain "))
         .map(str::to_string);
+    let explain_missing = printed.is_none();
     let verdict = verdict_of(&steps[check].stdout);
     if let Some(command) = printed {
         let words: Vec<&str> = command.split_whitespace().skip(1).collect();
@@ -458,7 +485,10 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
 
     let mut annotated = Vec::new();
     for result in steps {
-        let flags = friction(&result, workflow.as_deref());
+        let mut flags = friction(&result, workflow.as_deref());
+        if explain_missing && result.name == "check" {
+            flags.push("no `ripr explain` command printed to drill into".to_string());
+        }
         annotated.push((result, flags));
     }
     Ok(CaseResult {
@@ -763,6 +793,34 @@ mod tests {
         assert_eq!(setup_friction(&failed), vec!["exit Some(101), expected 0"]);
         let report = render_markdown("v", &[failed], &[]);
         assert!(report.contains("Friction flags: 1"), "{report}");
+    }
+
+    #[test]
+    fn the_fetch_manifest_is_its_own_workspace_and_pins_every_case() {
+        let manifest = fetch_manifest();
+        assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
+        for case in &CASES {
+            assert!(manifest.contains(&format!("{} = \"={}\"", case.krate, case.version)));
+        }
+    }
+
+    #[test]
+    fn an_edit_applies_only_when_the_pattern_occurs_once_on_the_recorded_line() {
+        let case = Case {
+            krate: "k",
+            version: "1",
+            file: "f",
+            line: 2,
+            from: "a > b",
+            to: "a >= b",
+        };
+        assert_eq!(
+            apply_edit("x\nif a > b {\ny\n", &case).as_deref(),
+            Some("x\nif a >= b {\ny\n")
+        );
+        assert_eq!(apply_edit("x\nif a > b && a > b {\n", &case), None);
+        assert_eq!(apply_edit("x\nif a > c {\n", &case), None);
+        assert_eq!(apply_edit("if a > b {\nx\n", &case), None, "wrong line");
     }
 
     #[test]
