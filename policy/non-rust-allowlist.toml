@@ -761,6 +761,6 @@ kind = "public_proof_receipt"
 owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "generated"
-reason = "Committed scoreboard, verdict-corpus, mutation spot-check, first-run and agent-as-user receipts that docs/PUBLIC_PROOF.md is rendered from."
+reason = "Committed scoreboard, verdict-corpus, corpus-manifest, mutation spot-check, first-run, install and agent-as-user receipts that docs/PUBLIC_PROOF.md is rendered from."
 generated_by = "cargo xtask public-proof --refresh-receipts"
 covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask public_proof"]

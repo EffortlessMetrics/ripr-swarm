@@ -1809,10 +1809,10 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "public-proof [--check] [--refresh-receipts]",
             "argument_dependent",
-            "docs/PUBLIC_PROOF.md (written without --check); --refresh-receipts also rewrites metrics/public-proof/dx-scoreboard.json and verdict-corpus.json from their canonical sources",
+            "docs/PUBLIC_PROOF.md (written without --check); --refresh-receipts also rewrites metrics/public-proof/dx-scoreboard.json, verdict-corpus.json and corpus-manifest.json from their canonical sources",
             false,
             false,
-            "Renders the public proof page from the committed receipts under metrics/public-proof/ and the pinned corpus manifest; --check fails when the page differs from its receipts or a receipt has drifted from its canonical in-repo source, and the same check runs as an xtask unit test.",
+            "Renders the public proof page from the committed receipts under metrics/public-proof/; --check fails when the page differs from its receipts or a receipt has drifted from its canonical in-repo source. The xtask unit test checks only the page against its receipts, so source drift is advisory.",
         ),
         command_entry(
             "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",

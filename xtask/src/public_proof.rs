@@ -1562,11 +1562,21 @@ mod tests {
         fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
         fs::write(receipts.join("dx-scoreboard.json"), "{}").map_err(|e| e.to_string())?;
         fs::write(receipts.join("verdict-corpus.json"), "{}").map_err(|e| e.to_string())?;
+        fs::write(receipts.join("corpus-manifest.json"), "{}").map_err(|e| e.to_string())?;
+        // Two of the three sources exist; the corpus manifest does not.
+        fs::create_dir_all(dir.join("metrics/dx-scoreboard")).map_err(|e| e.to_string())?;
+        fs::write(dir.join("metrics/dx-scoreboard/baseline.json"), "{}")
+            .map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir.join("fixtures/rust-verdict-corpus/expected"))
+            .map_err(|e| e.to_string())?;
+        fs::write(
+            dir.join("fixtures/rust-verdict-corpus/expected/report.json"),
+            "{}",
+        )
+        .map_err(|e| e.to_string())?;
         let result = receipt_drift(&dir);
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-        assert!(result.is_err_and(
-            |err| err.contains("dx-scoreboard-baseline") || err.contains("baseline.json")
-        ));
+        assert!(result.is_err_and(|err| err.contains("manifest.json")));
         Ok(())
     }
 
@@ -1610,12 +1620,19 @@ mod tests {
         )
         .map_err(|e| e.to_string())?;
         fs::create_dir_all(dir.join("benchmarks/rust_corpus")).map_err(|e| e.to_string())?;
-        fs::write(receipts.join("corpus-manifest.json"), "{}").map_err(|e| e.to_string())?;
-        fs::write(dir.join(CORPUS_MANIFEST), "{}").map_err(|e| e.to_string())?;
+        fs::write(receipts.join("corpus-manifest.json"), "{\"v\":1}").map_err(|e| e.to_string())?;
+        fs::write(dir.join(CORPUS_MANIFEST), "{\"v\":2}").map_err(|e| e.to_string())?;
         let drift = receipt_drift(&dir)?;
+        let advisory = check_receipts(&dir);
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-        assert_eq!(drift.len(), 1);
+        assert!(advisory.is_err_and(|err| err.contains("--refresh-receipts")));
+        assert_eq!(drift.len(), 2);
         assert!(drift.iter().any(|line| line.contains("dx-scoreboard.json")));
+        assert!(
+            drift
+                .iter()
+                .any(|line| line.contains("corpus-manifest.json"))
+        );
         Ok(())
     }
 }
