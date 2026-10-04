@@ -1564,14 +1564,21 @@ fn substitution_is_quoted(command: &str) -> bool {
 }
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
-    match tokens.first().map(String::as_str) {
-        Some("cargo" | "ripr" | "pytest") => true,
-        Some("python") => {
-            tokens.get(1).map(String::as_str) == Some("-m")
-                && matches!(
-                    tokens.get(2).map(String::as_str),
-                    Some("unittest" | "pytest")
-                )
+    let words = tokens.iter().map(String::as_str).collect::<Vec<_>>();
+    match words.as_slice() {
+        ["cargo" | "ripr" | "pytest", ..] | ["python", "-m", "unittest" | "pytest", ..] => true,
+        // TypeScript verify commands (RIPR-SPEC-0085). Package scripts first,
+        // so `yarn test` is not read as a `yarn <bin>` launch.
+        ["bun" | "yarn", "test", ..]
+        | ["npm" | "pnpm", "test", "--", ..]
+        | ["node", "--test", ..] => true,
+        // Only launchers that run the package's installed binary: `npx`
+        // without `--no-install` and `bunx` fetch a missing package.
+        ["npx", "--no-install", binary @ ..]
+        | ["pnpm", "exec", binary @ ..]
+        | ["bun", "run", binary @ ..]
+        | ["yarn", binary @ ..] => {
+            matches!(binary, ["jest" | "ava", ..] | ["vitest", "run", ..])
         }
         _ => false,
     }
@@ -3254,6 +3261,52 @@ mod tests {
         assert!(looks_like_command_payload(
             "python -m unittest tests.test_pricing.TestDiscount.test_boundary"
         ));
+    }
+
+    #[test]
+    fn command_payload_accepts_typescript_local_runner_verify_commands() {
+        let workspace = root();
+
+        // Every form `verify_command_for_discovery` emits (RIPR-SPEC-0085).
+        for command in [
+            "npx --no-install jest tests/discount.test.ts",
+            "npx --no-install vitest run src/util.test.ts",
+            "npx --no-install ava tests/math.test.ts",
+            "pnpm exec jest tests/token.test.ts",
+            "pnpm exec vitest run src/util.test.ts",
+            "yarn jest tests/math.test.ts",
+            "yarn ava tests/math.test.ts",
+            "bun run vitest run src/foo.test.ts",
+            "bun test tests/math.test.ts",
+            "node --test tests/math.test.ts",
+            "npm test -- tests/math.test.ts",
+            "pnpm test -- tests/math.test.ts",
+            "yarn test tests/math.test.ts",
+            "npx --no-install jest 'tests/my file.test.ts'",
+        ] {
+            assert!(command_payload_is_safe(&workspace, command), "{command}");
+        }
+        // Launchers that can fetch a registry package, other binaries, and
+        // the shared path and metacharacter refusals.
+        for command in [
+            "npx jest tests/discount.test.ts",
+            "npx --yes jest tests/discount.test.ts",
+            "npx --no-install some-tool tests/discount.test.ts",
+            "bunx vitest run src/foo.test.ts",
+            "pnpm dlx jest tests/discount.test.ts",
+            "yarn dlx jest tests/discount.test.ts",
+            "pnpm exec rimraf .",
+            "yarn add jest",
+            "bun run build",
+            "npm exec jest tests/discount.test.ts",
+            "npm install",
+            "node -e process.exit()",
+            "vitest tests/discount.test.ts",
+            "npx --no-install jest ../outside/discount.test.ts",
+            "npx --no-install jest tests/a.test.ts; rm -rf target",
+        ] {
+            assert!(!command_payload_is_safe(&workspace, command), "{command}");
+        }
     }
 
     /// #4544: the shared validator recomputes the `source_subject` digests.

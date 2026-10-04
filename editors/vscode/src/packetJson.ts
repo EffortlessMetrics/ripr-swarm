@@ -50,6 +50,30 @@ export function hasUnsafeShellMetacharacter(command: string): boolean {
 }
 
 /**
+ * Test-runner verify commands the preview-language producers emit, which the
+ * editor may offer to copy: Python's pytest and unittest routes, and the
+ * TypeScript launchers that run only the package's installed binary
+ * (RIPR-SPEC-0085). `npx` without `--no-install` and `bunx` are absent on
+ * purpose: they fetch a missing package from the registry.
+ */
+export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
+  'python -m pytest',
+  'pytest',
+  'python -m unittest',
+  ...['jest', 'vitest run', 'ava'].flatMap((bin) => [
+    `npx --no-install ${bin}`,
+    `pnpm exec ${bin}`,
+    `yarn ${bin}`,
+    `bun run ${bin}`
+  ]),
+  'bun test',
+  'node --test',
+  'npm test --',
+  'pnpm test --',
+  'yarn test'
+];
+
+/**
  * Quote one argument exactly as the server's `shell_arg`
  * (`crates/ripr/src/agent/loop_commands.rs`): bare when every character is in
  * `[A-Za-z0-9._/:-]`, otherwise single-quoted with `'` written as `'\''`.
