@@ -9,8 +9,30 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr help --json` now projects a typed per-command `exit` object for the
+  0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
+  `check` findings still completing with 0, `gate evaluate` `config_error`=2
+  versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
+  scraping `stop_states` (#5066).
+
 ### Fixed
 
+- `ripr pilot`, repo exposure and the editor no longer report a seam as
+  `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
+  failed to trace the path to it. A seam with no related test now reads
+  `opaque`, with the limit and a witness named in its reach evidence, when a
+  test may reach it through an unresolved helper chain, macro, or trait
+  dispatch (`to_string()` running `Display::fmt`). At semver `280ebcb6edac`
+  `ungripped` falls from 505 seams to 1, and all 12 seams the mutation spot
+  check (#5295) found caught by real mutants now read `opaque`. A seam no
+  test path reaches stays `ungripped` (RIPR-SPEC-0230, #5411).
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
@@ -31,6 +53,12 @@ are scoped or reviewed.
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
   filled.
+- Mutation spot-check: `--mutants-arg <name>=<arg>` (#5475) passes selection
+  arguments such as `--workspace`, `--file` or `--re` to the cargo-mutants run
+  the harness starts, records them in the receipt, and marks scoreboard samples
+  from such runs. Arguments the harness owns or that cannot take effect are
+  refused, including bundled short flags such as `-vj8` and
+  `--minimum-test-timeout`; `-V` (`--unviable`) is accepted (#5565).
 - CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
   the default base and HEAD each resolve to the same commit after analysis (for
   example `origin/HEAD` tracking the checked-out branch in a clone of a feature
@@ -157,6 +185,12 @@ are scoped or reviewed.
   actionable receipt status. Retained evidence and recorded finish admission
   remain unchanged. Durable reads run off the async executor; supported stdio
   request admission remains serialized through reply flush (#5399).
+
+- MCP durable attempts at a current HEAD use the selected CLI attempt's next
+  action: a finished result offers none, and failed or open-gap work starts a
+  new before phase. Retained typed packet routes remain available only for a
+  current after continuation; a restart display never supplies typed command
+  authority. Retained receipts and freshness refusals are unchanged (#5413).
 
 ### Changed
 
@@ -332,6 +366,17 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: authored subjects. Three small crates written for the
+  corpus add 23 runtime-labeled cases covering the verdicts and probe
+  families the real crates left empty: field construction, call deletion,
+  side effect, error path, static unknown and non-arithmetic return values.
+  ripr now credits 6 authored lines, and 3 of those credits are false
+  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
+  cases are reported apart from upstream ones under `by_origin`, because
+  they were chosen to fill cells: the upstream rates stay 10 of 20 false
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline

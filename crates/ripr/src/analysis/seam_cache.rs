@@ -280,9 +280,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// not an accepted generation owned by this candidate.
 /// `1.30`: the body writes each distinct related test once in a table and
 /// seams reference it by index; evidence is unchanged.
-/// `1.31`: probe shapes gain the parser-owned end byte (#5336); old fact
+/// `1.31`: a seam with no related test reads reach `opaque`, not `no`, when
+/// a transitive, macro or trait-dispatch path is unresolved (#5411).
+/// `1.32`: probe shapes gain the parser-owned end byte (#5336); old fact
 /// entries lack span geometry and must cold-recompute.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.31";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -349,9 +351,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.31";
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
-/// `0.37`: seams gain optional span geometry (#5336) — same semantic
-/// transition as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.37";
+/// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
+/// `0.38`: seams gain optional span geometry (#5336) — same semantic
+/// transition as full `1.32`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -420,9 +423,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.37";
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
-/// `0.37`: seams gain optional span geometry (#5336) — same semantic
-/// transition as the outer classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.37";
+/// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
+/// `0.38`: seams gain optional span geometry (#5336) — same semantic
+/// transition as full `1.32`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -550,8 +554,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// fabricate property-body functions/tests. Published 1.16 facts must miss.
 /// `1.18`: parser raw oracle scans exclude opaque property bodies (#5131).
 /// Published `1.17` favorable discarded-oracle facts cannot replay.
-/// `1.19`: probe shapes gain the parser-owned end byte (#5336).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.19";
+/// `1.20`: unguarded wildcard pattern assertions are weak, not exact strong
+/// oracles (#5397). Predecessor strong wildcard facts must not replay. The
+/// concurrent assertion-admission candidate #5359 uses generation `1.19`.
+/// `1.21`: probe shapes gain the parser-owned end byte (#5336).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.21";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3643,7 +3650,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.19");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.21");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3690,8 +3697,9 @@ mod tests {
         // probes the token rule left unconfirmed.
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
         // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
-        // 1.30 -> 1.31: probe shapes gain the parser-owned end byte (#5336).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.31");
+        // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
+        // 1.31 -> 1.32: probe shapes gain the parser-owned end byte (#5336).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.32");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3715,9 +3723,10 @@ mod tests {
         // same semantic transition as the outer cache.
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
         // 0.35 -> 0.36: same related-test table body as the outer cache.
-        // 0.36 -> 0.37: seams gain optional span geometry (#5336).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.37");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.37");
+        // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
+        // 0.37 -> 0.38: seams gain optional span geometry (#5336).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
     }
 
     #[test]
