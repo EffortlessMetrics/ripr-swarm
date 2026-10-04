@@ -26,7 +26,7 @@ import { RiprClientController, RiprClientRuntime } from '../../src/client';
 import { RiprConfig } from '../../src/config';
 import { compatibleLspEvidence } from './testCompatibility';
 
-const FIXTURE_DIR = path.resolve(__dirname, '../../test-fixtures/attempt-status');
+const FIXTURE_DIR = path.resolve(__dirname, '../../../test-fixtures/attempt-status');
 
 async function loadFixture(name: string): Promise<unknown> {
   const raw = await fs.readFile(path.join(FIXTURE_DIR, name), 'utf8');
