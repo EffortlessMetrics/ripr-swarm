@@ -917,7 +917,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
 
     let selected_tests = cached
         .index
-        .tests
+        .tests()
         .iter()
         .filter(|test| normalized_inventory_path(&test.file) == changed_test)
         .filter(|test| test_node.is_none_or(|node| test.name == node))
@@ -957,7 +957,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
 
     let candidate_functions = cached
         .index
-        .functions
+        .functions()
         .iter()
         .filter(|function| {
             !function.source_role.is_evidence_role() && direct_call_names.contains(&function.name)
@@ -1359,6 +1359,8 @@ fn classify_scoped_seams_streamed(
     if window_size == 0 || window_size > MAX_REVIEW_EVIDENCE_WINDOW {
         return Err("invalid review evidence window size".into());
     }
+    #[cfg(test)]
+    source_lifetime_probe::observe_evidence_boundary();
     let pass = test_grip_evidence::EvidencePass::new(index);
     cancellation::checkpoint()?;
     let mut first = Vec::new();
@@ -1513,6 +1515,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         &state.files,
         harness_registrations(config),
     )?;
+    // The index and cache key own their data; release the raw corpus before evidence.
+    drop(state);
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -1703,7 +1707,7 @@ fn immediate_caller_file_set(
     }
 
     index
-        .functions
+        .functions()
         .iter()
         .filter(|function| !function.source_role.is_evidence_role())
         .filter_map(|function| {
@@ -1993,7 +1997,12 @@ fn collect_workspace_state_from_files(
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
         files.push((path, bytes));
     }
+    #[cfg(test)]
+    let source_lifetime =
+        source_lifetime_probe::constructed(root, files.iter().map(|(_, bytes)| bytes.len()).sum());
     Ok(OwnedWorkspaceState {
+        #[cfg(test)]
+        _source_lifetime: source_lifetime,
         workspace_root: root.to_path_buf(),
         files,
         config_text: config.source_text().map(str::to_string),
@@ -2105,6 +2114,84 @@ struct OwnedWorkspaceState {
     config_text: Option<String>,
     test_intent_text: Option<String>,
     suppressions_text: Option<String>,
+    #[cfg(test)]
+    _source_lifetime: source_lifetime_probe::Lease,
+}
+
+#[cfg(test)]
+mod source_lifetime_probe {
+    use std::{
+        cell::RefCell,
+        path::{Path, PathBuf},
+        sync::{Arc, Mutex},
+    };
+
+    #[derive(Clone, Default)]
+    pub(super) struct Counts {
+        pub(super) constructed: usize,
+        pub(super) destroyed: usize,
+        pub(super) source_bytes: usize,
+        pub(super) live_bytes: usize,
+        pub(super) evidence_boundaries: Vec<usize>,
+    }
+    type Observer = (PathBuf, Arc<Mutex<Counts>>);
+    thread_local! {
+        static OBSERVER: RefCell<Option<Observer>> = const { RefCell::new(None) };
+    }
+    pub(super) struct Guard(Option<Observer>);
+    impl Guard {
+        pub(super) fn install(root: &Path) -> (Self, Arc<Mutex<Counts>>) {
+            let counts = Arc::new(Mutex::new(Counts::default()));
+            let previous = OBSERVER.with(|slot| slot.replace(Some((root.into(), counts.clone()))));
+            (Self(previous), counts)
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            OBSERVER.with(|slot| {
+                let _ = slot.replace(self.0.take());
+            });
+        }
+    }
+    pub(super) struct Lease(Option<(Arc<Mutex<Counts>>, usize)>);
+    pub(super) fn constructed(root: &Path, bytes: usize) -> Lease {
+        OBSERVER.with(|slot| {
+            let slot = slot.borrow();
+            let Some((_, counts)) = slot.as_ref().filter(|(path, _)| path == root) else {
+                return Lease(None);
+            };
+            let mut state = counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.constructed += 1;
+            state.source_bytes += bytes;
+            state.live_bytes += bytes;
+            Lease(Some((counts.clone(), bytes)))
+        })
+    }
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            if let Some((counts, bytes)) = &self.0 {
+                let mut state = counts
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.destroyed += 1;
+                assert!(state.live_bytes >= *bytes, "source lease underflow");
+                state.live_bytes -= bytes;
+            }
+        }
+    }
+    pub(super) fn observe_evidence_boundary() {
+        OBSERVER.with(|slot| {
+            if let Some((_, counts)) = &*slot.borrow() {
+                let mut state = counts
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let live = state.live_bytes;
+                state.evidence_boundaries.push(live);
+            }
+        });
+    }
 }
 
 impl OwnedWorkspaceState {
@@ -2142,7 +2229,7 @@ pub(crate) fn inventory_seams_from_index(
     // Iterate `production_files` in caller-given order, but the final
     // sort below makes the output independent of that order anyway.
     for path in production_files {
-        let Some(facts) = index.files.get(path) else {
+        let Some(facts) = index.files().get(path) else {
             continue;
         };
         for shape in &facts.probe_shapes {
@@ -2399,10 +2486,11 @@ marker = "libtest_mimic::Trial"
         let mut index = RustIndex::default();
         for (path, source) in files {
             let facts = adapter.summarize_file(path, source)?;
-            index.files.insert(path.clone(), facts);
-            index
-                .functions
-                .extend(index.files[path].functions.iter().cloned());
+            // This fixture intentionally populates only the flat functions;
+            // callers select flat tests separately from the per-file facts.
+            let functions = facts.functions.clone();
+            index.insert_file_only(path.clone(), facts);
+            index.extend_functions(functions);
         }
         Ok(index)
     }
@@ -2421,6 +2509,109 @@ marker = "libtest_mimic::Trial"
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn streamed_review_releases_raw_source_before_evidence_on_cold_and_warm_cache()
+    -> Result<(), String> {
+        struct Consumer(Vec<(usize, ClassifiedSeam)>);
+        impl ScopedEvidenceConsumer for Consumer {
+            fn in_first_stage(&self, _: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
+                self.0.push((ordinal, entry));
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                false
+            }
+            fn retained_payloads(&self) -> usize {
+                self.0.len()
+            }
+        }
+        let root = make_tempdir("review-source-lifetime")?;
+        let padding = "x".repeat(2 * 1024 * 1024);
+        write_file(
+            &root.join("src/lib.rs"),
+            &format!("/*{padding}*/\npub fn eligible(n: i32) -> bool {{ n >= 10 }}\n"),
+        )?;
+        write_file(
+            &root.join("tests/boundary.rs"),
+            "#[test] fn boundary() { assert!(eligible(10)); assert!(!eligible(9)); }",
+        )?;
+        let mut previous = None;
+        let mut lifetime_runs = Vec::new();
+        for warm in [false, true] {
+            let (_guard, counts) = source_lifetime_probe::Guard::install(&root);
+            let mut sink = Consumer(Vec::new());
+            let inventory = inventory_diff_scoped_streamed_seams_at_with_config(
+                &root,
+                &RiprConfig::default(),
+                &[PathBuf::from("src/lib.rs")],
+                &["eligible".into()],
+                &mut sink,
+            )?;
+            let counts = counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lifetime_runs.push(counts.clone());
+            assert!(!sink.0.is_empty());
+            assert!(
+                sink.0
+                    .iter()
+                    .any(|(_, entry)| !entry.evidence.related_tests.is_empty())
+            );
+            assert_eq!(inventory.classified_seams_considered, sink.0.len());
+            assert_eq!(inventory.unevaluated_seams, 0);
+            assert_eq!(inventory.total_production_files, 1);
+            assert_eq!(
+                inventory.scoped_production_files,
+                [PathBuf::from("src/lib.rs")]
+            );
+            assert_eq!(
+                inventory.changed_production_files,
+                [PathBuf::from("src/lib.rs")]
+            );
+            assert!(inventory.immediate_caller_files.is_empty());
+            assert!(inventory.absent_changed_files.is_empty());
+            assert_eq!(inventory.total_rust_files, 2);
+            assert_eq!(inventory.file_fact_cache.corrupt_ignored, 0);
+            assert_eq!(inventory.file_fact_cache.store_errors, 0);
+            assert_eq!(inventory.file_fact_cache.hits, if warm { 2 } else { 0 });
+            assert_eq!(inventory.file_fact_cache.misses, if warm { 0 } else { 2 });
+            let behavior = (
+                inventory.workspace_cache_key,
+                serde_json::to_string(&sink.0).map_err(|err| err.to_string())?,
+                inventory.classified_seams_considered,
+                inventory.unevaluated_seams,
+                inventory.total_production_files,
+                inventory.scoped_production_files,
+                inventory.changed_production_files,
+                inventory.immediate_caller_files,
+                inventory.absent_changed_files,
+            );
+            if let Some(expected) = previous.as_ref() {
+                assert_eq!(&behavior, expected);
+            }
+            previous = Some(behavior);
+        }
+        for counts in lifetime_runs {
+            assert_eq!(counts.constructed, 1);
+            assert_eq!(counts.destroyed, 1);
+            assert!(counts.source_bytes > 2 * 1024 * 1024);
+            assert!(
+                !counts.evidence_boundaries.is_empty(),
+                "real evidence authority must run"
+            );
+            assert!(
+                counts.evidence_boundaries.iter().all(|bytes| *bytes == 0),
+                "raw source remains live at evidence construction: {:?}",
+                counts.evidence_boundaries
+            );
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     #[test]
@@ -2462,12 +2653,13 @@ marker = "libtest_mimic::Trial"
                 "#[test] fn exercises_both() { let _ = eligible(11); let _ = other(11); }",
             ),
         ])?;
-        index.tests = index
-            .files
+        let tests = index
+            .files()
             .values()
             .flat_map(|facts| facts.tests.iter().cloned())
-            .collect();
-        assert!(!index.tests.is_empty());
+            .collect::<Vec<_>>();
+        index.replace_tests(tests);
+        assert!(!index.tests().is_empty());
         let seams = inventory_seams_from_index(&[path], &index);
         if seams.len() < 2 {
             return Err("fixture must span windows".into());
@@ -2622,13 +2814,14 @@ pub fn eligible(value: i32) -> bool { if value >= 10 { true } else { false } }
 }
 "#,
         )])?;
-        index.tests = index
-            .files
+        let tests = index
+            .files()
             .values()
             .flat_map(|facts| facts.tests.iter().cloned())
-            .collect();
+            .collect::<Vec<_>>();
+        index.replace_tests(tests);
         let seams = inventory_seams_from_index(&[path], &index);
-        if seams.is_empty() || index.tests.is_empty() {
+        if seams.is_empty() || index.tests().is_empty() {
             return Err(
                 "late deadline fixture must contain production seams and a test".to_string(),
             );
@@ -2802,7 +2995,7 @@ pub fn check_b(x: i32) -> i32 {
             ));
         }
         assert!(!forward_ids.is_empty());
-        let facts = index.files.get_mut(&a).ok_or("fixture file facts")?;
+        let facts = index.file_data_mut(&a).ok_or("fixture file facts")?;
         let probe = facts
             .probe_shapes
             .first()
@@ -3301,7 +3494,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // The repo walker keeps its production-file list and the index
         // in lockstep, but in tests the two can diverge when a caller
         // passes a synthetic file list. The early-continue at the
-        // `index.files.get(path)` lookup is what keeps the walker
+        // `index.files().get(path)` lookup is what keeps the walker
         // crash-free in that case.
         let index = RustIndex::default();
         let seams = inventory_seams_from_index(&[PathBuf::from("missing.rs")], &index);
@@ -3338,8 +3531,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
-        index.functions.push(owner.clone());
-        index.files.insert(
+        index.push_function(owner.clone());
+        index.insert_file_only(
             path.clone(),
             FileFacts {
                 path: path.clone(),
@@ -3390,8 +3583,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
-        index.functions.push(test_owner.clone());
-        index.files.insert(
+        index.push_function(test_owner.clone());
+        index.insert_file_only(
             path.clone(),
             FileFacts {
                 path: path.clone(),

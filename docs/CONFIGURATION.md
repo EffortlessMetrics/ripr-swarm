@@ -290,7 +290,7 @@ into full repo truth.
 Renders a single finding in human format.
 
 ```text
-ripr explain [--root PATH] [--base REV | --diff PATH] [--from PATH]
+ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] <finding-id | file:line>
 ```
@@ -301,12 +301,20 @@ The trailing positional argument selects the finding. Either form works:
 - A `file:line` location, where the file matches the finding's path by exact
   match or path-suffix match.
 
+`--worktree` analyzes staged and unstaged tracked edits, like
+`ripr check --worktree`, so a finding listed from uncommitted edits can be
+selected. `ripr check --worktree` prints drill-in commands that carry the
+flag. It cannot be combined with `--diff` or `--from`; `context` accepts it
+the same way. Without `--root`, a `--worktree` lookup resolves the project
+root from a subdirectory the way `ripr check` does, and a selector miss
+names a `ripr check ... --worktree --json` listing for the same root and base.
+
 ### `ripr context`
 
 Emits a compact JSON context packet for one finding.
 
 ```text
-ripr context [--root PATH] [--base REV | --diff PATH] [--from PATH]
+ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -417,8 +425,13 @@ reads seven keys; everything else is ignored. The schema lives in
 | `refreshDeadlineMs` | number | `600000` | Physical deadline in milliseconds for one whole refresh analysis attempt. An attempt that exceeds the deadline is cancelled cooperatively at analysis checkpoints and dropped fail-closed with the named `deadline_exceeded` outcome and an "analysis deadline exceeded" progress end — no limited snapshot is committed. A deadline cancel loses to an earlier supersede or client cancel (first-cancel-wins). Malformed initialization values are ignored (the default stays). No `ripr.toml` slot. |
 
 Initialization options are treated as explicit LSP settings and override
-`ripr.toml`. Defaults match `CheckInput::default()` when no repo config is
-present, except that LSP diagnostics render JSON-shaped data internally.
+`ripr.toml` when the value is successfully applied. A recognized key with
+the wrong JSON type or an unknown literal is ignored without aborting the
+session; `session_value_sources` discloses the effective `repo` or
+`default` fallback rather than `initialization`, and the server emits one
+`window/logMessage` warning naming the rejected key. Defaults match
+`CheckInput::default()` when no repo config is present, except that LSP
+diagnostics render JSON-shaped data internally.
 
 ## LSP configuration pull
 

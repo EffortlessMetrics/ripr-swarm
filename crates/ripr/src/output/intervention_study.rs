@@ -1,5 +1,5 @@
 //! Deterministic JSON and Markdown projections for a preregistered
-//! intervention study (RIPR-SPEC-0215 / #4649).
+//! intervention study (RIPR-SPEC-0216 / #4649).
 //!
 //! Projections are derived from one validated semantic object. This module
 //! does not execute the study, grade attempts, or claim intervention value.
@@ -271,7 +271,7 @@ mod tests {
         Ok(json!({
             "schema_version": "ripr_intervention_study_corpus.v1",
             "kind": "ripr_intervention_study_corpus",
-            "spec": "RIPR-SPEC-0215",
+            "spec": "RIPR-SPEC-0216",
             "valid": serde_json::to_value(seal(example_preregistered_study()).map_err(|error| error.to_string())?)
                 .map_err(|error| error.to_string())?,
             "falsifiers": [
