@@ -17484,8 +17484,10 @@ fn deadline_exceeded_disclosed_in_logs_and_analysis_status_without_work_done_pro
         }
         backend.initialize_test_workspace_root();
 
-        let mut config = LspAnalysisConfig::default();
-        config.refresh_deadline = Duration::from_millis(MIN_LSP_REFRESH_DEADLINE_MS);
+        let config = LspAnalysisConfig {
+            refresh_deadline: Duration::from_millis(MIN_LSP_REFRESH_DEADLINE_MS),
+            ..LspAnalysisConfig::default()
+        };
         let decision = backend.refresh_scheduler_for_test().request(
             PathBuf::from("/workspace"),
             config,
