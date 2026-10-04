@@ -751,6 +751,23 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     }
     fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove ripr.toml failed: {e}"))?;
 
+    // A tracked file deleted from the working tree is named in a stderr notice.
+    fs::remove_file(root.join("src/a\u{1b}[2Jb.rs"))
+        .map_err(|e| format!("delete hostile file failed: {e}"))?;
+    let deleted = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&deleted, "check with a deleted hostile file")?;
+    if leaks(&deleted.stdout) || leaks(&deleted.stderr) {
+        return Err(format!("deleted-file notice leaked\n{:?}", deleted.stderr));
+    }
+    if !deleted.stderr.contains("\\u{1b}[2Jb.rs") {
+        return Err(format!(
+            "expected the escaped file name on stderr\n{}",
+            deleted.stderr
+        ));
+    }
+    fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
+        .map_err(|e| format!("restore hostile file failed: {e}"))?;
+
     // A bad ref echoed back by the failure path.
     let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
     assert_sane(&bad_ref, "check with hostile ref")?;

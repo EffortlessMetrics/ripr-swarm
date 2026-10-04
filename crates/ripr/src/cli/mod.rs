@@ -341,7 +341,13 @@ fn persist_before_repair_attempt(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()
     );
-    eprintln!("ripr: attempt manifest: {}", result.manifest_path.display());
+    eprintln!(
+        "{}",
+        crate::output::human::terminal_safe(format!(
+            "ripr: attempt manifest: {}",
+            result.manifest_path.display()
+        ))
+    );
     eprintln!(
         "ripr: attempt next command: {}",
         result.manifest.next_command

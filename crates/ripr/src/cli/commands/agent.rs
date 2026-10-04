@@ -24,6 +24,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
+use crate::output::human::terminal_safe;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -855,8 +856,11 @@ fn run_agent_repair_phase(
                     .to_string()
             })?;
             eprintln!(
-                "ripr: agent repair --phase before for seam `{seam_id}` at {}",
-                root.display()
+                "{}",
+                terminal_safe(format!(
+                    "ripr: agent repair --phase before for seam `{seam_id}` at {}",
+                    root.display()
+                ))
             );
 
             // Render and admit the packet first (F15-12): a seam whose repair
@@ -905,7 +909,10 @@ fn run_agent_repair_phase(
                 json: false,
             })?;
             for path in &started.paths {
-                eprintln!("ripr: wrote {}", path.display());
+                eprintln!(
+                    "{}",
+                    terminal_safe(format!("ripr: wrote {}", path.display()))
+                );
             }
 
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
@@ -913,7 +920,10 @@ fn run_agent_repair_phase(
 
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            eprintln!("ripr: wrote {}", packet_path.display());
+            eprintln!(
+                "{}",
+                terminal_safe(format!("ripr: wrote {}", packet_path.display()))
+            );
             // Nothing prints on stdout here. The before-phase success stdout —
             // with `--json` the packet document carrying the additive
             // `repair_attempt` continuation (#4329), without it the short
