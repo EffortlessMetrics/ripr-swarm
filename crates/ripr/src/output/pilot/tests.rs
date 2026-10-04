@@ -1723,6 +1723,19 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     assert_eq!(json["actionable_seams_in_change"], 0);
     assert_eq!(json["top_recommendation_in_change"], false);
 
+    // An uncommitted change is invisible to plain `ripr check`, which reads
+    // committed history, so the command pilot names selects the working tree.
+    let uncommitted = changed("src/other.rs", 3).from_working_tree(true);
+    let (worktree_terminal, worktree_md, _) = render(Some(&uncommitted))?;
+    assert!(
+        worktree_terminal.contains("For the change itself, run: ripr check --root . --worktree\n"),
+        "{worktree_terminal}"
+    );
+    assert!(
+        worktree_md.contains("For the change itself, run `ripr check --root . --worktree`."),
+        "{worktree_md}"
+    );
+
     // The Inspected block names the change-first scope when there is a change.
     assert!(
         terminal.contains(

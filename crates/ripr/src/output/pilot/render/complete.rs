@@ -670,7 +670,11 @@ fn current_change_label(
     } else {
         CurrentChangeLabel::Elsewhere {
             base,
-            check: format!("ripr check --root {}", shell_path(context.root)),
+            check: format!(
+                "ripr check --root {}{}",
+                shell_path(context.root),
+                change.check_selector()
+            ),
         }
     })
 }

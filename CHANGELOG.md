@@ -55,7 +55,9 @@ are scoped or reviewed.
   already look, instead of `target/ripr/pilot` under the shell's working
   directory, which overwrote that directory's own packet (#5324). `--root .`
   and an explicit `--out` are unchanged; the terminal output already names
-  the packet path.
+  the packet path. The packet's snapshot and verify commands now bind that
+  root too, like `ripr agent packet`; they used to say `--root .` while
+  redirecting into the launch directory.
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
@@ -102,22 +104,14 @@ are scoped or reviewed.
   0.38/0.26/0.38 s -> 0.04/0.03/0.05 s, `doctor` 0.21 s -> 0.07 s, `pilot`
   0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
   -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
-  once instead of once per pass (subject, hash, write) when the rendered
-  seams fit 64 MiB, pilot ranking computes each seam's rank key once, and the
-  same-file assertion-helper pass parses only files with a candidate helper
-  call. Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
-  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.08/0.04/0.05 s,
-  `check --format json` 0.36/0.36/0.46 s -> 0.09/0.06/0.05 s, `explain`
-  0.39/0.24/0.38 s -> 0.05/0.04/0.05 s, `doctor` 0.16 s -> 0.07 s, `pilot`
-  0.93/0.30/0.35 s -> 0.38/0.15/0.13 s; cold-cache `pilot` 2.76/0.65/0.75 s
-  -> 2.09/0.50/0.54 s. Output bytes are unchanged (#5348).
 - `ripr pilot` ranks seams on lines changed by the current change (the base
   against the working tree when it has uncommitted tracked changes, else
   `<base>...HEAD`) ahead of the repo-wide order, and its terminal,
   `pilot-summary.md` and `pilot-summary.json` say whether the top
   recommendation is part of that change. When the change has no ranked seam,
   pilot says the recommendation is elsewhere in the repo and points to
-  `ripr check` for the change itself. The "Inspected" block names the scope:
+  `ripr check` for the change itself, with `--worktree` when the change is
+  uncommitted (plain `ripr check` reads committed history only). The "Inspected" block names the scope:
   `change-first (...)` with a change, otherwise `whole repository` (with a short
   reason when the change could not be loaded). With no change, or when the diff
   cannot be loaded, the ranking is unchanged; `pilot-summary.json` adds a

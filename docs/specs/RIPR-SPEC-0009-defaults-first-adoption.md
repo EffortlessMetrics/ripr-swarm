@@ -195,7 +195,8 @@ lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
 of the change. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo and names `ripr check` for the change
-itself. The terminal and Markdown "Inspected" block names the scope:
+itself, with `--worktree` when the change is uncommitted, since plain `ripr
+check` reads committed history only. The terminal and Markdown "Inspected" block names the scope:
 change-first with a change, otherwise the whole repository, with a short reason
 when the change could not be loaded. With no change, or when the diff cannot be
 loaded, the ranking is unchanged, the human output differs only by that scope
@@ -416,6 +417,10 @@ Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
 then pilot says the top recommendation is elsewhere in the repo, not part of
 the current change, and names ripr check for the change itself.
+
+Given a change that exists only as uncommitted edits in the working tree,
+when a user runs ripr pilot and the top recommendation is not part of it,
+then the ripr check command pilot names carries --worktree.
 
 Given no current change, or a root where the diff cannot be loaded,
 when a user runs ripr pilot,

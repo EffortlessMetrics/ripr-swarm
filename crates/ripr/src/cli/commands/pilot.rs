@@ -243,10 +243,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
-        output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
+        output::agent_seam_packets::render_agent_seam_packets_json_for_root(
             &classified,
             limit_info.as_ref(),
             causal_projection.as_ref(),
+            &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
         ),
     )?;
 
@@ -309,15 +310,17 @@ fn run_pilot_inventory(
 
 /// The current change: the base (resolved as `ripr check` resolves it,
 /// RIPR-SPEC-0084) against the live working tree when it has uncommitted
-/// tracked changes, else `<base>...HEAD`. This matches the default `ripr
-/// check` selection; keep it the one place pilot picks its diff so it can
-/// move to check's shared default-selection function. Pilot ranks seams on
+/// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
+/// history only, so a working-tree change is recorded as such and pilot's
+/// printed `ripr check` command carries `--worktree` to analyze the same
+/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
 /// the changed lines first and says whether its top recommendation is part
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
 /// the ranking stays repo-wide.
 fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentChange {
     let git_timeout = Some(app::default_cli_git_timeout());
+    let mut from_working_tree = false;
     // Resolve the base first: a root with no resolvable base (outside a Git
     // work tree, say) is `unavailable` without the working-tree probe, whose
     // failure warning would otherwise be new stderr noise there.
@@ -326,7 +329,8 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
             current_change_unavailable_reason(&CoreError::from(err), "no default base resolved")
         })
         .and_then(|base| {
-            if analysis::working_tree_has_tracked_changes(&input.root) {
+            from_working_tree = analysis::working_tree_has_tracked_changes(&input.root);
+            if from_working_tree {
                 analysis::load_worktree_diff_with_effective_base_core(
                     &input.root,
                     Some(&base),
@@ -344,6 +348,7 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
         })
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
+        .from_working_tree(from_working_tree)
 }
 
 /// A few fixed words for why the current change could not be loaded, shown

@@ -24,6 +24,10 @@ pub(crate) enum PilotCurrentChange {
         base: Option<String>,
         /// Root-relative path (slash separated) to changed new-side lines.
         lines: BTreeMap<String, BTreeSet<usize>>,
+        /// The diff was taken against the live working tree, so `ripr check`
+        /// sees it only with `--worktree`; its default reads committed
+        /// history (RIPR-SPEC-0112).
+        working_tree: bool,
     },
     /// The default diff loaded and is empty: there is no current change.
     NoChange { base: Option<String> },
@@ -72,6 +76,25 @@ impl PilotCurrentChange {
             root: root.to_path_buf(),
             base,
             lines,
+            working_tree: false,
+        }
+    }
+
+    /// Mark a change whose diff came from the live working tree.
+    pub(crate) fn from_working_tree(mut self, from_working_tree: bool) -> Self {
+        if let Self::Changed { working_tree, .. } = &mut self {
+            *working_tree = from_working_tree;
+        }
+        self
+    }
+
+    /// The `ripr check` flags that select this same diff.
+    pub(crate) fn check_selector(&self) -> &'static str {
+        match self {
+            Self::Changed {
+                working_tree: true, ..
+            } => " --worktree",
+            _ => "",
         }
     }
 

@@ -13939,6 +13939,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(stdout.contains("run: ripr check --root "), "{stdout}");
+    // A committed change is what plain `ripr check` reads.
+    assert!(!stdout.contains("--worktree"), "{stdout}");
     assert!(
         stdout.contains(
             "  scope: change-first (seams on lines changed since origin/main rank first)\n"
@@ -13965,6 +13967,23 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
+
+    // An uncommitted edit on no ranked seam: plain `ripr check` reads
+    // committed history and would miss it, so the named command selects the
+    // working tree.
+    std::fs::write(root.join("src/lib.rs"), format!("{lib}// note\n"))
+        .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    let check_line = stdout
+        .lines()
+        .find(|line| line.contains("For the change itself, run: "))
+        .ok_or_else(|| format!("no check command: {stdout}"))?;
+    assert!(check_line.ends_with(" --worktree"), "{check_line}");
+    assert!(md.contains(" --worktree`."), "{md}");
     Ok(())
 }
 
@@ -13983,6 +14002,10 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
             (
                 "src/lib.rs",
                 "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/discount.rs",
+                "#[test]\nfn small_amounts_pass_through() {\n    assert!(out_root::discounted(50) > 0);\n}\n",
             ),
         ],
         ("NOTES.md", "notes\n"),
@@ -14013,6 +14036,21 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
         stdout.contains(&packet.join("pilot-summary.md").display().to_string()),
         "{stdout}"
     );
+    // The packet's loop commands must write into the analyzed repository,
+    // not the directory pilot was launched from.
+    let packets = std::fs::read_to_string(packet.join("agent-seam-packets.json"))
+        .map_err(|err| format!("read packets: {err}"))?;
+    let packets: serde_json::Value =
+        serde_json::from_str(&packets).map_err(|err| format!("parse packets: {err}"))?;
+    let before = packets["next"]["before_snapshot_command"]
+        .as_str()
+        .ok_or_else(|| format!("the fixture must yield a repair loop: {packets}"))?;
+    let elsewhere_text = elsewhere.display().to_string();
+    assert!(
+        !before.contains(&elsewhere_text),
+        "the snapshot redirect names the launch directory: {before}"
+    );
+    assert!(before.contains(&root_arg), "{before}");
     Ok(())
 }
 

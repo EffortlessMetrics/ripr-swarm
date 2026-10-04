@@ -15169,7 +15169,8 @@ carries a matching scope line: `change-first (seams on lines changed since
 unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
 no seam is ranked. When it is `false`, the terminal and Markdown say the
 recommendation is elsewhere in the repo and name `ripr check --root <root>` for
-the change itself. The partial (timeout) summary carries no `current_change`.
+the change itself, adding `--worktree` when the diff came from the working tree
+(plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
 If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 `status: "partial"` and no ranked seams:
