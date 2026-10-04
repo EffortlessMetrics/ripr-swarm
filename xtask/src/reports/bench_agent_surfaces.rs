@@ -632,12 +632,12 @@ fn reset_dir(path: &Path) -> Result<(), String> {
     // the whole benchmark.
     let mut last_err = None;
     for _ in 0..3 {
-        if path.exists() {
-            if let Err(err) = fs::remove_dir_all(path) {
-                last_err = Some(err);
-                std::thread::sleep(Duration::from_millis(500));
-                continue;
-            }
+        if path.exists()
+            && let Err(err) = fs::remove_dir_all(path)
+        {
+            last_err = Some(err);
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
         }
         match fs::create_dir_all(path) {
             Ok(()) => return Ok(()),
