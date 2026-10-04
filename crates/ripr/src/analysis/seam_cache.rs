@@ -4183,13 +4183,15 @@ mod tests {
             if limit >= seams.len() {
                 tables.push(cache.entry_path(&key));
             } else {
-                for index in 0..seams.len() {
-                    tables.push(
-                        cache
-                            .sharded_entry_dir(&key)
-                            .join(format!("shard-{index:05}.json")),
-                    );
+                // Follow the manifest so the check holds for any shard file layout.
+                let manifest = codec::decode_sharded_manifest(
+                    &std::fs::read(cache.sharded_manifest_path(&key))
+                        .map_err(|err| format!("{label} manifest: {err}"))?,
+                )?;
+                for shard in &manifest.shards {
+                    tables.push(cache.sharded_entry_dir(&key).join(&shard.file));
                 }
+                assert_eq!(tables.len(), seams.len());
             }
             let mut stored_tests = 0;
             for path in &tables {
