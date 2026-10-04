@@ -18,6 +18,17 @@ are scoped or reviewed.
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
   filled.
+- `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
+  `--root` is not a directory or the gap-ledger input cannot be read, instead
+  of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
+  names the path and the next step. A root that exists but is not a workspace
+  still gets the `first-pr` recovery packet.
+- Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
+  has a focused test but no `ripr agent repair` command, and closes with
+  `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
+  provider, and `ripr agent repair --phase before` without `--seam-id` points
+  to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
+  not seam IDs.
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -42,7 +53,27 @@ are scoped or reviewed.
   tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
   prefix components stay rejected (#5128).
 
+- LSP: stale-seam evidence packets name the executable wire command
+  `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
+  client palette alias, which the server dispatcher rejects. Palette advice in
+  human-readable recovery prose is unchanged (#5274).
+
 ### Changed
+
+- CI: the `ripr init --ci github` workflow downloads the pinned ripr
+  release's prebuilt binary and checks its published SHA-256 instead of
+  compiling ripr with `cargo install` on every run, so it no longer sets up a
+  Rust toolchain or `Swatinem/rust-cache`. A checksum mismatch fails the step;
+  a runner with no prebuilt archive (Windows) or a failed download falls back
+  to `cargo install`. The workflow also restores ripr's analysis cache
+  (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
+  pushes to a pull request reuse the facts of unchanged files.
+
+- CI: the generated workflow's advisory summary step is one
+  `ripr reports ci-summary` call instead of about 1,250 lines of inline
+  bash and `jq`, so the generated workflow drops from about 2,400 lines to
+  about 1,150. The new command prints the same Markdown from the same
+  artifacts and can be run locally against a `target/ripr` tree.
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
