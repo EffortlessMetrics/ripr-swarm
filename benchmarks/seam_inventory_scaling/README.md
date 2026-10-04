@@ -1,0 +1,19 @@
+# Seam inventory scaling benchmark
+
+`cargo xtask seam-inventory-scaling-benchmark` generates deterministic
+synthetic Rust workspaces at several file counts (default 200/800/2000
+production modules, three small functions each, no tests directory) under
+`target/` and times cold `ripr check` inventory runs
+(`repo-seams-json` plus `repo-exposure-json`) at each size.
+
+There is no committed input corpus: the generator is fixed-template, so a
+run is reproducible from the recorded revision without storing thousands of
+fixture files. Generated workspaces are removed after the run unless
+`--keep-workspaces` is passed.
+
+The receipt (`target/ripr/reports/seam-inventory-scaling-benchmark.{json,md}`)
+records the per-size cost curve and the coarse ms-per-file slope. That curve
+is the baseline the seam-inventory construction-cap issues (#1887, #4996,
+#4997) need: a cap-during-construction fix should bend the slope, not just
+shift one point. Benchmark claims are limited to the recorded repository
+revision and runner class.
