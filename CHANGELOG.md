@@ -11,6 +11,31 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
+  `--root` is not a directory or the gap-ledger input cannot be read, instead
+  of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
+  names the path and the next step. A root that exists but is not a workspace
+  still gets the `first-pr` recovery packet.
+- Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
+  has a focused test but no `ripr agent repair` command, and closes with
+  `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
+  provider, and `ripr agent repair --phase before` without `--seam-id` points
+  to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
+  not seam IDs.
+
+- `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
+  recovery messages bind a relative `--root` to the selected directory in the
+  commands they print, so `--root .` no longer yields a command that fails
+  when pasted from another directory. The card's `full packet:` line and the
+  identity refusal now carry `--root` at all; the card's typed command args and
+  detail routes stay portable (#3999).
+
+- GitHub: `ripr check --format github` omits `,line=` when a finding's probe
+  location is line 0, instead of emitting out-of-contract `line=0`. Findings
+  with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
+  unchanged. GitHub documents omitted `line` as defaulting to 1; this does not
+  claim file-level UI placement (#5089).
+
 - LSP: `session_value_sources` reports `initialization` only for applied
   initialization options. A malformed value such as `checkMode: "Deep"` keeps
   the session up, discloses the `repo` or `default` fallback, and emits one
@@ -21,7 +46,27 @@ are scoped or reviewed.
   tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
   prefix components stay rejected (#5128).
 
+- LSP: stale-seam evidence packets name the executable wire command
+  `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
+  client palette alias, which the server dispatcher rejects. Palette advice in
+  human-readable recovery prose is unchanged (#5274).
+
 ### Changed
+
+- CI: the `ripr init --ci github` workflow downloads the pinned ripr
+  release's prebuilt binary and checks its published SHA-256 instead of
+  compiling ripr with `cargo install` on every run, so it no longer sets up a
+  Rust toolchain or `Swatinem/rust-cache`. A checksum mismatch fails the step;
+  a runner with no prebuilt archive (Windows) or a failed download falls back
+  to `cargo install`. The workflow also restores ripr's analysis cache
+  (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
+  pushes to a pull request reuse the facts of unchanged files.
+
+- CI: the generated workflow's advisory summary step is one
+  `ripr reports ci-summary` call instead of about 1,250 lines of inline
+  bash and `jq`, so the generated workflow drops from about 2,400 lines to
+  about 1,150. The new command prints the same Markdown from the same
+  artifacts and can be run locally against a `target/ripr` tree.
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
@@ -144,6 +189,12 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
+- Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
+  a frozen protocol names study identity, assignment, equal budgets, the named
+  RIPR evidence surface, leakage controls, retries, stopping, non-compensating
+  outcome axes, and claim ceiling before any attempt. JSON and Markdown project
+  one sealed object. This does not execute agents, grade repairs, or claim
+  intervention value (#4649).
 - Python same-class method owners that tests reach only through construction
   or another method on that class now keep `no_static_path` but name
   `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0201,
@@ -1327,6 +1378,17 @@ are scoped or reviewed.
   non-blocking and the status is unchanged
   ([#3903](https://github.com/EffortlessMetrics/ripr-swarm/issues/3903)).
 
+- TypeScript verify commands now run from a shell:
+  `npx --no-install vitest run <file>` (or `pnpm exec`, `yarn`, `bun run` by
+  the package's runner) instead of bare
+  `vitest run <file>`, which failed with command not found because
+  `node_modules/.bin` is not on PATH. The same applies to `jest` and `ava`;
+  `bun test`, `node --test` and the `npm test --` style runner scripts are
+  unchanged. The command still needs the package's dependencies installed;
+  ripr does not check for `node_modules`, and every launcher runs only the
+  installed binary, so a missing one fails instead of being fetched from the
+  registry.
+
 - A TypeScript change that only edits type syntax on a signature or
   declaration line (a return type, a parameter or variable annotation, an
   optional marker, a generic parameter list) no longer produces a `predicate`
@@ -2059,6 +2121,27 @@ are scoped or reviewed.
   `run ripr check` recovery that could not help. One trailing redirect into
   the workspace's `target/ripr/` is accepted; every other redirect is still
   refused.
+- Rust: a test that asserts through a helper in its own file no longer reads
+  as "no assertion". With `fn check(x, want) { assert!(gate(x) == want) }`
+  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
+  a changed `gate` was `reachable_unrevealed`; it now reads
+  `weakly_exposed`. The test carries the helper's owner call and assertion,
+  one hop, only for a uniquely named helper in the test's own
+  `#[cfg(test)]` module that the test calls directly, outside any closure,
+  and that is not shadowed, `async`, or cfg-gated. The caller's arguments
+  are not credited as the owner's inputs, and the helper's assertion is
+  admitted by the same rules as one written in the test. (#4574)
+- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
+  parameter parser read `#[case] x: u32` as a malformed name and bound no
+  case values, so a test passing the boundary value through a case row was
+  reported as never reaching the boundary. Case columns map to the
+  `#[case]` parameters only; a `mut` parameter, one bound again anywhere
+  in the parsed test, a test that does not parse, or any test with a
+  nested `fn` binds nothing. (#4601)
+- Rust: a changed line with no resolved owner, such as a line inside a
+  `macro_rules!` template, is no longer `no_static_path` just because the
+  only related tests are same-file neighbours. With no owner name, nothing
+  can rule reach out, so it stays weak. (#4613)
 - Upgrading from 0.10: a `.ripr/suppressions.toml` `finding_id` written
   under 0.10 no longer matches, because Rust finding ids now hash the parsed
   expression (`amount >= threshold`) instead of the whole changed line

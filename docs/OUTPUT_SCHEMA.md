@@ -57,6 +57,7 @@ map is:
 | `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
 | `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
+| `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
@@ -89,6 +90,7 @@ records that distinction.
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `xtask/src/reports/rust_repair_trust.rs`; trust corpus input, including optional observation `route` ladder facts |
+| `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr/src/domain/intervention_study.rs` plus `crates/ripr/src/output/intervention_study.rs`; preregistration-only matched intervention-study protocol |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
@@ -295,6 +297,18 @@ are `0`), `partial` (some directories or entries, including the cache
 directory itself, could not be read, so the counts are lower bounds), or
 `unavailable` (the path is not a directory, is a symlink, or its metadata
 could not be read; both counts are `0`).
+
+## Matched intervention-study preregistration
+
+`schemas/ripr/ripr-intervention-study.schema.json` describes one frozen
+`ripr_intervention_study.v1` protocol. `schema_version`, `kind`, and
+`implementation_state` (`preregistration_only`) are pinned. The semantic
+object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
+(`study_id`), `assignment`, `shared_budget`, `intervention_surface`,
+`leakage_controls`, `outcome_axes`, `stopping_rule`, and `non_claims`.
+`crates/ripr/src/output/intervention_study.rs` seals `protocol_digest` and
+projects JSON and Markdown. The protocol does not execute agents, grade
+repairs, or claim intervention value.
 
 ## JSON object key ordering
 
@@ -1195,9 +1209,13 @@ The evidence-first fields are additive in schema `0.2`:
     when at least one of `framework_hint` or `runner_hint` is resolved. When
     emitted, `typescript_preview_card.verify.command` reflects the same value.
     Command forms (RIPR-SPEC-0085 PR 3):
-    `jest <file>`, `vitest run <file>`, `bun test <file>`,
-    `ava <file>`, `node --test <file>`, `npm test -- <file>`, `pnpm test -- <file>`,
-    `yarn test <file>`.
+    `<launch> jest <file>`, `<launch> vitest run <file>`, `bun test <file>`,
+    `<launch> ava <file>`, `node --test <file>`, `npm test -- <file>`,
+    `pnpm test -- <file>`, `yarn test <file>`. `<launch>` is the package
+    runner's local-binary launcher (`npx --no-install` for npm or an
+    unresolved runner, `pnpm exec`, `yarn`, `bun run`), because devDependency
+    binaries live in `node_modules/.bin`, which is not on `PATH`. No launcher
+    downloads a missing package.
   - `typescript_limitation: <name>` — ADDITIVE evidence line (RIPR-SPEC-0085
     §PR4, named limitation taxonomy). Emitted only when a REAL detected
     TypeScript construct triggers the named limitation. No existing field is
@@ -12832,6 +12850,107 @@ Markdown output contains the same status, recovered seam, artifact table, next
 command, warnings, and static-only limits. Generated CI writes it to
 `target/ripr/workflow/agent-status.md` next to
 `target/ripr/workflow/agent-status.json`.
+
+### Exact attempt selection (`agent_attempt_status`, RIPR-SPEC-0217, #4798)
+
+`ripr agent status --root <workspace> --attempt <repair-attempt-id>` selects
+exactly one attempt from the resolved attempt store (with `--store`, the
+explicit store from RIPR-SPEC-0195; the default store otherwise) and reports
+one typed attempt state instead of the inventory list. Both surfaces derive
+from one normalized DTO; reordered directory traversal cannot change the
+bytes. The command stays read-only: it never finishes, restarts, rewrites, or
+deletes the attempt it inspects.
+
+```text
+ripr agent status --root . --attempt repair-attempt-0123456789abcdef01234567
+ripr agent status --root . --attempt repair-attempt-0123456789abcdef01234567 --json
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "agent_attempt_status",
+  "root": ".",
+  "store": {
+    "locator": "target/ripr/repair-attempts",
+    "location_class": "default_repository",
+    "currentness": "present"
+  },
+  "attempt": {
+    "attempt_id": "repair-attempt-0123456789abcdef01234567",
+    "seam_id": "…",
+    "manifest": "target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/attempt.json",
+    "state": "awaiting_edit",
+    "status_class": "awaiting_edit",
+    "head_current": true,
+    "currentness": "current",
+    "evidence_head": "…",
+    "unreadable_reason": null,
+    "receipt": null,
+    "last_after_refusal": null,
+    "diverged_recovery": null
+  },
+  "next_action": {
+    "step": "repair_attempt_after",
+    "artifact": "…",
+    "reason": "…",
+    "command": "ripr agent repair --root . --attempt … --phase after"
+  },
+  "test_run": null,
+  "claim_boundary": ["status is read-only: …"],
+  "limitations": ["…"],
+  "non_claims": ["…"]
+}
+```
+
+Field contract:
+
+- `kind` is always `agent_attempt_status`; the envelope is distinct from the
+  inventory document so a caller can parse stdout once.
+- `store` is the typed #4797 store identity (locator, location class,
+  currentness), not a re-derived path. An attempt ID selected through the
+  wrong store is `corrupt_or_unavailable` there, never silently resolved.
+- `attempt.state` is the manifest's operational state; it is `null` only when
+  the manifest could not be validated at all.
+- `attempt.status_class` is the resume vocabulary: `awaiting_edit`,
+  `prepared`, `finished_current`, `finished_historical`, `stale`,
+  `incomparable`, `failed`, `limited`, `corrupt_or_unavailable`, and
+  `legacy_compatibility_only`. The class is never stronger than the receipt
+  the attempt retained: `finished_current`/`finished_historical` require a
+  digest-bound attempt-local receipt whose reading shows the gap closed,
+  split by whether `HEAD` is still the head the after phase recorded (a
+  moved `HEAD` downgrades to `finished_historical`; the retained result
+  stays readable and is explicitly not current proof). `limited` covers a
+  receipt that does not show the gap closed and states whose currentness
+  cannot be read. `corrupt_or_unavailable` covers missing, tampered, or
+  unbound attempt-local terminal evidence — status never falls back to
+  another attempt's one-slot compatibility receipt. `legacy_compatibility_only`
+  covers manifests without `terminal_artifacts`: any reading travels only
+  through the compatibility projection, which is exactly the strength it
+  earned. A missing, malformed, or unbound selected manifest is also
+  `corrupt_or_unavailable`, with `unreadable_reason` naming the refused
+  artifact; the store's other rows are not affected and do not lend it
+  state.
+- `attempt.currentness` is `current`, `historical`, or `unknown`, derived
+  from `HEAD` alone and reported separately from the class.
+- `attempt.receipt` is the same receipt object the inventory document
+  reports (`null` unless the attempt is `ready_to_finish`).
+- `next_action` is one exact next or recovery command: the after phase's
+  recorded command for `awaiting_edit`, a typed restart (or head-recovery)
+  command for `stale`, `incomparable`, `failed`, `prepared`, and the
+  recovery routes, and `null` for terminal classes and for states where no
+  honest action names itself. Commands bind the selected repository root
+  (an invocation spelling like `--root .` becomes the bound absolute root),
+  so a pasted command resumes the selected attempt from any working
+  directory; the report's own `root` field keeps the invocation spelling.
+- `claim_boundary`, `limitations`, and `non_claims` carry the read-only
+  non-claim, the retained-evidence non-claim (a finished result does not
+  establish the repair is correct or that any project test ran), the
+  manifest's own limitations and non-claims, and the store resolver's
+  non-claims. The Markdown rendering prints the same fields.
 
 ## Agent Review Summary
 
