@@ -139,6 +139,12 @@ strength.
 
 ### Admission rules
 
+A **catch-all binding** is a pattern that matches every value: a
+lowercase-initial identifier (including `_name`), optionally with `ref`,
+`mut` or `ref mut`, or `name @ p` where `p` is itself `_`, `..` or a
+catch-all binding. `name @ E::X` and `name @ Some(_)` are not catch-all;
+they are read through their sub-pattern.
+
 1. **Inequality is never exact.** At steps 0, 1, 5 and 10, an inequality
    assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
    `!=` in an `ensure!` condition, a negated `!matches!(..)` (which today
@@ -151,15 +157,13 @@ strength.
    `relational_check`.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is `_`, `..`
-   or a bare binding (a lowercase-initial identifier, including `_name`)
-   assigns `broad_error` / weak, guard or not. `Err(E::X)`,
+   or a catch-all binding assigns `broad_error` / weak, guard or not. `Err(E::X)`,
    `Err(E::X(..))` and `Err(E::X { .. })` stay `exact_error_variant`.
    `assert_eq!` against `Err(value)` with any expression stays
    `exact_error_variant`, because equality pins the value.
 3. **Pattern assertions follow their pattern.** At steps 0 and 5, a
    `matches!` or `assert_matches!` whose whole pattern is a guarded `_` or a
-   bare binding (a lowercase-initial identifier) assigns `relational_check` /
-   weak; the wildcard pre-check already covers an unguarded `_`. A
+   catch-all binding assigns `relational_check` / weak; the wildcard pre-check already covers an unguarded `_`. A
    constructor pattern whose only content is wildcards (`Some(_)`, `Ok(_)`,
    `Ok(..)`), and `None`, assign `smoke_only` / smoke when unguarded,
    because they only check the side (RIPR-SPEC-0227); with a guard they
@@ -257,6 +261,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     (today `exact_error_variant` / strong).
 20. `assert_ne!(check(20), Err(E::Bad))`: `relational_check` / weak (today
     `exact_value` / strong at step 5).
+21. `assert!(matches!(check(20), Err(ref e) if e.len() > 1))`, `Err(mut e)`
+    and `Err(e @ _)`: `broad_error` / weak.
+22. `assert!(matches!(check(20), Err(e @ E::Bad)))`: `exact_error_variant` /
+    strong (unchanged).
 
 ## Test Mapping
 
