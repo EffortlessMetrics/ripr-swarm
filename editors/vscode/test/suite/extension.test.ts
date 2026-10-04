@@ -674,8 +674,8 @@ suite('Extension Smoke', () => {
         recovery_route?: string;
       };
       assert.strictEqual(stalePacket.status, 'stale');
-      assert.strictEqual(stalePacket.recovery_command, 'ripr.refreshDiagnostics');
-      assert.strictEqual(stalePacket.recovery_route, 'ripr.refreshDiagnostics');
+      assert.strictEqual(stalePacket.recovery_command, 'ripr.refresh');
+      assert.strictEqual(stalePacket.recovery_route, 'ripr.refresh');
 
       await vscode.commands.executeCommand(secondContext.command, ...(secondContext.arguments ?? []));
       const currentPacket = JSON.parse(await waitForClipboardText((text) => text.includes('"seam_id"'))) as {
