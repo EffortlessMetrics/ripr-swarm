@@ -2092,13 +2092,29 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     if let Some(colon) = pattern.find(':') {
         return type_head(&pattern[colon + 1..]).map(|(segments, _)| segments.last().copied())?;
     }
-    let (segments, next) = type_head(&stmt[eq + 1..])?;
+    initializer_type_head(&stmt[eq + 1..])
+}
+
+/// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
+/// `Site(..)`, a constructor-named associated call (`Site::new(..)`,
+/// `Site::default()`, `Site::from_x(..)`, `Site::with_x(..)`) or an
+/// associated item (`Shape::Circle`). Any other associated call
+/// (`Site::make_cache()`) may return another type and fails closed.
+fn initializer_type_head(expr: &str) -> Option<&str> {
+    let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
-        ([.., ty, _call], Some(b'(')) => Some(ty),
-        ([.., last], Some(b'(' | b'{')) => Some(last),
+        ([.., ty, call], Some(b'(')) => is_constructor_name(call).then_some(*ty),
+        ([last], Some(b'(')) | ([.., last], Some(b'{')) => Some(last),
         ([.., ty, _assoc], _) => Some(ty),
         _ => None,
     }
+}
+
+fn is_constructor_name(name: &str) -> bool {
+    matches!(name, "new" | "default" | "from")
+        || ["new_", "from_", "with_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
 }
 
 /// Leading `a::B::c` path of `text` after `&`/`mut`/`dyn`/whitespace, and the
@@ -2186,17 +2202,91 @@ fn text_resolves_method_to_type(
                     {
                         return true;
                     }
-                } else {
-                    let start = at.saturating_sub(96);
-                    if super::reveal::contains_as_whole_word(&text[start..at], impl_type) {
-                        return true;
-                    }
+                } else if receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets) {
+                    return true;
                 }
             }
         }
         search = at + method.chars().next().map_or(1, char::len_utf8);
     }
     false
+}
+
+/// Whether the bracketed receiver expression ending just before the `.` at
+/// `dot` has type `impl_type`: `Site::new().m()`, `Site { .. }.m()`,
+/// `(site).m()` or `(&Site::default()).m()`. Method chains
+/// (`Site::new().with(1).m()`), index expressions and anything unbalanced
+/// fail closed rather than matching a type named nearby.
+fn receiver_expr_resolves_to_type(
+    text: &str,
+    dot: usize,
+    impl_type: &str,
+    body_for_lets: &str,
+) -> bool {
+    let bytes = text.as_bytes();
+    let mut close = dot;
+    while close > 0 && bytes[close - 1].is_ascii_whitespace() {
+        close -= 1;
+    }
+    let Some(close) = close.checked_sub(1) else {
+        return false;
+    };
+    let (open_byte, close_byte) = match bytes[close] {
+        b')' => (b'(', b')'),
+        b'}' => (b'{', b'}'),
+        _ => return false,
+    };
+    let Some(open) = matching_open(bytes, close, open_byte, close_byte) else {
+        return false;
+    };
+    let mut path_end = open;
+    if open_byte == b'{' {
+        while path_end > 0 && bytes[path_end - 1].is_ascii_whitespace() {
+            path_end -= 1;
+        }
+    }
+    let mut start = path_end;
+    while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
+        start -= 1;
+    }
+    if start == path_end {
+        if open_byte != b'(' {
+            return false;
+        }
+        let inner = text[open + 1..close].trim();
+        let inner = inner.strip_prefix('&').map_or(inner, str::trim_start);
+        let inner = inner.strip_prefix("mut ").map_or(inner, str::trim_start);
+        if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
+            return inner == impl_type
+                || let_binding_mentions_type(body_for_lets, inner, impl_type);
+        }
+        return initializer_type_head(inner).is_some_and(|head| head == impl_type);
+    }
+    let mut before = start;
+    while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+        before -= 1;
+    }
+    if before > 0 && bytes[before - 1] == b'.' {
+        return false;
+    }
+    initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type)
+}
+
+/// Index of the bracket opening the one closed at `close`, or `None`.
+fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> Option<usize> {
+    let mut depth = 0usize;
+    for index in (0..=close).rev() {
+        let byte = bytes[index];
+        if byte == close_byte {
+            depth += 1;
+        } else if byte == open_byte {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
 }
 
 /// Whether a test invokes `method` on a receiver bound to `impl_type`
@@ -5196,6 +5286,37 @@ let r = try_parse_summary(\"x\");",
     // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
     // BEGINS with the callee is a different binding — the unbounded prefix
     // check would falsely defeat the admit and drop the test's relation.
+    // (#6303) A receiver resolves to a type only through its own syntax: a
+    // constructor-named associated call, a struct literal, or a
+    // parenthesised binding. A type named nearby, or a non-constructor
+    // associated call, does not resolve it.
+    #[test]
+    fn method_call_receiver_resolves_only_from_its_own_expression() {
+        let cases = [
+            ("let c = Site::make_cache(); c.build();", false),
+            ("let c = Cache::new(Site::default()); (c).build();", false),
+            ("let c = Cache::new(Site::default()); (&c).build();", false),
+            ("let s = Site::new(); (s).build();", true),
+            ("let s = Site::new(); (&mut s).build();", true),
+            ("Site::new().build();", true),
+            ("Site::with_langs(1).build();", true),
+            ("Site { langs: 1 }.build();", true),
+            ("(Site::default()).build();", true),
+            ("Cache::new(Site::default()).build();", false),
+            ("Site::builder().langs(1).build();", false),
+            ("make(Site::new()).build();", false),
+            ("Site::new().unused(); helper().build();", false),
+        ];
+        for (body, expected) in cases {
+            let summary = test("tests/site.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                expected,
+                "{body}"
+            );
+        }
+    }
+
     // (#5481 review) A binding's type is its annotation or initializer head;
     // types nested in arguments and wrappers fail closed.
     #[test]
@@ -5214,6 +5335,11 @@ let r = try_parse_summary(\"x\");",
             ("let x = Site::<Vec<u8>>::new()", Some("Site")),
             ("let x = Site::<u8", None),
             ("let x = make_site()", Some("make_site")),
+            ("let x = Site::make_cache()", None),
+            ("let x = Site::builder().build()", None),
+            ("let x = Site::new_empty()", Some("Site")),
+            ("let x = Vec::with_capacity(4)", Some("Vec")),
+            ("let x = Shape::Circle", Some("Shape")),
             ("let x = |s: Site| s", None),
         ];
         for (stmt, expected) in cases {

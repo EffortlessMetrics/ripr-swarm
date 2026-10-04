@@ -87,7 +87,9 @@ A candidate is **corroborated** when its entry symbol names a production functio
 the owner and that function is either a free function, or an associated function the test calls on
 a receiver resolved to its `impl` self type (a constructor, type annotation, UFCS `Type::method` or
 struct literal; a binding's type is its annotation or initializer head, so `Cache::new(Site::default())`
-binds a `Cache`; an unresolved receiver is not corroborated). Name-only facts cannot tell
+binds a `Cache`; only constructor-named associated calls such as `new`, `default`, `from_*` or `with_*`
+count as an initializer head; a bracketed receiver such as `(site).build()` or `Site::new().build()` is
+resolved from its own expression, never from a type named nearby; an unresolved receiver is not corroborated). Name-only facts cannot tell
 `Site::build` from `Cache::build`, so without this rank a unit test calling an unrelated type's
 same-named method could win on file order alone (#5481). A function's declaration line, which call
 facts record under the function's own name, does not count as a call onward; a real call to a
