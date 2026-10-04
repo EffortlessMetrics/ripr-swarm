@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index 21ec8a2..6514a65 100644
+index c000ade..0824cdc 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -16,7 +16,7 @@ mod tests {

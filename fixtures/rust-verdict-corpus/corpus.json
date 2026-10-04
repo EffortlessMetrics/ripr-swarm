@@ -519,10 +519,6 @@
           "sha256": "d66ae1d39b5c4859d963ed3481e94670e49f12dacae2d3037d69358aaa71397f"
         },
         {
-          "path": "src/audit.rs",
-          "sha256": "63a8dc1bd174a8c6952d671f5b00a718d122a9e16dad0d34e4dd70d8d35693ae"
-        },
-        {
           "path": "src/bytes.rs",
           "sha256": "f6cd8969580469a87e31fa348682f4ca7f6238a9151e413e6069364f8dd16323"
         },
@@ -532,7 +528,7 @@
         },
         {
           "path": "src/lib.rs",
-          "sha256": "fbd243d72885e798ae3e0bfc7da864a6cf133eed216240220bb05e854ed8638c"
+          "sha256": "1ba4d355f3fe1d379575ae40040ea359e43a58e7bbc22dab56cc006c697d5d85"
         },
         {
           "path": "src/parse.rs",
@@ -664,7 +660,7 @@
         },
         {
           "path": "src/lib.rs",
-          "sha256": "d04879fa1347f0cdc8f441a8088f795c427b8cbd0b750c6a3d149dcf45b68bfc"
+          "sha256": "53f26e973bc9ea2673d7956adb14fa67c5b6cf2e013edcb0ec2c1c566a50efd3"
         }
       ]
     }
@@ -3448,7 +3444,7 @@
           "silent"
         ]
       },
-      "reasoning": "deposits_add_to_the_balance reads the balance back with assert_eq!, so both mutants of the field write fail it. Spec cells: RIPR-SPEC-0001 side effect family; RIPR-SPEC-0228 field writes.",
+      "reasoning": "deposits_add_to_the_balance reads the balance back with assert_eq!, so both mutants of the field write fail it. Spec cells: RIPR-SPEC-0001 side effect family (field write).",
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "limited",
@@ -3552,7 +3548,7 @@
           "limited"
         ]
       },
-      "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107; RIPR-SPEC-0227.",
+      "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107.",
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -3919,7 +3915,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "error_path",
       "test_shape": "guarded_match_pins_sibling_variant",
-      "hard_case": null,
+      "hard_case": "ripr's error_path finding reads exposed, borrowing the strong `matches!(refund(20_000), Err(PayError::Limit))` pin from a test of a different function in the same file; the line still scores gap because a weakly_exposed return_value finding outranks it.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -4020,7 +4016,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "error_path",
       "test_shape": "happy_path_only_assert_eq",
-      "hard_case": null,
+      "hard_case": "ripr's error_path finding reads exposed, borrowing the strong `matches!(refund(20_000), Err(PayError::Limit))` pin from a test of a different function in the same file; the line still scores gap because a weakly_exposed return_value finding outranks it.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -4133,10 +4129,10 @@
             "equivalence_review": "not equivalent: exactly DAILY_LIMIT is no longer over"
           },
           {
-            "replacement": "count >= DAILY_LIMIT + 1",
+            "replacement": "count >= DAILY_LIMIT - 1",
             "outcome": "tests_failed",
             "failing_test": "limits::tests::the_daily_limit_is_inclusive",
-            "equivalence_review": "not equivalent: exactly DAILY_LIMIT is no longer over"
+            "equivalence_review": "not equivalent: DAILY_LIMIT - 1 becomes over the limit"
           }
         ]
       },
@@ -4235,10 +4231,10 @@
             "equivalence_review": "not equivalent: exactly 1000 no longer needs review"
           },
           {
-            "replacement": "total >= 1001",
+            "replacement": "total >= 999",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: exactly 1000 no longer needs review"
+            "equivalence_review": "not equivalent: 999 starts needing review"
           }
         ]
       },
@@ -5079,10 +5075,10 @@
             "equivalence_review": "not equivalent: --ab stops being long"
           },
           {
-            "replacement": "name.len() >= 3",
+            "replacement": "name.len() >= 1",
             "outcome": "tests_failed",
             "failing_test": "flow::tests::long_flags_have_two_letters",
-            "equivalence_review": "not equivalent: --ab stops being long"
+            "equivalence_review": "not equivalent: --a becomes long"
           }
         ]
       },

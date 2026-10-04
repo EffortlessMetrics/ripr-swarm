@@ -1,5 +1,5 @@
 diff --git a/src/raw.rs b/src/raw.rs
-index 6388842..207bc84 100644
+index 6388842..d294b10 100644
 --- a/src/raw.rs
 +++ b/src/raw.rs
 @@ -6,7 +6,7 @@
@@ -7,7 +7,7 @@ index 6388842..207bc84 100644
  /// `index` must be less than `bytes.len()`.
  pub unsafe fn byte_at(bytes: &[u8], index: usize) -> u8 {
 -    *bytes.get_unchecked(index)
-+    *bytes.as_ptr().add(index)
++    *<[u8]>::get_unchecked(bytes, index)
  }
  
  #[cfg(test)]

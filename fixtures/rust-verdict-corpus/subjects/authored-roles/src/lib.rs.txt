@@ -1,5 +1,5 @@
-//! Code in different source roles: a constant, a production function, a
-//! test-only helper, and an example.
+//! Code in different source roles: a constant, a production function and a
+//! test-only helper.
 
 pub const LIMIT: u32 = 10;
 
