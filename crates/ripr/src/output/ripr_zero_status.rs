@@ -608,18 +608,45 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             ..DeltaParse::default()
         };
     }
+    // Every count above validated as a real usize, so these reads are exact.
+    let still_present = usize_path(&value, &["delta", "still_present"]);
+    let resolved = usize_path(&value, &["delta", "resolved"]);
+    let new_policy_eligible = usize_path(&value, &["delta", "new_policy_eligible"]);
+    let acknowledged = usize_path(&value, &["delta", "acknowledged"]);
+    let suppressed = usize_path(&value, &["delta", "suppressed"]);
+    let stale = usize_path(&value, &["delta", "stale_baseline_entry"]);
+    let invalid = usize_path(&value, &["delta", "invalid_baseline_entry"]);
+    let missing_input = usize_path(&value, &["delta", "missing_current_input"]);
+    // Aggregates must not overflow: a wrapped sum would fabricate zero
+    // visible debt and `achieved` (or panic in checked builds), so
+    // overflowing counts fail closed as Invalid (#6095 review).
+    let new_sum = new_policy_eligible
+        .checked_add(acknowledged)
+        .and_then(|sum| sum.checked_add(suppressed));
+    let visible_sum = still_present
+        .checked_add(new_policy_eligible)
+        .and_then(|sum| sum.checked_add(acknowledged));
+    if new_sum.is_none() || visible_sum.is_none() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has counts whose aggregates overflow; overflowing counts are not evidence of zero debt"
+            )],
+            ..DeltaParse::default()
+        };
+    }
     let counts = DebtDeltaSummary {
-        still_present: usize_path(&value, &["delta", "still_present"]),
-        resolved: usize_path(&value, &["delta", "resolved"]),
-        new: usize_path(&value, &["delta", "new_policy_eligible"])
-            + usize_path(&value, &["delta", "acknowledged"])
-            + usize_path(&value, &["delta", "suppressed"]),
-        new_policy_eligible: usize_path(&value, &["delta", "new_policy_eligible"]),
-        acknowledged: usize_path(&value, &["delta", "acknowledged"]),
-        suppressed: usize_path(&value, &["delta", "suppressed"]),
-        stale: usize_path(&value, &["delta", "stale_baseline_entry"]),
-        invalid: usize_path(&value, &["delta", "invalid_baseline_entry"]),
-        missing_input: usize_path(&value, &["delta", "missing_current_input"]),
+        still_present,
+        resolved,
+        // Validated non-overflowing above; parse_delta is the only
+        // constructor of nonzero counts, so downstream sums are safe.
+        new: new_sum.unwrap_or(0),
+        new_policy_eligible,
+        acknowledged,
+        suppressed,
+        stale,
+        invalid,
+        missing_input,
     };
     let items = value
         .get("items")
@@ -2259,6 +2286,52 @@ mod tests {
         assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
         assert!(rendered.contains("malformed counts"), "{rendered}");
         assert!(rendered.contains("still_present"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_overflowing_delta_counts() -> Result<(), String> {
+        // Aggregates that overflow must fail closed (#6095 review): a wrapped
+        // sum would fabricate zero visible debt and `achieved`. usize::MAX
+        // keeps the overflow exact on any pointer width.
+        let delta = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {{
+            "still_present": {},
+            "resolved": 0,
+            "new_policy_eligible": 1,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          }},
+          "items": []
+        }}"#,
+            usize::MAX
+        );
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("aggregates overflow"), "{rendered}");
         assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
         Ok(())
     }

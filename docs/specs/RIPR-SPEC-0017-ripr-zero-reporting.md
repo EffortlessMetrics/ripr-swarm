@@ -376,7 +376,11 @@ malformed (non-integer) counts, items that contradict zero counts, or a
 disclosed partial-scope, findings-bounded, or otherwise incomplete producer
 run, the report sets `ripr_zero.state = "unknown"` with the reason in
 warnings; it must not report `achieved` from a denominator it cannot
-validate. Visible debt under such a delta keeps `not_yet` (#5251).
+validate. Visible debt keeps `not_yet` only when the counts are valid
+and items do not contradict them; a disclosed partial producer denominator
+stays visible in warnings but does not erase the debt signal, while missing
+or malformed counts, or items contradicting counts, yield `unknown` even
+when other counts show debt (#5251).
 
 Given a baseline debt delta with existing baseline gaps still present, the
 report sets `ripr_zero.state = "not_yet"` and counts them as visible unresolved

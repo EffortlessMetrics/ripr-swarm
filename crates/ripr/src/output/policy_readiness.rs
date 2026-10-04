@@ -523,28 +523,45 @@ fn parse_optional_json(
 
 fn blocking_axis(gate: &ArtifactParse, facts: &GateFacts) -> Axis {
     match gate.status {
-        ArtifactStatus::Loaded => Axis {
-            state: "healthy".to_string(),
-            evidence: vec![
-                format!(
-                    "gate_status={}",
-                    facts.status.as_deref().unwrap_or("unknown")
-                ),
-                format!(
-                    "current_gate_mode={}",
-                    facts.mode.as_deref().unwrap_or("unknown")
-                ),
-                format!("blocking_candidates={}", facts.blocking),
-                format!("acknowledged={}", facts.acknowledged),
-                format!("advisory={}", facts.advisory),
-                format!("suppressed={}", facts.suppressed),
-                format!("not_applicable={}", facts.not_applicable),
-            ],
-            warnings: Vec::new(),
-            next_action:
-                "Keep generated CI advisory unless RIPR_GATE_MODE is explicitly configured."
-                    .to_string(),
-        },
+        ArtifactStatus::Loaded => {
+            // A gate that failed evaluation is config_error for this axis
+            // too, not healthy: its zeros are not evidence (#6095 review).
+            if facts.status.as_deref() == Some(GATE_STATUS_CONFIG_ERROR) {
+                return Axis {
+                    state: "config_error".to_string(),
+                    evidence: vec![format!(
+                        "gate_status={}",
+                        facts.status.as_deref().unwrap_or("unknown")
+                    )],
+                    warnings: Vec::new(),
+                    next_action:
+                        "Repair the gate-decision evaluation before trusting blocking readiness."
+                            .to_string(),
+                };
+            }
+            Axis {
+                state: "healthy".to_string(),
+                evidence: vec![
+                    format!(
+                        "gate_status={}",
+                        facts.status.as_deref().unwrap_or("unknown")
+                    ),
+                    format!(
+                        "current_gate_mode={}",
+                        facts.mode.as_deref().unwrap_or("unknown")
+                    ),
+                    format!("blocking_candidates={}", facts.blocking),
+                    format!("acknowledged={}", facts.acknowledged),
+                    format!("advisory={}", facts.advisory),
+                    format!("suppressed={}", facts.suppressed),
+                    format!("not_applicable={}", facts.not_applicable),
+                ],
+                warnings: Vec::new(),
+                next_action:
+                    "Keep generated CI advisory unless RIPR_GATE_MODE is explicitly configured."
+                        .to_string(),
+            }
+        }
         ArtifactStatus::Invalid => Axis {
             state: "config_error".to_string(),
             evidence: Vec::new(),
@@ -1192,6 +1209,21 @@ mod tests {
         assert!(!report.summary.baseline_check_ready);
         assert!(!report.summary.calibrated_gate_ready);
         assert!(!report.summary.blocking_ready);
+        // The blocking axis must agree too: a failed gate is config_error
+        // there, not healthy (#6095 review).
+        assert_eq!(report.blocking_readiness.state, "config_error");
+        assert!(
+            report
+                .blocking_readiness
+                .evidence
+                .contains(&"gate_status=config_error".to_string())
+        );
+        assert!(
+            report
+                .blocking_readiness
+                .next_action
+                .contains("Repair the gate-decision evaluation")
+        );
         let rendered = render_policy_readiness_json(&report)?;
         assert!(
             rendered.contains("\"status\": \"config_error\""),
