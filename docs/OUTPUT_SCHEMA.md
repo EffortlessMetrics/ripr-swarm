@@ -1198,9 +1198,10 @@ The evidence-first fields are additive in schema `0.2`:
     `<launch> jest <file>`, `<launch> vitest run <file>`, `bun test <file>`,
     `<launch> ava <file>`, `node --test <file>`, `npm test -- <file>`,
     `pnpm test -- <file>`, `yarn test <file>`. `<launch>` is the package
-    runner's local-binary launcher (`npx` for npm or an unresolved runner,
-    `pnpm exec`, `yarn`, `bunx`), because devDependency binaries live in
-    `node_modules/.bin`, which is not on `PATH`.
+    runner's local-binary launcher (`npx --no-install` for npm or an
+    unresolved runner, `pnpm exec`, `yarn`, `bun run`), because devDependency
+    binaries live in `node_modules/.bin`, which is not on `PATH`. No launcher
+    downloads a missing package.
   - `typescript_limitation: <name>` — ADDITIVE evidence line (RIPR-SPEC-0085
     §PR4, named limitation taxonomy). Emitted only when a REAL detected
     TypeScript construct triggers the named limitation. No existing field is

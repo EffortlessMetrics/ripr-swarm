@@ -387,7 +387,7 @@ Updated:
 ## Pending — typescript_monorepo_package_local (12)
 
 Reason:
-RIPR-SPEC-0085: TypeScript verify commands launch the framework through the package runner (npx, pnpm exec, yarn, bunx) because node_modules/.bin is not on PATH
+RIPR-SPEC-0085: TypeScript verify commands launch the framework through the package runner (npx --no-install, pnpm exec, yarn, bun run) because node_modules/.bin is not on PATH
 
 Command:
 `cargo xtask goldens bless typescript_monorepo_package_local --reason "..."`

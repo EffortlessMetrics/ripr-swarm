@@ -142,7 +142,7 @@ Repair:
   Add a focused Jest assertion in tests/discount.test.ts.
 
 Verify:
-  npx jest tests/discount.test.ts
+  npx --no-install jest tests/discount.test.ts
 ```
 
 The packet stays `preview_limited`, labels the language status as `preview`,
