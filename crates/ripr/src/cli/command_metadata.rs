@@ -2055,6 +2055,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[
                 "target/ripr/reports/ripr-plus.md",
                 "target/ripr/reports/ripr-plus.last-good.json",
+                "target/ripr/reports/ripr-plus.last-good.md",
             ],
         },
         state_target: None,

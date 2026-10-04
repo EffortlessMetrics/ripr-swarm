@@ -103,20 +103,48 @@ fn keep_last_good_receipt(repo: &Path) -> String {
     match status.as_deref() {
         None | Some("indeterminate") => String::new(),
         Some(status) => {
-            let copied = fs::write(repo.join(RIPR_PLUS_LAST_GOOD_JSON), previous).and_then(|()| {
-                match fs::read(repo.join(RIPR_PLUS_MD)) {
-                    Ok(markdown) => fs::write(repo.join(RIPR_PLUS_LAST_GOOD_MD), markdown),
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(err) => Err(err),
+            // The shared guarded writer: regular-file destinations only, replaced
+            // atomically, so a planted link cannot redirect the copy.
+            let json_result = write_parented_file(
+                &repo.join(RIPR_PLUS_LAST_GOOD_JSON),
+                RIPR_PLUS_LAST_GOOD_JSON,
+                previous,
+            );
+            let markdown_result = match fs::read(repo.join(RIPR_PLUS_MD)) {
+                Ok(markdown) => write_parented_file(
+                    &repo.join(RIPR_PLUS_LAST_GOOD_MD),
+                    RIPR_PLUS_LAST_GOOD_MD,
+                    markdown,
+                ),
+                // No canonical Markdown: drop any saved one so the pair never
+                // describes two different runs.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    match fs::remove_file(repo.join(RIPR_PLUS_LAST_GOOD_MD)) {
+                        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(format!(
+                            "failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}"
+                        )),
+                        _ => Ok(()),
+                    }
                 }
-            });
-            match copied {
-                Ok(()) => format!(
+                Err(err) => Err(format!("failed to read {RIPR_PLUS_MD}: {err}")),
+            };
+            match (json_result, markdown_result) {
+                (Ok(()), Ok(())) => format!(
                     " The previous receipt (status `{status}`) is kept at {RIPR_PLUS_LAST_GOOD_JSON}; {RIPR_PLUS_JSON} now records this failed run as indeterminate."
                 ),
-                Err(err) => format!(
-                    " The previous receipt (status `{status}`) could not be kept ({err}); it is replaced by the indeterminate record."
-                ),
+                (json, markdown) => {
+                    let mut failures = Vec::new();
+                    if let Err(err) = json {
+                        failures.push(err);
+                    }
+                    if let Err(err) = markdown {
+                        failures.push(err);
+                    }
+                    format!(
+                        " The previous receipt (status `{status}`) was only partly kept ({}); {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
+                        failures.join("; ")
+                    )
+                }
             }
         }
     }
@@ -1124,6 +1152,64 @@ mod tests {
             r#"{"status":"pass"}"#,
             "an indeterminate receipt must never become the last good one"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn saved_markdown_is_dropped_when_the_previous_receipt_had_none() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo =
+            std::env::temp_dir().join(format!("ripr-plus-stale-md-{}-{nanos}", std::process::id()));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        fs::write(repo.join(RIPR_PLUS_JSON), r#"{"status":"pass"}"#)
+            .map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_LAST_GOOD_MD), "older run")
+            .map_err(|err| format!("seed stale md: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let stale_md = repo.join(RIPR_PLUS_LAST_GOOD_MD).exists();
+        let json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("is kept at"), "{kept}");
+        assert!(
+            !stale_md,
+            "a saved Markdown from an older run must not outlive its JSON"
+        );
+        assert_eq!(json.map_err(|err| err.to_string())?, r#"{"status":"pass"}"#);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_preservation_is_reported_as_partial() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-partial-keep-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        fs::write(repo.join(RIPR_PLUS_JSON), r#"{"status":"pass"}"#)
+            .map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), "good receipt")
+            .map_err(|err| format!("seed md: {err}"))?;
+        // A directory where the saved Markdown belongs makes only that copy fail.
+        fs::create_dir_all(repo.join(RIPR_PLUS_LAST_GOOD_MD))
+            .map_err(|err| format!("block saved md: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("only partly kept"), "{kept}");
+        assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
+        assert!(!kept.contains("ripr-plus.last-good.json:"), "{kept}");
+        assert_eq!(json.map_err(|err| err.to_string())?, r#"{"status":"pass"}"#);
         Ok(())
     }
 
