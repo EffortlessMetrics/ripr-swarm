@@ -1,0 +1,202 @@
+# RIPR-SPEC-0225: Whole-value equality credit for constructed fields
+
+Status: proposed
+
+Owner: product / analysis
+
+Created: 2026-10-04
+
+Linked proposal:
+
+- None yet
+
+Linked ADRs:
+
+- None yet
+
+Linked plan:
+
+- None yet
+
+Linked issues:
+
+- None yet
+
+Linked PRs:
+
+- None yet
+
+Support-tier impact:
+
+- No tier change. A Rust `field_construction` finding can read `exposed` when
+  a related test compares the owner's whole result against a literal that
+  names the changed field, and the type's equality is the derived one. The
+  `whole_object_equality` oracle kind stops being assigned from a `{`
+  character alone. Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
+
+Policy impact:
+
+- Register this spec in `policy/doc-artifacts.toml` and
+  `.ripr/traceability.toml`.
+- No schema version bump.
+
+## Problem
+
+Comparing a whole returned value is the most common way Rust tests pin a
+constructor:
+
+```rust
+pub fn build(n: u32) -> Config { Config { retries: n + 1, name: "x".into() } }
+
+#[test]
+fn builds() {
+    assert_eq!(build(3), Config { retries: 4, name: "x".into() });
+}
+```
+
+The diff changed `retries: n + 2` to `retries: n + 1`, and any wrong value
+for `retries` fails this test. ripr reports one
+`field_construction` finding and reads it `weakly_exposed`. The oracle is
+classified `whole_object_equality` (strong), reveal matches the `retries`
+token, and then activation keeps a `FieldValue` missing discriminator because
+the assertion neither contains `retries: n + 1` nor reads `.retries` on the
+owner result (`analysis/classify/activation.rs`,
+`missing_field_value_discriminator` and `reads_owner_result_field`). The
+evidence classifier downgrades the finding to weak. A real, ordinary pin is a
+false gap. The "Fill spec-defined corpus cases" ledger crate reproduces it
+with `Header { kind: 7, len: 3 }` against mutant truth.
+
+RIPR-SPEC-0005 already says credit requires that "the oracle structurally
+names the exact constructed field through a member access or record
+field/pattern". A struct literal naming the field is a record field, so the
+current behavior under-delivers that spec.
+
+The opposite risk sits in the oracle classifier. Any `assert_eq!` or
+`assert_ne!` line containing `{` is classified `whole_object_equality` with
+strong strength (`analysis/extract/oracles/classify.rs` and
+`patterns.rs`, `is_whole_object_equality_assertion`). A brace in a format
+string or a closure qualifies. No spec governs that rule, and a derived
+`PartialEq` is never checked, so a manual `impl PartialEq` that ignores the
+changed field would be credited the moment field credit is added.
+
+## Behavior
+
+### Whole-value oracle
+
+An assertion is `whole_object_equality` only when the parser shows an
+`assert_eq!` or `assert_ne!` operand that is a struct literal, or a single
+tuple-variant constructor (`Ok`, `Some`, `Err` or an enum tuple variant)
+wrapping one struct literal. Braces anywhere else do not make the kind.
+Assertions that no longer qualify fall to the kind their other text earns.
+
+### Field credit
+
+A changed `field_construction` probe for field `f` of type `T` in a struct
+literal the owner returns is confirmed by a related test when all of these
+hold:
+
+1. One `assert_eq!` operand is the owner's call, admitted by the same call
+   identity and execution gates as RIPR-SPEC-0197, or a `let` binding in the
+   same test whose initializer is that call.
+2. The other operand is a struct literal of `T` (wrapped at most once as
+   above, matching any wrapper on the owner's return) that names `f`
+   explicitly with a value.
+3. `T` is a workspace type with a visible `#[derive(PartialEq)]` and no
+   manual `impl PartialEq for T` in the workspace.
+
+Then activation clears the `FieldValue` missing discriminator for `f` and the
+finding may read `exposed`, subject to every other stage.
+
+### No credit
+
+The finding does not read `exposed` from whole-value equality when:
+
+- the literal omits `f` through `..base` or `..Default::default()`;
+- the expected value comes from a separate binding or a helper
+  (`let e = Config { .. }; assert_eq!(c, e)`, `assert_eq!(build(3), expected())`);
+  it stays `observation_unverified`;
+- the compared call is not the owner;
+- the assertion is `assert_ne!`, which reads weak;
+- `T` has a manual `PartialEq`, comes from outside the workspace, or the
+  derive cannot be seen (aliases, generics, macro-generated types).
+
+A single-field read of the changed field (`assert_eq!(c.retries, 4)`) keeps
+crediting as today. A read of a sibling field (`assert_eq!(c.name, "x")`)
+keeps the `FieldValue` missing discriminator.
+
+### Decisions for the owner
+
+1. **Credit whole-value literals at all.** Recommended: yes, as above. This is
+   what RIPR-SPEC-0005's "record field/pattern" wording implies.
+2. **Wrapper depth.** Recommended: one level (`Ok(T { .. })`). Alternative:
+   none, which keeps `parse()`-style tests as gaps.
+3. **Equality gate.** Recommended: derived `PartialEq` only, fail closed
+   otherwise. When the gate refuses and the oracle is otherwise strong, the
+   finding reads `static_unknown` under RIPR-SPEC-0221 rule 3 rather than a
+   gap, because the refusal is an analyzer limit. Alternative: keep it a gap.
+
+## Required Evidence
+
+- The reproduction above reads `exposed`.
+- The manual-`PartialEq` control (equality ignores `retries`) does not read
+  `exposed`.
+- The `..Default::default()` control, the separate-binding control and the
+  non-owner control do not read `exposed`.
+- A brace inside a format string in an `assert_eq!` message does not produce
+  `whole_object_equality`.
+- Golden drift: every finding that gains `exposed` names a literal with the
+  changed field; every finding that loses `whole_object_equality` is listed
+  with the kind it now carries.
+
+## Non-Goals
+
+- No reasoning about `PartialEq` bodies.
+- No credit for `Debug`, `Display` or snapshot comparisons (other authorities).
+- No change to `return_value` owner-return pins (RIPR-SPEC-0197).
+- No credit for nested struct literals more than one level deep.
+
+## Acceptance Examples
+
+The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` derives
+`PartialEq` unless stated.
+
+1. `assert_eq!(build(3), Config { retries: 4, name: "x".into() })`: `exposed`.
+2. Same, with `impl PartialEq for Config { fn eq(&self, o: &Self) -> bool { self.name == o.name } }`:
+   not `exposed`.
+3. `assert_eq!(parse("3"), Ok(Config { retries: 4, name: "x".into() }))`,
+   `parse` the owner: `exposed`.
+4. `let c = build(3); assert_eq!(c, Config { retries: 4, name: "x".into() })`: `exposed`.
+5. `let c = build(3); let e = Config { retries: 4, name: "x".into() }; assert_eq!(c, e)`:
+   `weakly_exposed`, `observation_unverified`.
+6. `assert_eq!(build(3), expected())`: `weakly_exposed`.
+7. `assert_eq!(build(3), Config { name: "x".into(), ..Config::default() })`: not `exposed`.
+8. `assert_eq!(other(), Config { retries: 4, name: "x".into() })`, `other` not the owner: not `exposed`.
+9. `let c = build(3); assert_eq!(c.name, "x")`: `weakly_exposed`, `FieldValue`
+   missing discriminator kept.
+10. `assert_ne!(build(3), Config { retries: 9, name: "x".into() })`: `weakly_exposed`.
+
+## Test Mapping
+
+- Existing: `fixtures/observation_verified_field_construction`,
+  `fixtures/observation_unverified_field_construction`,
+  `fixtures/rust_field_construction_token_coincidence`.
+- Planned: one fixture or verdict-corpus case per acceptance example.
+- Planned: oracle classifier unit tests for braces outside struct-literal
+  operands.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/extract/oracles/classify.rs` and `patterns.rs`:
+  parser-backed `whole_object_equality`.
+- `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
+  named field in an admitted whole-value literal.
+- `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
+  execution admission.
+
+## Metrics
+
+- `field_construction_whole_value_credit`: findings confirmed by a whole-value
+  literal naming the changed field.
+- `whole_object_equality_lexical_only`: assertions that earned the kind from a
+  brace alone; must be zero.
