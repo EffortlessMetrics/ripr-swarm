@@ -6616,7 +6616,7 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
@@ -6632,6 +6632,22 @@ schemas.
       "stderr_bytes": 152,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "resource_cost": {
+        "schema_version": "0.1",
+        "observer": "ripr_process_self",
+        "observer_pid": 4242,
+        "host_os": "windows",
+        "host_arch": "x86_64",
+        "cpu": {
+          "state": "unavailable",
+          "reason": "machine_wide_or_unsafe_only"
+        },
+        "peak_resident_bytes": {
+          "state": "unavailable",
+          "reason": "machine_wide_or_unsafe_only"
+        }
+      },
+      "resource_cost_limitation": null,
       "trace": [
         {
           "phase": "collect_workspace_state",
@@ -6656,7 +6672,8 @@ schemas.
 
 Field contract:
 
-- `schema_version` - currently `"0.2"` for the diagnostic report.
+- `schema_version` - currently `"0.3"` for the diagnostic report. `0.3` adds
+  the analyzer's own `resource_cost` block; no `0.2` field changed.
 - `status` - `pass` when every attempted format completes successfully, `warn`
   when a format times out or a later format is skipped after timeout, and
   `fail` when a format exits unsuccessfully before timeout.
@@ -6690,6 +6707,31 @@ Field contract:
   duplicate, or invalid cache receipts. Completed rows survive a later timeout.
   The Markdown sibling derives its cache table and limitation from these same
   typed run fields.
+- `runs[].resource_cost` - the analyzed `ripr` process's own CPU time and peak
+  resident memory, as measured by that process about itself and emitted on the
+  same opt-in stderr stream as the phase trace. It states the host observed on
+  (`host_os`, `host_arch`) and attributes the numbers to the observed process
+  (`observer` is always `ripr_process_self`; `observer_pid` is that process, not
+  the harness). `cpu` is observed as a unit or not at all: an observed value
+  carries `source_unit`, `source_unit_per_second`, the raw `user_source` and
+  `system_source`, and the derived `user_ms` and `system_ms`, so the
+  millisecond figures can be recomputed rather than trusted.
+  `peak_resident_bytes` is in bytes.
+- Observed and unavailable are **separate shapes**, never a bare number. A
+  measurement reads `{"state": "observed", "value": ...}`; an absent one reads
+  `{"state": "unavailable", "reason": "..."}` and carries no value at all, so a
+  zero is never inferred. Reasons are `platform_not_supported` (no safe
+  dependency-free per-process source on this host), `machine_wide_or_unsafe_only`
+  (the host offers only a machine-wide aggregate or an `unsafe` call this
+  crate's `unsafe_code = "forbid"` policy excludes - the current Windows
+  position, since `winsafe` 0.0.29 wraps no per-process counter),
+  `source_unreadable`, `source_field_missing`, and `source_value_malformed`.
+- `runs[].resource_cost_limitation` - `null` when the cost block is present;
+  otherwise a named state: `resource_cost_receipt_not_observed`,
+  `duplicate_resource_cost_receipt`, `malformed_resource_cost_receipt`,
+  `invalid_resource_cost_receipt`, or `format_skipped`. An absent receipt is
+  never rendered as zero CPU or zero memory. The Markdown sibling derives its
+  "Analyzer Resource Cost" section from these same typed run fields.
 
 ## Targeted-Test Outcome Report
 
