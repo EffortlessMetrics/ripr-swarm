@@ -16,6 +16,12 @@ are scoped or reviewed.
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
   names the path and the next step. A root that exists but is not a workspace
   still gets the `first-pr` recovery packet.
+- Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
+  has a focused test but no `ripr agent repair` command, and closes with
+  `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
+  provider, and `ripr agent repair --phase before` without `--seam-id` points
+  to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
+  not seam IDs.
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -39,6 +45,11 @@ are scoped or reviewed.
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
   tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
   prefix components stay rejected (#5128).
+
+- LSP: stale-seam evidence packets name the executable wire command
+  `ripr.refresh` in `recovery_route`/`recovery_command` instead of the
+  client palette alias, which the server dispatcher rejects. Palette advice in
+  human-readable recovery prose is unchanged (#5274).
 
 ### Changed
 
