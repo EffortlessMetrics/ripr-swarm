@@ -847,9 +847,8 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     // Only a directory this command could have created may be replaced: an
     // empty one, or a checkout carrying the OWNER_MARKER file that a verified
     // fetch writes into .git. A same-URL clone without the marker is not
-    // ours. Anything
-    // else under --root (a user's own clone, notes, another project) is left
-    // alone and the fetch for this repo is refused.
+    // ours. Anything else under --root (a user's own clone, notes, another
+    // project) is left alone and the fetch for this repo is refused.
     if dir.exists() && !is_replaceable_checkout(dir) {
         return Err(format!(
             "{} exists and is neither empty nor a checkout created by rust-corpus fetch; \

@@ -133,8 +133,8 @@ The three gaps the first version listed now have subjects: nextest
 (`external_test_data`). The pinned fetch is shallow and does not initialise
 submodules, so html5ever's html5lib-tests and xml5lib-tests data is absent by
 design. winreg raises `compile_error!` off Windows, so on a Linux host its
-tests cannot be built or run; ripr still reads them statically. Python subjects stay in
-`fixtures/python-eval-sweep/manifest.json`.
+tests cannot be built or run; ripr still reads them statically. Python
+subjects stay in `fixtures/python-eval-sweep/manifest.json`.
 
 ## Changing the corpus
 
