@@ -19,6 +19,18 @@
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
     "base": { "$ref": "#/$defs/nullable_string" },
+    "base_commit": { "type": "string", "minLength": 1 },
+    "merge_base_commit": { "type": "string", "minLength": 1 },
+    "head": {
+      "description": "Where a live-repository diff ended: the HEAD commit or the working tree on top of it. Absent for diff-file, stdin and candidate-tree input.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["commit", "working_tree"] },
+        "commit": { "type": "string", "minLength": 1 }
+      }
+    },
     "summary": { "$ref": "#/$defs/summary" },
     "analysis_outcome": { "$ref": "#/$defs/analysis_outcome_projection" },
     "findings": {

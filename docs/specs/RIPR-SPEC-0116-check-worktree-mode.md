@@ -37,6 +37,59 @@ Policy impact:
 - No new dependencies, crates, binaries, workflow permissions, or network/process
   surfaces beyond the existing local `git diff` adapter.
 
+## Amendment (dirty-tree default and analyzed base/head header)
+
+Owner decision (Steven): `ripr check` analyzes the working tree by default
+when it has uncommitted changes, and every check output names the base and
+head it analyzed.
+
+- **Default diff source.** For a run that diffs the live repository (no
+  `--diff`, no `--candidate-tree`, not a repo-scope format), the default reads
+  the working tree exactly as `--worktree` does when
+  `working_tree_has_uncommitted_changes` reports uncommitted work: a staged or
+  unstaged edit to any tracked file, or an untracked file a language adapter
+  routes (for example a new integration test, which the working-tree run reads
+  as test evidence and a committed-history run treats as absent). A clean
+  tree, or a dirtiness probe that cannot run, keeps the committed-history
+  read `git diff <base>...HEAD`; that run's own loader names any git failure,
+  so the probe adds no second warning.
+- **Explicit `--base` follows the same default.** The base names where the
+  diff starts, not where it ends, so `ripr check --base origin/main` on a
+  dirty tree reads the working tree. CI checkouts are clean, so CI runs keep
+  the committed-history read unchanged.
+- **`--committed`** forces the committed-history read on a dirty tree. It is
+  rejected with `--worktree`, `--diff`, `--candidate-tree`, `--gap-ledger`,
+  and repo-scope formats, none of which has a live diff source to choose.
+- **One owner.** `app::diff_source::select_live_diff_source` owns the
+  decision so `ripr pilot` can reuse it; the CLI adapter only decides whether
+  a live diff source exists.
+- **Drill-in parity.** A working-tree default run carries `--worktree` into
+  its printed `explain`/`context` commands and records the worktree diff
+  source in `--write-artifact`, exactly as an explicit `--worktree` run does.
+- **Untracked files.** Unchanged from `--worktree`: untracked files are not in
+  the diff until staged, and `ripr check` output does not list them (the help
+  text, `doctor`, and the LSP status name that boundary). An untracked test
+  file is still read as test evidence on a working-tree run.
+- **Analyzed base and head.** Every diff-scoped live-repository run names its
+  base ref and commit and its head, either `HEAD <sha>` or
+  `working tree (uncommitted changes on HEAD <sha>)`; when the merge base
+  the diff started from differs from the base tip, the human and GitHub
+  labels also name it. Human and human-full print `base:`/`head:` header
+  lines; JSON adds `base_commit`, optional `merge_base_commit`, and
+  `head {source, commit}` beside the existing `base`; GitHub leads with a
+  `ripr analyzed` notice; SARIF carries the same fields in run `properties`.
+  A `--candidate-tree` human header names the base tree and candidate tree.
+  `--diff` file and stdin runs carry no revisions ripr can verify, so their
+  output is unchanged; badge and repo-scope formats have no diff header.
+- **LSP and library callers are unchanged.** The LSP already reads the
+  working tree for every refresh (`check_workspace_worktree_*`), and the
+  public `check_workspace*` library entry points keep their committed-history
+  read; neither routes through the CLI default.
+
+This supersedes the original non-goal "Changing default `ripr check`
+semantics" and the compatibility rule that `--base <rev>` without
+`--worktree` always reads committed history.
+
 ## Problem
 
 RIPR is a draft-time evidence tool, but the obvious first-run path still has an
@@ -78,7 +131,10 @@ When `--worktree` is present:
 
 When `--worktree` is absent:
 
-- `--base <rev>` remains committed-history mode and may emit
+- a live-repository run (with or without `--base`) reads the working tree
+  when it has uncommitted changes and committed history when it is clean (see
+  the amendment above);
+- `--committed` forces committed-history mode, which may emit
   `unanalyzed_working_tree`;
 - `--diff <file>` remains file-based mode;
 - default-base resolution is unchanged.
@@ -129,8 +185,7 @@ that untracked source was analyzed.
 
 - Auto-staging, reading untracked files, or inventing a diff for untracked
   files.
-- Changing default `ripr check` semantics.
-- Changing `--base` committed-history semantics.
+- Changing default `ripr check` semantics (superseded by the amendment above).
 - Changing `--diff` file semantics.
 - Adding or renaming output fields.
 - Promoting any finding based only on worktree scope.
@@ -146,9 +201,9 @@ that untracked source was analyzed.
    changed source and does not emit `unanalyzed_working_tree`.
 2. **Clean worktree**: `ripr check --base HEAD --worktree --json` emits no
    findings and no scope/unanalyzed-worktree disclosure.
-3. **Committed-history compatibility**: `ripr check --base HEAD --json` with a
-   dirty tracked source or test file still emits
-   `unanalyzed_working_tree: true`.
+3. **Committed-history compatibility**: `ripr check --base HEAD --committed
+   --json` with a dirty tracked source or test file still emits
+   `unanalyzed_working_tree: true` and `head.source: "commit"`.
 4. **File diff compatibility**: `ripr check --diff change.patch` keeps existing
    behavior; `ripr check --diff change.patch --worktree` returns an error.
 5. **Drill-in parity**: after `ripr check --base HEAD --worktree` finds an
@@ -168,6 +223,15 @@ that untracked source was analyzed.
    emits diff-scoped findings while keeping the seam inventory deferred.
 8. **LSP explicit refresh parity**: an explicit full refresh consumes the same
    worktree diff and differs only by running the full seam inventory.
+9. **Dirty-tree default**: bare `ripr check` with an uncommitted tracked edit
+   lists the same findings as `ripr check --worktree`, emits no
+   `unanalyzed_working_tree`, names `head: working tree (uncommitted changes
+   on HEAD <sha>)` in human output and `head.source: "working_tree"` in JSON,
+   and prints drill-ins that carry `--worktree`. An untracked test file alone
+   also selects the working tree.
+10. **Clean-tree default**: bare `ripr check` on a clean tree (an untracked
+   non-source file does not count) reads committed history and names
+   `head: HEAD <sha>`.
 
 ## Required Evidence
 
@@ -241,10 +305,29 @@ that untracked source was analyzed.
     changed saved source line before the later explicit full refresh, while the
     dirty pre-save document remains quarantined.
 
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_uncommitted_edit_analyzes_the_working_tree`
+  - dirty default equals `--worktree`, names base/head in human and JSON, and
+    `--committed` restores the committed read with its disclosure.
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
+  - clean default names `head: HEAD <sha>` and `head.source: "commit"`.
+- `crates/ripr/tests/cli_smoke.rs::check_base_reads_tests_as_committed_and_notes_only_source_changes`
+  - with an explicit `--base`, an edited or untracked test moves the default
+    result while `--committed` keeps the committed result and notes it.
+- `crates/ripr/tests/cli_smoke.rs::check_committed_rejects_conflicting_diff_sources`
+- `crates/ripr/src/app/diff_source.rs::tests::default_reads_the_working_tree_only_when_it_is_dirty`
+- `crates/ripr/src/app/diff_source.rs::tests::forced_sources_win_without_running_the_probe`
+- `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_and_routed_untracked_files`
+- `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source`
+- `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits`
+
 ## Implementation Mapping
 
 | Component | Location |
 |---|---|
+| Default diff-source selection | `crates/ripr/src/app/diff_source.rs` |
+| Dirtiness probe and revision resolution | `crates/ripr/src/analysis/diff/load.rs` |
+| Base/head labels | `crates/ripr/src/output/analyzed_revisions.rs` |
+| Base/head in human, JSON, GitHub, SARIF | `crates/ripr/src/output/human.rs`, `crates/ripr/src/output/json/report.rs`, `crates/ripr/src/output/github.rs`, `crates/ripr/src/output/sarif.rs` |
 | CLI flag parse and doctor guidance | `crates/ripr/src/cli/commands.rs` |
 | Doctor first-command owner | `crates/ripr/src/cli/commands/doctor.rs` |
 | Doctor git-unavailable first command | `crates/ripr/src/output/doctor.rs` |

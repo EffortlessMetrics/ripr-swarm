@@ -27,5 +27,6 @@ pub(super) fn check_output_from_analysis(
         unanalyzed_working_tree: !analysis.uncommitted_source_paths.is_empty(),
         suppression: None,
         partial_scope: analysis.partial_scope,
+        analyzed_revisions: analysis.analyzed_revisions,
     }
 }

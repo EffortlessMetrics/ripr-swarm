@@ -862,6 +862,7 @@ mod tests {
             unanalyzed_working_tree: false,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 

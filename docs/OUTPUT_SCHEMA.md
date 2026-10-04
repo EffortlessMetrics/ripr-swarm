@@ -1895,8 +1895,11 @@ requires no disclosure.
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
-   bare `ripr check` that resolved the default base (#3888).
+1. The analyzed diff was committed history: `ripr check --committed` (with
+   an explicit `--base <rev>` or the resolved default base). Since the
+   RIPR-SPEC-0116 amendment a dirty tree is otherwise analyzed as a working
+   tree, so without `--committed` this field fires only when the dirtiness
+   probe could not run and the run fell back to committed history.
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
 3. At least one file a language adapter reads (a source or test file) has
@@ -1924,6 +1927,38 @@ edited README does not count), when `--diff <file>` or
 tracked edits in the analyzed diff. When the committed-content probe cannot
 run, the check fails with the git step named instead of analyzing mixed
 content.
+
+### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
+
+A run that diffs the live repository names the base and head it analyzed.
+Beside the existing `base` ref:
+
+- `base_commit` — full commit id of `base`. Absent when it could not be
+  resolved.
+- `merge_base_commit` — full commit id the diff started from, emitted only
+  when it differs from `base_commit` (both diff sources start from the merge
+  base of the base and `HEAD`).
+- `head.source` — `"commit"` when the diff ended at `HEAD` (committed
+  history) or `"working_tree"` when it ended at the working tree (staged and
+  unstaged tracked edits on top of `HEAD`; the dirty-tree default or
+  `--worktree`).
+- `head.commit` — full commit id of `HEAD`. Absent when `HEAD` is unborn or
+  could not be resolved.
+
+All three are absent for `--diff` file and stdin input (no revisions ripr can
+verify) and for `--candidate-tree` runs, whose trees are in
+`analysis_outcome.outcome.identity.git_candidate_subject`. Does not bump
+`schema_version`. The SARIF run `properties` carry the same `base`,
+`base_commit`, `merge_base_commit`, and `head` fields.
+
+```json
+"base": "origin/main",
+"base_commit": "50370181c7bf20f7b960045780ebe7a979357bf0",
+"head": {
+  "source": "working_tree",
+  "commit": "50370181c7bf20f7b960045780ebe7a979357bf0"
+}
+```
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 

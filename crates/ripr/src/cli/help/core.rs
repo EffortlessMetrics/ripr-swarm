@@ -128,7 +128,12 @@ Options:
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
-                           of those resolves, the analysis does not run.
+                           of those resolves, the analysis does not run. The
+                           diff ends at HEAD on a clean tree and at the working
+                           tree when it has uncommitted changes (see
+                           --worktree and --committed); the human, JSON,
+                           GitHub, and SARIF outputs name the base and head
+                           that were analyzed.
   --diff PATH              Read a unified diff file instead of running git diff.
                            Use --diff - to read from stdin (e.g.
                            `git diff origin/main | ripr check --diff -`).
@@ -141,7 +146,16 @@ Options:
                            tree.
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
-                           tracked edits. Cannot be combined with --diff.
+                           tracked edits. This is already the default when the
+                           tree has uncommitted changes (a tracked edit, or an
+                           untracked file a language adapter reads); untracked
+                           source files stay out of the diff until staged.
+                           Cannot be combined with --diff.
+  --committed              Diff committed history only (base...HEAD) even when
+                           the working tree has uncommitted changes; the
+                           output then notes that those edits were not
+                           analyzed. Cannot be combined with --worktree,
+                           --diff, --candidate-tree, or repo-scope formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for
@@ -280,6 +294,7 @@ Examples:
   ripr check
   ripr check --base HEAD~1
   ripr check --base HEAD --worktree
+  ripr check --base origin/main --committed
   ripr check --diff crates/ripr/examples/sample/example.diff --format github
   ripr check --mode ready --json
   ripr check --base origin/main --json --suppression-policy policy/ripr-suppressions.toml

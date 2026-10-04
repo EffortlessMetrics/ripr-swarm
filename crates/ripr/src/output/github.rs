@@ -186,6 +186,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // `GITHUB_ANNOTATIONS_PER_LEVEL` annotations of each level per step, so
     // a trailing notice is the first line dropped on a busy run.
     let mut out = String::new();
+    // RIPR-SPEC-0116 amendment: name the analyzed base and head first, so a
+    // PR check states whether it read committed history or the working
+    // tree. Absent for diff-file, stdin and candidate-tree inputs.
+    if let Some(revisions) = output.analyzed_revisions.as_ref() {
+        *per_level.entry("notice").or_default() += 1;
+        out.push_str(&format!(
+            "::notice title=ripr analyzed::{}\n",
+            escape_data(&format!(
+                "base {}; head {}",
+                crate::output::analyzed_revisions::base_label(revisions),
+                crate::output::analyzed_revisions::head_label(revisions)
+            ))
+        ));
+    }
     let incomplete = output
         .analysis_outcome
         .as_ref()
@@ -275,7 +289,7 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
     let mut warnings = Vec::new();
     if output.unanalyzed_working_tree {
         warnings.push(
-            "::warning title=ripr unanalyzed working tree::Uncommitted source and test changes were not analyzed; `ripr check` reads each file as committed at HEAD. An empty result here does NOT mean those changes are covered; add `--worktree` to include staged and unstaged edits (for example `ripr check --worktree`).\n"
+            "::warning title=ripr unanalyzed working tree::Uncommitted source and test changes were not analyzed; this run read each file as committed at HEAD. An empty result here does NOT mean those changes are covered; drop `--committed` (or pass `--worktree`) to include staged and unstaged edits (for example `ripr check --worktree`).\n"
                 .to_string(),
         );
     }
@@ -490,6 +504,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -848,6 +863,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -921,6 +937,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1562,6 +1579,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -1903,6 +1921,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);

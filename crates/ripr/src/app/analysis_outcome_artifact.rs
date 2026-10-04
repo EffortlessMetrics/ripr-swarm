@@ -225,12 +225,24 @@ pub(crate) fn validate_analysis_outcome_artifact(
             crate::analysis_outcome::AnalysisOutcomeKind::NoScope
         )
     {
-        let diff =
-            crate::analysis::load_diff(root, declared_base, None, None).map_err(|error| {
-                invalid(format!(
-                    "Current analysis input could not be established: {error}."
-                ))
-            })?;
+        // RIPR-SPEC-0116 amendment: a check run on a dirty tree reads the
+        // working tree by default and records `head.source: "working_tree"`;
+        // re-derive the same diff source it analyzed, or a valid working-tree
+        // artifact would be compared with the committed diff.
+        let working_tree = value
+            .pointer("/head/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "working_tree");
+        let loaded = if working_tree {
+            crate::analysis::load_worktree_diff(root, declared_base, None)
+        } else {
+            crate::analysis::load_diff(root, declared_base, None, None)
+        };
+        let diff = loaded.map_err(|error| {
+            invalid(format!(
+                "Current analysis input could not be established: {error}."
+            ))
+        })?;
         let digest = Sha256::digest(diff.as_bytes());
         let expected_input_identity = format!("sha256:{}", digest_hex(digest.as_ref()));
         if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {

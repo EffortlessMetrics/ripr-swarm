@@ -3,15 +3,16 @@ use crate::config::RiprConfig;
 use crate::domain::Finding;
 use std::collections::BTreeSet;
 
-/// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
-/// or the resolved default base) read every source and test file as committed
-/// at `HEAD`, so uncommitted edits and new files count neither in the diff nor
-/// as test evidence. `--worktree` (RIPR-SPEC-0116) is the remedy that includes
-/// them. Committing works too, but staging alone does not change a `--base`
-/// diff.
+/// RIPR-SPEC-0112 disclosure. A committed-history diff (forced with
+/// `--committed`; a dirty tree is otherwise read as a working tree by default,
+/// RIPR-SPEC-0116) reads every source and test file as committed at `HEAD`,
+/// so uncommitted edits and new files count neither in the diff nor as test
+/// evidence. Dropping `--committed`, or `--worktree`, is the remedy that
+/// includes them. Committing works too, but staging alone does not change a
+/// committed-history diff.
 const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test changes were not analyzed; \
-`ripr check` reads each file as committed at HEAD; add `--worktree` to include staged and \
-unstaged edits (for example `ripr check --worktree`).\n";
+this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
+include staged and unstaged edits (for example `ripr check --worktree`).\n";
 
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
@@ -183,13 +184,44 @@ pub(crate) fn render_full_with_config_and_navigation(
     out
 }
 
+/// Name the analyzed base and head (RIPR-SPEC-0116 amendment): a live
+/// repository diff names its base ref and commit and whether it ended at
+/// `HEAD` or at the working tree; a candidate-tree subject names its two
+/// trees. A diff read from a file or stdin carries no revisions ripr could
+/// verify, so its header is unchanged.
+fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
+    use crate::output::analyzed_revisions::{base_label, head_label};
+    if let Some(revisions) = output.analyzed_revisions.as_ref() {
+        out.push_str(&format!(
+            "base: {}\nhead: {}\n",
+            base_label(revisions),
+            head_label(revisions)
+        ));
+        return;
+    }
+    if let Some(subject) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.identity.git_candidate_subject.as_ref())
+    {
+        let short = |id: &str| id.get(..7).unwrap_or(id).to_string();
+        out.push_str(&format!(
+            "base: tree {}\nhead: candidate tree {}\n",
+            short(&subject.base_tree),
+            short(&subject.candidate_tree)
+        ));
+    }
+}
+
 fn render_header_summary(output: &CheckOutput) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
+        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    render_analyzed_revisions(&mut out, output);
+    out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
     // finding vocabulary. All seven classes render with their canonical
     // `ExposureClass::as_str()` tokens (no `weak`/`unrevealed` abbreviations,
@@ -796,6 +828,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -838,6 +871,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -892,6 +926,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -935,6 +970,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1004,6 +1040,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1079,6 +1116,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1143,6 +1181,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1221,6 +1260,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             };
             let rendered = render(&output);
             assert!(
@@ -1264,6 +1304,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1307,6 +1348,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1831,6 +1873,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1874,6 +1917,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1924,6 +1968,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1974,6 +2019,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2002,6 +2048,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2042,6 +2089,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2512,6 +2560,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2609,6 +2658,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2653,6 +2703,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -2750,6 +2801,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -2808,6 +2860,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = super::render_bounded_with_config_and_navigation(
@@ -2859,6 +2912,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = super::render_full_with_config_and_navigation(
@@ -2929,6 +2983,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         super::render_full_with_config_and_navigation(
             &output,
@@ -3036,6 +3091,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3082,6 +3138,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3123,6 +3180,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         for rendered in [
@@ -3207,6 +3265,7 @@ mod tests {
                 next_file_changed_lines,
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         }
     }
 
@@ -3312,6 +3371,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -4263,6 +4323,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -4419,6 +4480,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4461,6 +4523,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4507,6 +4570,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4546,6 +4610,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4583,6 +4648,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4668,6 +4734,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4756,6 +4823,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4806,6 +4874,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4842,6 +4911,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4879,6 +4949,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4920,6 +4991,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4976,6 +5048,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
             render(output)
@@ -5037,6 +5110,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5085,6 +5159,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5140,6 +5215,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5176,6 +5252,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5209,6 +5286,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5239,6 +5317,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5274,6 +5353,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5308,6 +5388,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5353,6 +5434,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5415,6 +5497,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             })
         };
 

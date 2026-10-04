@@ -55,7 +55,13 @@ pub(crate) fn render_findings_sarif(
         .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
-    sarif_document("finding", rules, results, output.analysis_outcome.as_ref())
+    sarif_document(
+        "finding",
+        rules,
+        results,
+        output.analysis_outcome.as_ref(),
+        output.analyzed_revisions.as_ref(),
+    )
 }
 
 /// Render repo-scoped classified seams as SARIF.
@@ -126,6 +132,7 @@ fn sarif_document(
     rules: Vec<Value>,
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
+    revisions: Option<&crate::analysis::AnalyzedRevisions>,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -134,6 +141,27 @@ fn sarif_document(
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
     properties.insert("scope".to_string(), json!(scope));
+    // RIPR-SPEC-0116 amendment: the run names the base and head it analyzed,
+    // with the same field names the check JSON uses. Additive; absent for
+    // diff-file, stdin and candidate-tree inputs.
+    if let Some(revisions) = revisions {
+        properties.insert("base".to_string(), json!(revisions.base_ref));
+        if let Some(commit) = &revisions.base_commit {
+            properties.insert("base_commit".to_string(), json!(commit));
+        }
+        if let Some(commit) = &revisions.merge_base_commit {
+            properties.insert("merge_base_commit".to_string(), json!(commit));
+        }
+        let mut head = Map::new();
+        head.insert(
+            "source".to_string(),
+            json!(crate::output::analyzed_revisions::head_source(revisions)),
+        );
+        if let Some(commit) = &revisions.head_commit {
+            head.insert("commit".to_string(), json!(commit));
+        }
+        properties.insert("head".to_string(), Value::Object(head));
+    }
     if let Some(outcome) = analysis_outcome {
         properties.insert(
             "run_status".to_string(),
@@ -1875,6 +1903,7 @@ weakly_gripped = "note"
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 

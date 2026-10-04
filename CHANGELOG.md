@@ -41,6 +41,20 @@ are scoped or reviewed.
 
 ### Changed
 
+- `ripr check` analyzes the working tree by default when it has uncommitted
+  changes (a staged or unstaged tracked edit, or an untracked file a language
+  adapter reads), with or without `--base`, exactly as `--worktree` does,
+  including drill-in commands that carry `--worktree`. A clean tree still
+  diffs `<base>...HEAD`. The new `--committed` flag forces the old
+  committed-history read; the `unanalyzed_working_tree` note now names it.
+  Every diff-scoped check output names the analyzed base and head: human
+  `base:`/`head:` header lines (`HEAD <sha>` or `working tree (uncommitted
+  changes on HEAD <sha>)`), additive JSON `base_commit`, `merge_base_commit`
+  and `head {source, commit}`, a leading GitHub `ripr analyzed` notice, and
+  the same fields in SARIF run properties. `--diff` file/stdin output is
+  unchanged. The LSP and the `check_workspace*` library entry points keep
+  their existing diff sources (RIPR-SPEC-0116 amendment).
+
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
   compiling ripr with `cargo install` on every run, so it no longer sets up a

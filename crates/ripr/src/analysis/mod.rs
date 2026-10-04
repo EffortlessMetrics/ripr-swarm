@@ -42,9 +42,9 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
-    parse_unified_diff, resolve_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes,
+    AnalyzedRevisions, load_diff, load_diff_range_with_deadline, load_worktree_diff,
+    no_merge_base_diagnosis, parse_unified_diff, resolve_base_commit, resolve_effective_base,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -753,6 +753,10 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// The base and head commits a live-repository diff analyzed, for the
+    /// check header. `None` for diff-file/stdin inputs, repo-scope runs and
+    /// subject-materialized runs, whose revisions are not live refs.
+    pub(crate) analyzed_revisions: Option<diff::AnalyzedRevisions>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.

@@ -37,6 +37,33 @@ pub fn render(output: &CheckOutput) -> String {
     render_with_config(output, &RiprConfig::default())
 }
 
+/// Additive base/head identity for a live-repository diff (RIPR-SPEC-0116
+/// amendment): `base_commit` (and `merge_base_commit` when the diff started
+/// from a different commit) beside the existing `base` ref, and `head` naming
+/// whether the diff ended at the `HEAD` commit or at the working tree. Absent
+/// for diff-file, stdin, candidate-tree and repo-scope runs.
+fn analyzed_revisions_json(out: &mut String, output: &CheckOutput) {
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return;
+    };
+    if let Some(commit) = &revisions.base_commit {
+        field(out, 1, "base_commit", commit, true);
+    }
+    if let Some(commit) = &revisions.merge_base_commit {
+        field(out, 1, "merge_base_commit", commit, true);
+    }
+    out.push_str("  \"head\": {\n");
+    let source = crate::output::analyzed_revisions::head_source(revisions);
+    match &revisions.head_commit {
+        Some(commit) => {
+            field(out, 2, "source", source, true);
+            field(out, 2, "commit", commit, false);
+        }
+        None => field(out, 2, "source", source, false),
+    }
+    out.push_str("  },\n");
+}
+
 pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let finding_alignment = finding_alignment::report_for_findings(&output.findings);
     let mut out = String::new();
@@ -54,6 +81,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     if let Some(base) = &output.base {
         field(&mut out, 1, "base", base, true);
     }
+    analyzed_revisions_json(&mut out, output);
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
@@ -1545,6 +1573,7 @@ mod harness_projection_tests {
             unanalyzed_working_tree: false,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
