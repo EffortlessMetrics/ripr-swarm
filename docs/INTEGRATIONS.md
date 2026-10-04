@@ -45,6 +45,8 @@ repos:
         verbose: true   # show findings even when the hook passes
 ```
 
+`types: [rust]` runs the hook on commits that change Rust files only. Add
+`python` or `javascript` and `ts` types if you enable those preview adapters.
 `--worktree` needs a 0.11 build. On 0.10 use `ripr check` after committing.
 Run locally against an uncommitted edit: exit 0, "no changed line is behavior
 ripr checks" for a comment-only change. Not run through the pre-commit tool.

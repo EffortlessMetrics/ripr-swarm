@@ -38,8 +38,11 @@ include = [
 # is spelled out rather than built from `{ repo }` because the workspace
 # repository value ends in a slash. Archives hold `ripr` (`ripr.exe` on
 # Windows) at the archive root. A version published without a matching release
-# asset 404s and binstall falls back to `cargo install`.
+# asset 404s and binstall falls back to `cargo install`. QuickInstall, a
+# third-party prebuilt-binary service binstall tries by default, is disabled so
+# the only prebuilt artifact is the release archive above.
 [package.metadata.binstall]
+disabled-strategies = ["quick-install"]
 pkg-url = "https://github.com/EffortlessMetrics/ripr/releases/download/v{ version }/ripr-server-v{ version }-{ target }.tar.gz"
 pkg-fmt = "tgz"
 bin-dir = "{ bin }{ binary-ext }"

@@ -54,4 +54,11 @@ fn binstall_formats_match_archive_kinds() {
         Some("zip")
     );
     assert_eq!(binstall["bin-dir"].as_str(), Some("{ bin }{ binary-ext }"));
+    // Without this, binstall tries the third-party QuickInstall service before
+    // compiling, contradicting the documented release-archive-or-source path.
+    let disabled: Vec<&str> = binstall["disabled-strategies"]
+        .as_array()
+        .map(|items| items.iter().filter_map(|item| item.as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(disabled, ["quick-install"]);
 }
