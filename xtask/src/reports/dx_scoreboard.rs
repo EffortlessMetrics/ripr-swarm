@@ -1436,16 +1436,8 @@ fn worsening(def: &MetricDef, base: f64, current: f64) -> f64 {
 /// repository's baseline sample. The metric value is the worst sample, so
 /// without this a regression on any repository but the worst would pass.
 fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value> {
-    let samples = |r: &Value| -> Vec<(String, f64)> {
-        r["samples"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|s| Some((s["repo"].as_str()?.to_string(), s["value"].as_f64()?)))
-            .collect()
-    };
-    let base = samples(base_row);
-    samples(row)
+    let base = completed_repo_values(base_row);
+    completed_repo_values(row)
         .into_iter()
         .filter_map(|(repo, current)| {
             let (_, before) = base.iter().find(|(id, _)| *id == repo)?;
@@ -1459,6 +1451,20 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
                 })
             })
         })
+        .collect()
+}
+
+/// Per-repository values of the samples that completed. An incomplete
+/// sample's value is a placeholder (a fail-closed corpus repository records 0
+/// ms), so comparing it would read a repository that starts completing again
+/// as a regression. Losing completion is judged by `repo_completion_losses`.
+fn completed_repo_values(r: &Value) -> Vec<(String, f64)> {
+    r["samples"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["status"] != "incomplete")
+        .filter_map(|s| Some((s["repo"].as_str()?.to_string(), s["value"].as_f64()?)))
         .collect()
 }
 
@@ -1506,7 +1512,7 @@ fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
 type CommonWorst = (Option<(f64, f64)>, Vec<String>);
 
 /// Worst baseline and current values over the repositories both reports
-/// measured, plus the repositories only this run measured. A repository new to
+/// measured to completion, plus the repositories only this run measured. A repository new to
 /// the corpus is not a regression, so it must not move the compared worst.
 /// `None` when the samples carry no repositories.
 fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<CommonWorst> {
@@ -1525,10 +1531,12 @@ fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<C
     let worst = |items: &mut dyn Iterator<Item = f64>| {
         items.reduce(|a, b| if is_worse(def, b, a) { b } else { a })
     };
-    let common: Vec<(f64, f64)> = current
+    let completed_base = completed_repo_values(base_row);
+    let common: Vec<(f64, f64)> = completed_repo_values(row)
         .iter()
         .filter_map(|(repo, now)| {
-            base.iter()
+            completed_base
+                .iter()
                 .find(|(id, _)| id == repo)
                 .map(|(_, before)| (*before, *now))
         })
