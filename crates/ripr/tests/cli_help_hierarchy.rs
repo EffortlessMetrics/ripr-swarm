@@ -553,7 +553,7 @@ fn check_help_chooses_one_format_per_task() -> Result<(), String> {
         "Choose by task:",
         "eye review -> human",
         "every finding with drill-in commands -> human-full",
-        "machine consumer or gate input -> json",
+        "machine consumer (jq, CI scripts) -> json",
         "file annotations in Actions logs -> github",
         "code scanning upload -> sarif",
         "badge-shields (diff) or repo-badge-shields",

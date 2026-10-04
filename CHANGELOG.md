@@ -12,7 +12,7 @@ are scoped or reviewed.
 ### Added
 
 - `ripr check --help` now chooses one `--format` per task (eye review,
-  drill-in listing, machine/gate JSON, Actions annotations, code scanning,
+  drill-in listing, machine JSON, Actions annotations, code scanning,
   badges, repo inventory, agent packets) above the full group list, so a
   newcomer maps their job to a format without re-reading the 22 values
   (#5211).

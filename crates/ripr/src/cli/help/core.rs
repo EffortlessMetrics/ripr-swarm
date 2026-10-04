@@ -171,7 +171,7 @@ Options:
                                agent-seam-packets-json
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
-                           machine consumer or gate input -> json (--json);
+                           machine consumer (jq, CI scripts) -> json (--json);
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
                            badge-shields (diff) or repo-badge-shields (repo
