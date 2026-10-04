@@ -79,7 +79,7 @@ Repo exposure JSON includes the record under each seam:
 ```
 
 Repo exposure keeps existing top-level seam fields for compatibility. The
-record is additive in repo exposure schema `0.3`.
+record is additive in repo exposure schema `0.3` and later.
 
 ## Required Fields
 

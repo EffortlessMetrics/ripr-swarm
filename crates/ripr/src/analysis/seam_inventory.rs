@@ -36,7 +36,10 @@ use super::seam_cache::{
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
-use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use super::seams::{
+    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
+    byte_span_to_lines_with_starts,
+};
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
@@ -2221,9 +2224,17 @@ pub(crate) fn inventory_seams_from_index(
         let Some(facts) = index.files().get(path) else {
             continue;
         };
+        if facts.probe_shapes.is_empty() {
+            continue;
+        }
         let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        // One line index per file: span derivation reuses it for every shape
+        // instead of rescanning the source per seam.
+        let line_starts = build_line_starts(&facts.source);
         for shape in &facts.probe_shapes {
-            let Some(seam) = build_seam_from_shape(path, shape, &owners) else {
+            let Some(seam) =
+                build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
+            else {
                 continue;
             };
             seams.push(seam);
@@ -2261,6 +2272,8 @@ fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
     owners: &rust_index::FileOwnerLookup<'_>,
+    source: &str,
+    line_starts: &[usize],
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(&shape.kind)?;
     let owner_fact = owners.owner(shape.start_line)?;
@@ -2278,7 +2291,7 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
-    Some(RepoSeam::new(
+    let seam = RepoSeam::new(
         path,
         owner,
         kind,
@@ -2287,7 +2300,26 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    ))
+    );
+    // Span geometry is additional precision: when derivation fails (stale or
+    // mismatched source), the seam keeps line-only behavior rather than
+    // carrying wrong coordinates. Match-arm shapes are line-only by policy:
+    // the parser records the `match`/`=>` token range while the seam
+    // describes the scrutinee/arm construct, so a token span would bound the
+    // wrong source (#5451 review).
+    if shape.kind == PROBE_SHAPE_MATCH_ARM {
+        return Some(seam);
+    }
+    match byte_span_to_lines_with_starts(
+        source,
+        line_starts,
+        shape.start_line,
+        shape.start_byte,
+        shape.end_byte,
+    ) {
+        Some(span) => Some(seam.with_span(span)),
+        None => Some(seam),
+    }
 }
 
 fn seam_kind_from_probe_shape(kind: &str) -> Option<SeamKind> {
@@ -2912,6 +2944,48 @@ pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
     }
 
     #[test]
+    fn given_match_and_predicate_shapes_when_repo_inventory_runs_then_only_predicate_has_span()
+    -> Result<(), String> {
+        // Match-arm shapes record the `match`/`=>` token range while the seam
+        // describes the scrutinee/arm construct, so match seams stay
+        // line-only; predicate shapes cover their condition and carry spans.
+        let path = PathBuf::from("src/classify.rs");
+        let source = r#"pub fn classify(n: i32) -> &'static str {
+    if n >= 0 { "nonneg" } else { "neg" }
+}
+pub fn name(n: i32) -> &'static str {
+    match n {
+        0 => "zero",
+        _ => "other",
+    }
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "missing predicate seam".to_string())?;
+        let span = predicate
+            .span()
+            .ok_or_else(|| "predicate seam must carry a span".to_string())?;
+        assert_eq!((span.start_line, span.start_column), (2, 8));
+        assert_eq!((span.end_line, span.end_column), (2, 14));
+        for seam in seams.iter().filter(|s| s.kind() == SeamKind::MatchArm) {
+            if seam.span().is_some() {
+                return Err(format!(
+                    "match-arm seam must stay line-only, got {:?}",
+                    seam.span()
+                ));
+            }
+        }
+        if !seams.iter().any(|s| s.kind() == SeamKind::MatchArm) {
+            return Err("expected at least one match-arm seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn given_test_file_predicate_shape_when_repo_inventory_runs_then_no_production_seam_is_emitted()
     -> Result<(), String> {
         let prod = PathBuf::from("src/lib.rs");
@@ -3509,6 +3583,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 2,
                     end_line: 2,
                     start_byte: 16,
+                    end_byte: 26,
                     kind: "shape_kind_that_is_not_recognized".to_string(),
                     text: "owner_body".to_string(),
                 }],
@@ -3561,6 +3636,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 11,
                     end_line: 11,
                     start_byte: 120,
+                    end_byte: 126,
                     kind: PROBE_SHAPE_PREDICATE.to_string(),
                     text: "x >= 0".to_string(),
                 }],
