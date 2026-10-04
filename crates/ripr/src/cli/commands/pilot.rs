@@ -155,7 +155,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         // retry budget, not the original default.
         // (context struct reads options.timeout_ms for the hint)
     }
-    let PilotAnalysisResult::Complete(report) = analysis_result else {
+    let PilotAnalysisResult::Complete(mut report) = analysis_result else {
         let context = output::pilot::PilotSummaryContext {
             root: &input.root,
             mode: &input.mode,
@@ -177,6 +177,26 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         print!("{}", output::pilot::render_pilot_timeout_terminal(context));
         return Ok(());
     };
+
+    // #5205: honor `[languages] enabled` like `check` does. Pilot ranks Rust
+    // seams only, so without Rust enabled it ranks nothing. Filter here —
+    // not in shared discovery — so check's repo paths are untouched; the
+    // inventory cache key already includes the config text, so cached and
+    // fresh reports filter identically.
+    let rust_enabled = config
+        .languages()
+        .enabled()
+        .contains(&crate::domain::LanguageId::Rust);
+    let rust_files = analysis::workspace_rust_files(&input.root);
+    if !rust_enabled {
+        report.classified.clear();
+        report.limit_info = None;
+        report.skipped_generated.clear();
+        report.naming_only_skips.clear();
+    }
+    // Disclose only when the exclusion changed the result meaning: Rust
+    // files exist but were not analyzed.
+    let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
 
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
@@ -209,8 +229,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_unanalyzed(
         analysis::workspace_unanalyzed_source_languages(&input.root),
-        !analysis::workspace_rust_files(&input.root).is_empty(),
-    );
+        !rust_files.is_empty(),
+    )
+    .with_rust_exclusion(rust_excluded);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,

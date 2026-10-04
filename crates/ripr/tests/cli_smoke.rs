@@ -12051,6 +12051,103 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+/// #5205: pilot honors `[languages] enabled` like `check` does. With Rust
+/// disabled, pilot ranks no Rust seam and discloses the exclusion — in the
+/// terminal and the summary packet — instead of silently ranking Rust.
+#[test]
+fn pilot_excludes_rust_when_disabled_in_language_config() -> Result<(), String> {
+    let root = unique_temp_workspace("pilot-rust-disabled");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let out_dir = unique_temp_workspace("pilot-rust-disabled-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    // Terminal: no Rust seam ranked; the exclusion disclosed with its remedy.
+    let terminal = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !terminal.contains("gate_state"),
+        "must rank no Rust seam: {terminal}"
+    );
+    assert!(
+        terminal.contains("Excluded from pilot's Rust seam scan:")
+            && terminal.contains("not enabled in ripr.toml [languages]"),
+        "missing exclusion disclosure: {terminal}"
+    );
+    // Markdown: the exclusion section.
+    let md =
+        std::fs::read_to_string(out_dir.join("pilot-summary.md")).map_err(|err| err.to_string())?;
+    assert!(
+        md.contains("## Excluded From Pilot's Rust Seam Scan"),
+        "missing md exclusion section"
+    );
+    // Packet: empty ranking, exclusion object, nulled follow-up commands.
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    let empty: Vec<serde_json::Value> = Vec::new();
+    assert_eq!(
+        summary
+            .pointer("/top_actionable_seams")
+            .and_then(serde_json::Value::as_array),
+        Some(&empty),
+        "{summary}"
+    );
+    assert_eq!(
+        summary
+            .pointer("/language_routes/rust_excluded_from_scope/file_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "{summary}"
+    );
+    assert!(
+        summary
+            .pointer("/next/after_snapshot_command")
+            .is_some_and(serde_json::Value::is_null),
+        "exclusion must null the snapshot follow-up: {summary}"
+    );
+    // Precondition guard: the fixture really holds a rankable Rust seam —
+    // with the default config the same pilot run ranks it.
+    std::fs::remove_file(root.join("ripr.toml")).map_err(|err| err.to_string())?;
+    let enabled = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&enabled);
+    let enabled_terminal = String::from_utf8_lossy(&enabled.stdout);
+    assert!(
+        enabled_terminal.contains("gate_state"),
+        "fixture must hold a rankable Rust seam: {enabled_terminal}"
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::remove_dir_all(&out_dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 #[test]
 fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
     let root = workspace_root().join("fixtures/boundary_gap/input");
