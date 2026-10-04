@@ -162,7 +162,7 @@ impl<'a> ObservingAdapter<'a> {
         let mut observed = self
             .stored_at_parse
             .lock()
-            .map_err(|_| "observation lock poisoned")?
+            .map_err(|error| error.to_string())?
             .clone();
         observed.sort();
         Ok(observed)
@@ -182,7 +182,7 @@ impl RustSyntaxAdapter for ObservingAdapter<'_> {
         let stored = self.cache.known_file_paths().len();
         self.stored_at_parse
             .lock()
-            .map_err(|_| "observation lock poisoned".to_string())?
+            .map_err(|error| error.to_string())?
             .push((path.to_path_buf(), stored));
         RaRustSyntaxAdapter.summarize_file(path, text)
     }

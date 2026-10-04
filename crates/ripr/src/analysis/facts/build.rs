@@ -60,11 +60,7 @@ fn build_index_with_file_fact_cache(
     cache: &RepoFileFactCache,
     mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
 ) -> Result<CachedRustIndex, String> {
-    let mut stats = FileFactCacheStats::default();
-    // One stderr line per build, not one per file: an unusable cache
-    // directory makes every lookup fail the same way, and a line per file
-    // buried the analysis output under hundreds of repeats (#4888).
-    let mut first_corrupt_reason: Option<String> = None;
+    let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
         root,
         files,
@@ -72,9 +68,12 @@ fn build_index_with_file_fact_cache(
         fallback,
         cache,
         &mut load_known_file_paths,
-        &mut stats,
-        &mut first_corrupt_reason,
+        &mut accounting,
     );
+    let CacheAccounting {
+        stats,
+        first_corrupt_reason,
+    } = accounting;
     // Emitted once on every exit after lookup began, before finalization.
     // A complete build reports the whole-corpus count. An aborted build
     // reports the entries found in the batches it admitted: later batches
@@ -94,6 +93,17 @@ fn build_index_with_file_fact_cache(
     })
 }
 
+/// Cache statistics plus the first corrupt-entry reason, owned by the caller
+/// so they survive an `Err` from the batch loop.
+#[derive(Default)]
+struct CacheAccounting {
+    stats: FileFactCacheStats,
+    // One stderr line per build, not one per file: an unusable cache
+    // directory makes every lookup fail the same way, and a line per file
+    // buried the analysis output under hundreds of repeats (#4888).
+    first_corrupt_reason: Option<String>,
+}
+
 /// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
 /// (#5029). Cache-hit facts and parsed misses live outside the canonical
 /// index only for the current batch; every batch temporary is dropped before
@@ -110,9 +120,12 @@ fn insert_cached_file_batches(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
     load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
-    stats: &mut FileFactCacheStats,
-    first_corrupt_reason: &mut Option<String>,
+    accounting: &mut CacheAccounting,
 ) -> Result<RustIndex, String> {
+    let CacheAccounting {
+        stats,
+        first_corrupt_reason,
+    } = accounting;
     enum Pending {
         Ready(super::FileFacts),
         Parse { key: RepoFileFactCacheKey },
