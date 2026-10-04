@@ -485,7 +485,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     {
         return;
     }
-    let related_tests_total = output
+    let retained_related_tests = output
         .findings
         .iter()
         .flat_map(|finding| finding.related_tests.iter())
@@ -498,15 +498,33 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         })
         .collect::<BTreeSet<_>>()
         .len();
+    // Each finding's "Related test (1 of N)" line counts matches before
+    // bounded packing (#5146); counting only the retained rows here put a
+    // smaller number in the same report. Across findings the packed-away
+    // tests cannot be deduplicated, so the largest per-finding total is a
+    // floor and the count reads "at least" when packing hid any test.
+    let packed_related_tests = output
+        .findings
+        .iter()
+        .map(Finding::related_tests_total)
+        .max()
+        .unwrap_or(0);
+    let related_tests_count = if packed_related_tests <= retained_related_tests {
+        retained_related_tests.to_string()
+    } else if output.findings.len() == 1 {
+        packed_related_tests.to_string()
+    } else {
+        format!("at least {packed_related_tests}")
+    };
     let scope_summary = if s.changed_rust_files > 0 {
         format!(
             "Scope analyzed: {} changed Rust file(s), {} changed expression(s), and {} statically linked related test(s).",
-            s.changed_rust_files, all_no_path_count, related_tests_total
+            s.changed_rust_files, all_no_path_count, related_tests_count
         )
     } else {
         format!(
             "Scope analyzed: {} changed expression(s) and {} statically linked related test(s).",
-            all_no_path_count, related_tests_total
+            all_no_path_count, related_tests_count
         )
     };
     // Language bindings are tested from the other language, so when every
@@ -5040,6 +5058,68 @@ mod tests {
         assert!(
             rendered.contains("analyzed: 2 changed expression(s) and 1 statically linked related"),
             "expected related-test count disclosure; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn all_no_path_disclosure_counts_related_tests_before_packing() {
+        // The finding line reads "Related test (1 of 81)" from the matched
+        // total; the scope note must not report the 8 retained rows instead.
+        let related = |line: usize| RelatedTest {
+            name: format!("test_{line}"),
+            file: PathBuf::from("tests/sample.rs"),
+            line,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+        };
+        let packed = |lines: std::ops::Range<usize>, total: usize| {
+            let mut finding = unknown_finding();
+            finding.related_tests = lines.map(related).collect();
+            finding.related_tests_matched_total = Some(total);
+            finding
+        };
+        let output = |findings: Vec<Finding>| CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: findings.len(),
+                findings: findings.len(),
+                static_unknown: findings.len(),
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let one = render(&output(vec![packed(0..8, 81)]));
+        assert!(
+            one.contains("analyzed: 1 changed expression(s) and 81 statically linked related"),
+            "a single packed finding reports its matched total; got:\n{one}"
+        );
+
+        let two = render(&output(vec![packed(0..8, 81), packed(100..108, 20)]));
+        assert!(
+            two.contains("and at least 81 statically linked related"),
+            "packed totals across findings are a floor; got:\n{two}"
+        );
+
+        let unpacked = render(&output(vec![packed(0..8, 8), packed(100..108, 8)]));
+        assert!(
+            unpacked.contains("and 16 statically linked related"),
+            "without packing the retained rows are exact; got:\n{unpacked}"
         );
     }
 
