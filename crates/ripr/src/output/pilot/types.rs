@@ -26,6 +26,9 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// Routes for languages pilot's Rust seam scan does not rank. `None` when
     /// they were not collected (the timeout summary).
     pub(crate) language_routes: Option<&'a super::PilotLanguageRoutes>,
+    /// The current change (see `PilotCurrentChange`). `None` when it was not
+    /// collected (the timeout summary).
+    pub(crate) current_change: Option<&'a super::PilotCurrentChange>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

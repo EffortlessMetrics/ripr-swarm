@@ -186,6 +186,18 @@ close with that route instead of the Rust before/after snapshot commands. When
 Rust seams exist, the human output is unchanged and other languages are listed
 only in `pilot-summary.json` `language_routes` (#3906).
 
+Pilot's ranking is repo-wide, but a developer who just ran `ripr check` on a
+branch reads its top recommendation as the next step for that change. Pilot
+therefore loads the current change (the default base, resolved as `ripr check`
+resolves it, against the live working tree when it has uncommitted tracked
+changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
+lines first, and says in the terminal, Markdown and
+`pilot-summary.json` (`current_change`) whether the top recommendation is part
+of the change. When the change has no ranked seam, pilot says the
+recommendation is elsewhere in the repo and names `ripr check` for the change
+itself. With no change, or when the diff cannot be loaded, the ranking and the
+human output are unchanged and a failed load never fails pilot (#1169).
+
 The pilot command must remain advisory. It should not edit source files,
 generate tests, run mutation testing, or enable CI blocking policy.
 It should also be bounded for interactive first runs: if analysis exceeds the
@@ -389,6 +401,25 @@ then the terminal and Markdown output are unchanged and pilot-summary.json
 lists the other languages under language_routes with state supplementary.
 ```
 
+### Pilot says whether its top recommendation is part of the current change
+
+```text
+Given a branch whose committed or uncommitted change touches a ranked seam,
+when a user runs ripr pilot,
+then that seam ranks ahead of better-classed seams elsewhere and pilot says the
+top recommendation is part of the current change.
+
+Given a branch whose change touches no ranked seam,
+when a user runs ripr pilot,
+then pilot says the top recommendation is elsewhere in the repo, not part of
+the current change, and names ripr check for the change itself.
+
+Given no current change, or a root where the diff cannot be loaded,
+when a user runs ripr pilot,
+then the ranking and the terminal and Markdown output are unchanged and
+pilot-summary.json records current_change state no_change or unavailable.
+```
+
 ### Outcome is public CLI
 
 ```text
@@ -485,6 +516,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_json_contains_config_state_artifacts_and_next_commands`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_spells_out_first_screen_recommendation`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_terminal_prints_top_test_and_follow_up_commands`

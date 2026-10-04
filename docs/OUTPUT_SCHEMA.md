@@ -15046,6 +15046,12 @@ target/ripr/pilot/pilot-summary.md
     "state": "not_detected",
     "routes": []
   },
+  "current_change": {
+    "state": "changed",
+    "base": "origin/main",
+    "actionable_seams_in_change": 1,
+    "top_recommendation_in_change": true
+  },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
@@ -15141,6 +15147,22 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
   ]
 }
 ```
+
+`current_change` describes the current change: the base (resolved as `ripr
+check` resolves it) against the live working tree when it has uncommitted
+tracked changes, otherwise the committed `<base>...HEAD` diff. Untracked files
+are not part of it.
+Pilot ranks actionable seams whose span overlaps a changed new-side line of
+that diff ahead of the others, keeping the repo-wide order inside each group.
+`state` is `changed`, `no_change` (the diff loaded and is empty) or
+`unavailable` (the diff could not be loaded, for example outside a Git work
+tree; the ranking stays repo-wide and this is not evidence that nothing
+changed). `base` is the resolved base, or `null` when unavailable.
+`actionable_seams_in_change` and `top_recommendation_in_change` are `null`
+unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
+no seam is ranked. When it is `false`, the terminal and Markdown say the
+recommendation is elsewhere in the repo and name `ripr check --root <root>` for
+the change itself. The partial (timeout) summary carries no `current_change`.
 
 If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 `status: "partial"` and no ranked seams:

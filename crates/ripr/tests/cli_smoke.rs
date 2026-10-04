@@ -13896,6 +13896,72 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
 /// Rust-only output is untouched by language routing, and adding TypeScript
 /// beside Rust seams leaves the human output byte-identical: the mixed repo
 /// keeps the Rust result and lists the other language in JSON only.
+/// #1169: right after `ripr check` describes a change, pilot's top
+/// recommendation must not read as the next step for that change when it is
+/// a repo-wide seam elsewhere. Drives the real binary through the default
+/// base resolution and both diff routes (uncommitted and committed).
+#[test]
+fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-current-change-out");
+    let top_line = |summary: &serde_json::Value| summary["top_actionable_seams"][0]["line"].clone();
+
+    // A committed change with no ranked seam: the repo-wide top seam is
+    // labeled as elsewhere, and `ripr check` is named for the change.
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 2, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed");
+    assert_eq!(summary["current_change"]["base"], "origin/main");
+    assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("run: ripr check --root "), "{stdout}");
+    assert!(md.contains("- Current change: not part of it."), "{md}");
+
+    // An uncommitted edit to `is_digit` is the current change: its seam now
+    // outranks the better-classed `discounted` seam and is labeled part of it.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        lib.replace("byte <= b'9'", "byte < b'9'"),
+    )
+    .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    assert!(
+        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        "{stdout}"
+    );
+    assert!(md.contains("- Current change: part of it"), "{md}");
+    Ok(())
+}
+
 #[test]
 fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
     let root = pilot_language_fixture_repo(

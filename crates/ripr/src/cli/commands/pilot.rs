@@ -158,6 +158,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             artifacts: &artifacts,
             python_first_use: None,
             language_routes: None,
+            current_change: None,
         };
         write_pilot_file(
             &artifacts.pilot_summary_json,
@@ -204,6 +205,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis::workspace_unanalyzed_source_languages(&input.root),
         !analysis::workspace_rust_files(&input.root).is_empty(),
     );
+    let current_change = load_pilot_current_change(&input);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
@@ -213,6 +215,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
+        current_change: Some(&current_change),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -301,6 +304,36 @@ fn run_pilot_inventory(
         || analysis::inventory_classified_seams_report_at_with_config(root, config),
         Ok,
     )
+}
+
+/// The current change: the base (resolved as `ripr check` resolves it,
+/// RIPR-SPEC-0084) against the live working tree when it has uncommitted
+/// tracked changes, else `<base>...HEAD`. This matches the default `ripr
+/// check` selection; keep it the one place pilot picks its diff so it can
+/// move to check's shared default-selection function. Pilot ranks seams on
+/// the changed lines first and says whether its top recommendation is part
+/// of the change. A load failure (not a Git work tree, no resolvable default
+/// base, a git error) never fails pilot: it is recorded as `unavailable` and
+/// the ranking stays repo-wide.
+fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentChange {
+    let git_timeout = Some(app::default_cli_git_timeout());
+    // Resolve the base first: a root with no resolvable base (outside a Git
+    // work tree, say) is `unavailable` without the working-tree probe, whose
+    // failure warning would otherwise be new stderr noise there.
+    let loaded = analysis::resolve_effective_base(&input.root, input.base.as_deref(), git_timeout)
+        .and_then(|base| {
+            if analysis::working_tree_has_tracked_changes(&input.root) {
+                analysis::load_worktree_diff_with_effective_base(
+                    &input.root,
+                    Some(&base),
+                    git_timeout,
+                )
+            } else {
+                analysis::load_diff_with_effective_base(&input.root, Some(&base), None, git_timeout)
+            }
+        })
+        .map(|loaded| (loaded.text, loaded.effective_base));
+    output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
 }
 
 fn collect_pilot_python_first_use(
