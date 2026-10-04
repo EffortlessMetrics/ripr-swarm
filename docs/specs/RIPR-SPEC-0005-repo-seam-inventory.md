@@ -153,7 +153,7 @@ what test is missing and why:
 - reach evidence: does any test call the owner? With no related test, reach
   is `no` only when ripr established that no test path exists; an unresolved
   transitive, macro or trait-dispatch path makes it `opaque`, so the seam
-  classifies `opaque`, not `ungripped` (RIPR-SPEC-0226)
+  classifies `opaque`, not `ungripped` (RIPR-SPEC-0230)
 - activate evidence: does any test supply the triggering input?
 - propagate evidence: does the test observe the changed state downstream?
 - observe evidence: does the test assert on the visible sink?

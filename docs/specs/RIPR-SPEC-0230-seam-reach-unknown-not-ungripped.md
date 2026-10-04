@@ -1,4 +1,4 @@
-# RIPR-SPEC-0226: Seam reach unknown, not ungripped
+# RIPR-SPEC-0230: Seam reach unknown, not ungripped
 
 Status: proposed
 
@@ -8,7 +8,8 @@ Created: 2026-10-04
 
 Linked issues: #5411 (pilot ranks unresolved reach as the top gap), #5295
 (mutation spot check), #5334 (crediting that reach, out of scope here).
-The `ripr check` side of the same rule is #5416.
+The `ripr check` side of the same rule is #5416. Numbered 0230 because
+open #5512 holds RIPR-SPEC-0225 through 0229.
 
 Support-tier impact:
 
@@ -51,6 +52,8 @@ unresolved candidate path, in this order:
    and a test body, or production code a test may run, names `T`.
 4. Trait dispatch, one level down. The owner is called, within the bounded
    walk, by a trait-impl method whose self type test-reached code names.
+   This includes a trait method whose own type nothing names but which a
+   named type's trait method delegates to (`self.inner.fmt(f)`).
    Each such method's callees join the test-reached set, so a type they
    name can root a further method, up to `MAX_TRANSITIVE_DEPTH` rounds.
 
@@ -78,6 +81,19 @@ gap class, the LSP shows it at information severity, and its evidence
 record carries the reach summary as an `opaque_static_evidence` limitation.
 
 When none fires, reach stays `no` and the seam stays `ungripped`.
+
+Known limits, both in the fail-closed direction (the seam stays
+`ungripped`, or reads `opaque` where it might not need to):
+
+- Only capitalized identifiers count as type mentions, so a trait impl for a
+  primitive or lowercase self type (`impl Encode for u32`) never meets rule 3.
+- Comments and strings are stripped line by line, so a type named only inside
+  a block comment or multi-line string still counts as a mention.
+- Matching is by name, as in RIPR-SPEC-0114. A test that calls a common name
+  such as `new` or `parse` pulls in every same-named function, so rule 3
+  covers most trait impls of types a crate's tests use, including `Debug`,
+  `Hash` or `Drop` impls the tests never exercise. Those seams read unknown,
+  not gripped.
 
 The witness is a candidate path. It never becomes a related test and adds
 no reach, activation, propagation, observation or discrimination credit.
@@ -113,9 +129,12 @@ At semver `280ebcb6edac`, `ripr check --format repo-exposure-json`:
 | `ungripped` | 505 | 1 |
 | `opaque` | 0 | 504 |
 
-The 504 moves: 321 transitive witnesses, 183 trait dispatch. All 12
-seam-precise false-gap seams from the spot check read `opaque`. The one
-remaining `ungripped` seam is `impl Version::cmp_precedence`.
+The 504 moves: 321 transitive witnesses, 183 trait dispatch. The spot check
+scored 12 semver seams (23 mutants). Each of the 12 had at least one mutant
+the crate's tests caught, and all 12 now read `opaque`. Its one missed mutant
+sits on one of those same seams, so no seam whose mutants all survived
+changed class. The one remaining `ungripped` seam is
+`impl Version::cmp_precedence`.
 
 On the other spot-check repositories: rust-hex and strsim-rs have no
 `ungripped` seams before or after. bytesize moves 2 of 5 (trait dispatch);
@@ -129,6 +148,7 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_tests_use_is_opaque_not_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_of_a_type_no_test_reaches_stays_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::helper_run_only_through_trait_dispatch_is_opaque_not_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_method_reached_only_by_delegation_is_opaque_not_ungripped`
 - `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::identifiers_keep_type_shaped_tokens_outside_comments_and_strings`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::transitive_reach_limit_kind_names_integration_test_path`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limit_kind_names_direct_test_body_macro_path`

@@ -16945,3 +16945,44 @@ fn helper_run_only_through_trait_dispatch_is_opaque_not_ungripped() -> Result<()
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
+
+#[test]
+fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(), String> {
+    // No test or test-reached body names `Inner`; `Outer::fmt` delegates to it.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(Default)]\n\
+             struct Inner(u32);\n\
+             impl std::fmt::Display for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             #[derive(Default)]\n\
+             pub struct Outer { inner: Inner }\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     self.inner.fmt(f)\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"small\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("(trait dispatch)")
+            && reach
+                .summary
+                .contains("`fmt` may run from `fmt` (src/lib.rs:12), a trait method of `Outer`"),
+        "the delegating root is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}

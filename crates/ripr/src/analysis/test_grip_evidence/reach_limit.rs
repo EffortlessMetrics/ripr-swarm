@@ -237,35 +237,57 @@ fn unresolved_reach_summary(
     owner_fn: &FunctionSummary,
     context: &CompactGripContext<'_>,
 ) -> Option<String> {
-    let key = owner_fn.id.0.clone();
-    if let Some(cached) = context.unresolved_reach_cached(&key) {
-        return cached;
-    }
-    let summary = compute_unresolved_reach_summary(owner_fn, context);
-    context.cache_unresolved_reach(key, summary.clone());
-    summary
-}
-
-fn compute_unresolved_reach_summary(
-    owner_fn: &FunctionSummary,
-    context: &CompactGripContext<'_>,
-) -> Option<String> {
     let owner_name = owner_fn.name.as_str();
     if owner_name.is_empty() {
         return None;
     }
+    // The witness walks match by name, so every owner sharing a name shares
+    // their answer; only the trait-dispatch checks need the owner id.
+    if let Some(summary) = cached(context, format!("name:{owner_name}"), || {
+        witness_summary(owner_name, context)
+    }) {
+        return Some(summary);
+    }
+    cached(context, format!("id:{}", owner_fn.id.0), || {
+        trait_dispatch_reach_summary(owner_fn, context)
+    })
+}
+
+fn cached(
+    context: &CompactGripContext<'_>,
+    key: String,
+    compute: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    if let Some(cached) = context.unresolved_reach_cached(&key) {
+        return cached;
+    }
+    let summary = compute();
+    context.cache_unresolved_reach(key, summary.clone());
+    summary
+}
+
+fn witness_summary(owner_name: &str, context: &CompactGripContext<'_>) -> Option<String> {
     if let Some(witness) = context.transitive_reach.transitive_witness(owner_name) {
         return Some(transitive_summary(owner_name, &witness));
     }
-    if let Some(witness) = context.transitive_reach.macro_reach_witness(owner_name) {
-        return Some(macro_summary(owner_name, &witness));
-    }
+    let witness = context.transitive_reach.macro_reach_witness(owner_name)?;
+    Some(macro_summary(owner_name, &witness))
+}
+
+fn trait_dispatch_reach_summary(
+    owner_fn: &FunctionSummary,
+    context: &CompactGripContext<'_>,
+) -> Option<String> {
+    let owner_name = owner_fn.name.as_str();
     let mentions = context.type_mentions();
-    if is_trait_impl_method(owner_fn) {
-        let self_type = impl_self_type_name(&owner_fn.id.0)?;
-        let mention = mentions.mention(&self_type)?;
+    if is_trait_impl_method(owner_fn)
+        && let Some(self_type) = impl_self_type_name(&owner_fn.id.0)
+        && let Some(mention) = mentions.mention(&self_type)
+    {
         return Some(trait_dispatch_summary(owner_name, &self_type, mention));
     }
+    // A trait method whose own type nothing names may still run from another
+    // trait method that delegates to it (`self.inner.fmt(f)`).
     let root = mentions.dispatch_root(&owner_fn.id.0)?;
     let mention = mentions.mention(&root.self_type)?;
     Some(dispatch_reached_summary(owner_name, root, mention))

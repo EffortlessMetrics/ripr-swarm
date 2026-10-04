@@ -19,7 +19,7 @@ are scoped or reviewed.
   dispatch (`to_string()` running `Display::fmt`). At semver `280ebcb6edac`
   `ungripped` falls from 505 seams to 1, and all 12 seams the mutation spot
   check (#5295) found caught by real mutants now read `opaque`. A seam no
-  test path reaches stays `ungripped` (RIPR-SPEC-0226, #5411).
+  test path reaches stays `ungripped` (RIPR-SPEC-0230, #5411).
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
