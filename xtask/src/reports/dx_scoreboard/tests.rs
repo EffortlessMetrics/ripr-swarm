@@ -623,7 +623,14 @@ fn losing_completion_regresses_on_any_runner_class() -> Result<(), String> {
         Some("a"),
         SampleOutcome::Value(1000.0),
     )];
-    let baseline = build_report(&config, &all_boards(), &base, &context("runner-a"), None, false);
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &base,
+        &context("runner-a"),
+        None,
+        false,
+    );
     // A check that now exits early looks faster than the baseline.
     let broken = vec![sample(
         "speed.warm_check_ms",
@@ -656,7 +663,11 @@ fn gate_lists_baseline_metrics_it_could_not_compare() -> Result<(), String> {
         ),
     ];
     let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
-    let current = vec![sample("ci.workflow_lines", None, SampleOutcome::Value(100.0))];
+    let current = vec![sample(
+        "ci.workflow_lines",
+        None,
+        SampleOutcome::Value(100.0),
+    )];
     let report = build_report(
         &config,
         &all_boards(),
@@ -689,7 +700,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         heavy: false,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
-    assert!(validate_corpus(&[entry("a", full)]).is_ok());
+    assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
     assert!(validate_corpus(&[entry("a", "main")]).is_err_and(|e| e.contains("40-character")));
     assert!(
         validate_corpus(&[entry("a", full), entry("a", full)])
