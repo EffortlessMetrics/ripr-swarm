@@ -15,9 +15,8 @@ are scoped or reviewed.
   resolved default base is HEAD's own commit (for example `origin/HEAD`
   tracking the checked-out branch in a clone of a feature branch). An explicit
   `--base`, `--diff`, `--candidate-tree` or `--worktree` skips it. The empty
-  range is not evidence
-  about the change, and the warning names `--base <ref>`. The stdout note and
-  JSON are unchanged.
+  range is not evidence about the change, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
