@@ -861,7 +861,15 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
         let status = repo["status"]
             .as_str()
             .ok_or_else(|| format!("rust-corpus smoke repo `{id}` needs a status"))?;
-        let ms = repo["duration_ms"].as_f64().unwrap_or(0.0);
+        let duration = repo["duration_ms"]
+            .as_f64()
+            .filter(|ms| ms.is_finite() && *ms >= 0.0);
+        if status == "analyzed" && duration.is_none() {
+            return Err(format!(
+                "rust-corpus smoke repo `{id}` is analyzed but has no valid duration_ms; rerun `cargo xtask rust-corpus smoke`"
+            ));
+        }
+        let ms = duration.unwrap_or(0.0);
         let row = |metric: &str, number: f64, completed: bool, evidence: String| {
             json!({
                 "id": metric,

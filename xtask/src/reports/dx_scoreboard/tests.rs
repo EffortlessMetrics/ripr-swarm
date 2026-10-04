@@ -1380,3 +1380,19 @@ fn a_slower_fail_closed_repo_is_not_a_time_regression() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn an_analyzed_smoke_row_without_a_duration_is_refused() -> Result<(), String> {
+    let receipt = json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "repos": [{"id": "a", "status": "analyzed", "findings": 1}],
+    });
+    assert!(rust_corpus_smoke_to_input(&receipt).is_err_and(|e| e.contains("duration_ms")));
+    // A fail-closed row has no time to compare, so a missing one is fine.
+    let closed = json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "repos": [{"id": "c", "status": "diff_scope_oversized"}],
+    });
+    rust_corpus_smoke_to_input(&closed)?;
+    Ok(())
+}
