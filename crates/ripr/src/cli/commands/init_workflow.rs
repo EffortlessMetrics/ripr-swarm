@@ -5,8 +5,7 @@
 //! around it. This module owns the generated workflow bytes; `init.rs` keeps
 //! only the init command surface. The template is stored as a head, the
 //! advisory-summary step ([`advisory_summary`]), and a tail, spliced in
-//! source order; the assembled bytes are identical to the pre-extraction
-//! inline string, pinned by hash in the test below.
+//! source order; the assembled bytes are pinned by hash in the test below.
 //! `generated_github_actions_workflow` substitutes `@RIPR_...@` placeholders
 //! at render time; rendered behavior stays pinned by the
 //! `generated_workflow_*` tests in `init.rs` and `commands.rs`, the
@@ -118,41 +117,72 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Pinned to a commit SHA for the same reason as rust-cache below.
-      # dtolnay/rust-toolchain stable branch = 6bed0761d98439e5a578e2877258200ad565ba87.
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        with:
-          toolchain: stable
-
-      # Cache the cargo registry, git checkouts, and installed binaries
-      # (#2008): an uncached `cargo install ripr` recompiles for minutes on
-      # every PR. The install below names an exact version, so a cached
-      # binary of that version is reused and any other version is rebuilt.
-      # Pinned to a commit SHA (#2190 review): the generated workflow
-      # grants pull-requests: write and security-events: write, so a
-      # mutable third-party tag is a supply-chain risk in consumer repos.
-      # Swatinem/rust-cache v2 = e18b497796c12c097a38f9edb9d0641fb99eee32.
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-        with:
-          shared-key: ripr-install
-
       # Every RIPR input under target/ripr and target/ci must come from this
       # run. The gate, ledger, and policy steps read several files there only
       # when present (sarif-policy, agent-verify, agent-receipt, calibration,
       # coverage), and nothing in this workflow writes some of them, so a
-      # pull request could commit forged copies (`git add -f`) or the cache
-      # restored above could carry stale ones. Remove both directories before
-      # the first RIPR step; steps you add later that write there still work.
+      # pull request could commit forged copies (`git add -f`). Remove both
+      # directories before the first RIPR step; steps you add later that
+      # write there still work. ripr's analysis cache lives outside the
+      # checkout (RIPR_CACHE_DIR, below), so this never discards it.
       - name: Remove checked-in RIPR artifacts
         run: rm -rf target/ripr target/ci
 
       # Pinned to the ripr that generated this workflow. The steps below use
       # that version's commands and flags; an unpinned install takes the
-      # newest crates.io release, whose CLI may not match. To upgrade,
-      # install the newer ripr and compare
-      # `ripr init --ci github --force --dry-run` with this file.
+      # newest release, whose CLI may not match. To upgrade, install the
+      # newer ripr and compare `ripr init --ci github --force --dry-run`
+      # with this file.
+      #
+      # Downloads that release's prebuilt binary from GitHub Releases and
+      # checks it against the release's published SHA-256: seconds, where
+      # compiling ripr takes minutes. With no prebuilt binary for this
+      # runner (Windows, or a download failure), it falls back to
+      # `cargo install`. A checksum mismatch fails the step instead.
       - name: Install ripr
-        run: cargo install ripr --version @RIPR_VERSION@ --locked
+        run: |
+          version=@RIPR_VERSION@
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=x86_64-unknown-linux-gnu ;;
+            Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
+            macOS-X64) target=x86_64-apple-darwin ;;
+            macOS-ARM64) target=aarch64-apple-darwin ;;
+            *) target="" ;;
+          esac
+          asset="ripr-server-v$version-$target.tar.gz"
+          url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset"
+          bin_dir="$RUNNER_TEMP/ripr-bin"
+          mkdir -p "$bin_dir"
+          if [ -n "$target" ] &&
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset" "$url" &&
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"; then
+            expected="$(awk 'NR == 1 { print $1 }' "$RUNNER_TEMP/$asset.sha256")"
+            actual="$( { sha256sum "$RUNNER_TEMP/$asset" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/$asset"; } | awk '{ print $1 }')"
+            if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+              echo "::error::$asset does not match its published SHA-256 (expected ${expected:-nothing}, got $actual)"
+              exit 1
+            fi
+            tar -xzf "$RUNNER_TEMP/$asset" -C "$bin_dir"
+            echo "$bin_dir" >> "$GITHUB_PATH"
+          else
+            echo "::notice::No prebuilt ripr $version downloaded for $RUNNER_OS-$RUNNER_ARCH; building it with cargo install"
+            cargo install ripr --version @RIPR_VERSION@ --locked
+          fi
+          PATH="$bin_dir:$PATH" ripr --version
+          echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV"
+
+      # Restores ripr's analysis cache, so a new push to a pull request
+      # reuses the facts of files it did not change. Entries are keyed on
+      # file contents, configuration, and the ripr version: an entry that no
+      # longer matches is a miss, never stale evidence. GitHub scopes a
+      # cache a pull request saves to that pull request, and the cache lives
+      # outside the checkout, so a pull request cannot commit one.
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/ripr-cache
+          key: ripr-cache-@RIPR_VERSION@-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            ripr-cache-@RIPR_VERSION@-${{ runner.os }}-
 
       - name: Generate RIPR pilot packet
         continue-on-error: true
@@ -1141,9 +1171,8 @@ const TEMPLATE_TAIL: &str = r#"      - name: Check RIPR advisory artifacts
           category: ripr-seams
 "#;
 
-/// The unrendered workflow template: byte-identical to the inline string
-/// `generated_github_actions_workflow` held before #4386 extracted it. The
-/// only substitutions between this and the written file are the render-time
+/// The unrendered workflow template, pinned by hash below. The only
+/// substitutions between this and the written file are the render-time
 /// `@RIPR_...@` placeholder replacements below.
 fn generated_workflow_template() -> String {
     TEMPLATE_HEAD.to_owned() + ADVISORY_SUMMARY_STEP + TEMPLATE_TAIL
@@ -1243,22 +1272,25 @@ mod template_pin_tests {
     use super::generated_workflow_template;
     use sha2::{Digest, Sha256};
 
-    /// #4386: the extraction must be byte-preserving. This is the SHA-256 of
-    /// the pre-extraction inline raw string, measured on the base commit
-    /// (08de7c3bf, `crates/ripr/src/cli/commands/init.rs:381-2755`, the whole
-    /// `r#...#` literal inside `generated_github_actions_workflow`). The
-    /// unrendered template is the stable identity: rendering additionally
-    /// substitutes the crate version and shared labels, which the
-    /// `generated_workflow_*` tests pin at the rendered level.
-    const PRE_EXTRACTION_TEMPLATE_SHA256: &str =
-        "9a9779116f239c59173b929cebb044c5de3685577c8218ff89cb8f7c7c9a4315";
+    /// #4386: the extraction had to be byte-preserving, so this pinned the
+    /// SHA-256 of the pre-extraction inline raw string
+    /// (`9a9779116f239c59173b929cebb044c5de3685577c8218ff89cb8f7c7c9a4315`,
+    /// base commit 08de7c3bf). The pin now guards against unintended template
+    /// edits; the only intended change since extraction replaced the
+    /// toolchain, rust-cache, and `cargo install` steps with the prebuilt
+    /// release download and the analysis-cache restore. The unrendered
+    /// template is the stable identity: rendering additionally substitutes
+    /// the crate version and shared labels, which the `generated_workflow_*`
+    /// tests pin at the rendered level.
+    const TEMPLATE_SHA256: &str =
+        "37aca3bdd712229a7f18e4eddd64d4507c97d8106a3ae8ca1daad7e68fb7d955";
 
     #[test]
-    fn extracted_template_matches_the_pre_extraction_inline_bytes() {
+    fn template_matches_the_pinned_bytes() {
         let hex: String = Sha256::digest(generated_workflow_template().as_bytes())
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        assert_eq!(hex, PRE_EXTRACTION_TEMPLATE_SHA256);
+        assert_eq!(hex, TEMPLATE_SHA256);
     }
 }

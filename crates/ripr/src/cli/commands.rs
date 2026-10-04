@@ -7664,12 +7664,11 @@ language = "rust"
         let fixture = generated_workflow_smoke_fixture();
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
-        // Install caching (#2008): the install names an exact version, so a
-        // cached binary is reused only when it is that version.
-        // Pinned to a SHA, not the mutable v2 tag (#2190 review).
-        assert!(workflow.contains("Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32"));
-        assert!(!workflow.contains("Swatinem/rust-cache@v2"));
-        assert!(workflow.contains("shared-key: ripr-install"));
+        // The install downloads the prebuilt release binary instead of
+        // compiling ripr, so the job sets up no Rust toolchain or cargo
+        // cache of its own.
+        assert!(!workflow.contains("Swatinem/rust-cache"));
+        assert!(!workflow.contains("dtolnay/rust-toolchain"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("actions/upload-artifact@v7"));
         assert!(workflow.contains("github/codeql-action/upload-sarif@v4"));
@@ -7682,18 +7681,36 @@ language = "rust"
         assert!(
             workflow.contains("          fetch-depth: 0\n          persist-credentials: false\n")
         );
-        // Checked-in or cache-restored files under target/ripr and target/ci
-        // are removed after the cache restore and before any RIPR step, so
-        // gate inputs read "when present" come only from this run.
+        // Checked-in files under target/ripr and target/ci are removed before
+        // any RIPR step, so gate inputs read "when present" come only from
+        // this run. The analysis cache is restored outside the checkout, so
+        // the cleanup cannot discard it and the restore cannot land a file
+        // the cleanup was meant to remove.
         let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
         assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
-        let cache_at = workflow.find("Swatinem/rust-cache@").unwrap_or(usize::MAX);
-        let cleanup_at = workflow
-            .find("      - name: Remove checked-in RIPR artifacts")
+        let install = workflow_step(&workflow, "Install ripr");
+        assert!(
+            install.contains(r#"echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV""#)
+        );
+        let cache = workflow
+            .split("\n\n")
+            .find(|block| block.contains("      - uses: actions/cache@v6\n"))
+            .unwrap_or_default();
+        assert!(cache.contains("          path: ${{ runner.temp }}/ripr-cache\n"));
+        assert!(cache.contains(&format!(
+            "          key: ripr-cache-{}-${{{{ runner.os }}}}-",
+            env!("CARGO_PKG_VERSION")
+        )));
+        let cache_at = workflow
+            .find("      - uses: actions/cache@v6")
+            .unwrap_or(usize::MAX);
+        let install_at = workflow.find("      - name: Install ripr").unwrap_or(0);
+        let pilot_at = workflow
+            .find("      - name: Generate RIPR pilot packet")
             .unwrap_or(0);
         assert!(
-            cache_at < cleanup_at,
-            "cleanup must follow the cache restore"
+            install_at < cache_at && cache_at < pilot_at,
+            "the cache restores after the install sets RIPR_CACHE_DIR and before the first analysis"
         );
         assert_step_before(
             &workflow,

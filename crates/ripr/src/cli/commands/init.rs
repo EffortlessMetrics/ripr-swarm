@@ -512,23 +512,56 @@ mod tests {
         Ok(())
     }
 
-    /// W5: an unpinned `cargo install ripr` installs whatever release is
-    /// latest, so CI could run an older ripr that lacks the commands this
-    /// workflow calls, or change behavior silently on a later release. The
-    /// install pins the generating binary's own version and keeps `--locked`.
+    /// W5: an unpinned install takes whatever release is latest, so CI
+    /// could run an older ripr that lacks the commands this workflow calls,
+    /// or change behavior silently on a later release. Both install routes,
+    /// the prebuilt release download and the `cargo install` fallback, pin
+    /// the generating binary's own version; the fallback keeps `--locked`.
     #[test]
     fn generated_workflow_pins_the_generating_ripr_version() {
         let workflow = generated_github_actions_workflow();
-        let pinned = format!(
-            "run: cargo install ripr --version {} --locked",
-            env!("CARGO_PKG_VERSION")
-        );
+        let version = env!("CARGO_PKG_VERSION");
+        let download = format!("          version={version}\n");
+        assert!(workflow.contains(&download), "missing {download}");
+        let pinned = format!("cargo install ripr --version {version} --locked");
         assert!(workflow.contains(&pinned), "missing {pinned}");
         let installs: Vec<&str> = workflow
             .lines()
-            .filter(|line| line.contains("run: cargo install"))
+            .filter(|line| line.contains("cargo install ripr"))
+            .filter(|line| !line.trim_start().starts_with('#'))
             .collect();
-        assert_eq!(installs.len(), 1, "{installs:?}");
+        assert_eq!(installs, [format!("            {pinned}")]);
+    }
+
+    /// The install downloads the release archive for the runner and refuses
+    /// a mismatched checksum instead of falling back to a compile; only a
+    /// runner with no archive, or a failed download, takes `cargo install`.
+    #[test]
+    fn generated_workflow_installs_the_checksummed_release_binary() {
+        let workflow = generated_github_actions_workflow();
+        let install = workflow
+            .split("\n\n")
+            .find(|block| block.contains("      - name: Install ripr\n"))
+            .unwrap_or_default();
+        for needle in [
+            "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
+            "macOS-ARM64) target=aarch64-apple-darwin ;;",
+            r#"asset="ripr-server-v$version-$target.tar.gz""#,
+            r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
+            r#"curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"; then"#,
+            r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
+            r#"echo "$bin_dir" >> "$GITHUB_PATH""#,
+        ] {
+            assert!(install.contains(needle), "install step missing {needle}");
+        }
+        // The mismatch branch exits before the `else` that compiles.
+        let mismatch = install.find("does not match its published SHA-256");
+        let exit = install.find("exit 1");
+        let fallback = install.find("cargo install ripr");
+        assert!(
+            mismatch < exit && exit < fallback && mismatch.is_some(),
+            "a checksum mismatch must fail before the cargo fallback"
+        );
     }
 
     /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove

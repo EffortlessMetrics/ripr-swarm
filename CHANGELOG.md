@@ -23,6 +23,15 @@ are scoped or reviewed.
 
 ### Changed
 
+- CI: the `ripr init --ci github` workflow downloads the pinned ripr
+  release's prebuilt binary and checks its published SHA-256 instead of
+  compiling ripr with `cargo install` on every run, so it no longer sets up a
+  Rust toolchain or `Swatinem/rust-cache`. A checksum mismatch fails the step;
+  a runner with no prebuilt archive (Windows) or a failed download falls back
+  to `cargo install`. The workflow also restores ripr's analysis cache
+  (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
+  pushes to a pull request reuse the facts of unchanged files.
+
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
   `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,

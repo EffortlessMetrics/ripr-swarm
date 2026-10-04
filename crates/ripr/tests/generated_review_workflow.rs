@@ -1782,7 +1782,8 @@ fn far_above_threshold_discounts() {
             let Some(script) = &step.run else {
                 continue;
             };
-            if script.starts_with("cargo install ripr") {
+            // The replay runs the ripr under test, not a downloaded release.
+            if step.name == "Install ripr" {
                 continue;
             }
             if let Some(condition) = &step.condition

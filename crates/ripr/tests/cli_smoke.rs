@@ -11301,7 +11301,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The steps use the generating version's CLI, so the install is pinned
     // to it rather than taking the newest crates.io release.
     assert!(workflow.contains(&format!(
-        "run: cargo install ripr --version {} --locked\n",
+        "          version={}\n",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(workflow.contains(&format!(
+        "            cargo install ripr --version {} --locked\n",
         env!("CARGO_PKG_VERSION")
     )));
     assert!(!workflow.contains("cargo install ripr --locked"));
@@ -11310,9 +11314,9 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains(
         "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
     ));
-    // Every third-party action is pinned to a commit SHA (#4452).
-    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
-    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
+    // The prebuilt install needs no third-party toolchain or cache action.
+    assert!(!workflow.contains("dtolnay/rust-toolchain"));
+    assert!(!workflow.contains("Swatinem/rust-cache"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
