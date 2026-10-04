@@ -263,6 +263,25 @@ reported `exposed` for a probe whose mutants survived. All three agents ended
 with findings they judged, correctly, to be ripr limitations rather than
 missing tests.
 
+### Where the commands went
+
+Counted from the shim logs, by what each invocation was for:
+
+| Purpose | bytesize | humantime | semver | Avoidable by |
+|---|---|---|---|---|
+| Orientation (`--help`, `doctor`, `help check`) | 3 | 3 | 3 | none; expected |
+| First `check` and drill-in (`human-full`, `explain`, `context`) | 4 | 4 | 4 | one fewer if `explain` added to human-full (#5356) |
+| Looking for a repair route (`help agent`, `agent repair`/`status`, `pilot`) | 3 | 4 | 3 | a route from a `check` finding into repair (#5355) |
+| Re-check that read HEAD and showed no change | 1 | 1 | 1 | reading the worktree when dirty (#5358) |
+| Re-checks and explains after adding tests | 6 | 9 | 9 | most followed verdicts that stayed weak under tests that catch every mutant (#5352, #5353) |
+| **Total** | **17** | **21** | **20** | |
+
+Without that friction a run needs about seven or eight commands: the three
+orientation calls, one `check`, one drill-in, and one or two re-checks after
+the test is written. Counting the post-test loop beyond two re-checks as
+avoidable (a read of the logs, not a measurement), the five issues above
+account for 10 (bytesize), 13 (humantime) and 12 (semver) of the commands.
+
 ### Findings
 
 1. **The re-check after adding a test reads HEAD.** All three agents re-ran
