@@ -225,3 +225,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (15)
+
+Reason:
+RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

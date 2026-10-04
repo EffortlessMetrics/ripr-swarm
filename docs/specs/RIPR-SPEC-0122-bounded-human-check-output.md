@@ -214,12 +214,17 @@ the stub producer refuses them.
 
 The check pipeline runs that same `--at` resolver for the selected finding
 before rendering (#5471), with the configuration `ripr agent stub` loads for
-the same root, against the gaps of that one file (the file-scoped inventory,
-not the capped repo-wide one). The block is printed only when the resolver
-produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When it finds
-no gap at that location, nothing is printed. Only the default human format
-runs the resolver; JSON and `human-full` output are unchanged.
+the same root. For a file under the root, that resolver reads the seams of
+that one file from a parse of the file alone, with no workspace index, test
+evidence, or seam classification: `check` already judged the location a gap,
+so the stub is not re-judged by a second classifier. Candidates are the seams
+on the finding line, then the seams in the same function nearest first, and
+the stub is placed inline (integration-file placement needs classified
+evidence and stays with `--seam-id`). The block is printed only when the
+resolver produces a stub. When it refuses, the block is replaced by one line,
+`No test stub here: <reason>`, naming the producer's refusal. When the file
+has no seam in that function, nothing is printed. Only the default human
+format runs the resolver; JSON and `human-full` output are unchanged.
 
 ### Triage states
 

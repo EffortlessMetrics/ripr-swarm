@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_false_branch (6)
+
+Reason:
+RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_false_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

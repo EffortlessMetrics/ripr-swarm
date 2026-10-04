@@ -212,3 +212,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_type_token_blind (9)
+
+Reason:
+RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
+
+Command:
+`cargo xtask goldens bless match_arm_type_token_blind --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

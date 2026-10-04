@@ -81,7 +81,8 @@ pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    apply_pilot_seam_budget, file_seams_without_evidence_at_with_config,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,

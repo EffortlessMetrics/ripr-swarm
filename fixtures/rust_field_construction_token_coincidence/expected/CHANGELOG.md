@@ -105,3 +105,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_field_construction_token_coincidence (10)
+
+Reason:
+RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
+
+Command:
+`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
