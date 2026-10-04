@@ -167,7 +167,12 @@ pub fn locate(shell: Shell, probe_dir: &Path) -> Option<PathBuf> {
         Shell::Bash if cfg!(windows) => {
             for var in ["ProgramFiles", "ProgramFiles(x86)"] {
                 if let Some(prefix) = std::env::var_os(var) {
-                    candidates.push(PathBuf::from(prefix).join("Git/bin/bash.exe"));
+                    // `usr/bin/bash.exe` is the MSYS shell itself. `bin/bash.exe` is
+                    // a launcher that puts Git's own `mingw64/bin` in front of
+                    // `PATH`, which would hide the `git` recorder.
+                    for relative in ["Git/usr/bin/bash.exe", "Git/bin/bash.exe"] {
+                        candidates.push(PathBuf::from(&prefix).join(relative));
+                    }
                 }
             }
         }
@@ -257,6 +262,18 @@ pub fn run_cases(
     let _ = std::fs::remove_file(&log);
     let path = path_env(recorders)?;
     let mut errors: Vec<Option<String>> = (0..cases.len()).map(|_| None).collect();
+    // Git Bash may still reorder `PATH` at start-up, so a non-interactive
+    // MSYS shell re-asserts the recorders at the front before the case runs.
+    // The case text itself is untouched.
+    let bash_env = dir.join("bash_env.sh");
+    if cfg!(windows) && shell == Shell::Bash {
+        let line = format!(
+            "PATH=\"$(/usr/bin/cygpath -u '{}'):$PATH\"\n",
+            shell_path(recorders)
+        );
+        std::fs::write(&bash_env, line)
+            .map_err(|err| format!("write {}: {err}", bash_env.display()))?;
+    }
     if shell.is_powershell() {
         run_powershell(shell, executable, &dir, &log, &path, cases, &mut errors)?;
     } else {
@@ -269,6 +286,9 @@ pub fn run_cases(
                 // Match what a user's interactive paste does not do: no rc
                 // files, so a stray `setopt` cannot hide a quoting failure.
                 command.arg("-f");
+            }
+            if cfg!(windows) && shell == Shell::Bash {
+                command.env("BASH_ENV", shell_path(&bash_env));
             }
             let output = command
                 .arg(shell_path(&script))
@@ -340,7 +360,9 @@ fn run_powershell(
     let script = "\
 param([string]$CasesFile, [string]$ResultsFile)
 $ErrorActionPreference = 'Stop'
-$cases = @(Get-Content -LiteralPath $CasesFile -Raw -Encoding UTF8 | ConvertFrom-Json)
+# Windows PowerShell 5.1 hands a piped JSON array on as one object, so the
+# text is passed by parameter and the result enumerated as it stands.
+$cases = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $CasesFile -Raw -Encoding UTF8)
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 foreach ($case in $cases) {
   $env:RIPR_PASTE_CASE = [string]$case.id
