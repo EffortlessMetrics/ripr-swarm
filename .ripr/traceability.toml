@@ -7804,6 +7804,12 @@ id = "RIPR-SPEC-0134"
 name = "repair artifact provenance"
 spec = "docs/specs/RIPR-SPEC-0134-repair-artifact-provenance.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_preserves_exact_empty_and_same_length_checks",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_growth_at_the_admitted_length",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_missing_and_directory_replacements",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_same_byte_symlink_replacements",
+  "xtask/src/reports/release/candidate_harness/archive.rs::tests::extracted_install_inputs_refuse_growth_at_each_retained_length",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
   "crates/ripr/src/agent/artifact.rs::tests::content_placeholder_is_fixed_width",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
@@ -7869,6 +7875,8 @@ fixtures = [
   "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/archive.rs",
+  "xtask/src/reports/release/candidate_harness/input.rs",
   "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/config.rs",
@@ -8407,6 +8415,12 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::diagnostic_result_ids_ignore_refresh_clock_and_attempt_snapshot_handle",
   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::diagnostic_result_ids_change_for_message_only_and_profile_changes",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::diagnostic_data_field_carries_seam_id_and_grip_class",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_publishes_empty_diagnostics_for_tracked_uris",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_publishes_nothing_for_pull_diagnostics_client",
+  "crates/ripr/tests/lsp_lifecycle.rs::shutdown_with_zero_tracked_uris_sends_no_publishes",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_during_refresh_publication_clears_last",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_before_refresh_publication_suppresses_rollback",
+  "crates/ripr/src/lsp/tests.rs::shutdown_clear_tests::shutdown_after_root_change_publishes_no_duplicates",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -10506,7 +10520,7 @@ id = "RIPR-SPEC-0187"
 name = "rich command metadata projected into human help and inventories"
 spec = "docs/specs/RIPR-SPEC-0187-command-metadata-human-projection.md"
 tests = [
-  "crates/ripr/src/cli/command_metadata.rs::tests::help_metadata_reports_the_machine_catalog_route",
+  "crates/ripr/src/cli/command_metadata.rs::tests::help_row_reports_its_machine_catalog_route",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/src/cli/command_metadata.rs::tests::every_public_catalog_row_is_described",
   "crates/ripr/src/cli/command_metadata.rs::tests::readonly_row_declaring_a_product_write_is_rejected",
@@ -11803,7 +11817,16 @@ tests = [
   "crates/ripr/src/mcp/repair.rs::tests::receipt_status_for_session_attempt_awaits_the_external_edit",
   "crates/ripr/src/mcp/repair.rs::tests::unknown_and_invalid_durable_attempts_fail_closed",
   "crates/ripr/src/mcp/repair.rs::tests::receipt_status_vocabulary_maps_the_shared_lifecycle",
+  "crates/ripr/src/mcp/repair.rs::tests::terminal_receipts_preserve_stale_and_mismatch_before_completeness",
+  "crates/ripr/src/mcp/repair.rs::tests::terminal_legacy_regression_preserves_completeness_and_field_precedence",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_improved_receipt_preserves_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_changed_receipt_never_closes_the_gap",
+  "crates/ripr/src/mcp/repair.rs::tests::typed_incomplete_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::partial_incomplete_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::missing_outcome_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::invalid_outcome_receipt_preserves_invalid_status",
   "crates/ripr/src/mcp/repair.rs::tests::regressed_movement_survives_the_presence_lifecycle",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_unchanged_receipt_preserves_unchanged_status",
   "crates/ripr/src/mcp/repair.rs::tests::repair_reads_fail_closed_while_refresh_is_in_flight",
   "crates/ripr/src/mcp/repair.rs::tests::evicted_transactions_keep_the_superseded_typed_code",
   "crates/ripr/src/mcp/repair.rs::tests::command_spec_modes_round_trip_without_display_authority",
@@ -11899,6 +11922,53 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0219"
+name = "Labeled Rust verdict corpus"
+spec = "docs/specs/RIPR-SPEC-0219-labeled-rust-verdict-corpus.md"
+tests = [
+  "xtask/src/reports/verdict_corpus_tests.rs::score_follows_the_truth_table_in_both_error_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::finding_verdict_mirrors_triage_classes_and_named_limits",
+  "xtask/src/reports/verdict_corpus_tests.rs::anchored_findings_keep_only_candidate_current_findings_on_the_anchor",
+  "xtask/src/reports/verdict_corpus_tests.rs::case_verdict_ranks_gap_over_credit_over_limit",
+  "xtask/src/reports/verdict_corpus_tests.rs::contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding",
+  "xtask/src/reports/verdict_corpus_tests.rs::summary_contradictions_compare_counts_with_the_findings_list",
+  "xtask/src/reports/verdict_corpus_tests.rs::summary_contradictions_account_for_suppressed_findings",
+  "xtask/src/reports/verdict_corpus_tests.rs::ratio_text_is_fixed_precision_and_names_an_empty_denominator",
+  "xtask/src/reports/verdict_corpus_tests.rs::apply_patch_rewrites_the_anchored_line_and_reports_it_as_added",
+  "xtask/src/reports/verdict_corpus_tests.rs::apply_patch_refuses_drifted_context",
+  "xtask/src/reports/verdict_corpus_tests.rs::parse_patch_refuses_renames_and_empty_input",
+  "xtask/src/reports/verdict_corpus_tests.rs::parse_patch_holds_hunks_to_their_declared_counts_and_starts",
+  "xtask/src/reports/verdict_corpus_tests.rs::relativize_probe_files_strips_only_the_run_root",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_corpus_is_valid_and_measures_both_error_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_label_that_contradicts_its_mutant_outcomes",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_expected_verdict_outside_the_truth_table",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_retained_file_whose_digest_moved",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_anchor_the_diff_does_not_add",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_ids_that_are_not_one_safe_path_segment",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_diff_that_patches_an_unretained_path",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_both_truth_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::expected_report_rows_agree_with_corpus_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
+  "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
+  "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "xtask/src/reports/verdict_corpus.rs",
+]
+outputs = [
+  "fixtures/rust-verdict-corpus/expected/report.json",
+  "fixtures/rust-verdict-corpus/expected/report.md",
+]
+metrics = [
+  "verdict_corpus_false_verdict_rate",
+  "verdict_corpus_false_actionable_rate",
+  "verdict_corpus_contradiction_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0217"
 name = "Repair-attempt discovery selection and fresh-process resume"
 spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
@@ -11933,4 +12003,128 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0218"
+name = "Issue lifecycle attempt extension contract and scorecard projection"
+spec = "docs/specs/RIPR-SPEC-0218-issue-lifecycle-attempt-extension.md"
+tests = [
+  "xtask/src/issue_lifecycle_attempt.rs::tests::complete_lifecycle_row_counts_as_completed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::schema_drift_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::altered_row_bytes_reject_the_digest_binding",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::blank_base_attempt_identity_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::empty_shared_facts_reject_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::unknown_shared_fact_family_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::open_intake_questions_cap_at_needs_evidence",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::spec_required_blocks_one_pr_qualification",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::unsuppressed_unchanged_progress_blocks_completion",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::merge_without_current_head_proof_stays_pending_closeout",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::incomplete_closeout_state_blocks_completed_without_merge",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::uncovered_burn_down_rows_keep_a_merge_partially_landed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::uncovered_burn_down_rows_block_completed_without_merge",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::stale_current_main_receipt_forces_stale",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::first_established_downgrade_wins_across_closeout_gates",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::spec_required_without_acceptance_blocks_completed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::negative_dispositions_pass_through_and_stay_visible",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::completed_closeout_requires_a_recorded_reason",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::zero_byte_intake_evidence_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::synthetic_flag_does_not_change_row_assessment",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::fixture_corpus_loader_rejects_duplicates_and_drifted_schemas",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::missing_required_scenarios_are_reported",
+  "xtask/src/reports/issue_lifecycle.rs::tests::empty_corpus_reports_no_success_rate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::synthetic_rows_never_enter_real_denominators",
+  "xtask/src/reports/issue_lifecycle.rs::tests::completed_row_enters_the_implementation_success_rate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::negative_dispositions_never_count_as_implementation_success",
+  "xtask/src/reports/issue_lifecycle.rs::tests::duplicate_observations_of_one_lifecycle_deduplicate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::conflicting_duplicate_observations_reject_both",
+  "xtask/src/reports/issue_lifecycle.rs::tests::reordered_inputs_preserve_the_corpus_identity",
+  "xtask/src/reports/issue_lifecycle.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
+  "xtask/src/reports/issue_lifecycle.rs::tests::parse_captured_accepts_at_most_one_path",
+  "xtask/src/reports/issue_lifecycle.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
+]
+fixtures = [
+  "fixtures/issue_lifecycle_attempts",
+]
+code = [
+  "xtask/src/issue_lifecycle_attempt.rs",
+  "xtask/src/reports/issue_lifecycle.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "fixtures/issue_lifecycle_attempts/corpus.json",
+]
+metrics = [
+  "issue_lifecycle_fixture_scenarios",
+  "issue_lifecycle_scorecard_synthetic_lifecycles",
+  "issue_lifecycle_scorecard_rejected_rows",
+  "issue_lifecycle_scorecard_real_lifecycles",
+  "issue_lifecycle_scorecard_implementation_success_rate_state",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0220"
+name = "VS Code shared repair-attempt status and active-attempt resolution"
+spec = "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md"
+tests = [
+  "editors/vscode/test/suite/attempt_status.test.ts::Agent attempt status adapter parity (#4643)",
+  "editors/vscode/test/suite/attempt_status.test.ts::Active attempt resolution law (#4643)",
+  "editors/vscode/test/suite/attempt_status.test.ts::Show Repair Attempt Status command (#4643)",
+]
+fixtures = [
+  "editors/vscode/test-fixtures/attempt-status",
+]
+code = [
+  "editors/vscode/src/attemptStatus.ts",
+  "editors/vscode/src/client.ts",
+  "editors/vscode/src/extension.ts",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0222"
+name = "Byte-bounded classified-cache store publication"
+spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
+tests = [
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_shard_matches_owned_codec_bytes",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_writers_match_owned_bytes_with_shared_related_tests",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::below_exactly_and_one_byte_over_the_encoded_ceiling",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::variable_size_records_force_byte_shards_when_record_count_would_not",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::many_small_records_empty_and_multi_shard_round_trip",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::store_high_water_is_independent_of_total_shard_payload",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::oversized_record_skips_without_claiming_a_populated_cache",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_replacement_keeps_the_previous_valid_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::injected_fill_failure_does_not_admit_a_partial_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_sharded_replace_restores_the_previous_single_entry",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_replace_a_newer_single_entry",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_hide_a_newer_sharded_manifest",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_cache_paths_reject_drive_prefix_and_parent_components",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/seam_cache/store.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/atomic_file.rs",
+  "crates/ripr/src/analysis/seam_classification.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md",
+  "docs/CONFIGURATION.md",
+]
+metrics = [
+  "classified_cache_encoded_shard_ceiling_bytes",
+  "classified_cache_store_io_buffer_bytes",
 ]

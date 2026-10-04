@@ -395,7 +395,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
             return Err(format!("current target `{}` was rejected", test.name));
         }
     }
-    let cache = context.source_digest_cache.borrow();
+    let cache = memo(&context.source_digest_cache);
     if cache.len() != 1 || cache.get(file.as_path()) != Some(&authority_digest) {
         return Err(format!(
             "expected one memoized digest equal to the authority digest, got {cache:?}"
@@ -404,10 +404,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
     drop(cache);
     // Reuse, not just presence: a poisoned memo entry must decide the next
     // validation, so a lookup that recomputes the digest would be caught.
-    context
-        .source_digest_cache
-        .borrow_mut()
-        .insert(file.as_path(), "sha256:poisoned".to_string());
+    memo(&context.source_digest_cache).insert(file.as_path(), "sha256:poisoned".to_string());
     if test_target_evidence(&context, &seam, related[0], RelationReason::DirectOwnerCall).is_some()
     {
         return Err("validation recomputed the digest instead of reusing the memo".to_string());
@@ -1042,9 +1039,12 @@ fn call_arguments_uses_identifier_boundary_for_callee_name() {
     );
 }
 
+/// The evidence phases ride the shared trace-line owner (#5213), so these
+/// assert the *evidence* phase labels reach the wire in that one shape rather
+/// than pinning a second copy of the format.
 #[test]
 fn latency_trace_line_uses_repo_exposure_trace_shape() {
-    let line = latency_trace_line(
+    let line = crate::analysis::resource_cost::latency_trace_line(
         "evidence_for_seams_progress",
         "processed_500_of_12337",
         Duration::from_millis(42),
@@ -1058,7 +1058,11 @@ fn latency_trace_line_uses_repo_exposure_trace_shape() {
 
 #[test]
 fn latency_trace_line_can_report_evidence_context_start() {
-    let line = latency_trace_line("evidence_context", "start_seams_12337", Duration::ZERO);
+    let line = crate::analysis::resource_cost::latency_trace_line(
+        "evidence_context",
+        "start_seams_12337",
+        Duration::ZERO,
+    );
 
     assert_eq!(
         line,
@@ -2595,6 +2599,106 @@ fn import_only_mentions_owner() {
         let batch_json =
             serde_json::to_string(from_batch).map_err(|err| format!("encode batch: {err}"))?;
         assert_eq!(single_json, batch_json);
+    }
+    Ok(())
+}
+
+fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub struct Quote { pub amount: i32, pub tier: u8 }
+
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn quote(amount: i32) -> Quote {
+    Quote { amount, tier: if amount > 500 { 2 } else { 1 } }
+}
+
+pub fn parse(value: &str) -> Result<i32, String> {
+    if value.is_empty() { return Err("empty".to_string()); }
+    value.parse::<i32>().map_err(|err| err.to_string())
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+#[test]
+fn quote_tier() {
+    let q = quote(600);
+    assert!(q.tier > 0);
+}
+#[test]
+fn parse_rejects_empty() {
+    assert!(parse("").is_err());
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.len() < 4 {
+        return Err(format!(
+            "fixture should yield several seams, got {}",
+            seams.len()
+        ));
+    }
+    Ok((index, seams))
+}
+
+#[test]
+fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let run = |threads: usize| -> Result<String, String> {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|err| format!("pool: {err}"))?;
+        let evidence = pool.install(|| evidence_for_seams(&seams, &index));
+        serde_json::to_string(&evidence).map_err(|err| format!("encode: {err}"))
+    };
+    let serial = run(1)?;
+    let parallel = run(4)?;
+    if serial != parallel {
+        return Err("parallel evidence differs from the single-thread pass".into());
+    }
+    if serial.matches("seam_id").count() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    let (index, seams) = parallel_evidence_fixture()?;
+    // The test thread is not a rayon worker, so the parallel pass injects
+    // every seam into the global pool and none of them runs on the thread
+    // that holds the token. That is the production shape: callers install
+    // the token on their own thread before analysis.
+    if rayon::current_thread_index().is_some() {
+        return Err("the caller must not be a rayon worker".into());
+    }
+    // Build the context outside both scopes: a cancelled token fails the
+    // context build, which would return nothing before any worker runs.
+    let pass = EvidencePass::new(&index);
+    let live = AnalysisCancellationToken::new();
+    let completed = cancellation::with_token(&live, || pass.evidence_for(&seams));
+    if completed.len() != seams.len() {
+        return Err("a live token must not drop seams".into());
+    }
+    let cancelled = AnalysisCancellationToken::new();
+    cancelled.cancel(AnalysisAbortKind::Cancelled);
+    // Workers that did not inherit the token would see no cancellation and
+    // evaluate every seam.
+    let evidence = cancellation::with_token(&cancelled, || pass.evidence_for(&seams));
+    if !evidence.is_empty() {
+        return Err(format!(
+            "cancelled pass evaluated {} seams on rayon workers",
+            evidence.len()
+        ));
     }
     Ok(())
 }

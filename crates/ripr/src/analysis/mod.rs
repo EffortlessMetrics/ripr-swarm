@@ -17,6 +17,11 @@ pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
+/// Process CPU time and peak resident memory observability (#5213). One
+/// owner for the whole `RIPR_REPO_EXPOSURE_LATENCY_TRACE` family: the
+/// wall-clock phase line and the end-of-run resource-cost receipt both live
+/// here, so a new phase cannot invent a parallel spelling.
+pub(crate) mod resource_cost;
 mod rust_index;
 pub(crate) mod seam_cache;
 mod seam_classification;
@@ -754,6 +759,11 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
+    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
+    /// so the note can name the real repair (staging) instead of offering
+    /// `--worktree`. Empty when no untracked routed file exists.
+    pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
