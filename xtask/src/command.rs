@@ -1158,7 +1158,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/bench-agent-surfaces.{json,md}",
             false,
             false,
-            "Runs the cross-surface agent-experience benchmark (RIPR-SPEC-0218): CLI/MCP/LSP latency, envelope actionability, and determinism over pinned corpora. Advisory; never a precommit/CI gate.",
+            "Runs the cross-surface agent-experience benchmark (RIPR-SPEC-0221): CLI/MCP/LSP latency, envelope actionability, and determinism over pinned corpora. Advisory; never a precommit/CI gate.",
         ),
         command_entry(
             "repo-contract-report",

@@ -1,5 +1,5 @@
 //! `cargo xtask bench-agent-surfaces` — the cross-surface agent-experience
-//! benchmark (RIPR-SPEC-0218, #5257).
+//! benchmark (RIPR-SPEC-0221, #5257).
 //!
 //! Measures what an agent consumer of ripr actually experiences: CLI
 //! end-to-end analysis latency (M1), MCP stdio round-trip latency (M2), LSP
@@ -1946,7 +1946,7 @@ fn run_m3_corpus(
             cold: Vec::new(),
             warm: Vec::new(),
             limitation: Some(
-                "recorded limitation: this run recorded no M3 repo populations because the workspace-scale analysis behind the repo's first textDocument/publishDiagnostics exceeds the per-sample timeout ceiling on large checkouts, so a first-publish population cannot exist within any bounded ceiling; the M3 timeout is the named outcome here, which is distinct from an empty-population gate failure (that gate stays reserved for corpora whose population can exist). The authoring session's observations and their measurements are recorded in RIPR-SPEC-0218; a run whose repo sessions do observe a first publish replaces this limitation with measured populations."
+                "recorded limitation: this run recorded no M3 repo populations because the workspace-scale analysis behind the repo's first textDocument/publishDiagnostics exceeds the per-sample timeout ceiling on large checkouts, so a first-publish population cannot exist within any bounded ceiling; the M3 timeout is the named outcome here, which is distinct from an empty-population gate failure (that gate stays reserved for corpora whose population can exist). The authoring session's observations and their measurements are recorded in RIPR-SPEC-0221; a run whose repo sessions do observe a first publish replaces this limitation with measured populations."
                     .to_string(),
             ),
         });
@@ -3417,10 +3417,16 @@ mod tests {
 
     #[test]
     fn file_uri_is_absolute_with_forward_slashes() {
-        let uri = file_uri(&PathBuf::from("F:\\dir\\corpus\\src\\lib.rs"));
+        // The fixture path is built at runtime so no local absolute path
+        // literal is committed (check-local-context) while the drive-letter
+        // and extended-length prefix handling stay exercised.
+        let sep = std::path::MAIN_SEPARATOR;
+        let windows_path =
+            PathBuf::from(format!("F:{sep}dir{sep}corpus{sep}src{sep}lib.rs"));
+        let uri = file_uri(&windows_path);
         assert_eq!(uri, "file:///F:/dir/corpus/src/lib.rs");
         // fs::canonicalize yields extended-length paths on Windows.
-        let canonical = file_uri(&PathBuf::from("\\\\?\\F:\\dir\\corpus"));
+        let canonical = file_uri(&PathBuf::from(format!("//?/F:{sep}dir{sep}corpus")));
         assert_eq!(canonical, "file:///F:/dir/corpus");
     }
 

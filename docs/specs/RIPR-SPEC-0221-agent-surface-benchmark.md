@@ -1,4 +1,4 @@
-# RIPR-SPEC-0218: Agent surface benchmark (CLI/MCP/LSP latency, actionability, determinism)
+# RIPR-SPEC-0221: Agent surface benchmark (CLI/MCP/LSP latency, actionability, determinism)
 
 Status: proposed
 
