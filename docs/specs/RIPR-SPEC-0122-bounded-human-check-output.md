@@ -219,15 +219,18 @@ the same root. For a file under the root, that resolver reads the seams of
 that one file from a parse of the file alone, with no workspace index, test
 evidence, or seam classification: `check` already judged the location a gap,
 so the stub is not re-judged by a second classifier. Candidates are the seams
-on the finding line, then the seams in the same function nearest first, with
-seams whose kind matches `--kind` (the one seam kind each of the four
-families names: `predicate` boundary, `return_value`, `error_path` error
-variant, `match_arm`) ahead of the rest, and
+on the finding line, then the seams in the same function nearest first,
+limited to seams whose kind matches `--kind` (the one seam kind each of the
+four families names: `predicate` boundary, `return_value`, `error_path` error
+variant, `match_arm`), so a seam of another kind never answers for the
+finding. Two equally near seams of that kind whose source spans do not nest
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When the file
-has no seam in that function, nothing is printed. Only the default human
+`No test stub here: <reason>`, naming the producer's refusal. When the
+function has no seam of that kind, or the location is refused as ambiguous,
+nothing is printed. Only the default human
 format runs the resolver; JSON and `human-full` output are unchanged.
 
 The stub producer covers free functions and methods of inherent or trait

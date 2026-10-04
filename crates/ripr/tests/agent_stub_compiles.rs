@@ -430,10 +430,12 @@ fn ripr_command() -> Command {
 /// other files; `src/gated.rs` puts its owner behind a feature cfg a plain
 /// `cargo test` build may not enable, so its stub is refused; `src/zz.rs` is
 /// stubbable; `src/pair.rs` has two predicate seams on one line, which
-/// `--at` and `--kind` cannot tell apart.
-const ROUTE_LIB: &str = "pub mod gated;\npub mod pair;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+/// `--at` and `--kind` cannot tell apart; `src/parse.rs` changes a `?` whose
+/// function holds a stubbable predicate but no stubbable error variant.
+const ROUTE_LIB: &str = "pub mod gated;\npub mod pair;\npub mod parse;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
 const ROUTE_GATED: &str = "#[cfg(feature = \"extra\")] pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n";
 const ROUTE_PAIR: &str = "pub fn both(a: u32, b: u32) -> u32 {\n    if a > 10 && b > 20 { 1 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a_boundary() {\n        assert_eq!(both(9, 30), 0);\n        assert_eq!(both(10, 30), 0);\n        assert_eq!(both(11, 30), 1);\n    }\n}\n";
+const ROUTE_PARSE: &str = "pub fn read(s: &str) -> Result<u32, std::num::ParseIntError> {\n    let n: u32 = s.parse()?;\n    if n > 5 { Ok(n) } else { Ok(0) }\n}\n";
 const ROUTE_ZZ: &str =
     "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
 
@@ -448,6 +450,7 @@ fn route_crate(scratch: &Scratch) -> Result<(), String> {
         ("src/lib.rs", ROUTE_LIB),
         ("src/gated.rs", ROUTE_GATED),
         ("src/pair.rs", ROUTE_PAIR),
+        ("src/parse.rs", ROUTE_PARSE),
         ("src/zz.rs", ROUTE_ZZ),
     ] {
         std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
@@ -541,6 +544,24 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     assert!(
         !stdout.contains("Write a test for it:"),
         "an ambiguous location must not be offered: {stdout}"
+    );
+
+    // An error_path finding never answers with the `n > 5` predicate stub on
+    // the next line: a seam of another kind does not speak for it.
+    let parse = one_line_diff(
+        &scratch,
+        "src/parse.rs",
+        "    let n: u32 = s.parse().unwrap_or(0);",
+        "    let n: u32 = s.parse()?;",
+    )?;
+    let stdout = check_human(&root, &parse)?;
+    assert!(
+        stdout.contains("src/parse.rs:2"),
+        "the selected finding is the parse.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "another kind's seam must not answer for the finding: {stdout}"
     );
 
     // A stubbable location prints the route, and the printed command, run

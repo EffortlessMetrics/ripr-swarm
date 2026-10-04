@@ -139,9 +139,11 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Seams of that
-                   kind are tried first, so a line holding several changes
-                   stubs the one the finding reported. `ripr check` prints it.
+                   `return_value`, `error_path`, `match_arm`). Only seams of
+                   that kind are tried, so a line holding several changes
+                   stubs the one the finding reported; two separate seams of
+                   that kind on one line are refused with their seam IDs.
+                   `ripr check` prints it.
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed

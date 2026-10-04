@@ -131,10 +131,11 @@ pub(crate) fn resolve_test_stub(
 /// `crates/a/src/lib.rs`) keeps the repo-wide classified lookup so its
 /// more-than-one-file refusal still applies; `check` never prints that form.
 ///
-/// `kind` is the finding's probe family (`--kind`). Seams of the matching
-/// seam kind are tried first, then the rest, each group in line-then-nearest
-/// order, so a line holding a boundary and an error variant stubs the one
-/// `check` reported. Without it the order is line-then-nearest alone.
+/// `kind` is the finding's probe family (`--kind`). Only seams of the
+/// matching seam kind are tried, in line-then-nearest order, so a line
+/// holding a boundary and an error variant stubs the one `check` reported
+/// and never a seam of another kind. Without it every seam is tried in that
+/// order.
 fn resolve_at_location(
     root: &Path,
     config: &RiprConfig,
@@ -306,8 +307,8 @@ pub(crate) fn check_stub_route(
 
 /// A `ripr check` finding line is the changed line, which is not always a
 /// seam's own line. Candidates are the seams on that line, then the seams in
-/// the same function nearest first, those of seam kind `kind` ahead of the
-/// rest; the first one that yields a stub wins, and when none does, the
+/// the same function nearest first, only those of seam kind `kind` when it
+/// is given; the first one that yields a stub wins, and when none does, the
 /// first candidate's refusal names why.
 fn resolve_at(
     root: &Path,
@@ -364,13 +365,13 @@ fn resolve_at(
                 || span.is_some_and(|(start, end)| start <= seam_line && seam_line <= end)
         })
         .collect::<Vec<_>>();
-    candidates.sort_by_key(|candidate| {
-        let seam = candidate.seam();
-        (
-            kind.is_some_and(|kind| seam.kind() != kind),
-            seam.display_line().abs_diff(line),
-        )
-    });
+    // With `--kind`, only a seam of the finding's kind speaks for it:
+    // another kind's stub targets a different behavior (#6298) and its
+    // refusal names the wrong blocker.
+    if let Some(kind) = kind {
+        candidates.retain(|candidate| candidate.seam().kind() == kind);
+    }
+    candidates.sort_by_key(|candidate| candidate.seam().display_line().abs_diff(line));
     // A single-file parse lists every seam, not only the reported gaps, so
     // two disjoint seams of one kind that rank equally (`a > 10 && b > 20`)
     // cannot be told apart by `--at` and `--kind`. Picking the first could
@@ -416,11 +417,7 @@ fn resolve_at(
         if resolution.outcome.is_ok() {
             return Ok(resolution);
         }
-        // A refusal speaks for the finding only when its seam is of the
-        // finding's kind; another kind's refusal would name the wrong blocker.
-        if kind.is_none_or(|kind| candidate.seam().kind() == kind) {
-            first_refusal.get_or_insert(resolution);
-        }
+        first_refusal.get_or_insert(resolution);
     }
     if let Some(resolution) = first_refusal {
         return Ok(resolution);
@@ -438,6 +435,10 @@ fn resolve_at(
             )
         })
         .collect::<Vec<_>>();
+    let noun = match kind {
+        Some(kind) => format!("{} {noun}", kind.as_str()),
+        None => noun.to_string(),
+    };
     Err(TestStubError::NotFound(format!(
         "no {noun} is in the function at {file}:{line}; nearest: {}",
         listed.join(", ")
