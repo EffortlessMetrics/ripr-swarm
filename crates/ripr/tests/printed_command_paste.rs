@@ -887,7 +887,6 @@ const KNOWN_GAPS: &[KnownGap] = &[
     KnownGap {
         source: "relative-root:check",
         command: "ripr agent stub --root",
-        shells: GapShells::Every,
         explains: WRONG_ROOT,
         reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
     },
