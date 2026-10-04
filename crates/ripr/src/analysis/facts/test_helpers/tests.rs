@@ -195,6 +195,11 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
             "        let _later = async { check(10, false) };\n",
         ),
         (
+            "call only inside an uncalled nested fn in the test",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        fn _never() {\n            check(10, false);\n        }\n",
+        ),
+        (
             "use item in the helper body",
             "    fn check(x: u32, want: bool) {\n        use crate::other::gate;\n        assert_eq!(gate(x), want);\n    }\n",
             "        check(10, false);\n",
