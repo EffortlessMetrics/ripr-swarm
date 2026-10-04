@@ -124,19 +124,42 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // attempt ends its run as a `cancelled` terminal, which is terminal
     // for the projection, and the #2424 cold-cache retry is a new run
     // with its own stage clock.
+    // #5205: pilot ranks Rust seams only, so without Rust enabled it ranks
+    // nothing. Determine that BEFORE the inventory (Codex P1): the walk
+    // would analyze a disabled language for minutes, and on a large
+    // workspace it can exhaust the timeout and return through the timeout
+    // branch without ever emitting the exclusion. The bypassed report is
+    // exactly what the post-inventory filter produced (empty classified,
+    // no limit, no skips), so downstream artifacts are identical; only the
+    // wasted walk is gone. Preview-language work is unaffected: it runs
+    // its own checks below, outside the inventory.
+    let rust_enabled = config
+        .languages()
+        .enabled()
+        .contains(&crate::domain::LanguageId::Rust);
     let mut progress = pilot_progress_sink(options.quiet);
-    let mut analysis_result = run_pilot_analysis_with_timeout(options.timeout_ms, {
-        let root = analysis_root.clone();
-        let cfg = analysis_config.clone();
-        let sink = progress.as_ref().map(Arc::clone);
-        move || run_pilot_inventory(&root, &cfg, sink.as_ref())
-    })?;
+    let mut analysis_result = if rust_enabled {
+        run_pilot_analysis_with_timeout(options.timeout_ms, {
+            let root = analysis_root.clone();
+            let cfg = analysis_config.clone();
+            let sink = progress.as_ref().map(Arc::clone);
+            move || run_pilot_inventory(&root, &cfg, sink.as_ref())
+        })?
+    } else {
+        PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
+            classified: Vec::new(),
+            limit_info: None,
+            skipped_generated: Vec::new(),
+            naming_only_skips: Vec::new(),
+        })
+    };
 
     // Auto-retry at a higher budget when the default timeout fires and the
     // user did not pass an explicit --timeout-ms (#2424). A cold fact cache
     // on a multi-crate workspace can need ~155s; the 30s default is too low
     // for first-run. The retry gives a complete result on the first
-    // invocation — just slower.
+    // invocation — just slower. (A bypassed Rust-disabled run completes
+    // immediately and never reaches this branch.)
     if matches!(analysis_result, PilotAnalysisResult::TimedOut)
         && options.timeout_ms == DEFAULT_PILOT_TIMEOUT_MS
     {
@@ -155,7 +178,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         // retry budget, not the original default.
         // (context struct reads options.timeout_ms for the hint)
     }
-    let PilotAnalysisResult::Complete(mut report) = analysis_result else {
+    let PilotAnalysisResult::Complete(report) = analysis_result else {
         let context = output::pilot::PilotSummaryContext {
             root: &input.root,
             mode: &input.mode,
@@ -178,24 +201,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
 
-    // #5205: honor `[languages] enabled` like `check` does. Pilot ranks Rust
-    // seams only, so without Rust enabled it ranks nothing. Filter here —
-    // not in shared discovery — so check's repo paths are untouched; the
-    // inventory cache key already includes the config text, so cached and
-    // fresh reports filter identically.
-    let rust_enabled = config
-        .languages()
-        .enabled()
-        .contains(&crate::domain::LanguageId::Rust);
+    // #5205: the inventory was bypassed above when Rust is disabled, so a
+    // disabled run always arrives here with an empty report. Disclose only
+    // when the exclusion changed the result meaning: Rust files exist but
+    // were not analyzed.
     let rust_files = analysis::workspace_rust_files(&input.root);
-    if !rust_enabled {
-        report.classified.clear();
-        report.limit_info = None;
-        report.skipped_generated.clear();
-        report.naming_only_skips.clear();
-    }
-    // Disclose only when the exclusion changed the result meaning: Rust
-    // files exist but were not analyzed.
     let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
 
     // Apply the pilot artifact seam budget.  The inventory may already have

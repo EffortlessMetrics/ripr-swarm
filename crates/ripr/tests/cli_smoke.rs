@@ -12131,6 +12131,40 @@ fn pilot_excludes_rust_when_disabled_in_language_config() -> Result<(), String> 
             .is_some_and(serde_json::Value::is_null),
         "exclusion must null the snapshot follow-up: {summary}"
     );
+    // Codex P1: the exclusion must not depend on the inventory it skips.
+    // With Rust disabled, pilot bypasses the Rust walk entirely, so even a
+    // 1ms budget completes with the exclusion packet instead of timing out
+    // (pre-bypass, a large workspace could exhaust the timeout and return
+    // the timeout branch with no exclusion at all).
+    let impatient = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+        "--timeout-ms",
+        "1",
+    ]);
+    assert_success(&impatient);
+    let impatient_summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    assert_eq!(
+        impatient_summary
+            .pointer("/status")
+            .and_then(|v| v.as_str()),
+        Some("complete"),
+        "a bypassed run completes under any budget: {impatient_summary}"
+    );
+    assert_eq!(
+        impatient_summary
+            .pointer("/language_routes/rust_excluded_from_scope/file_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "{impatient_summary}"
+    );
     // Precondition guard: the fixture really holds a rankable Rust seam —
     // with the default config the same pilot run ranks it.
     std::fs::remove_file(root.join("ripr.toml")).map_err(|err| err.to_string())?;
