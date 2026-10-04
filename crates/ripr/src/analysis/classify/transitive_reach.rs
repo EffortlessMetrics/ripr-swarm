@@ -127,9 +127,6 @@ struct ReachGraph<'a> {
     /// tell `StringDecoder::decode` from `StringDecoderRange::decode`, so the
     /// walk follows all of them rather than whichever one was indexed first.
     by_name: HashMap<&'a str, Vec<&'a FunctionSummary>>,
-    /// Macro invocations in each function body, aligned with `by_name`.
-    /// Every macro sweep reads them, and they depend only on the body.
-    macro_invocations_by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>>,
     /// Callee name to the distinct production function names that call it,
     /// over non-macro call facts: the forward walk's edges, reversed.
     callers: HashMap<&'a str, Vec<&'a str>>,
@@ -137,14 +134,20 @@ struct ReachGraph<'a> {
     /// needs a definition whose body names the owner, so an owner no body
     /// names cannot have one.
     macro_bodies: Vec<&'a str>,
-    /// Macro invocations in each test body, in `all_tests` order. Every
-    /// macro sweep reads them, and they depend only on the body.
-    test_macro_invocations: Vec<Vec<MacroInvocation>>,
+    /// Built on the first macro sweep; see [`Self::macro_invocations`].
+    macro_invocations: OnceLock<MacroInvocations<'a>>,
     /// Per macro name: one entry per `macro_rules!` definition of that name,
     /// holding its body when it has one, as [`macro_definitions_named`]
     /// would find them. Built in one pass over every source, instead of one
     /// pass per owner and invoked macro name.
     macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>>,
+}
+
+struct MacroInvocations<'a> {
+    /// Per test, in `ReachGraph::all_tests` order.
+    tests: Vec<Vec<MacroInvocation>>,
+    /// Per production function, aligned with `ReachGraph::by_name`.
+    by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>>,
 }
 
 impl<'a> ReachGraph<'a> {
@@ -174,16 +177,6 @@ impl<'a> ReachGraph<'a> {
             names.sort_unstable();
             names.dedup();
         }
-        let macro_invocations_by_name = by_name
-            .iter()
-            .map(|(&name, functions)| {
-                let invocations = functions
-                    .iter()
-                    .map(|function| macro_invocations_in_text(&function.body, function.start_line))
-                    .collect();
-                (name, invocations)
-            })
-            .collect();
         let mut macro_bodies = Vec::new();
         let mut macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>> = HashMap::new();
         for file in index.files().values() {
@@ -193,19 +186,41 @@ impl<'a> ReachGraph<'a> {
                 &mut macro_definitions,
             );
         }
-        let test_macro_invocations = all_tests
-            .iter()
-            .map(|test| macro_invocations_in_text(&test.body, test.start_line))
-            .collect();
         Self {
             all_tests,
             by_name,
-            macro_invocations_by_name,
             callers,
             macro_bodies,
-            test_macro_invocations,
+            macro_invocations: OnceLock::new(),
             macro_definitions,
         }
+    }
+
+    /// Macro invocations in every test and production function body. Every
+    /// macro sweep reads them and they depend only on the bodies, so they are
+    /// built once, on the first sweep; a run that never reaches the macro
+    /// fallback does not pay for them.
+    fn macro_invocations(&self) -> &MacroInvocations<'a> {
+        self.macro_invocations.get_or_init(|| MacroInvocations {
+            tests: self
+                .all_tests
+                .iter()
+                .map(|test| macro_invocations_in_text(&test.body, test.start_line))
+                .collect(),
+            by_name: self
+                .by_name
+                .iter()
+                .map(|(&name, functions)| {
+                    let invocations = functions
+                        .iter()
+                        .map(|function| {
+                            macro_invocations_in_text(&function.body, function.start_line)
+                        })
+                        .collect();
+                    (name, invocations)
+                })
+                .collect(),
+        })
     }
 
     /// Whether `macro_name` has exactly one `macro_rules!` definition in the
@@ -436,7 +451,7 @@ fn macro_reach_witness_with(
     owner_name: &str,
 ) -> Option<MacroReachWitness> {
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
-    for (test, invocations) in graph.all_tests.iter().zip(&graph.test_macro_invocations) {
+    for (test, invocations) in graph.all_tests.iter().zip(&graph.macro_invocations().tests) {
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
         for macro_invocation in invocations {
@@ -734,7 +749,8 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
             }
             let graph = self.graph;
             let invocations = graph
-                .macro_invocations_by_name
+                .macro_invocations()
+                .by_name
                 .get(current_name)
                 .map_or(&[][..], Vec::as_slice);
             for (current_fn, fn_invocations) in self.resolve(current_name).iter().zip(invocations) {
@@ -1824,6 +1840,10 @@ mod tests {
              macro_rules! after { [] => [ inner() ] }",
             // Unbalanced body, then a nested same name after a closed one.
             "macro_rules! a { () => { macro_rules! a ( ) } }\nmacro_rules! a { ",
+            // A nested same name with no body, and a nested one whose `(`
+            // range runs past the outer body's end.
+            "macro_rules! b { macro_rules! b; }\nmacro_rules! b { inner() }",
+            "macro_rules! c { macro_rules! c ( } ) }\nmacro_rules! c { inner() }",
             "",
         ];
         for source in sources {
