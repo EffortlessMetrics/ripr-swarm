@@ -62,7 +62,7 @@ owner = "docs"
 surface = "docs"
 classification = "docs"
 reason = "Per-PR changelog fragments folded into CHANGELOG.md at the release cut."
-covered_by = ["cargo xtask check-doc-index"]
+covered_by = []
 
 [[allow]]
 glob = "CONTRIBUTING.md"

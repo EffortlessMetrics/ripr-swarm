@@ -19155,6 +19155,7 @@ fn is_docs_path(path: &str) -> bool {
         || path == "AGENTS.md"
         || path == "CONTRIBUTING.md"
         || path == "CHANGELOG.md"
+        || path.starts_with("changelog.d/")
         || path.starts_with("docs/")
         || is_plan_path(path)
 }

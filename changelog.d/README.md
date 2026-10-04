@@ -25,13 +25,13 @@ Allowed sections are the ones in `docs/CHANGELOG_POLICY.md`: `Added`,
 
 ## What this is not
 
-- Nothing enforces the format yet. Review checks that a PR which needs an
-  entry carries a fragment. The fold step below is manual.
+- Nothing enforces the format or the presence of a fragment. Reviewers check
+  that a PR which needs an entry carries one. The fold step below is manual.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.
 
 ## Fold at the release cut
 
 At the release cut, in the same step that resolves `CHANGELOG.md`, append each
-fragment's body under the matching `Unreleased` section in file-name order,
+fragment's body (every `*.md` here except this `README.md`) under the matching `Unreleased` section in file-name order,
 then delete the folded fragment files in that commit. The fold happens once, in
 the release-copy step, never inside an ordinary PR.

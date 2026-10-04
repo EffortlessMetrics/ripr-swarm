@@ -9,9 +9,9 @@ shared folder; this page is the rule set behind it.
 The thread that owns a PR merges it with a protected squash merge once:
 
 1. required CI is green on the current head;
-2. an exact-head review by a reviewer other than the author finds nothing
-   blocking (correctness, compiles against current `main`, refusals say why and
-   what to do next);
+2. `review-pr` on the exact published head returns `REVIEW_READY`, and a
+   reviewer separate from the author found nothing blocking (correctness,
+   compiles against current `main`, refusals say why and what to do next);
 3. review threads are resolved, or answered with source-backed evidence;
 4. `status.md` does not list an unresolved conflict or earlier PR for it.
 
