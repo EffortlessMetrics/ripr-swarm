@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- MCP durable attempt and receipt reads use the CLI's live Git HEAD
+  applicability. Admitted ordinary descendants keep continuation; historical
+  or unreadable HEADs suppress continuation and report stale or limited
+  actionable receipt status. Retained evidence and recorded finish admission
+  remain unchanged. Durable reads run off the async executor; supported stdio
+  request admission remains serialized through reply flush (#5399).
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal

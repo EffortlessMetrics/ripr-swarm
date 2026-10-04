@@ -214,6 +214,8 @@ impl McpServer {
     /// fallback can perform Git/filesystem reads on the blocking worker. A
     /// session clone evaluated later could mistake a superseded snapshot for
     /// the current one, so session transactions never take that path.
+    /// Public requests use BoundedTransport's admission gate through reply
+    /// flush; a queued refresh cannot enter while this read is outstanding.
     async fn repair_read_document(
         &self,
         id: &str,

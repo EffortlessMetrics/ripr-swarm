@@ -8,6 +8,26 @@ use crate::app::repair_attempt::{
 };
 use std::path::PathBuf;
 
+/// Own only an exclusively created test directory, including setup failures
+/// and assertion unwinds. Durable proof receipts live outside this fixture.
+struct FixtureRoot(PathBuf);
+
+impl std::ops::Deref for FixtureRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            eprintln!("remove freshness fixture {}: {error}", self.0.display());
+        }
+    }
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<(), String> {
     crate::testing::fixture_git::fixture_git_ok(root, args)
 }
@@ -25,13 +45,18 @@ fn snapshot(grip: &str) -> String {
     .to_string()
 }
 
-fn prepared(label: &str) -> Result<(PathBuf, RepairAttemptId), String> {
+fn prepared(label: &str) -> Result<(FixtureRoot, RepairAttemptId), String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("fixture clock: {error}"))?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("ripr-mcp-freshness-{label}-{stamp}"));
-    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-freshness-{label}-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    let root = FixtureRoot(root);
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
     git(&root, &["init"])?;
     git(
         &root,
@@ -179,78 +204,60 @@ fn with_unavailable_git<T>(
 #[test]
 fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), String> {
     let (root, id) = prepared("descendant")?;
-    let result = (|| {
-        let (before, _) = parity(&root, &id, "current")?;
-        assert!(before["next_command"].is_string());
-        assert_eq!(before["command_routes"].as_array().map(Vec::len), Some(2));
-        write(
-            &root.join("tests/target.rs"),
-            "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
-        )?;
-        git(&root, &["add", "tests/target.rs"])?;
-        git(&root, &["commit", "--no-gpg-sign", "-m", "focused edit"])?;
-        let (after, receipt) = parity(&root, &id, "current")?;
-        assert_eq!(after["next_command"], before["next_command"]);
-        assert_eq!(after["command_routes"], before["command_routes"]);
-        assert_eq!(receipt["status"], "awaiting_edit");
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    let (before, _) = parity(&root, &id, "current")?;
+    assert!(before["next_command"].is_string());
+    assert_eq!(before["command_routes"].as_array().map(Vec::len), Some(2));
+    write(
+        &root.join("tests/target.rs"),
+        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+    )?;
+    git(&root, &["add", "tests/target.rs"])?;
+    git(&root, &["commit", "--no-gpg-sign", "-m", "focused edit"])?;
+    let (after, receipt) = parity(&root, &id, "current")?;
+    assert_eq!(after["next_command"], before["next_command"]);
+    assert_eq!(after["command_routes"], before["command_routes"]);
+    assert_eq!(receipt["status"], "awaiting_edit");
+    Ok(())
 }
 
 #[test]
 fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt()
 -> Result<(), String> {
     let (root, id) = prepared("diverged")?;
-    let result = (|| {
-        let manifest_path = root.join(format!(
-            "target/ripr/repair-attempts/{}/attempt.json",
-            id.as_str()
-        ));
-        let bytes = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
-        git(&root, &["checkout", "--orphan", "other-history"])?;
-        git(&root, &["commit", "--no-gpg-sign", "-m", "unrelated root"])?;
-        let (attempt, receipt) = parity(&root, &id, "historical")?;
-        assert!(attempt["next_command"].is_null());
-        assert_eq!(attempt["command_routes"], json!([]));
-        assert_eq!(receipt["status"], "stale");
-        assert_eq!(receipt["attempt"]["state"], "awaiting_edit");
-        assert_eq!(
-            std::fs::read(&manifest_path).map_err(|error| error.to_string())?,
-            bytes
-        );
-        assert_eq!(parity(&root, &id, "historical")?, (attempt, receipt));
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    let manifest_path = root.join(format!(
+        "target/ripr/repair-attempts/{}/attempt.json",
+        id.as_str()
+    ));
+    let bytes = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
+    git(&root, &["checkout", "--orphan", "other-history"])?;
+    git(&root, &["commit", "--no-gpg-sign", "-m", "unrelated root"])?;
+    let (attempt, receipt) = parity(&root, &id, "historical")?;
+    assert!(attempt["next_command"].is_null());
+    assert_eq!(attempt["command_routes"], json!([]));
+    assert_eq!(receipt["status"], "stale");
+    assert_eq!(receipt["attempt"]["state"], "awaiting_edit");
+    assert_eq!(
+        std::fs::read(&manifest_path).map_err(|error| error.to_string())?,
+        bytes
+    );
+    assert_eq!(parity(&root, &id, "historical")?, (attempt, receipt));
+    Ok(())
 }
 
 #[test]
 fn durable_currentness_does_not_reuse_recorded_after_admission() -> Result<(), String> {
     let (root, id) = prepared("terminal")?;
-    let result = (|| {
-        finish_and_issue(&root, &id)?;
-        let before = receipt_document(&root, &id)?;
-        assert_eq!(before["status"], "improved");
-        assert_eq!(before["receipt"]["status"], "issued");
-        git(&root, &["add", "tests/target.rs"])?;
-        git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
-        let (_, receipt) = parity(&root, &id, "historical")?;
-        assert_eq!(receipt["currentness"]["after_current"], true);
-        assert_eq!(receipt["status"], "stale");
-        assert_eq!(receipt["receipt"], before["receipt"]);
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    finish_and_issue(&root, &id)?;
+    let before = receipt_document(&root, &id)?;
+    assert_eq!(before["status"], "improved");
+    assert_eq!(before["receipt"]["status"], "issued");
+    git(&root, &["add", "tests/target.rs"])?;
+    git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
+    let (_, receipt) = parity(&root, &id, "historical")?;
+    assert_eq!(receipt["currentness"]["after_current"], true);
+    assert_eq!(receipt["status"], "stale");
+    assert_eq!(receipt["receipt"], before["receipt"]);
+    Ok(())
 }
 
 fn finish_and_issue(root: &Path, id: &RepairAttemptId) -> Result<(), String> {
@@ -378,62 +385,44 @@ fn issue_terminal_receipt(root: &Path, id: &RepairAttemptId, packet: &Path) -> R
 #[test]
 fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(), String> {
     let (root, id) = prepared("issued-unknown")?;
-    let result = (|| {
-        finish_and_issue(&root, &id)?;
-        let before = receipt_document(&root, &id)?;
-        assert_eq!(before["status"], "improved");
-        let (_, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
-        assert_eq!(receipt["receipt"], before["receipt"]);
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    finish_and_issue(&root, &id)?;
+    let before = receipt_document(&root, &id)?;
+    assert_eq!(before["status"], "improved");
+    let (_, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
+    assert_eq!(receipt["receipt"], before["receipt"]);
+    Ok(())
 }
 
 #[test]
 fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head()
 -> Result<(), String> {
     let (root, id) = prepared("tampered")?;
-    let result = (|| {
-        finish_and_issue(&root, &id)?;
-        let before = receipt_document(&root, &id)?;
-        assert_eq!(before["receipt"]["status"], "issued");
-        let manifest = load_repair_attempt_manifest(&root, &id)?;
-        let verify = find_terminal_artifact_by_role(&manifest, "agent_verify")
-            .ok_or_else(|| "fixture lost retained verify".to_string())?;
-        // Deliberate negative corruption of this fixture only, never a new
-        // producer status or a replacement receipt.
-        write(&root.join(&verify.path), "{\"tampered\":true}")?;
-        git(&root, &["add", "tests/target.rs"])?;
-        git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
-        let receipt = WorkspaceSession::default()
-            .receipt_status_document(id.as_str(), Some(&root), None)
-            .map_err(|failure| failure.detail)?;
-        assert_eq!(receipt["status"], "invalid");
-        assert_eq!(receipt["receipt"]["status"], "unavailable");
-        assert_eq!(receipt["currentness"]["state"], "historical");
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    finish_and_issue(&root, &id)?;
+    let before = receipt_document(&root, &id)?;
+    assert_eq!(before["receipt"]["status"], "issued");
+    let manifest = load_repair_attempt_manifest(&root, &id)?;
+    let verify = find_terminal_artifact_by_role(&manifest, "agent_verify")
+        .ok_or_else(|| "fixture lost retained verify".to_string())?;
+    // Deliberate negative corruption of this fixture only, never a new
+    // producer status or a replacement receipt.
+    write(&root.join(&verify.path), "{\"tampered\":true}")?;
+    git(&root, &["add", "tests/target.rs"])?;
+    git(&root, &["commit", "--no-gpg-sign", "-m", "later head"])?;
+    let receipt = WorkspaceSession::default()
+        .receipt_status_document(id.as_str(), Some(&root), None)
+        .map_err(|failure| failure.detail)?;
+    assert_eq!(receipt["status"], "invalid");
+    assert_eq!(receipt["receipt"]["status"], "unavailable");
+    assert_eq!(receipt["currentness"]["state"], "historical");
+    Ok(())
 }
 
 #[test]
 fn durable_currentness_unknown_head_never_offers_continuation() -> Result<(), String> {
     let (root, id) = prepared("unknown")?;
-    let result = (|| {
-        let (attempt, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
-        assert!(attempt["next_command"].is_null());
-        assert_eq!(attempt["command_routes"], json!([]));
-        assert_eq!(receipt["status"], "limited");
-        Ok(())
-    })();
-    if result.is_ok() {
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-    }
-    result
+    let (attempt, receipt) = with_unavailable_git(&root, || parity(&root, &id, "unknown"))?;
+    assert!(attempt["next_command"].is_null());
+    assert_eq!(attempt["command_routes"], json!([]));
+    assert_eq!(receipt["status"], "limited");
+    Ok(())
 }

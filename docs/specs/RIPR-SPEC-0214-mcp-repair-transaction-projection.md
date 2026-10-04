@@ -111,7 +111,11 @@ read-only and without execution authority (ADR 0022):
   `ripr_prepare_repair` fails with `no_snapshot`; the two reads route
   through the durable store and fail with `attempt_not_found`. During an
   attempt the tools report `analysis_in_flight`. An unknown item fails with
-  `item_not_found`; an unknown attempt or receipt identity fails with
+  `item_not_found`. The supported stdio transport admits one request through
+  its reply flush, so a refresh queued behind a durable read cannot begin
+  during that read. The session guard is evaluated at read admission; this
+  slice adds no concurrent public transport or response-time lease. An
+  unknown attempt or receipt identity fails with
   `attempt_not_found`; a durable manifest that fails canonical validation
   fails with `attempt_invalid`; a session transaction bound to a snapshot
   that is no longer current fails with the reserved `superseded` state and
