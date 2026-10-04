@@ -956,6 +956,11 @@ mod tests {
 
     #[test]
     fn missing_producer_facts_never_create_a_misleading_attempt() -> Result<(), String> {
+        // #5268: no canonical gap and no producer-named missing discriminator
+        // is the unpopulated-language-producer state, so the negative
+        // document must name that condition (the same evaluation the gap
+        // document's readiness block serves), never claim the producer failed
+        // to establish a discriminator its own availability block contradicts.
         let mut no_discriminator = super::super::gaps::test_finding()?;
         no_discriminator.canonical_gap = None;
         let mut session = session_with(&[no_discriminator], "root:sha256:a")?;
@@ -977,12 +982,42 @@ mod tests {
         if document
             .pointer("/ineligibility/reason")
             .and_then(Value::as_str)
-            != Some("missing_discriminator")
+            != Some("discriminator_not_populated_for_language")
         {
             return Err(format!("ineligibility lost its typed reason: {document}"));
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+        // The unpopulated state must not swallow the honest actionable
+        // refusal: a producer that names the missing discriminator still
+        // answers `missing_discriminator`.
+        let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.canonical_gap = None;
+        named_missing.activation.missing_discriminators.push(
+            crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            },
+        );
+        let mut session = session_with(&[named_missing], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("missing_discriminator")
+        {
+            return Err(format!(
+                "a producer-named missing discriminator must stay the typed refusal: {document}"
+            ));
         }
         Ok(())
     }
