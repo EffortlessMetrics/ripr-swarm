@@ -175,7 +175,7 @@ fn mutant_drift_names_each_way_a_label_can_be_wrong() {
         )
         .is_empty()
     );
-    // A surviving mutant labeled as killed.
+    // A mutant the tests pass, labeled as failing them.
     let drift = mutant_drift(
         id,
         "m",
@@ -188,7 +188,7 @@ fn mutant_drift_names_each_way_a_label_can_be_wrong() {
             .iter()
             .any(|d| d.contains("labeled tests_failed but the tests pass"))
     );
-    // A killed mutant labeled as surviving.
+    // A mutant the tests fail, labeled as passing them.
     let drift = mutant_drift(
         id,
         "m",
@@ -201,7 +201,7 @@ fn mutant_drift_names_each_way_a_label_can_be_wrong() {
             .iter()
             .any(|d| d.contains("labeled tests_passed but the tests fail"))
     );
-    // Killed, but by a different test than the label names.
+    // Failing, but in a different test than the label names.
     let drift = mutant_drift(
         id,
         "m",
