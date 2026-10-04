@@ -164,9 +164,10 @@ they are read through their sub-pattern.
 3. **Pattern assertions follow their pattern.** At steps 0 and 5, a `matches!`
    or `assert_matches!` whose whole pattern is a guarded `_` or a catch-all
    binding assigns `relational_check` / weak; the wildcard pre-check already
-   covers an unguarded `_`. A constructor pattern whose only content is
-   wildcards (`Some(_)`, `Ok(_)`, `Ok(..)`), and `None`, assign `smoke_only` /
-   smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
+   covers an unguarded `_`. A constructor pattern whose every payload
+   sub-pattern is `_`, `..` or a catch-all binding (`Some(_)`, `Ok(..)`,
+   `Some(ref x)`, `Ok(mut x)`, `Ok(x @ _)`), and `None`, assign
+   `smoke_only` / smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
    with a guard they assign `relational_check` / weak. Any other pattern stays
    `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
@@ -265,6 +266,9 @@ rejected alternative. Any can be reversed later without touching the rest.
     and `Err(e @ _)`: `broad_error` / weak.
 22. `assert!(matches!(check(20), Err(e @ E::Bad)))`: `exact_error_variant` /
     strong (unchanged).
+23. `assert!(matches!(lookup(1), Some(ref x)))` and `Ok(x @ _)`:
+    `smoke_only` / smoke (today `exact_value` / strong);
+    `assert!(matches!(lookup(1), Some(x @ 3)))` stays `exact_value`.
 
 ## Test Mapping
 

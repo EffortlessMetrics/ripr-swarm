@@ -131,7 +131,7 @@ shapes is a defect.
 A result-side oracle on an input that does not sit where the side flips
 (`check(300).is_err()` for the guard above) reads at most `weakly_exposed`.
 
-### Rule 3: side flips (proposal)
+### Rule 3: side flips
 
 A result-side oracle confirms a change when all of these hold:
 
@@ -149,6 +149,25 @@ A result-side oracle confirms a change when all of these hold:
 Then discrimination is confirmed and the finding may read `exposed`. When
 the input is unresolved or the side flip cannot be established, rule 2
 applies.
+
+### Rule 3b: `?` side flips
+
+Decision 3 extends rule 3 to an added or removed `?`. A result-side oracle
+confirms that change when all of these hold:
+
+1. the change adds or removes a `?` on one call `c` in the owner (for
+   example `digit(ch)?` from `digit(ch).unwrap_or(0)`);
+2. the same test calls the owner with a resolved input that reaches that
+   line with no earlier `return`, `?` or panic on that path, and for which
+   `c` provably returns `Err`;
+3. on that input the version without the `?` continues and provably returns
+   the other side (`Ok`), with no later `return`, `?` or panic that could
+   return `Err` either way;
+4. the oracle on that call observes the side.
+
+When any condition is not established, RIPR-SPEC-0107 applies and the
+finding stays `weakly_exposed`. A control where `c` returns `Ok` on the test
+input never confirms (example 12).
 
 ### Rule 4: variant oracles bind to the owner and the variant
 
@@ -191,9 +210,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    same way a guard does, but a `?` line is an `error_path` probe, and
    RIPR-SPEC-0107 says a broad oracle never confirms `error_path`.
    Adopted: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
-   input provably reaches the `?` call's `Err`, the original and changed
-   code provably return different sides on that input, and rule 3's path
-   conditions hold, because then the side alone tells the original from the
+   input provably reaches the `?` call's `Err` and the original and changed
+   code provably return different sides on that input (rule 3b), because then the side alone tells the original from the
    change; when any of these is not established, RIPR-SPEC-0107 still
    applies. RIPR-SPEC-0107 records this exception. Rejected: leave `?`
    under RIPR-SPEC-0107 (always weak with a broad oracle).
@@ -239,7 +257,7 @@ Source: `check` as in Problem.
    `weakly_exposed`.
 9. `let d = digit(c)?;` changed from `let d = digit(c).unwrap_or(0);` in
    `total`, where `digit('x')` returns `Err` and the original `total("x")`
-   returned `Ok`, test `assert!(total("x").is_err())`: `exposed` (decision 3;
+   returned `Ok`, test `assert!(total("x").is_err())`: `exposed` (rule 3b;
    `weakly_exposed` under RIPR-SPEC-0107 before this spec).
 10. `withdraw` changed to return `Err(PayError::Frozen)`; the only related
     test pinning a variant is `assert!(matches!(refund(20_000), Err(PayError::Limit)))`
@@ -247,6 +265,12 @@ Source: `check` as in Problem.
 11. `parse_amount` changed to return `Err(ParseError::TooLong)`; related tests
     pin `Err(ParseError::Empty)` and `Err(ParseError::BadDigit('x'))` and one
     asserts `is_err()` on a too-long input: `weakly_exposed` (rules 1 and 4).
+12. Same change as example 9, test `assert!(total("7").is_ok())`, where
+    `digit('7')` returns `Ok`: `weakly_exposed` (rule 3b condition 2 fails;
+    both versions return `Ok`).
+13. Same change as example 9, test `assert!(total("x").is_err())`, where
+    `total` already returned `Err` for `"x"` through an earlier `?`:
+    `weakly_exposed` (rule 3b condition 2 fails).
 
 ## Test Mapping
 
