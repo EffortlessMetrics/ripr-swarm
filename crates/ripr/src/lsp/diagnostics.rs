@@ -118,21 +118,32 @@ pub(super) fn canonicalize_diagnostic_batches(
 /// the CLI/report alignment layer. Findings without that identity remain
 /// individual report items; LSP must not invent a semantic grouping key.
 pub(super) fn canonical_finding_groups(findings: &[Finding]) -> Vec<(Finding, Vec<Finding>)> {
-    let mut grouped = BTreeMap::<String, Vec<Finding>>::new();
+    canonical_group_members(findings)
+        .into_iter()
+        .map(|(primary, members)| (primary.clone(), members.into_iter().cloned().collect()))
+        .collect()
+}
+
+/// Borrowing form of [`canonical_finding_groups`]: the same grouping key,
+/// primary selection, and ordering without cloning the findings, so count
+/// and class summaries can read the same group structure the listing and
+/// publishing paths see.
+pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Vec<&Finding>)> {
+    let mut grouped = BTreeMap::<String, Vec<&Finding>>::new();
     for finding in findings {
         let key = finding
             .canonical_gap
             .as_ref()
             .map(|gap| format!("canonical:{}", gap.id))
             .unwrap_or_else(|| format!("raw:{}", finding.id));
-        grouped.entry(key).or_default().push(finding.clone());
+        grouped.entry(key).or_default().push(finding);
     }
 
     grouped
         .into_values()
         .filter_map(|mut group| {
-            group.sort_by_key(finding_primary_sort_key);
-            let primary = group.first().cloned()?;
+            group.sort_by_key(|finding| finding_primary_sort_key(finding));
+            let primary = *group.first()?;
             Some((primary, group))
         })
         .collect()
@@ -204,6 +215,11 @@ pub(super) fn add_canonical_group_data(
                         "line": test.line,
                         "oracle_kind": test.oracle_kind.as_str(),
                         "oracle_strength": test.oracle_strength.as_str(),
+                        "miss": test.miss.map(|miss| miss.as_str()),
+                        "why": crate::output::related_test_miss::related_test_miss_reason(
+                            test,
+                            &finding.activation.missing_discriminators,
+                        ),
                     }))
                     .collect::<Vec<_>>(),
                 "evidence": finding.evidence,
@@ -2593,6 +2609,60 @@ fn related_information_for_finding(
     root: &Path,
     finding: &Finding,
 ) -> Option<Vec<DiagnosticRelatedInformation>> {
+    let mut related = fix_site_related_information(root, finding)
+        .into_iter()
+        .collect::<Vec<_>>();
+    related.extend(examined_test_related_information(root, finding));
+    (!related.is_empty()).then_some(related)
+}
+
+/// Editor rows for the first examined tests that miss the change (#5344), so
+/// a click opens the test the finding is about and the message says why it
+/// does not catch the change.
+const MAX_EXAMINED_TEST_ROWS: usize = 3;
+
+fn examined_test_related_information(
+    root: &Path,
+    finding: &Finding,
+) -> Vec<DiagnosticRelatedInformation> {
+    let mut seen = Vec::new();
+    finding
+        .related_tests
+        .iter()
+        // One row per test: a test with several assertion rows is one place
+        // to open.
+        .filter(|test| {
+            let key = (&test.name, &test.file, test.line);
+            let fresh = !seen.contains(&key);
+            if fresh {
+                seen.push(key);
+            }
+            fresh
+        })
+        .filter_map(|test| {
+            let why = crate::output::related_test_miss::related_test_miss_reason(
+                test,
+                &finding.activation.missing_discriminators,
+            )?;
+            let uri = file_uri_for_path(&absolute_join(root, &test.file)).ok()?;
+            Some(DiagnosticRelatedInformation {
+                location: Location {
+                    uri,
+                    range: crate::lsp::position::line_span_range(
+                        test.line.saturating_sub(1) as u32,
+                    ),
+                },
+                message: format!("Related test `{}` misses: {why}", test.name),
+            })
+        })
+        .take(MAX_EXAMINED_TEST_ROWS)
+        .collect()
+}
+
+fn fix_site_related_information(
+    root: &Path,
+    finding: &Finding,
+) -> Option<DiagnosticRelatedInformation> {
     let witness = DiagnosticWitness::from_finding(finding)?;
     let fix_site = witness.fix_site.as_ref()?;
     let path = absolute_join(root, Path::new(&fix_site.file));
@@ -2606,7 +2676,7 @@ fn related_information_for_finding(
         .current_oracle
         .as_deref()
         .map_or_else(String::new, |oracle| format!(": {oracle}"));
-    Some(vec![DiagnosticRelatedInformation {
+    Some(DiagnosticRelatedInformation {
         location: Location {
             uri,
             range: crate::lsp::position::line_span_range(line),
@@ -2615,7 +2685,7 @@ fn related_information_for_finding(
             "Fix site: related test `{}` has {} {} oracle{}",
             fix_site.test_name, fix_site.oracle_strength, fix_site.oracle_kind, oracle
         ),
-    }])
+    })
 }
 
 #[cfg(test)]
@@ -3891,6 +3961,7 @@ mod seam_diagnostic_tests {
             oracle_strength: crate::domain::OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -3908,6 +3979,7 @@ mod seam_diagnostic_tests {
             oracle_strength: crate::domain::OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -4218,6 +4290,7 @@ mod diagnostic_policy_tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -4269,6 +4342,7 @@ mod diagnostic_policy_tests {
                 oracle_strength: OracleStrength::Strong,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             });
             finding
         };
@@ -5012,6 +5086,7 @@ mod lsp_next_step_parity_tests {
                 oracle: Some("expect(result).toBeGreaterThan(50)".to_string()),
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
