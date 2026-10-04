@@ -228,8 +228,17 @@ fn prepare_out_dir(out: &Path) -> Result<(), String> {
 /// directory, because every step runs elsewhere and a relative path would
 /// otherwise fail as "No such file or directory" from the wrong directory.
 fn resolve_ripr(ripr: &str) -> Result<String, String> {
-    if ripr.contains('/') || (cfg!(windows) && ripr.contains('\\')) {
-        Ok(absolute(Path::new(ripr))?.display().to_string())
+    let path = Path::new(ripr);
+    // A Windows drive-relative name such as `C:ripr.exe` has no separator but
+    // is still not a bare command, so a path prefix also counts as a path.
+    let has_prefix = matches!(
+        path.components().next(),
+        Some(std::path::Component::Prefix(_))
+    );
+    if ripr.contains('/') || (cfg!(windows) && (ripr.contains('\\') || has_prefix)) {
+        std::path::absolute(path)
+            .map(|resolved| resolved.display().to_string())
+            .map_err(|err| format!("failed to resolve --ripr path {ripr}: {err}"))
     } else {
         Ok(ripr.to_string())
     }
