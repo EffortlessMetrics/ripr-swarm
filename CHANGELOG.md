@@ -9,6 +9,16 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- MCP wire names unified on `canonical_id` (same spelling the evidence
+  documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
+  `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
+  resource templates are `ripr://gap/{canonical_id}` and
+  `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
+  `resources/list` adapt automatically; in-flight callers passing `gap_id`
+  get `invalid params` (#5209).
+
 ### Fixed
 
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
