@@ -206,10 +206,36 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     crate::write_report("dx-scoreboard.md", &render_markdown(&report))?;
     println!("Wrote target/ripr/reports/dx-scoreboard.json");
     println!("Wrote target/ripr/reports/dx-scoreboard.md");
+    publish_to_actions(&json_text, &render_markdown(&report))?;
     if options.gate && report["gate"]["status"].as_str() == Some("fail") {
         return Err(gate_failure_message(&report));
     }
     Ok(())
+}
+
+/// On GitHub Actions the report also goes to the run summary and, in a
+/// collapsed group, to the job log. Artifacts are not reachable from every
+/// reader, and a hosted-runner baseline is rebuilt from this JSON.
+fn publish_to_actions(json_text: &str, markdown: &str) -> Result<(), String> {
+    let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
+        return Ok(());
+    };
+    append_step_summary(Path::new(&summary), markdown)?;
+    println!("::group::dx-scoreboard.json");
+    println!("{json_text}");
+    println!("::endgroup::");
+    Ok(())
+}
+
+pub(crate) fn append_step_summary(path: &Path, markdown: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| format!("open step summary {}: {err}", path.display()))?;
+    file.write_all(markdown.as_bytes())
+        .map_err(|err| format!("write step summary {}: {err}", path.display()))
 }
 
 /// A baseline must be an earlier dx-scoreboard report; any other JSON would
