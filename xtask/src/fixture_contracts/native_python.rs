@@ -261,12 +261,17 @@ fn validate_row(row: &Value) -> Result<(), String> {
     for id in ids {
         let class = id["classname"].as_str().unwrap_or_default();
         let name = id["name"].as_str().unwrap_or_default();
+        let needle = format!(
+            "classname=\"{}\" name=\"{}\"",
+            xml_attribute(class),
+            xml_attribute(name)
+        );
         if !subjects.insert((class, name))
             || !class.starts_with("tests.test_itsdangerous.test_timed.")
             || !name.starts_with("test_")
-            || !xml.contains(&format!("classname=\"{class}\" name=\"{name}\""))
+            || !xml.contains(&needle)
         {
-            return Err("wrong native subject identity".to_string());
+            return Err(format!("wrong native subject identity: {class}/{name}"));
         }
         if tests <= 2 && class != "tests.test_itsdangerous.test_timed.TestTimestampSigner" {
             return Err("native control selected the wrong upstream class".to_string());
@@ -277,7 +282,6 @@ fn validate_row(row: &Value) -> Result<(), String> {
         if suppressed && id["reason"] != "pytest.xfail" {
             return Err("suppressed assertion must remain an expected failure".to_string());
         }
-        let needle = format!("classname=\"{class}\" name=\"{name}\"");
         let start = xml.find(&needle).ok_or("missing native test identity")?;
         let rest = &xml[start..];
         let case = rest.split("<testcase ").next().unwrap_or(rest);
@@ -304,6 +308,19 @@ fn validate_row(row: &Value) -> Result<(), String> {
     Ok(())
 }
 
+// The receipt stores decoded subjects alongside the retained pytest JUnit XML.
+// Bind identities to that XML's double-quoted attribute serialization.
+fn xml_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\t', "&#09;")
+        .replace('\n', "&#10;")
+        .replace('\r', "&#13;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +329,41 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/python-real-repo-evals/itsdangerous-future-age");
         validate_itsdangerous(&root)
+    }
+    #[test]
+    fn parameterized_junit_names_bind_to_decoded_subjects() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/python-real-repo-evals/itsdangerous-future-age");
+        let receipt = read_json(&root.join("evidence/native.json"))?;
+        let row = receipt["rows"]
+            .as_array()
+            .ok_or("missing native rows")?
+            .iter()
+            .find(|row| row["variant"] == "full-file")
+            .ok_or("missing native full-file row")?;
+        validate_row(row)?;
+        let mut changed = row.clone();
+        let subject = changed["test_ids"]
+            .as_array_mut()
+            .ok_or("missing native subjects")?
+            .iter_mut()
+            .find(|id| {
+                id["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains("<lambda>"))
+            })
+            .ok_or("missing upstream parameterized subject")?;
+        subject["name"] = serde_json::json!(
+            subject["name"]
+                .as_str()
+                .ok_or("missing subject name")?
+                .replace('<', "&lt;")
+        );
+        assert!(
+            validate_row(&changed).is_err(),
+            "encoded text is a different decoded subject"
+        );
+        Ok(())
     }
     #[test]
     fn zero_setup_error_wrong_subject_and_suppressed_failure_are_not_passes() -> Result<(), String>
