@@ -7,15 +7,16 @@ mod bun;
 mod candidate_control;
 mod ci_budget;
 mod dogfood;
+mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
 mod eval_sweep_report;
 mod first_pr;
 mod fixtures;
-mod impacted_evidence;
 mod index;
 mod issue_intake;
+mod issue_lifecycle;
 mod lsp;
 mod lsp_performance;
 mod merge_queue;
@@ -50,6 +51,7 @@ mod review_comments;
 mod rust_corpus;
 mod rust_repair_trust;
 mod sarif;
+mod scale_cliff;
 mod seam_inventory_scaling;
 mod source_promotion;
 mod spec_maintenance;
@@ -57,6 +59,7 @@ mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod verdict_corpus;
 
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
@@ -98,6 +101,7 @@ pub(crate) use blind_journey_execute::{
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
+pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
@@ -113,9 +117,11 @@ pub(crate) use fixtures::{
     json_string_values_for_key, next_pending_heading, normalize_golden_text, parse_reason,
     run_fixture, run_fixture_outputs, validate_bless_reason,
 };
-pub(crate) use impacted_evidence::impacted_evidence;
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
+pub(crate) use issue_lifecycle::{
+    assess_issue_lifecycle_fixture_corpus, issue_lifecycle_scorecard_report,
+};
 pub(crate) use lsp::lsp_cockpit_report;
 pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
@@ -162,6 +168,7 @@ pub(crate) use sarif::{
     build_sarif_policy_report, parse_sarif_policy_args, parse_sarif_policy_results,
     sarif_policy_report_json, sarif_policy_report_markdown,
 };
+pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
@@ -176,6 +183,7 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use verdict_corpus::verdict_corpus;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

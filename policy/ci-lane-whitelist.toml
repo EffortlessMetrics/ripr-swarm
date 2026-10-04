@@ -26,6 +26,10 @@ id = "release-readiness"
 paths = ["target/package/", "editors/vscode/dist/*.vsix", "dist/ripr-server-*", "dist/ripr-server-manifest-*.json"]
 
 [[artifact_family]]
+id = "dx-scoreboard"
+paths = ["target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
+
+[[artifact_family]]
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
@@ -128,6 +132,16 @@ commands = ["cargo xtask badges"]
 estimated_lem = 5
 artifact_families = ["public-badge-endpoints"]
 description = "Generated public badge endpoint refresh, bounded so stale badge generation does not occupy main CI indefinitely."
+
+[[lane]]
+id = "dx-scoreboard"
+posture = "advisory"
+workflow = ".github/workflows/dx-scoreboard.yml"
+jobs = ["scoreboard"]
+commands = ["cargo xtask dx-scoreboard --clone --include-heavy --baseline metrics/dx-scoreboard/baseline.json --gate"]
+estimated_lem = 40
+artifact_families = ["dx-scoreboard"]
+description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks."
 
 [[lane]]
 id = "vscode-compile"
@@ -238,6 +252,16 @@ commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifac
 estimated_lem = 30
 artifact_families = []
 description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 an always-on subset job (windows-advisory-subset) also runs a fast gap_artifacts/cache-warning/Windows-clippy filter on every subscribed pull_request action (opened, synchronize, reopened, labeled) with no labels required, advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+
+[[lane]]
+id = "printed-command-paste"
+posture = "advisory"
+workflow = ".github/workflows/printed-command-paste.yml"
+jobs = ["paste"]
+commands = ["cargo test -p ripr --test printed_command_paste"]
+estimated_lem = 18
+artifact_families = []
+description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly, on pull requests touching ripr source or the harness, and on dispatch. A shell the platform should provide but lacks fails the job."
 
 [[lane]]
 id = "future-clippy"
