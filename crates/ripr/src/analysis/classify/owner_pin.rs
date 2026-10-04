@@ -48,7 +48,7 @@ use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, trusted_macro_binding_sites,
+    owner_pin_assertions, returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -629,6 +629,8 @@ enum ReturnPathGate {
     Any,
     /// The pinned value must start with this constructor.
     Head(&'static str),
+    /// The pinned value must be exactly this unit variant (`None`).
+    Exact(&'static str),
 }
 
 impl OwnerReturnPin {
@@ -759,14 +761,27 @@ impl OwnerReturnPin {
                     receivers,
                     trait_scope,
                 },
-                CallShape::Method(receiver),
+                CallShape::Method(_) | CallShape::Constructed(_),
             ) => {
-                if bound_by_macro(&masked_body, receiver) {
-                    return false;
-                }
-                let Some(receiver_type) =
-                    test_receiver_type(test, receiver, test_source, index, imports_foreign)
-                else {
+                let receiver_type = match call {
+                    CallShape::Method(receiver) => {
+                        if bound_by_macro(&masked_body, receiver) {
+                            return false;
+                        }
+                        test_receiver_type(test, receiver, test_source, index, imports_foreign)
+                    }
+                    // An inline constructor types the receiver the same way
+                    // a `let receiver = Type::constructor(..);` binding does.
+                    CallShape::Constructed(receiver) => binding_type(
+                        &format!("= {receiver}"),
+                        test,
+                        test_source,
+                        index,
+                        imports_foreign,
+                    ),
+                    CallShape::Bare => None,
+                };
+                let Some(receiver_type) = receiver_type else {
                     return false;
                 };
                 if !receivers.contains(&receiver_type) {
@@ -813,6 +828,7 @@ impl ReturnPathGate {
         match self {
             Self::Any => true,
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::Exact(value) => expected.trim() == *value,
         }
     }
 }
@@ -821,12 +837,23 @@ impl ReturnPathGate {
 enum CallShape<'a> {
     Bare,
     Method(&'a str),
+    /// `Type::constructor(..).name(..)`: the receiver is built inline.
+    Constructed(&'a str),
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     let operand = operand.trim();
+    if let Some(receiver) = constructed_receiver(operand, name) {
+        let call_start = receiver.len() + 1;
+        let masked = mask_comments_and_strings(operand);
+        let closing = matching_close(&masked, call_start + name.len(), b'(', b')')?;
+        return operand[closing + 1..]
+            .trim()
+            .is_empty()
+            .then_some(CallShape::Constructed(receiver));
+    }
     let call_start = if operand.starts_with(name) {
         0
     } else {
@@ -855,6 +882,32 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// The receiver of `Type::constructor(..).name(` when `operand` starts with
+/// one associated-function call on a capitalized type path and the method
+/// call follows it directly.
+fn constructed_receiver<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
+    let separator = operand.find("::")?;
+    let type_name = &operand[..separator];
+    if !is_plain_identifier(type_name)
+        || !type_name.starts_with(|character: char| character.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let call = &operand[separator + 2..];
+    let call_end =
+        call.find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))?;
+    if call_end == 0 || !call[call_end..].starts_with('(') {
+        return None;
+    }
+    let opening = separator + 2 + call_end;
+    let masked = mask_comments_and_strings(operand);
+    let closing = matching_close(&masked, opening, b'(', b')')?;
+    let after = &operand[closing + 1..];
+    let method = after.strip_prefix('.')?;
+    (method.starts_with(name) && method[name.len()..].starts_with('('))
+        .then_some(&operand[..=closing])
 }
 
 /// The span of `head(..)` when `text` is exactly one `head(..)` call.
@@ -908,7 +961,10 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
                 && spans_changed_line(start, end)
         });
     if !tail_is_changed && !final_return_is_changed {
-        return None;
+        if has_unbounded_macro(inner) {
+            return None;
+        }
+        return early_return_gate(body, inner, inner_text, &changed, &spans_changed_line);
     }
     if has_unbounded_macro(inner) || evaluates_conditionally(&mask_comments_and_strings(changed)) {
         return None;
@@ -941,6 +997,53 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
             || starts_with_word(inner[offset + "return".len()..].trim_start(), other)
     });
     returns_agree.then_some(ReturnPathGate::Head(head))
+}
+
+/// An early `return None;` / `return Err(..);` is the only source of that
+/// value when every other exit builds the opposite constructor: each other
+/// `return` and the tail are one `Some(..)` / `Ok(..)` call, and no `?` can
+/// produce a second `None` / `Err`. A pin expecting that value then observes
+/// the changed return. A second return of the same value, a `?`, or any
+/// other exit shape leaves the source ambiguous.
+fn early_return_gate(
+    body: &str,
+    inner: &str,
+    inner_text: &str,
+    changed: &str,
+    spans_changed_line: &dyn Fn(usize, usize) -> bool,
+) -> Option<ReturnPathGate> {
+    let (gate, other, head) = if changed == "None" {
+        (ReturnPathGate::Exact("None"), "None", "Some")
+    } else if constructor_call_span(changed, "Err").is_some() {
+        (ReturnPathGate::Head("Err"), "Err", "Ok")
+    } else {
+        return None;
+    };
+    if inner.contains('?') || !returns_leave_the_function(body) {
+        return None;
+    }
+    let mut changed_returns = 0usize;
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if starts_with_word(value, other) {
+            if value != changed || !spans_changed_line(offset, value_end) {
+                return None;
+            }
+            changed_returns += 1;
+        } else if constructor_call_span(value, head).is_none() {
+            return None;
+        }
+    }
+    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
+    let tail = tail.trim();
+    // The tail must itself build the opposite constructor: an empty tail
+    // after a trailing `if .. { .. } else { None }` hides a second source.
+    let tail_builds_head = constructor_call_span(tail, head).is_some();
+    (changed_returns == 1 && tail_builds_head).then_some(gate)
 }
 
 /// Whether `text` starts with the whole word `word`.
