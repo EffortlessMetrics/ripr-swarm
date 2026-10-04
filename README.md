@@ -106,6 +106,13 @@ shown above, `--worktree`, and the repair steps below need a development build:
 cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
 ```
 
+This compiles from source: about 11 minutes on one cold Linux container in
+October 2026 (`cargo install ripr` for 0.10.0 took about 2 minutes there). Every
+`ripr` command after that takes under 3 seconds. There is no prebuilt 0.11
+download until 0.11.0 is published; the
+[first-run scoreboard](benchmarks/dx_scoreboard/README.md) tracks the install
+time so a rise shows.
+
 <a id="start-from-the-surface-you-already-use"></a>
 
 ## What you get

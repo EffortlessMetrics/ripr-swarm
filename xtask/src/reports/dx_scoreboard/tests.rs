@@ -482,7 +482,7 @@ fn first_run_receipt(with_install: bool) -> Value {
 fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(), String> {
     let config = parse_config(&MINIMAL.replace(
         "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
     ))?;
     let samples = parse_ingest(&first_run_receipt(true), &config)?;
     let find = |metric: &str, repo: Option<&str>| {
@@ -500,6 +500,10 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Incomplete(130.0))
     );
     assert_eq!(
+        find("first_run.install_seconds", None),
+        Some(SampleOutcome::Value(128.0))
+    );
+    assert_eq!(
         find("first_run.friction_events", None),
         Some(SampleOutcome::Value(2.0))
     );
@@ -513,7 +517,8 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
     assert!(
         !samples
             .iter()
-            .any(|s| s.metric == "first_run.time_to_first_useful_result_s")
+            .any(|s| s.metric == "first_run.time_to_first_useful_result_s"
+                || s.metric == "first_run.install_seconds")
     );
     Ok(())
 }
@@ -621,6 +626,11 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     let first = &get("first_run.time_to_first_useful_result_s")[0];
     assert_eq!(first["value"], json!(52.5));
     assert_eq!(first["completed"], json!(true));
+    // The install alone is its own row, so a slower compile regresses it even
+    // when the walk after it stays fast.
+    let install = &get("first_run.install_seconds")[0];
+    assert_eq!(install["value"], json!(40.0));
+    assert_eq!(install["completed"], json!(true));
     assert!(
         parse_ingest_text("{\"schema\":\"other\"}\nnot json")
             .is_err_and(|err| err.contains("line 1"))

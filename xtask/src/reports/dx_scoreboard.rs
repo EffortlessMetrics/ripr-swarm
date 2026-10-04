@@ -593,6 +593,9 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
             "completed": reached,
         }));
     }
+    if let Some(install) = install_secs {
+        rows.push(json!({"id": "first_run.install_seconds", "value": install}));
+    }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
     Ok(json!({
@@ -621,6 +624,8 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
 /// - unknown verdicts: `verdict` rows of an `*_unknown` class. The verdict
 ///   list is the sample detail, so a change is listed for review and does not
 ///   fail the gate;
+/// - install seconds: the timed install steps in `_setup`, gated against the
+///   baseline so a slower compile or download is a regression on its own;
 /// - time to first useful result per case: install plus every step through
 ///   the first `check` that exited 0, only when the walk timed an install.
 ///
@@ -765,6 +770,15 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         json!({"id": "first_run.friction_events", "value": friction}),
         json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}),
     ];
+    if let Some(install) = install {
+        // The install alone, so a slower compile is visible even when the
+        // walk after it stays fast.
+        out.push(json!({
+            "id": "first_run.install_seconds",
+            "value": install,
+            "completed": install_timed,
+        }));
+    }
     for case in &cases {
         let mine: Vec<&Step> = steps.iter().filter(|s| &s.case == case).collect();
         // A step without a `secs` row has no duration; summing it as zero
