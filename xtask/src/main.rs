@@ -5902,8 +5902,7 @@ enum RoutedRustEventRoute {
 
 const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 const ROUTED_RUST_READY_EVENT: &str = "ready_for_review";
-const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str =
-    "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
 const ROUTED_RUST_READY_CANCEL_SNIPPET: &str =
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";

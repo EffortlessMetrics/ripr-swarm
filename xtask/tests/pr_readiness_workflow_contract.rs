@@ -16,8 +16,7 @@ const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "    branches: [main, master]",
     "  workflow_dispatch:",
 ];
-const EXPECTED_CONCURRENCY_GROUP: &str =
-    "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
 const EXPECTED_CANCEL_IN_PROGRESS: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
@@ -86,9 +85,7 @@ fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
             continue;
         }
 
-        if in_target
-            && let Some(name) = line.strip_prefix("    name: ")
-        {
+        if in_target && let Some(name) = line.strip_prefix("    name: ") {
             return Some(name.trim());
         }
     }
@@ -164,5 +161,8 @@ fn contract_rejects_a_noncanonical_terminal_context() {
 #[test]
 fn block_scalar_decoy_cannot_hide_a_renamed_result_job() {
     let source = "jobs:\n  route:\n    run: |\n      result:\n        name: Ripr Rust Small Result\n  result:\n    name: Ripr Rust Small Draft Result\n";
-    assert_eq!(terminal_context(source), Some("Ripr Rust Small Draft Result"));
+    assert_eq!(
+        terminal_context(source),
+        Some("Ripr Rust Small Draft Result")
+    );
 }
