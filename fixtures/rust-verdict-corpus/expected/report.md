@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.5. Cases: 104.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 158.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 37/104 | 0.3558 |
-| False actionable (of discriminated) | 33/56 | 0.5893 |
-| False exposed (of not fully discriminated) | 4/48 | 0.0833 |
-| False silent (of not fully discriminated) | 0/48 | 0.0000 |
-| Ideal verdict | 33/104 | 0.3173 |
-| Abstained (limited or silent where acceptable) | 34/104 | 0.3269 |
-| Findings with a contradiction | 2/138 | 0.0145 |
+| False verdicts (all cases) | 58/158 | 0.3671 |
+| False actionable (of discriminated) | 54/85 | 0.6353 |
+| False exposed (of not fully discriminated) | 4/73 | 0.0548 |
+| False silent (of not fully discriminated) | 0/73 | 0.0000 |
+| Ideal verdict | 51/158 | 0.3228 |
+| Abstained (limited or silent where acceptable) | 49/158 | 0.3101 |
+| Findings with a contradiction | 2/199 | 0.0101 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 | 15/70 |
+| authored | 124 | 48/124 | 44/65 | 4/59 | 0/59 | 46/124 | 30/124 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -125,6 +125,60 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
+| `lib-criterion-checksum-bench-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-criterion-window-bench-assert` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-criterion-mix-unit-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `lib-proptest-encode-roundtrip` | authored | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `lib-proptest-percent-bound` | authored | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `lib-proptest-even-sum-model` | authored | discriminated | credited | limited | no_static_path | abstained | no | none |
+| `lib-proptest-parse-no-panic` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `lib-pretty-render-shadowed-assert-eq` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
+| `lib-pretty-line-struct-literal` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-pretty-total-path-qualified` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-pretty-discount-assert-ne` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-serial-test-ticket-fetch-add` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `lib-serial-test-retries-default-arm` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-serial-test-batch-default-relational` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-mockall-grace-boundary-times` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-mockall-body-unpinned-always` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `lib-mockall-recipient-predicate` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-insta-inline-snapshot-line-total` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-insta-debug-file-snapshot-tier-boundary` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-insta-json-redacted-id` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-insta-json-unredacted-sibling-field` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-rstest-case-attribute-expected` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-rstest-named-cases-skip-boundary` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-rstest-fixture-injected-receiver` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-rstest-values-matrix-relational` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-trybuild-pass-file-runs-assert` | authored | discriminated | credited | limited | no_static_path | abstained | no | none |
+| `lib-trybuild-compile-fail-type-only` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `lib-trybuild-compile-fail-const-in-stderr` | authored | discriminated | credited | limited | no_static_path | abstained | no | none |
+| `lib-expect-test-inline-assert-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-expect-test-assert-debug-eq-variant-payload` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-expect-test-header-only-expectation` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `lib-expect-test-expect-file-golden` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-assert-matches-variant-field-pinned` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-assert-matches-ok-wildcard-side-only` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `lib-assert-matches-guarded-arm-partial` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-test-case-arrow-expected-value` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `lib-test-case-matches-err-wildcard` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `lib-test-case-args-body-assert-eq` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `lib-test-case-with-closure-bound` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `lib-quickcheck-roundtrip-involution` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `lib-quickcheck-model-comparison` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `lib-quickcheck-macro-relational-bound` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `lib-tokio-test-await-assert-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-tokio-spawn-handle-dropped` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-tokio-spawn-await-unwrap` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-tokio-multi-thread-timeout-is-ok` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-claims-assert-some-eq-pinned` | authored | discriminated | credited | limited | propagation_unknown, reachable_unrevealed | abstained | no | none |
+| `lib-claims-assert-some-side-only` | authored | not_discriminated | gap | limited | propagation_unknown, reachable_unrevealed | abstained | no | none |
+| `lib-claims-assert-ge-relational` | authored | partially_discriminated | gap | limited | reachable_unrevealed | abstained | no | none |
+| `lib-claims-assert-ok-unwrap-then-eq` | authored | discriminated | credited | limited | reachable_unrevealed | abstained | no | none |
+| `lib-approx-relative-eq-tight` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-approx-abs-diff-loose-epsilon` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `lib-float-cmp-assert-ulps` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `lib-float-cmp-approx-eq-loose-in-assert` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 

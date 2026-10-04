@@ -1,0 +1,15 @@
+//! A tiny API whose public surface is checked with trybuild UI tests. Pass
+//! files are compiled and run; compile-fail files are compared to committed
+//! `.stderr` output. There are no unit tests.
+
+pub fn parity_bit(word: u32) -> u8 {
+    (word.count_ones() % 2) as u8
+}
+
+pub fn default_port(scheme: &str) -> u16 {
+    if scheme == "https" { 443 } else { 80 }
+}
+
+pub const fn frame_len(payload: usize) -> usize {
+    payload + 4
+}

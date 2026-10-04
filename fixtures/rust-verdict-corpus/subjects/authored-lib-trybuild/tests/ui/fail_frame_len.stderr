@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_frame_len.rs:2:51
+  |
+2 |     let frame: [u8; lib_trybuild::frame_len(2)] = [0u8; 5];
+  |                --------------------------------   ^^^^^^^^ expected an array with a size of 6, found one with a size of 5
+  |                |
+  |                expected due to this
+  |
+help: consider specifying the actual array length
+  |
+2 -     let frame: [u8; lib_trybuild::frame_len(2)] = [0u8; 5];
+2 +     let frame: [u8; 5] = [0u8; 5];
+  |

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b39b033..bc20bc2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@
+ }
+ 
+ pub fn is_adult(age: u32) -> bool {
+-    age >= 18
++    18 <= age
+ }
+ 
+ pub fn clamp_pct(v: u32) -> u32 {

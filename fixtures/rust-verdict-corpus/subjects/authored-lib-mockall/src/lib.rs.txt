@@ -1,0 +1,53 @@
+//! Overdue reminders sent through a mocked mailer. The tests use mockall
+//! expectations: some pin the call count and arguments, one accepts any
+//! arguments, and one only checks the mock's return value flows back.
+
+#[cfg_attr(test, mockall::automock)]
+pub trait Mailer {
+    fn send(&self, to: &str, body: &str) -> bool;
+}
+
+pub const GRACE_DAYS: u32 = 30;
+
+pub fn remind(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+    if overdue_days > GRACE_DAYS {
+        let body = format!("{user}, your book is {overdue_days} days late");
+        return mailer.send(user, &body);
+    }
+    false
+}
+
+pub fn remind_all(mailer: &dyn Mailer, users: &[(&str, u32)]) -> usize {
+    users
+        .iter()
+        .filter(|(user, days)| remind(mailer, user, *days))
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::{always, eq};
+
+    #[test]
+    fn reminds_only_after_the_grace_period() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().with(eq("ann"), always()).times(1).return_const(true);
+        assert!(remind(&mailer, "ann", 31));
+        assert!(!remind(&mailer, "ann", 30));
+    }
+
+    #[test]
+    fn sends_some_body() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().times(1).returning(|_, _| true);
+        remind(&mailer, "bob", 45);
+    }
+
+    #[test]
+    fn counts_the_delivered_reminders() {
+        let mut mailer = MockMailer::new();
+        mailer.expect_send().returning(|to, _| to != "cy");
+        assert_eq!(remind_all(&mailer, &[("ann", 40), ("cy", 40), ("dee", 2)]), 1);
+    }
+}

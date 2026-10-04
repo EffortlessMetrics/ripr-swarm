@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.5",
+  "corpus_version": "2026-10-04.6",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -661,6 +661,305 @@
         {
           "path": "src/lib.rs",
           "sha256": "53f26e973bc9ea2673d7956adb14fa67c5b6cf2e013edcb0ec2c1c566a50efd3"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-criterion",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against criterion 0.5.1 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "80038c0130e676a7ebf1bbfac8e1a3a7729db770f1d55c04efe430a0b32b6892"
+        },
+        {
+          "path": "benches/throughput.rs",
+          "sha256": "bc532542eb8215661f0e9bfbcf91430eae62d7da34b264f0e37dc7f42e98c7d6"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "978839d3b31efd010755bd05de9ee949e31be092344addd6a3048fefebd10475"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-proptest",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against proptest 1.11.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "35ad42183ea3075d5be7d9d1fc2c75cfd4d5e77a92c5d1abf3d6e66c07fc8bb5"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "42f39cf0d2742d399e1a7166ad28d5bfc2764b1c2d8f277f144e6857ed30438b"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-pretty-assertions",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against pretty_assertions 1.4.1 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "b4f7e900efed00678b1e2a1b6992beb26b75ec6b51a86ae937ac896456da80d5"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "5b49b34cc0f1676dba087fe6903953484fa271a70ab9d2aa21945fc6189e8d5c"
+        },
+        {
+          "path": "tests/totals.rs",
+          "sha256": "a0a4b7a45a3fbb272ad6783af78aceb2fcb0544f06db67454f2e68107c0e4b9d"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-serial-test",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against serial_test 3.5.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "41bbfb84621157867e3bdcd0112dc35b1cb3a74d70313a8c09a3edb36587bfb7"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "c60d32548412015334031a022d64939f3f6d893d35496fdd66ff05474fef4842"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-mockall",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against mockall 0.13.1 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "a0dba2f74ad946a3dc6105a76908dd2dc20c38942995dad9d3ee48b6917b604d"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "f2113c7735576ca1cf928c6e6c99df3ffeba3b632a5acccc5e3155d8e58c6c75"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-insta",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against serde 1.0.229, insta 1.49.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "456d45fb43c51abb3d1480cf3712f74aff1bd3102fc8e6979f7ba614ed42d162"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "b02d8a9fcf422bca690798d569ff0afaca7eaf22725c5d219fb57c69d76e7926"
+        },
+        {
+          "path": "src/snapshots/lib_insta__tests__discount_tiers_file_snapshot.snap",
+          "sha256": "de8808684dad76b75c2631ef4fdd42749604f93fca10d3c2097ec36baa386f4b"
+        },
+        {
+          "path": "src/snapshots/lib_insta__tests__record_json_with_redacted_id.snap",
+          "sha256": "ed6e6431eab892c2eba5fa120ec2c975ba295d6bbb97b22371d2b2b406c23391"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-rstest",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against rstest 0.23.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "59fa8d1fc781d90a72b0d6c3762aeea960d2064e156fbb1b6fb00cb5e9f81ce5"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "c159b306dd50ce4d548facafca8d6a0fb8ae96f1d41ec47ce821e7a9a3ce7e22"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-trybuild",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against trybuild 1.0.121 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "cb34464f71a968008254e2ef48dfb1a893e069cb65c75c568ca82cc810b68abc"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7f8b2d7e6fb3d7cf4f184069f583a5d93da3aabada4143320cb4d6839708c8b3"
+        },
+        {
+          "path": "tests/ui.rs",
+          "sha256": "aa9e3239d29f97aa3de50dbc665d795932191f912d362adb5d1d80c559bf8ffd"
+        },
+        {
+          "path": "tests/ui/fail_frame_len.rs",
+          "sha256": "0842bb3afa9ba9dd48b0a6a38abafe75752cfc21fe17f3a849e7c6de0393886a"
+        },
+        {
+          "path": "tests/ui/fail_frame_len.stderr",
+          "sha256": "8ab19a9db270cf12b5ec1cc9987e73739e54a52e075046d4bf1ec465e3e9260d"
+        },
+        {
+          "path": "tests/ui/fail_port_type.rs",
+          "sha256": "c6408447a06cb5dd7af6b0e7548d586bea4bb07b725ad6c09c991d49453889b6"
+        },
+        {
+          "path": "tests/ui/fail_port_type.stderr",
+          "sha256": "58b9518112269501d1db0f1c5a766e663e6a3a4f727aee4f6313313266655079"
+        },
+        {
+          "path": "tests/ui/pass_parity.rs",
+          "sha256": "6c81a18c8c2cfe47144187c5e8e009e5f8172e0b600971f6fa5281734b7ede2d"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-expect-test",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against expect-test 1.5.1 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "ab599e6772df0fe2699837e04bae319523ea26eea010c5b7f187d4dfde45d2de"
+        },
+        {
+          "path": "src/expect/summary.txt",
+          "sha256": "183a6abd935556da3762f55909de61f3928a0921e75f6cb5e9607f427f3e4c91"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "56fa84a0fe69370bacb7ca36d06e259f53cc27528638d9a56b6a10970a002cf6"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-assert-matches",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against assert_matches 1.5.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "fa3d8ddae5eda9a29aaf7136b8fbd11f011b2a54d34e7088bca3e8b684d869fb"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "d0105ca11c73b84c05baae0fc09fafefa4329d004864badbc0efe7f2d42c4ab1"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-test-case",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against test-case 3.4.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "25932a9eb7eeaac921d75bc10b610a6c97f45fe3c756b0c3b8a2677db8c1be8e"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "cbe71f3aa8fa48792cb9d3cd10076b5bec50da2cc11078f762dd16984bc07ccf"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-quickcheck",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against quickcheck 1.1.0, quickcheck_macros 1.2.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "f8fcc09986875f612f40aebb3092784c85102e88d6086efc35aa15d848b9522c"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "2ffeed02cc6a10e2b5d15d44802b61d59a988c1593a0b16ff541fdfb7f149b14"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-tokio",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against tokio 1.53.2 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "f838e86e0278253c941592a290c77ec3b468ccff7fa875a764061c77657b03b9"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "936af5e235073054a4ea147ddf8b910e9116100b3913ee5f9901d10302bb0eb9"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-claims",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against claims 0.8.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "a997d3398f0b6442663522167ddd0d437c32bb0d31f716dfcdf15ac925705363"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "511d2730cee6126993a01f06ede731dd839eea8418492608f0f15c97f05bbc63"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-lib-float",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for test-library shapes; labeled against approx 0.5.1, float-cmp 0.10.0 from crates.io (not vendored)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "f0598791fcc49d0da926bb71e6f6884eea89f6b45c75c27fbe530b7a12a52f8e"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "a4407c0c73383627c9ba10967a7d27484e3d72fc90255834eb1c5d3fa259a507"
         }
       ]
     }
@@ -5741,6 +6040,2684 @@
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "silent",
         "full_checkout_classifications": [],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-criterion-checksum-bench-only",
+      "subject_id": "authored-lib-criterion",
+      "diff": "cases/lib-criterion-checksum-bench-only.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 8
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "criterion_bench_only",
+      "hard_case": "Only a criterion bench calls checksum; benches are not run by cargo test, so no test exercises the line. ripr relates the unrelated mix test by file proximity.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(*byte as u32) + 1",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: checksum(&[0]) becomes 17*31+1 instead of 17*31"
+          },
+          {
+            "replacement": "(*byte as u32) ^ 1",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: checksum(&[0]) becomes 17*31+1 instead of 17*31"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "checksum is called only from benches/throughput.rs, a harness = false criterion target that cargo test does not build or run, so both byte-mixing mutants survive.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-criterion-window-bench-assert",
+      "subject_id": "authored-lib-criterion",
+      "diff": "cases/lib-criterion-window-bench-assert.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 17
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "criterion_bench_sanity_assert",
+      "hard_case": "The bench carries assert_eq!(window_sum(&values, 4), 6), which would catch both mutants, but criterion benches never run under cargo test; crediting it would be false exposure.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "values.iter().take(width - 1).sum()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: window_sum(&[0,1,2,3], 4) is 3, not 6"
+          },
+          {
+            "replacement": "values.iter().skip(1).take(width).sum()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: window_sum(&[0,1,2,3,4], 4) is 10, not 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The only oracle is a sanity assert_eq! inside a criterion bench function; cargo test does not run benches, so both slice mutants pass the test command.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-criterion-mix-unit-control",
+      "subject_id": "authored-lib-criterion",
+      "diff": "cases/lib-criterion-mix-unit-control.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 21
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "unit_test_assert_eq_beside_bench",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(a * 4) ^ b",
+            "outcome": "tests_failed",
+            "failing_test": "tests::mix_shifts_then_xors",
+            "equivalence_review": "not equivalent: mix(1, 0) is 4, not 8"
+          },
+          {
+            "replacement": "(a * 8) & b",
+            "outcome": "tests_failed",
+            "failing_test": "tests::mix_shifts_then_xors",
+            "equivalence_review": "not equivalent: mix(1, 0) is 0, not 8"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Control beside the bench-only cases: mix_shifts_then_xors pins mix(1, 0) == 8 and mix(2, 5) == 21, so changing the shift or the xor fails it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-proptest-encode-roundtrip",
+      "subject_id": "authored-lib-proptest",
+      "diff": "cases/lib-proptest-encode-roundtrip.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate",
+      "test_shape": "proptest_roundtrip_prop_assert_eq",
+      "hard_case": "A roundtrip property pins only that decode inverts encode: a mutant that splits runs early keeps the roundtrip and survives. ripr treats every proptest! body as opaque (rust_macro_reach_unresolved).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "byte == *value && *count < 2 => *count += 1",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: encode(&[3, 3, 3]) is [(3, 2), (3, 1)] instead of [(3, 3)]"
+          },
+          {
+            "replacement": "byte == *value && *count < u8::MAX => *count += 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::decode_inverts_encode",
+            "equivalence_review": "not equivalent: encode(&[3, 3]) is [(3, 3)] instead of [(3, 2)]"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "prop_assert_eq!(decode(&encode(&data)), data) catches a count that grows by 2 but not a run cap of 2, because decode still restores the bytes from the shorter runs.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-proptest-percent-bound",
+      "subject_id": "authored-lib-proptest",
+      "diff": "cases/lib-proptest-percent-bound.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 30
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "proptest_relational_prop_assert",
+      "hard_case": "The property only asserts percent(..) <= 100, a relational bound: lowering the cap to 99 survives, raising it to 101 is caught.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "std::cmp::min(raw, 99) as u32",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: percent(5, 5) is 99, not 100"
+          },
+          {
+            "replacement": "std::cmp::min(raw, 101) as u32",
+            "outcome": "tests_failed",
+            "failing_test": "tests::percent_stays_in_range",
+            "equivalence_review": "not equivalent: percent(9, 1) is 101, not 100"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "prop_assert!(percent(part, whole) <= 100) fails when the cap is 101 (part >= 1.01 * whole is common) but cannot see a cap of 99.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-proptest-even-sum-model",
+      "subject_id": "authored-lib-proptest",
+      "diff": "cases/lib-proptest-even-sum-model.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 37
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate",
+      "test_shape": "proptest_model_prop_assert_eq",
+      "hard_case": "A model-based property (prop_assert_eq! against an independent iterator sum) discriminates exactly, but ripr cannot see inside proptest! and abstains.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": ".filter(|v| (*v & 1) != 0)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::even_sum_matches_the_model",
+            "equivalence_review": "not equivalent: even_sum(&[1]) is 1, not 0"
+          },
+          {
+            "replacement": ".filter(|v| (*v & 3) == 0)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::even_sum_matches_the_model",
+            "equivalence_review": "not equivalent: even_sum(&[2]) is 0, not 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "even_sum_matches_the_model compares even_sum with an independent filter-and-sum model over random vectors, so both filter mutants fail it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-proptest-parse-no-panic",
+      "subject_id": "authored-lib-proptest",
+      "diff": "cases/lib-proptest-parse-no-panic.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 45
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "proptest_no_panic_property",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "key.to_ascii_lowercase()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_pair(\" A=1\") keeps the leading space in the key"
+          },
+          {
+            "replacement": "key.trim_start().trim_end().to_string()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_pair(\"A=1\") keeps the key as \"A\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "parse_pair_never_panics only calls parse_pair and discards the result, so any change to the key normalisation survives.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-pretty-render-shadowed-assert-eq",
+      "subject_id": "authored-lib-pretty-assertions",
+      "diff": "cases/lib-pretty-render-shadowed-assert-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "call_deletion",
+      "test_shape": "pretty_assertions_use_shadowed_assert_eq",
+      "hard_case": "The test module imports `use pretty_assertions::{assert_eq, assert_ne};`; ripr treats that import as rebinding assert_eq for the whole workspace and refuses every bare assert_eq! oracle (#5359 admits the drop-in import).",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "out += &format!(\"{:<7}{:>6}\\n\", l.label, l.cents);",
+            "outcome": "tests_failed",
+            "failing_test": "tests::renders_aligned_columns",
+            "equivalence_review": "not equivalent: \"tea\" pads to 7 columns, not 8"
+          },
+          {
+            "replacement": "out += &format!(\"{:<8}{:>5}\\n\", l.label, l.cents);",
+            "outcome": "tests_failed",
+            "failing_test": "tests::renders_aligned_columns",
+            "equivalence_review": "not equivalent: 1200 pads to 5 columns, not 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_eq! (pretty_assertions) compares the whole rendered table to a literal, so changing either column width fails renders_aligned_columns.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "exposed",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-pretty-line-struct-literal",
+      "subject_id": "authored-lib-pretty-assertions",
+      "diff": "cases/lib-pretty-line-struct-literal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "pretty_assertions_struct_literal_equality",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "label.to_owned()",
+            "outcome": "tests_failed",
+            "failing_test": "tests::line_trims_the_label",
+            "equivalence_review": "not equivalent: the label stays \"  tea \""
+          },
+          {
+            "replacement": "label.trim_start().to_owned()",
+            "outcome": "tests_failed",
+            "failing_test": "tests::line_trims_the_label",
+            "equivalence_review": "not equivalent: the label is \"tea \""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "line_trims_the_label compares line(\"  tea \", 250) with a Line struct literal through pretty_assertions::assert_eq!, so not trimming or trimming only the start fails it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-pretty-total-path-qualified",
+      "subject_id": "authored-lib-pretty-assertions",
+      "diff": "cases/lib-pretty-total-path-qualified.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 24
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "pretty_assertions_path_qualified_assert_eq",
+      "hard_case": "The integration test calls `pretty_assertions::assert_eq!(total(&lines), 1500)` by path. ripr now reads it as an exact assertion, but the owner-return pin trusts only bare macro names, so the line stays a gap.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "+ 49",
+            "outcome": "tests_failed",
+            "failing_test": "total_adds_the_service_fee",
+            "equivalence_review": "not equivalent: total is 1499"
+          },
+          {
+            "replacement": "+ 51",
+            "outcome": "tests_failed",
+            "failing_test": "total_adds_the_service_fee",
+            "equivalence_review": "not equivalent: total is 1501"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "total_adds_the_service_fee pins total to 1500, so a fee of 49 or 51 fails it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-pretty-discount-assert-ne",
+      "subject_id": "authored-lib-pretty-assertions",
+      "diff": "cases/lib-pretty-discount-assert-ne.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 28
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "pretty_assertions_assert_ne",
+      "hard_case": "assert_ne!(discount(1000), 1000) only says the price changed, yet ripr grades assert_ne! exact_value/strong (RIPR-SPEC-0231 rule 1 is unimplemented). The pretty_assertions import hides it today; once #5359 admits the import, the owner pin credits the line, a false exposed.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "cents - (cents / 5)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: discount(1000) is 800, not 900"
+          },
+          {
+            "replacement": "cents - (cents / 10000)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::discount_changes_the_price",
+            "equivalence_review": "not equivalent: discount(1000) is 1000, not 900"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ne! only rejects an unchanged price: a 20% discount survives, while dividing by 10000 leaves 1000 unchanged and fails.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-serial-test-ticket-fetch-add",
+      "subject_id": "authored-lib-serial-test",
+      "diff": "cases/lib-serial-test-ticket-fetch-add.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "serial_test_attribute_below_test",
+      "hard_case": "The test carries #[serial] from serial_test; before this corpus version any attribute other than #[test] kept ripr from pinning the owner call.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "fetch_add(2, Ordering::SeqCst)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tickets_count_up_from_one_hundred",
+            "equivalence_review": "not equivalent: the second ticket is 102"
+          },
+          {
+            "replacement": "fetch_sub(2 - 1, Ordering::SeqCst)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tickets_count_up_from_one_hundred",
+            "equivalence_review": "not equivalent: the second ticket is 99"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "tickets_count_up_from_one_hundred resets the counter and pins next_ticket() to 100 then 101, so a step of 2 or a decrement fails it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-serial-test-retries-default-arm",
+      "subject_id": "authored-lib-serial-test",
+      "diff": "cases/lib-serial-test-retries-default-arm.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 20
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "match_arm",
+      "test_shape": "serial_test_attribute_above_test_env",
+      "hard_case": "The Err arm is reached only after the test removes APP_RETRIES from the process environment, an activation ripr cannot follow.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Err(_) => 4",
+            "outcome": "tests_failed",
+            "failing_test": "tests::retries_read_the_environment",
+            "equivalence_review": "not equivalent: retries() is 4 without the variable"
+          },
+          {
+            "replacement": "Err(_) => 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::retries_read_the_environment",
+            "equivalence_review": "not equivalent: retries() is 0 without the variable"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "retries_read_the_environment removes APP_RETRIES and asserts retries() == 3, so a default of 4 or 0 fails it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-serial-test-batch-default-relational",
+      "subject_id": "authored-lib-serial-test",
+      "diff": "cases/lib-serial-test-batch-default-relational.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 25
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "serial_test_path_qualified_keyed_relational",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": ".unwrap_or(63)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: batch_size() is 63, not 64"
+          },
+          {
+            "replacement": ".unwrap_or(0)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::batch_size_has_a_default",
+            "equivalence_review": "not equivalent: batch_size() is 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "batch_size_has_a_default (#[serial_test::serial(env)]) only asserts batch_size() > 0, so a default of 63 survives and 0 fails.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-mockall-grace-boundary-times",
+      "subject_id": "authored-lib-mockall",
+      "diff": "cases/lib-mockall-grace-boundary-times.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "mockall_times_expectation_boundary",
+      "hard_case": "The boundary is pinned by a mockall .times(1) expectation plus assert!(remind(.., 31)) and assert!(!remind(.., 30)); ripr reads the bool assertions as relational/weak.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "GRACE_DAYS <= overdue_days",
+            "outcome": "tests_failed",
+            "failing_test": "tests::reminds_only_after_the_grace_period",
+            "equivalence_review": "not equivalent: 30 days sends a reminder"
+          },
+          {
+            "replacement": "GRACE_DAYS + 1 < overdue_days",
+            "outcome": "tests_failed",
+            "failing_test": "tests::reminds_only_after_the_grace_period",
+            "equivalence_review": "not equivalent: 31 days sends nothing"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "With 30 and 31 days, sending at 30 trips the mock's times(1) and returns true for the negated assert, and a grace of 31 makes remind(.., 31) false; both mutants fail.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-mockall-body-unpinned-always",
+      "subject_id": "authored-lib-mockall",
+      "diff": "cases/lib-mockall-body-unpinned-always.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "mockall_unpinned_arguments",
+      "hard_case": "Every expectation that sees the body uses always() or no .with(..), so the message text is never checked even though the mock is called.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "format!(\"{}, your book is {} days overdue\", user, overdue_days)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the body says \"overdue\" instead of \"late\""
+          },
+          {
+            "replacement": "format!(\"{}, your book is {} days late\", user, overdue_days + 1)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the body reports 46 days instead of 45"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "sends_some_body expects one send with any arguments and reminds_only_after_the_grace_period matches the body with always(), so changing the wording or the day count survives.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-mockall-recipient-predicate",
+      "subject_id": "authored-lib-mockall",
+      "diff": "cases/lib-mockall-recipient-predicate.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 15
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "side_effect",
+      "test_shape": "mockall_with_eq_and_returning_closure",
+      "hard_case": "The recipient is pinned through the mock: .with(eq(\"ann\"), ..) and a returning(|to, _| to != \"cy\") closure whose result feeds an assert_eq! count.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "mailer.send(\"ann\", &body)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::counts_the_delivered_reminders",
+            "equivalence_review": "not equivalent: cy's reminder goes to ann"
+          },
+          {
+            "replacement": "mailer.send(&body, &body)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::counts_the_delivered_reminders",
+            "equivalence_review": "not equivalent: the recipient is the message body"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Sending every reminder to \"ann\" makes cy's delivery succeed (count 2, not 1), and sending to the body breaks both the eq(\"ann\") predicate and the count.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-insta-inline-snapshot-line-total",
+      "subject_id": "authored-lib-insta",
+      "diff": "cases/lib-insta-inline-snapshot-line-total.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 22
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "insta_inline_snapshot",
+      "hard_case": "An inline `@\"...\"` snapshot pins the exact rendered text, but ripr gives it the fixed snapshot/medium strength and reports weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "u64::from(item.qty) + item.cents",
+            "outcome": "tests_failed",
+            "failing_test": "tests::receipt_text_is_pinned_inline",
+            "equivalence_review": "not equivalent: qty=3,cents=40 gives 43 not 120"
+          },
+          {
+            "replacement": "u64::from(item.qty - 1) * item.cents",
+            "outcome": "tests_failed",
+            "failing_test": "tests::receipt_text_is_pinned_inline",
+            "equivalence_review": "not equivalent: qty=3,cents=40 gives 80 not 120"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "`assert_snapshot!(render_receipt(..), @\"...\")` compares the whole receipt text, which contains every line_total and the sum; both mutants change the numbers and the inline literal fails.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-insta-debug-file-snapshot-tier-boundary",
+      "subject_id": "authored-lib-insta",
+      "diff": "cases/lib-insta-debug-file-snapshot-tier-boundary.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 38
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "insta_debug_file_snapshot",
+      "hard_case": "The expected value lives only in the committed src/snapshots/*.snap file, not in Rust source; ripr cannot see it and grades snapshot/medium.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "threshold < total_cents",
+            "outcome": "tests_failed",
+            "failing_test": "tests::discount_tiers_file_snapshot",
+            "equivalence_review": "not equivalent: total=5000 tier 5000 gets 0 not 250"
+          },
+          {
+            "replacement": "threshold <= total_cents * 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::discount_tiers_file_snapshot",
+            "equivalence_review": "not equivalent: total=5000 tier 10000 gets 500 not 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "`assert_debug_snapshot!(discount_tiers(5_000))` compares against the committed .snap (insta fails on mismatch under CI=true INSTA_UPDATE=no); the input sits exactly on the 5000 threshold so both boundary mutants change the debug output.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-insta-json-redacted-id",
+      "subject_id": "authored-lib-insta",
+      "diff": "cases/lib-insta-json-redacted-id.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 44
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "insta_json_snapshot_redacted_field",
+      "hard_case": "The changed field is exactly the one the `{\".id\" => \"[id]\"}` redaction replaces, so the snapshot cannot see it, yet ripr grades it the same as an unredacted field.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "seq",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: seq=41 gives id ord-0041 not ord-0042"
+          },
+          {
+            "replacement": "seq + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: seq=41 gives id ord-0043 not ord-0042"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "`assert_json_snapshot!(record, {\".id\" => \"[id]\"})` replaces `id` with a placeholder before comparing, so any change to the id format survives; the other fields stay pinned.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-insta-json-unredacted-sibling-field",
+      "subject_id": "authored-lib-insta",
+      "diff": "cases/lib-insta-json-unredacted-sibling-field.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 46
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "insta_json_snapshot_redacted_field",
+      "hard_case": "Control for the redaction case: same assertion, but this field is not redacted, so the snapshot does pin it; ripr reports the same weakly_exposed for both.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "items.iter().count() + 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::record_json_with_redacted_id",
+            "equivalence_review": "not equivalent: 2 items gives items=3"
+          },
+          {
+            "replacement": "items.iter().skip(1).count()",
+            "outcome": "tests_failed",
+            "failing_test": "tests::record_json_with_redacted_id",
+            "equivalence_review": "not equivalent: 2 items gives items=1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The redaction only covers `.id`; `items` is serialized verbatim into the committed .snap, so both mutants change the JSON and fail.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-rstest-case-attribute-expected",
+      "subject_id": "authored-lib-rstest",
+      "diff": "cases/lib-rstest-case-attribute-expected.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 5
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "rstest_case_attribute_table",
+      "hard_case": "The expected values exist only in `#[case(2, 4)]` / `#[case(5, 10)]`; ripr resolves the inputs from the case rows but drops the assertion of the #[rstest] test (oracle unknown/none).",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::scale_cases::case_2",
+            "equivalence_review": "not equivalent: x=5 gives 7 not 10"
+          },
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_failed",
+            "failing_test": "tests::scale_cases::case_1",
+            "equivalence_review": "not equivalent: x=2 gives 6 not 4"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "rstest expands each `#[case]` row into a test that runs `assert_eq!(scale(input), expected)` with literal values; x+2 fails case_2 and x*3 fails both.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-rstest-named-cases-skip-boundary",
+      "subject_id": "authored-lib-rstest",
+      "diff": "cases/lib-rstest-named-cases-skip-boundary.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "rstest_named_case_attribute",
+      "hard_case": "The named cases `#[case::child(10, false)]` and `#[case::grown(30, true)]` never hit age 18, so the off-by-one survives; ripr would need the case literals to see that the boundary is missing.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "18 < age",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: age=18 gives false not true"
+          },
+          {
+            "replacement": "10 <= age",
+            "outcome": "tests_failed",
+            "failing_test": "tests::adult_cases_skip_boundary::case_1_child",
+            "equivalence_review": "not equivalent: age=10 gives true not false"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The case table pins exact bools but only at 10 and 30, so `18 < age` survives (no case at 18) while `10 <= age` flips case_1_child.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-rstest-fixture-injected-receiver",
+      "subject_id": "authored-lib-rstest",
+      "diff": "cases/lib-rstest-fixture-injected-receiver.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 38
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "rstest_fixture_injection",
+      "hard_case": "The receiver comes from a `#[fixture] fn account()` injected as a test parameter; ripr finds the test but drops its literal `assert_eq!(account.monthly_fee(), 5)` to unknown/none.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "self.balance / 4 / 4",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fee_from_fixture",
+            "equivalence_review": "not equivalent: balance 100 gives 6 not 5"
+          },
+          {
+            "replacement": "self.balance / 4",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fee_from_fixture",
+            "equivalence_review": "not equivalent: balance 100 gives 25 not 5"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "rstest calls the `account` fixture (Account::open(100)) and passes it in; the literal 5 pins balance/20 exactly, so both mutants fail fee_from_fixture.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-rstest-values-matrix-relational",
+      "subject_id": "authored-lib-rstest",
+      "diff": "cases/lib-rstest-values-matrix-relational.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "rstest_values_matrix_relational",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "v.min(99)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: v=100 gives 99 not 100"
+          },
+          {
+            "replacement": "v.max(100)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::clamp_stays_in_range::v_3_200",
+            "equivalence_review": "not equivalent: v=200 gives 200 not 100 (caught); v=0 gives 100 not 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "`#[values(0, 50, 200)]` generates three tests that only assert `clamp_pct(v) <= 100`; v.min(99) stays within range and survives, v.max(100) breaks the bound at v=200.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-trybuild-pass-file-runs-assert",
+      "subject_id": "authored-lib-trybuild",
+      "diff": "cases/lib-trybuild-pass-file-runs-assert.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 6
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "trybuild_pass_file_main_assert",
+      "hard_case": "The only oracle is an assert_eq! inside `fn main` of tests/ui/pass_parity.rs, which is not a cargo test target; trybuild compiles and runs it from `t.pass(\"tests/ui/pass_*.rs\")`.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "word.count_ones() & 2",
+            "outcome": "tests_failed",
+            "failing_test": "ui",
+            "equivalence_review": "not equivalent: 0b1011 gives 2 not 1"
+          },
+          {
+            "replacement": "(word.count_ones() + 1) & 1",
+            "outcome": "tests_failed",
+            "failing_test": "ui",
+            "equivalence_review": "not equivalent: 0b1011 gives 0 not 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "trybuild builds and executes each pass file and fails the `ui` test if the binary panics; the literal assert_eq! pins parity_bit, so both mutants fail.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-trybuild-compile-fail-type-only",
+      "subject_id": "authored-lib-trybuild",
+      "diff": "cases/lib-trybuild-compile-fail-type-only.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 10
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate",
+      "test_shape": "trybuild_compile_fail_stderr",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "\"https\" != scheme",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: \"https\" gives 80 not 443"
+          },
+          {
+            "replacement": "\"http\" == scheme",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: \"https\" gives 80 not 443"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "tests/ui/fail_port_type.rs references default_port only to provoke a type error (u16 vs &str); the committed .stderr pins the diagnostic, which does not depend on the runtime value.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-trybuild-compile-fail-const-in-stderr",
+      "subject_id": "authored-lib-trybuild",
+      "diff": "cases/lib-trybuild-compile-fail-const-in-stderr.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "trybuild_compile_fail_const_eval_stderr",
+      "hard_case": "A compile-fail UI test discriminates a value: the const fn result is evaluated at compile time and printed into the committed .stderr ('expected an array with a size of 6').",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "4 + payload - 1",
+            "outcome": "tests_failed",
+            "failing_test": "ui",
+            "equivalence_review": "not equivalent: frame_len(2) gives 5, so the fail file compiles"
+          },
+          {
+            "replacement": "4 * payload",
+            "outcome": "tests_failed",
+            "failing_test": "ui",
+            "equivalence_review": "not equivalent: frame_len(2) gives 8, stderr says size of 8 not 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "fail_frame_len.rs uses `[u8; frame_len(2)]`; rustc evaluates the const fn and the committed .stderr pins the size, so one mutant makes the file compile (compile_fail fails) and the other changes the diagnostic text.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-expect-test-inline-assert-eq",
+      "subject_id": "authored-lib-expect-test",
+      "diff": "cases/lib-expect-test-inline-assert-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 21
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "expect_test_inline_assert_eq",
+      "hard_case": "A one-line `expect![[\"alice: 42\"]].assert_eq(&render_row(..))` pins the exact text, but ripr reports the test with oracle \"\" unknown/none.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "2 + score",
+            "outcome": "tests_failed",
+            "failing_test": "tests::row_text_inline",
+            "equivalence_review": "not equivalent: score=41 gives 'alice: 43'"
+          },
+          {
+            "replacement": "1 + score / 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::row_text_inline",
+            "equivalence_review": "not equivalent: score=41 gives 'alice: 21'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "expect-test compares the rendered string to the inline literal and panics on mismatch (UPDATE_EXPECT unset); both mutants change the number.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-expect-test-assert-debug-eq-variant-payload",
+      "subject_id": "authored-lib-expect-test",
+      "diff": "cases/lib-expect-test-assert-debug-eq-variant-payload.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "match_arm",
+      "test_shape": "expect_test_assert_debug_eq",
+      "hard_case": "With the expectation on its own lines, ripr reads the continuation `.assert_debug_eq(&tokens)` as exact_value/strong (not snapshot/medium as RIPR-SPEC-0231 step 6 says) and still reports weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "10 + n",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tokens_debug_inline",
+            "equivalence_review": "not equivalent: '7' gives Num(17) not Num(70)"
+          },
+          {
+            "replacement": "100 * n",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tokens_debug_inline",
+            "equivalence_review": "not equivalent: '7' gives Num(700) not Num(70)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "`expect![[r#\"...\"#]].assert_debug_eq(&tokens)` compares the full pretty Debug output including `Num(70)`; both mutants change the payload.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-expect-test-header-only-expectation",
+      "subject_id": "authored-lib-expect-test",
+      "diff": "cases/lib-expect-test-header-only-expectation.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 26
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "expect_test_partial_output",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "scores.iter().min().copied()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: [3,9,4] gives best=3 not 9"
+          },
+          {
+            "replacement": "scores.iter().last().copied()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: [3,9,4] gives best=4 not 9"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The test pins only `report.lines().next()` (the title line) with expect![[..]]; the best= line is never compared, so both mutants survive.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-expect-test-expect-file-golden",
+      "subject_id": "authored-lib-expect-test",
+      "diff": "cases/lib-expect-test-expect-file-golden.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 32
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "expect_test_expect_file_golden",
+      "hard_case": "The expected text is in src/expect/summary.txt via `expect_file![..]`; ripr reads snapshot/medium and reports weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "count >> 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::summary_golden_file",
+            "equivalence_review": "not equivalent: count=7 gives half 1 not 3"
+          },
+          {
+            "replacement": "(count + 1) >> 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::summary_golden_file",
+            "equivalence_review": "not equivalent: count=7 gives half 4 not 3"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "expect_file! compares the whole rendered summary to the committed golden file; both mutants change the `half:` line.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-assert-matches-variant-field-pinned",
+      "subject_id": "authored-lib-assert-matches",
+      "diff": "cases/lib-assert-matches-variant-field-pinned.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 16
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_variant",
+      "test_shape": "assert_matches_variant_field_pattern",
+      "hard_case": "ripr reads the assert_matches! pattern as exact_error_variant strong yet still reports weakly_exposed, so a fully pinned variant-field pattern is not credited.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "pos: i + 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::bad_digit_reports_position",
+            "equivalence_review": "not equivalent: parse_num(\"x1\") yields BadDigit{pos:1} instead of pos:0"
+          },
+          {
+            "replacement": "pos: 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::bad_digit_reports_position",
+            "equivalence_review": "not equivalent: parse_num(\"1x\") yields BadDigit{pos:0} instead of pos:1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_matches! with a struct-variant pattern `BadDigit { pos: 0 }` / `{ pos: 1 }` compares the field literally at two positions, so both position mutants fail.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-assert-matches-ok-wildcard-side-only",
+      "subject_id": "authored-lib-assert-matches",
+      "diff": "cases/lib-assert-matches-ok-wildcard-side-only.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 17
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_matches_ok_wildcard",
+      "hard_case": "ripr labels `assert_matches!(r, Ok(_))` as exact_value (strength unknown) and lands static_unknown instead of a gap.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "acc * 10",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(40) instead of Ok(42)"
+          },
+          {
+            "replacement": "acc + d",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(6) instead of Ok(42)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_matches!(parse_num(\"42\"), Ok(_)) only checks the Ok side; any accumulated value matches the wildcard, and the Err tests never reach the changed line's value.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-assert-matches-guarded-arm-partial",
+      "subject_id": "authored-lib-assert-matches",
+      "diff": "cases/lib-assert-matches-guarded-arm-partial.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 26
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_matches_guarded_pattern",
+      "hard_case": "ripr classifies the guarded `Ok(n) if n > 10` pattern as exact_value strong; the gap verdict is right only by accident.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "level * 4 + 4",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: bonus(3) returns 16 instead of 15 (still > 10)"
+          },
+          {
+            "replacement": "level * 2 + 3",
+            "outcome": "tests_failed",
+            "failing_test": "tests::bonus_is_large_enough",
+            "equivalence_review": "not equivalent: bonus(3) returns 9 instead of 15"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The match guard `if n > 10` is a relational bound, so a +1 mutant still satisfies it while a halving mutant drops below 10.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-test-case-arrow-expected-value",
+      "subject_id": "authored-lib-test-case",
+      "diff": "cases/lib-test-case-arrow-expected-value.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test_case_arrow_expected_value",
+      "hard_case": "ripr does not read the `=> 4` expected value in #[test_case] as an oracle (unknown/none) and reports reachable_unrevealed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x + x",
+            "outcome": "tests_failed",
+            "failing_test": "tests::squares::test_case_2_3_expects_9",
+            "equivalence_review": "not equivalent: square(3) = 6 instead of 9 (square(2)=4 coincides)"
+          },
+          {
+            "replacement": "x * x + 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::squares::test_case_1_2_expects_4",
+            "equivalence_review": "not equivalent: square(2) = 5 instead of 4"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "#[test_case(x => expected)] generates an assert_eq on the return value; two cases (2=>4, 3=>9) together kill both mutants, including x + x which agrees at 2.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-test-case-matches-err-wildcard",
+      "subject_id": "authored-lib-test-case",
+      "diff": "cases/lib-test-case-matches-err-wildcard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 15
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate",
+      "test_shape": "test_case_matches_err_wildcard",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "s.len() == 1",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_port(\"\") returns Err(NotNumber) instead of Err(Empty); parse_port(\"5\") returns Err(Empty)"
+          },
+          {
+            "replacement": "false",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse_port(\"\") returns Err(NotNumber) instead of Err(Empty)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "`\"\" => matches Err(_)` accepts any error, and the fallback parse error still yields Err, so the empty check can be removed or broken without failing.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-test-case-args-body-assert-eq",
+      "subject_id": "authored-lib-test-case",
+      "diff": "cases/lib-test-case-args-body-assert-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 26
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test_case_args_body_assert_eq",
+      "hard_case": "ripr sees the body assert_eq as exact_value but with unknown strength and reports reachable_unrevealed, because the case args feeding `n`/`expected` are not resolved.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "n * (n - 1) / 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::triangles::test_case_1_3_6_expects",
+            "equivalence_review": "not equivalent: triangle(3) = 3 instead of 6"
+          },
+          {
+            "replacement": "n * n / 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::triangles::test_case_1_3_6_expects",
+            "equivalence_review": "not equivalent: triangle(3) = 4 instead of 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Each #[test_case(n, expected)] feeds assert_eq!(triangle(n), expected) in the body with concrete values (3,6),(4,10), killing both mutants.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-test-case-with-closure-bound",
+      "subject_id": "authored-lib-test-case",
+      "diff": "cases/lib-test-case-with-closure-bound.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 30
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "test_case_with_closure_bound",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x.min(99)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: clamp_pct(150) = 99 instead of 100 (still <= 100)"
+          },
+          {
+            "replacement": "x.min(101)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::clamps::test_case_1_over",
+            "equivalence_review": "not equivalent: clamp_pct(150) = 101 instead of 100"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "`150 => with |v| assert!(v <= 100)` is an upper bound only, so clamping to 99 passes; the 40 => 40 case never hits the clamp.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-quickcheck-roundtrip-involution",
+      "subject_id": "authored-lib-quickcheck",
+      "diff": "cases/lib-quickcheck-roundtrip-involution.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 4
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "quickcheck_bool_roundtrip_property",
+      "hard_case": "The bool return of a #[quickcheck] fn is the oracle; ripr finds no oracle (unknown/none).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "b ^ 0x33",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: mask(0) = 0x33 instead of 0x5A (encode output differs)"
+          },
+          {
+            "replacement": "b.wrapping_add(1)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::roundtrip",
+            "equivalence_review": "not equivalent: mask(0) = 1 and decode(encode(0)) = 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The roundtrip property decode(encode(xs)) == xs only checks that mask is an involution; a different XOR key is still an involution and survives, while wrapping_add(1) breaks it.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-quickcheck-model-comparison",
+      "subject_id": "authored-lib-quickcheck",
+      "diff": "cases/lib-quickcheck-model-comparison.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "quickcheck_bool_model_comparison",
+      "hard_case": "A model-comparison property (`popcount(x) == x.count_ones()`) returned as bool is not recognized as an oracle; ripr reports static_unknown only.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(x >> i) & 3",
+            "outcome": "tests_failed",
+            "failing_test": "tests::popcount_matches_model",
+            "equivalence_review": "not equivalent: popcount(2) = 2 instead of 1"
+          },
+          {
+            "replacement": "(x >> (i / 2)) & 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::popcount_matches_model",
+            "equivalence_review": "not equivalent: popcount(2) = 2 instead of 1 (bit 1 counted twice)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The #[quickcheck] property compares against the std model count_ones over random u32, so any change in bit counting is found.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-quickcheck-macro-relational-bound",
+      "subject_id": "authored-lib-quickcheck",
+      "diff": "cases/lib-quickcheck-macro-relational-bound.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 24
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "quickcheck_macro_relational_property",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "xs.len().min(max).saturating_sub(1)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: truncate([1], 5) = [] instead of [1] (length still <= max)"
+          },
+          {
+            "replacement": "xs.len().min(max + 1)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::truncate_never_exceeds",
+            "equivalence_review": "not equivalent: truncate([1,2], 0) = [1], length 1 > 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The quickcheck! macro property only asserts len <= max, so dropping an extra element survives while keeping max+1 elements violates the bound.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-tokio-test-await-assert-eq",
+      "subject_id": "authored-lib-tokio",
+      "diff": "cases/lib-tokio-test-await-assert-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 4
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "tokio_test_await_assert_eq",
+      "hard_case": "`assert_eq!(total(&[1, 2]).await, 8)` in a #[tokio::test] is read as unknown/none, so a pinned async return is only weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "prices.iter().sum::<u32>() + 6",
+            "outcome": "tests_failed",
+            "failing_test": "tests::total_adds_shipping",
+            "equivalence_review": "not equivalent: total(&[1,2]) = 9 instead of 8"
+          },
+          {
+            "replacement": "prices.iter().max().copied().unwrap_or(0) + 5",
+            "outcome": "tests_failed",
+            "failing_test": "tests::total_adds_shipping",
+            "equivalence_review": "not equivalent: total(&[1,2]) = 7 instead of 8"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The #[tokio::test] awaits the owner and assert_eq! pins the exact value 8.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-tokio-spawn-handle-dropped",
+      "subject_id": "authored-lib-tokio",
+      "diff": "cases/lib-tokio-spawn-handle-dropped.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 8
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "tokio_spawn_unawaited_assert",
+      "hard_case": "ripr credits the assert_eq inside an unawaited tokio::spawn as exact_value (in its static_unknown finding); a dropped JoinHandle never fails the test.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "p - p / 5",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: discount(100) = 80 instead of 90"
+          },
+          {
+            "replacement": "p",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: discount(100) = 100 instead of 90"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The assertion runs in a detached tokio::spawn task whose JoinHandle is dropped; the runtime shuts down without propagating (or even running) the task's panic.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-tokio-spawn-await-unwrap",
+      "subject_id": "authored-lib-tokio",
+      "diff": "cases/lib-tokio-spawn-await-unwrap.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "tokio_spawn_await_unwrap",
+      "hard_case": "ripr reads the spawned-and-joined test as smoke_only (from `.await.unwrap()`) and misses the assert_eq inside the spawned block.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "p * 9 / 100",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tax_in_joined_task",
+            "equivalence_review": "not equivalent: tax(1000) = 90 instead of 80"
+          },
+          {
+            "replacement": "p * 8 / 10",
+            "outcome": "tests_failed",
+            "failing_test": "tests::tax_in_joined_task",
+            "equivalence_review": "not equivalent: tax(1000) = 800 instead of 80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The assert_eq inside tokio::spawn is propagated because the JoinHandle is awaited and unwrap() re-panics on the JoinError.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-tokio-multi-thread-timeout-is-ok",
+      "subject_id": "authored-lib-tokio",
+      "diff": "cases/lib-tokio-multi-thread-timeout-is-ok.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 16
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "tokio_multi_thread_timeout_is_ok",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "1u64 << (i + 1)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: backoff_total(3) = 28 instead of 14"
+          },
+          {
+            "replacement": "i as u64",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: backoff_total(3) = 6 instead of 14"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "In the multi_thread #[tokio::test], assert!(timeout(..).await.is_ok()) only checks completion, never the returned value.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-claims-assert-some-eq-pinned",
+      "subject_id": "authored-lib-claims",
+      "diff": "cases/lib-claims-assert-some-eq-pinned.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 7
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate",
+      "test_shape": "claims_assert_some_eq",
+      "hard_case": "claims::assert_some_eq! is not resolved (rust_macro_wrapped_assertion_unresolved), so an exact Option value oracle is a gap.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x % 2 == 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::first_even_found",
+            "equivalence_review": "not equivalent: first_even(&[1,4,6]) = Some(1)"
+          },
+          {
+            "replacement": "x % 3 == 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::first_even_found",
+            "equivalence_review": "not equivalent: first_even(&[1,4,6]) = Some(6)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_some_eq!(first_even(&[1,4,6]), 4) pins the found value, killing both predicate mutants.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "propagation_unknown",
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-claims-assert-some-side-only",
+      "subject_id": "authored-lib-claims",
+      "diff": "cases/lib-claims-assert-some-side-only.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "claims_assert_some_side_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "xs.iter().rposition(|&x| x == t)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: find_index(&[5,3,3],3) = Some(2) instead of Some(1)"
+          },
+          {
+            "replacement": "xs.iter().position(|&x| x <= t)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: find_index(&[1,3],3) = Some(0) instead of Some(1)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_some! only checks that an index was found, so returning a different index survives.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "propagation_unknown",
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-claims-assert-ge-relational",
+      "subject_id": "authored-lib-claims",
+      "diff": "cases/lib-claims-assert-ge-relational.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 15
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "claims_assert_ge_relational",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(n + 1).next_power_of_two()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: capacity_for(8) = 16 instead of 8 (capacity_for(5) = 8 either way)"
+          },
+          {
+            "replacement": "n / 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::capacity_fits",
+            "equivalence_review": "not equivalent: capacity_for(5) = 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ge!(capacity_for(5), 5) is a lower bound; (n+1).next_power_of_two() still gives 8 for 5 while n/2 drops below 5.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-claims-assert-ok-unwrap-then-eq",
+      "subject_id": "authored-lib-claims",
+      "diff": "cases/lib-claims-assert-ok-unwrap-then-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 22
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "claims_assert_ok_unwrap_then_assert_eq",
+      "hard_case": "`let q = assert_ok!(checked_div(17, 5)); assert_eq!(q, 3);` is a pinned value, but ripr flags the claims macro unresolved and reports reachable_unrevealed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "a / b + 1",
+            "outcome": "tests_failed",
+            "failing_test": "tests::division",
+            "equivalence_review": "not equivalent: checked_div(17,5) = Ok(4) instead of Ok(3)"
+          },
+          {
+            "replacement": "(a + b - 1) / b",
+            "outcome": "tests_failed",
+            "failing_test": "tests::division",
+            "equivalence_review": "not equivalent: checked_div(17,5) = Ok(4) (ceiling) instead of Ok(3)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_ok! returns the Ok payload and the following std assert_eq! pins it to 3, so both arithmetic mutants fail.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-approx-relative-eq-tight",
+      "subject_id": "authored-lib-float",
+      "diff": "cases/lib-approx-relative-eq-tight.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 6
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "approx_assert_relative_eq_tight_epsilon",
+      "hard_case": "approx::assert_relative_eq! with epsilon = 1e-9 is read as unknown/none, so a tight float oracle is only weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "r * 3.14159 * r",
+            "outcome": "tests_failed",
+            "failing_test": "tests::area_of_radius_three",
+            "equivalence_review": "not equivalent: circle_area(3.0) differs by ~2.4e-5 (> 1e-9)"
+          },
+          {
+            "replacement": "2.0 * PI * r",
+            "outcome": "tests_failed",
+            "failing_test": "tests::area_of_radius_three",
+            "equivalence_review": "not equivalent: circle_area(3.0) = 6*PI instead of 9*PI"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_relative_eq!(circle_area(3.0), 9*PI, epsilon = 1e-9) is effectively exact at this scale; both mutants differ far beyond the tolerance.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-approx-abs-diff-loose-epsilon",
+      "subject_id": "authored-lib-float",
+      "diff": "cases/lib-approx-abs-diff-loose-epsilon.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 10
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "approx_assert_abs_diff_eq_loose_epsilon",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "c * 1.8 + 32.2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: fahrenheit(100.0) = 212.2 (within 0.5); fahrenheit(0.0) = 32.2 instead of 32"
+          },
+          {
+            "replacement": "c * 1.9 + 32.0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::boiling_point",
+            "equivalence_review": "not equivalent: fahrenheit(100.0) = 222"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "epsilon = 0.5 in assert_abs_diff_eq! absorbs the 0.2 offset mutant but not the slope change.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-float-cmp-assert-ulps",
+      "subject_id": "authored-lib-float",
+      "diff": "cases/lib-float-cmp-assert-ulps.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "float_cmp_assert_approx_eq_ulps",
+      "hard_case": "float_cmp::assert_approx_eq!(f64, a, b, ulps = 2) is read as unknown/none, so a strict ulps oracle is only weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "xs.iter().skip(1).sum::<f64>()",
+            "outcome": "tests_failed",
+            "failing_test": "tests::mean_of_three",
+            "equivalence_review": "not equivalent: mean([1,2,4]) = 2.0 instead of 2.333"
+          },
+          {
+            "replacement": "xs.iter().map(|x| x * x).sum::<f64>()",
+            "outcome": "tests_failed",
+            "failing_test": "tests::mean_of_three",
+            "equivalence_review": "not equivalent: mean([1,2,4]) = 7.0 instead of 2.333"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The float-cmp ulps = 2 comparison is near-exact, so any change to the sum is caught.",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "lib-float-cmp-approx-eq-loose-in-assert",
+      "subject_id": "authored-lib-float",
+      "diff": "cases/lib-float-cmp-approx-eq-loose-in-assert.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "float_cmp_approx_eq_in_assert_loose",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "CI=true INSTA_UPDATE=no cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "v / 3.5",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: kmh_to_ms(36.0) = 10.29 (within 0.5) instead of 10.0"
+          },
+          {
+            "replacement": "v / 3.0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::highway_speed",
+            "equivalence_review": "not equivalent: kmh_to_ms(36.0) = 12.0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert!(approx_eq!(f64, .., epsilon = 0.5)) tolerates the 3.5 divisor (10.29) but not 3.0 (12).",
+      "labeling_observation": {
+        "ripr_commit": "5e385c644",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
         "excerpt_parity": "matched"
       }
     }

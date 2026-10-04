@@ -1,0 +1,61 @@
+//! Small numeric helpers tested with `#[test_case]`.
+
+#[derive(Debug, PartialEq)]
+pub enum PortError {
+    Empty,
+    NotNumber,
+    OutOfRange(u32),
+}
+
+pub fn square(x: i64) -> i64 {
+    x * x
+}
+
+pub fn parse_port(s: &str) -> Result<u16, PortError> {
+    if s.is_empty() {
+        return Err(PortError::Empty);
+    }
+    let n: u32 = s.parse().map_err(|_| PortError::NotNumber)?;
+    if n == 0 || n > 65535 {
+        return Err(PortError::OutOfRange(n));
+    }
+    Ok(n as u16)
+}
+
+pub fn triangle(n: u64) -> u64 {
+    n * (n + 1) / 2
+}
+
+pub fn clamp_pct(x: u32) -> u32 {
+    if x > 100 { 100 } else { x }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case(2 => 4)]
+    #[test_case(3 => 9)]
+    fn squares(x: i64) -> i64 {
+        square(x)
+    }
+
+    #[test_case("" => matches Err(_) ; "empty")]
+    #[test_case("8080" => Ok(8080) ; "http alt")]
+    fn ports(s: &str) -> Result<u16, PortError> {
+        parse_port(s)
+    }
+
+    #[test_case(3, 6)]
+    #[test_case(4, 10)]
+    fn triangles(n: u64, expected: u64) {
+        assert_eq!(triangle(n), expected);
+    }
+
+    #[test_case(150 => with |v: u32| assert!(v <= 100) ; "over")]
+    #[test_case(40 => 40 ; "inside")]
+    fn clamps(x: u32) -> u32 {
+        clamp_pct(x)
+    }
+}

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 008cf8f..3cb78a1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@
+ }
+ 
+ pub async fn tax(p: u32) -> u32 {
+-    p * 8 / 100
++    (p << 3) / 100
+ }
+ 
+ pub async fn backoff_total(n: u32) -> u64 {

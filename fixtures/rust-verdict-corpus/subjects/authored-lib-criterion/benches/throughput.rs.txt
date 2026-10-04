@@ -1,0 +1,16 @@
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use lib_criterion::{checksum, window_sum};
+
+fn bench_checksum(c: &mut Criterion) {
+    let data = vec![7u8; 4096];
+    c.bench_function("checksum 4k", |b| b.iter(|| checksum(black_box(&data))));
+}
+
+fn bench_window(c: &mut Criterion) {
+    let values: Vec<u64> = (0..1024).collect();
+    assert_eq!(window_sum(&values, 4), 6, "bench input sanity");
+    c.bench_function("window 64", |b| b.iter(|| window_sum(black_box(&values), 64)));
+}
+
+criterion_group!(benches, bench_checksum, bench_window);
+criterion_main!(benches);

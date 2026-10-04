@@ -1,0 +1,9 @@
+[package]
+name = "lib_assert_matches"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dev-dependencies]
+assert_matches = "1.5"

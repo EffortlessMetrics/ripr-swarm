@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2145ef3..3371a38 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@
+     if level > 5 {
+         return Err(ParseError::TooLarge);
+     }
+-    Ok(level * 4 + 3)
++    Ok(3 + level * 4)
+ }
+ 
+ #[cfg(test)]
