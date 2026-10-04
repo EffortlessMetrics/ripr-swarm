@@ -6,8 +6,8 @@
 //! verdict, and spells out each stop reason.
 
 use crate::domain::{
-    ExposureClass, Finding, RelatedTest, RelatedTestMiss, StopReason, exact_assertion_fact,
-    input_boundary_fact,
+    ExposureClass, Finding, OracleStrength, RelatedTest, RelatedTestMiss, StopReason,
+    exact_assertion_fact, input_boundary_fact,
 };
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
@@ -28,29 +28,30 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
             finding.related_tests.len()
         ));
         for rows in groups {
-            let test = rows[0];
-            let verdict =
-                match related_test_miss_reason(test, &finding.activation.missing_discriminators) {
-                    Some(why) => format!("misses: {why}"),
-                    None => match &test.oracle {
-                        Some(_) => format!(
-                            "{} {} oracle",
-                            test.oracle_strength.as_str(),
-                            test.oracle_kind.as_str().replace('_', " ")
-                        ),
-                        None => "no oracle row".to_string(),
-                    },
-                };
+            // The test is judged by its strongest assertion; a weaker row's
+            // reason must not speak for a test that also asserts exactly.
+            let lead = rows
+                .iter()
+                .copied()
+                .min_by_key(|row| strength_order(&row.oracle_strength))
+                .unwrap_or(rows[0]);
+            let lead_verdict = row_verdict(lead, finding);
             out.push_str(&format!(
-                "  - {}:{} {}: {verdict}\n",
-                display_path(&test.file),
-                test.line,
-                test.name
+                "  - {}:{} {}: {lead_verdict}\n",
+                display_path(&lead.file),
+                lead.line,
+                lead.name
             ));
             for row in &rows {
                 if let Some(oracle) = &row.oracle {
+                    let verdict = row_verdict(row, finding);
+                    let note = if verdict == lead_verdict {
+                        String::new()
+                    } else {
+                        format!(" ({verdict})")
+                    };
                     out.push_str(&format!(
-                        "      checked: {}\n",
+                        "      checked: {}{note}\n",
                         checked_assertion_text(oracle)
                     ));
                 }
@@ -82,6 +83,33 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
         }
     }
     out
+}
+
+/// What ripr concluded about one assertion row.
+fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
+    match related_test_miss_reason(row, &finding.activation.missing_discriminators) {
+        Some(why) => format!("misses: {why}"),
+        None => match &row.oracle {
+            Some(_) => format!(
+                "{} {} oracle",
+                row.oracle_strength.as_str(),
+                row.oracle_kind.as_str().replace('_', " ")
+            ),
+            None => "no oracle row".to_string(),
+        },
+    }
+}
+
+/// Strongest first, so the minimum is the assertion a test is judged by.
+fn strength_order(strength: &OracleStrength) -> u8 {
+    match strength {
+        OracleStrength::Strong => 0,
+        OracleStrength::Medium => 1,
+        OracleStrength::Weak => 2,
+        OracleStrength::Smoke => 3,
+        OracleStrength::Unknown => 4,
+        OracleStrength::None => 5,
+    }
 }
 
 /// Rows of the same test (name, file, line), in first-seen order.
@@ -194,5 +222,66 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         StopReason::MacroReachUnresolved => {
             "a test may reach this through a macro ripr does not expand"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{MissingDiscriminatorFact, OracleKind};
+    use crate::output::perl_preview_card::tests::sample_perl_finding;
+    use std::path::PathBuf;
+
+    fn row(oracle: &str, strength: OracleStrength, miss: RelatedTestMiss) -> RelatedTest {
+        RelatedTest {
+            name: "parses_empty".to_string(),
+            file: PathBuf::from("tests/parse.rs"),
+            line: 7,
+            oracle: Some(oracle.to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(miss),
+        }
+    }
+
+    #[test]
+    fn a_test_is_judged_by_its_strongest_assertion_not_its_first_row() {
+        let mut finding = sample_perl_finding();
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "len == 0".to_string(),
+            reason: "no related test passes an empty input".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests = vec![
+            row(
+                "assert!(parse(\"a\").is_ok());",
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+            row(
+                "assert_eq!(parse(\"a\"), Ok(1));",
+                OracleStrength::Strong,
+                RelatedTestMiss::MissingInput,
+            ),
+        ];
+        let text = render_verdict_explanation(&finding);
+        assert!(
+            text.contains(
+                "  - tests/parse.rs:7 parses_empty: misses: no test input reaches `len == 0`\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "      checked: assert!(parse(\"a\").is_ok()) (misses: assertion too weak to tell the old behavior from the new)\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("      checked: assert_eq!(parse(\"a\"), Ok(1))\n"),
+            "{text}"
+        );
     }
 }
