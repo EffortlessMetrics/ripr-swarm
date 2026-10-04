@@ -102,7 +102,9 @@ hold:
    `&mut` borrow, shadowing or interior-mutability write of the binding
    between the call and the assertion. A `let mut` binding gives no credit.
 2. The other operand is a struct literal of `T` (wrapped at most once as
-   above, matching any wrapper on the owner's return) that names `f`
+   above, matching any wrapper on the owner's return; a wrapper other than
+   `Ok`, `Some` or `Err` must itself be a workspace enum that meets rule 3)
+   that names `f`
    explicitly with an independent expected value: a literal, a constant, or
    an expression that mentions neither the owner call nor the binding.
    `Config { retries: c.retries, .. }` names `f` but pins nothing.
@@ -194,6 +196,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 12. `let c = build(3); assert_eq!(c, Config { retries: c.retries, name: "x".into() })`:
     not `exposed`.
 13. `let mut c = build(3); c.retries = 4; assert_eq!(c, Config { retries: 4, name: "x".into() })`:
+    not `exposed`.
+14. `wrap(3)` returns `Wrapped::One(build(3))`, where `Wrapped` has
+    `impl PartialEq for Wrapped { fn eq(&self, _: &Self) -> bool { true } }`;
+    test `assert_eq!(wrap(3), Wrapped::One(Config { retries: 4, name: "x".into() }))`:
     not `exposed`.
 
 ## Test Mapping

@@ -150,8 +150,12 @@ This holds for a change to the arm's body. For a change to the arm's
 pattern, selecting the changed arm is not enough, because an input inside
 both the original and the changed pattern runs the same arm either way.
 Credit then needs a resolved call whose selected arm differs between the
-original and the changed `match`, two arms whose result expressions differ
-in text, and a same-test exact oracle on that call's result.
+original and the changed `match`, two arms whose results are provably
+unequal values, and a same-test exact oracle on that call's result. Results
+are provably unequal only when both are literals, or enum paths or
+constructors of literals in the grammar above, with different values. Any
+other result expression (`1 + 1` against `2`, a call, a binding) gives no
+credit, because different text can compute the same value.
 
 ### Selection outranks tokens
 
@@ -236,12 +240,15 @@ the diff changes `None => 1` to `None => 0`.
    is a follow-up.
    Test `assert_eq!(f(9), "digit")`: `exposed` (9 moved from `_` to the
    changed arm).
+9. `match n { 0..=4 => 1 + 1, _ => 2 }`, the diff changes the pattern
+   `0..=3` to `0..=4`. Test `assert_eq!(f(4), 2)`: not `exposed` (4 moved
+   arms, but both arms return 2).
 
 ## Test Mapping
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
-- Planned: one fixture or verdict-corpus case per acceptance example 2 to 7.
+- Planned: one fixture or verdict-corpus case per acceptance example 2 to 9.
 - Planned: `crates/ripr/src/analysis/classify/activation.rs` unit tests for
   each grammar element, guard blocking, first-match order and unresolved
   arguments.
