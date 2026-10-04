@@ -8,12 +8,20 @@
 //! implementation. The harness then scores only the joins it can trust:
 //!
 //! - `seam_precise`: an operator mutant (cargo-mutants `BinaryOperator` or
-//!   `UnaryOperator`) whose original operator token appears in the expression
-//!   of a `predicate_boundary` or `return_value` seam on the same line. The
-//!   mutant changes the seam's own behavior, so its outcome tests the verdict.
+//!   `UnaryOperator`) joined to a `predicate_boundary` or `return_value` seam
+//!   whose expression contains it. With a `span` join (the snapshot carries
+//!   seam spans) the calibration join already placed the mutated range inside
+//!   the innermost containing seam, so lines holding several seams are scored.
+//!   A `file_line` join (span-less seam) qualifies only when the original
+//!   operator token appears in the seam expression. Either way the mutant
+//!   changes the seam's own behavior, so its outcome tests the verdict.
 //! - `function_body`: a `FnValue` mutant that replaces the whole function
 //!   body. It is caught or missed by the function's tests as a whole, not by a
 //!   discriminator for the joined seam; reported, never scored.
+//! - `span_tie_conflict`: a span tie (several seams share the exact span
+//!   that contains the mutant) whose seams make different grip claims;
+//!   reported, never scored. A span tie whose seams agree is classified like
+//!   a `span` join on its most specific seam.
 //! - `same_line_other`: any other unambiguous file/line join (a call-presence
 //!   seam joined to an arithmetic mutant on the same line, for example);
 //!   reported, never scored.
@@ -556,7 +564,8 @@ struct Pair {
     mutant: String,
 }
 
-/// Classify every unambiguous calibration match. Ambiguous and unmatched
+/// Classify every unambiguous calibration match, plus ambiguous matches that
+/// are span ties (see [`span_tie_candidate`]). Other ambiguous and unmatched
 /// runtime records stay in the calibration metrics and are never scored.
 fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> Vec<Pair> {
     let genres: BTreeMap<&str, &str> = mutants
@@ -589,51 +598,124 @@ fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> V
             .unwrap_or("")
             .to_string()
     };
-    calibration
+    let pair = |join_method: &str, seam: &Value, runtime: &Value| {
+        let mutant = text(runtime, "/mutant_id");
+        let seam_id = text(seam, "/seam_id");
+        let seam_kind = text(seam, "/seam_kind");
+        let expression = expressions
+            .get(seam_id.as_str())
+            .copied()
+            .unwrap_or("")
+            .to_string();
+        let genre = genres.get(mutant.as_str()).copied().unwrap_or("");
+        Pair {
+            pairing: pairing_for(genre, join_method, &mutant, &seam_kind, &expression),
+            grip_class: text(seam, "/seam_grip_class"),
+            outcome: text(runtime, "/runtime_outcome"),
+            seam_id,
+            seam_kind,
+            file: text(seam, "/file"),
+            line: seam.get("line").and_then(Value::as_u64).unwrap_or(0),
+            expression,
+            mutant,
+        }
+    };
+    let matched = calibration
         .get("matches")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .map(|record| {
-            let mutant = text(record, "/runtime/mutant_id");
-            let seam_id = text(record, "/static/seam_id");
-            let seam_kind = text(record, "/static/seam_kind");
-            let expression = expressions
-                .get(seam_id.as_str())
-                .copied()
-                .unwrap_or("")
-                .to_string();
-            let genre = genres.get(mutant.as_str()).copied().unwrap_or("");
-            Pair {
-                pairing: pairing_for(genre, &mutant, &seam_kind, &expression),
-                grip_class: text(record, "/static/seam_grip_class"),
-                outcome: text(record, "/runtime/runtime_outcome"),
-                seam_id,
-                seam_kind,
-                file: text(record, "/static/file"),
-                line: record
-                    .pointer("/static/line")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                expression,
-                mutant,
+            pair(
+                &text(record, "/join_method"),
+                record.get("static").unwrap_or(&Value::Null),
+                record.get("runtime").unwrap_or(&Value::Null),
+            )
+        });
+    let ties = calibration
+        .get("ambiguous_file_line_matches")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|record| {
+            let runtime = record.get("runtime")?;
+            match span_tie_candidate(record)? {
+                Ok(seam) => Some(pair("span", seam, runtime)),
+                Err(seam) => Some(Pair {
+                    pairing: "span_tie_conflict",
+                    ..pair("span", seam, runtime)
+                }),
             }
-        })
-        .collect()
+        });
+    matched.chain(ties).collect()
 }
 
-fn pairing_for(genre: &str, mutant: &str, seam_kind: &str, expression: &str) -> &'static str {
+/// An ambiguous calibration record whose runtime mutant carries a column and
+/// whose candidates all carry the same seam span is a span tie: the mutated
+/// range lies inside every candidate (the join only ties containing seams),
+/// typically a predicate seam that is also the function's return value. When
+/// every candidate makes the same grip claim, the mutant's outcome tests that
+/// one claim, so the tie is scored against the candidate whose kind is most
+/// specific (`predicate_boundary`, then `return_value`, then the first).
+/// Candidates that disagree return `Err` so the tie is reported, never scored.
+/// Line-only ambiguity (no runtime column, or span-less candidates) returns
+/// `None` and stays unscored.
+fn span_tie_candidate(record: &Value) -> Option<Result<&Value, &Value>> {
+    record.pointer("/runtime/column")?.as_u64()?;
+    let candidates = record.get("candidates")?.as_array()?;
+    let span = |seam: &Value| -> Option<[u64; 4]> {
+        Some([
+            seam.get("line")?.as_u64()?,
+            seam.get("column")?.as_u64()?,
+            seam.get("end_line")?.as_u64()?,
+            seam.get("end_column")?.as_u64()?,
+        ])
+    };
+    let first = candidates.first()?;
+    let shared = span(first)?;
+    if candidates.iter().any(|seam| span(seam) != Some(shared)) {
+        return None;
+    }
+    let grip = first.get("seam_grip_class");
+    let chosen = ["predicate_boundary", "return_value"]
+        .iter()
+        .find_map(|kind| {
+            candidates
+                .iter()
+                .find(|seam| seam.get("seam_kind").and_then(Value::as_str) == Some(kind))
+        })
+        .unwrap_or(first);
+    if candidates
+        .iter()
+        .all(|seam| seam.get("seam_grip_class") == grip)
+    {
+        Some(Ok(chosen))
+    } else {
+        Some(Err(chosen))
+    }
+}
+
+fn pairing_for(
+    genre: &str,
+    join_method: &str,
+    mutant: &str,
+    seam_kind: &str,
+    expression: &str,
+) -> &'static str {
     if genre == "FnValue" {
         return "function_body";
     }
     let operator_genre = matches!(genre, "BinaryOperator" | "UnaryOperator");
     let behavior_seam = matches!(seam_kind, "predicate_boundary" | "return_value");
+    if !(operator_genre && behavior_seam) {
+        return "same_line_other";
+    }
+    // A span join already proved the mutated range lies inside this seam.
+    if join_method == "span" {
+        return "seam_precise";
+    }
     match original_operator(mutant) {
-        Some(operator)
-            if operator_genre && behavior_seam && contains_operator_token(expression, operator) =>
-        {
-            "seam_precise"
-        }
+        Some(operator) if contains_operator_token(expression, operator) => "seam_precise",
         _ => "same_line_other",
     }
 }
@@ -757,7 +839,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
-        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants inside a predicate_boundary or return_value seam: by span containment when the snapshot carries seam spans, otherwise by the original operator appearing in the seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
         "repos": repos.iter().map(|repo| json!({
             "name": repo.name,
             "revision": repo.revision,
@@ -978,22 +1060,41 @@ mod tests {
     fn pairing_scores_only_operator_mutants_inside_behavior_seams() {
         let boundary = "src/a.rs:3:9: replace > with >= in f";
         assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "i > 0"),
+            pairing_for(
+                "BinaryOperator",
+                "file_line",
+                boundary,
+                "predicate_boundary",
+                "i > 0"
+            ),
             "seam_precise"
         );
         // Same line, but the seam's claim is about a call, not the operator.
         assert_eq!(
-            pairing_for("BinaryOperator", boundary, "call_presence", "f(i > 0)"),
+            pairing_for(
+                "BinaryOperator",
+                "file_line",
+                boundary,
+                "call_presence",
+                "f(i > 0)"
+            ),
             "same_line_other"
         );
         // `>` appears only inside the seam's `>=`, so it is not the seam's operator.
         assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x >= y"),
+            pairing_for(
+                "BinaryOperator",
+                "file_line",
+                boundary,
+                "predicate_boundary",
+                "x >= y"
+            ),
             "same_line_other"
         );
         assert_eq!(
             pairing_for(
                 "UnaryOperator",
+                "file_line",
                 "src/a.rs:3:9: delete ! in f",
                 "predicate_boundary",
                 "a != b"
@@ -1003,6 +1104,7 @@ mod tests {
         assert_eq!(
             pairing_for(
                 "BinaryOperator",
+                "file_line",
                 "src/a.rs:3:9: replace >= with < in f",
                 "predicate_boundary",
                 "x >= y"
@@ -1011,17 +1113,124 @@ mod tests {
         );
         // Same line and kind, but the operator is outside the seam expression.
         assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x == y"),
+            pairing_for(
+                "BinaryOperator",
+                "file_line",
+                boundary,
+                "predicate_boundary",
+                "x == y"
+            ),
             "same_line_other"
         );
         assert_eq!(
             pairing_for(
                 "FnValue",
+                "file_line",
                 "src/a.rs:3:9: replace f -> bool with true",
                 "return_value",
                 "x > 0"
             ),
             "function_body"
+        );
+        // A span join proved containment; expression text is not re-checked,
+        // but the genre and seam-kind rules still apply.
+        assert_eq!(
+            pairing_for(
+                "BinaryOperator",
+                "span",
+                boundary,
+                "predicate_boundary",
+                "x >= y"
+            ),
+            "seam_precise"
+        );
+        assert_eq!(
+            pairing_for(
+                "BinaryOperator",
+                "span",
+                boundary,
+                "call_presence",
+                "f(i > 0)"
+            ),
+            "same_line_other"
+        );
+        assert_eq!(
+            pairing_for(
+                "Literal",
+                "span",
+                "src/a.rs:3:9: replace 1 with 0 in f",
+                "return_value",
+                "x + 1"
+            ),
+            "same_line_other"
+        );
+    }
+
+    /// atuin `context.rs:40`: `cfg!(..) && daemon_enabled` is both the
+    /// predicate seam and the function's return seam, with one span. The
+    /// calibration report keeps the `&&` mutant ambiguous; the harness scores
+    /// it once, on the predicate seam, because both seams claim the same grip.
+    #[test]
+    fn span_ties_with_one_grip_claim_are_scored_and_conflicts_are_not() {
+        let seam = |id: &str, kind: &str, grip: &str, column: u64| {
+            json!({"seam_id": id, "seam_kind": kind, "seam_grip_class": grip,
+                   "file": "src/context.rs", "line": 40, "column": column,
+                   "end_line": 40, "end_column": 47})
+        };
+        let tie = |name: &str, runtime_column: Option<u64>, candidates: Vec<Value>| {
+            let mut runtime = json!({"mutant_id": name, "runtime_outcome": "missed"});
+            if let Some(column) = runtime_column {
+                runtime["column"] = json!(column);
+            }
+            json!({"runtime": runtime, "candidates": candidates})
+        };
+        let and_mutant = "src/context.rs:40:30: replace && with || in f";
+        let calibration = json!({
+            "matches": [],
+            "ambiguous_file_line_matches": [
+                tie(and_mutant, Some(30), vec![
+                    seam("ret", "return_value", "strongly_gripped", 5),
+                    seam("pred", "predicate_boundary", "strongly_gripped", 5),
+                ]),
+                tie("src/context.rs:40:31: replace && with || in g", Some(31), vec![
+                    seam("ret", "return_value", "strongly_gripped", 5),
+                    seam("pred", "predicate_boundary", "ungripped", 5),
+                ]),
+                // Different spans: a partial overlap, never scored.
+                tie("src/context.rs:40:32: replace && with || in h", Some(32), vec![
+                    seam("a", "predicate_boundary", "ungripped", 5),
+                    seam("b", "predicate_boundary", "ungripped", 6),
+                ]),
+                // No runtime column: line-only ambiguity, never scored.
+                tie("src/context.rs:40:33: replace && with || in k", None, vec![
+                    seam("ret", "return_value", "strongly_gripped", 5),
+                    seam("pred", "predicate_boundary", "strongly_gripped", 5),
+                ]),
+            ],
+        });
+        let mutants = json!([
+            {"name": and_mutant, "genre": "BinaryOperator"},
+            {"name": "src/context.rs:40:31: replace && with || in g", "genre": "BinaryOperator"},
+        ]);
+
+        let pairs = classify_matches(&calibration, &json!({"seams": []}), &mutants);
+
+        let got = pairs
+            .iter()
+            .map(|pair| {
+                (
+                    pair.pairing,
+                    pair.seam_id.as_str(),
+                    pair.grip_class.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            vec![
+                ("seam_precise", "pred", "strongly_gripped"),
+                ("span_tie_conflict", "pred", "ungripped"),
+            ]
         );
     }
 

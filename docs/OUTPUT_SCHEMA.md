@@ -16926,16 +16926,18 @@ Field contract:
 - `metrics.mutants_total` — count of runtime mutation records imported from the
   supplied JSON.
 - `metrics.matched_total` — runtime records joined to a static seam.
-- `metrics.ambiguous_file_line_total` — runtime records whose normalized
-  file/line matched multiple static seams and were therefore not assigned to a
-  single seam.
+- `metrics.ambiguous_file_line_total` — runtime records that matched multiple
+  static seams and were therefore not assigned to a single seam: several
+  span-less seams on the record's line, or several innermost seam spans that
+  tie (identical or partially overlapping ranges).
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
   by `seam_id` or file/line.
 - `metrics.static_without_runtime_total` — static seams with no definitive or
   ambiguous runtime record in this import.
 - `metrics.runtime_outcome_counts` — counts keyed by normalized runtime outcome
   label from the imported data.
-- `metrics.join_method_counts` — counts for `seam_id` and `file_line` joins.
+- `metrics.join_method_counts` — counts for `seam_id`, `span`, and `file_line`
+  joins.
 - `agreement.static_gap_and_runtime_signal` — static gap seams that also have at
   least one matched runtime gap signal in this import.
 - `agreement.static_gap_without_runtime_signal` — static gap seams with no
@@ -16965,7 +16967,16 @@ Field contract:
   static gap joined only to runtime-clean labels, or `no_runtime_data` when no
   usable runtime signal was available for the static gap in this import.
 - `matches[].join_method` — `seam_id` when the runtime record carries a matching
-  seam/probe ID; otherwise `file_line` when normalized path and line match.
+  seam/probe ID; otherwise `span` when the runtime record carries a start column
+  (cargo-mutants `span.start.column`) and exactly one innermost seam span in
+  the same file contains the mutated range; otherwise `file_line` when
+  normalized path and line match exactly one seam without a span. A spanned
+  seam that does not contain the mutated range is never joined to it, even on
+  the same line. Runtime records without a column join by file and line over
+  every seam on the line.
+- `matches[].static.column`, `end_line`, `end_column` and
+  `matches[].runtime.column`, `end_line`, `end_column` — 1-based character
+  columns with an exclusive end, present only when that side carries a span.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
   and missing discriminators.

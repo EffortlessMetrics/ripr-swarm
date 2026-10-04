@@ -1,5 +1,6 @@
 use super::{
-    MutationOutcomeRecord, json_scalar_as_string, json_scalar_as_usize, normalize_report_path,
+    MutationOutcomeRecord, RuntimeSpan, json_scalar_as_string, json_scalar_as_usize,
+    normalize_report_path,
 };
 use serde_json::Value;
 
@@ -15,6 +16,7 @@ const NESTED_FILE_KEYS: &[&str] = &[
     "file_name",
 ];
 const LINE_KEYS: &[&str] = &["line", "line_start", "start_line", "startLine"];
+const COLUMN_KEYS: &[&str] = &["column", "col"];
 const OPERATOR_KEYS: &[&str] = &[
     "operator",
     "mutation_operator",
@@ -47,6 +49,7 @@ struct OutcomeIdentity {
     seam_id: Option<String>,
     file: Option<String>,
     line: Option<usize>,
+    span: Option<RuntimeSpan>,
 }
 
 struct RuntimeDetails {
@@ -122,6 +125,7 @@ fn mutation_outcome_record_from_object(
         seam_id: identity.seam_id,
         file: identity.file,
         line: identity.line,
+        span: identity.span,
         mutation_operator: details.mutation_operator,
         runtime_outcome: details.runtime_outcome,
         duration: details.duration,
@@ -170,7 +174,32 @@ impl<'a> OutcomeObjectContext<'a> {
             seam_id: self.seam_id(),
             file: self.file(),
             line: self.line(),
+            span: self.runtime_span(),
         }
+    }
+
+    /// The mutated source range, from the same `span` the start line falls
+    /// back to. Read only when that span's start line agrees with the record
+    /// line, so a column is never paired with a different line. cargo-mutants
+    /// records 1-based character columns with an exclusive end, the same
+    /// geometry `repo-exposure-json` seams carry.
+    fn runtime_span(&self) -> Option<RuntimeSpan> {
+        let span = self.span?;
+        let start = nested_object(span, "start")?;
+        let line = usize_field_any(start, LINE_KEYS)?;
+        let column = usize_field_any(start, COLUMN_KEYS)?;
+        if self.line() != Some(line) || column == 0 {
+            return None;
+        }
+        let end = nested_object(span, "end").and_then(|end| {
+            let end_line = usize_field_any(end, LINE_KEYS)?;
+            let end_column = usize_field_any(end, COLUMN_KEYS)?;
+            ((end_line, end_column) >= (line, column)).then_some((end_line, end_column))
+        });
+        Some(RuntimeSpan {
+            start: (line, column),
+            end,
+        })
     }
 
     fn runtime_details(&self) -> RuntimeDetails {
