@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
+  has a focused test but no `ripr agent repair` command, and closes with
+  `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
+  provider, and `ripr agent repair --phase before` without `--seam-id` points
+  to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
+  not seam IDs.
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are

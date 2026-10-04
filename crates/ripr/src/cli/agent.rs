@@ -505,7 +505,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 );
             }
             if seam_id.is_none() {
-                return Err("agent repair --phase before requires --seam-id <id>".to_string());
+                return Err("agent repair --phase before requires --seam-id <id>; run `ripr pilot --root .` to list seam IDs with their exact repair commands (the `probe:...` IDs from `ripr check` are not seam IDs)".to_string());
             }
         }
         AgentRepairPhase::After => match (seam_id.is_some(), attempt_id.is_some()) {
