@@ -121,6 +121,7 @@ Updated:
 ## Pending — binding_value_fail_closed (8)
 
 Reason:
+RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
 RIPR-SPEC-0158: char literal test inputs are literal facts; map_or_else probe moves from infection_unknown to propagation_unknown with no infection yes
 
 Command:

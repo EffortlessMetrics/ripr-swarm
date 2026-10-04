@@ -194,6 +194,32 @@ pub(crate) enum MacroBindingKind {
     MacroArgument(String),
 }
 
+impl MacroBindingKind {
+    /// Whether this site may shadow any macro name, not only the one it
+    /// was recorded for.
+    pub(crate) fn binds_any_name(&self) -> bool {
+        matches!(
+            self,
+            Self::Unparsed | Self::NoImplicitPrelude | Self::MacroUse(_) | Self::ForeignGlob(_)
+        )
+    }
+}
+
+/// One file's file-wide macro-binding sites (its scoped sites cannot
+/// reach a test in another file). The diff scope (#5320) reads it for files
+/// it withholds; no module declaration counts as resolved there, so a
+/// `#[macro_use]` stays broad.
+pub(crate) fn macro_binding_scan(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+) -> Vec<(String, MacroBindingSite)> {
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), &|_, _| false)
+        .into_iter()
+        .filter(|(_, site)| site.scope.is_none())
+        .collect()
+}
+
 fn macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,

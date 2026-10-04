@@ -372,6 +372,7 @@ Updated:
 ## Pending — opaque_fixture_builder (8)
 
 Reason:
+RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
 RIPR-SPEC-0009: literal-free related tests name the changed boundary instead of claiming opaque fixtures
 
 Command:

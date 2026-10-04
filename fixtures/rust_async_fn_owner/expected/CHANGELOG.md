@@ -303,6 +303,7 @@ Updated:
 ## Pending — rust_async_fn_owner (12)
 
 Reason:
+RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
 RIPR-SPEC-0197: a refused assert_eq! discloses why it was not credited; a refused context no longer claims no assertion or oracle was detected
 
 Command:
