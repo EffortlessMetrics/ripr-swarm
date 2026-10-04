@@ -20,7 +20,7 @@ use std::path::Path;
 
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
-use crate::agent::loop_commands::bound_root;
+use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
     RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
@@ -392,7 +392,7 @@ pub(crate) fn assemble_repair_card(
     };
 
     let seam_id = entry.seam.id().as_str().to_string();
-    let packet_route = format!("ripr agent packet --seam-id {seam_id} --json");
+    let packet_route = format!("ripr agent packet --seam-id {} --json", shell_arg(&seam_id));
     let detail_sources = detail_sources_for(facts, &packet_route, &done_when)
         .map_err(AgentCardError::operational)?;
 
@@ -482,7 +482,9 @@ fn detail_sources_for(
     }
     match (facts.witness, facts.finding_id) {
         (Some(witness), Some(finding_id)) => {
-            let explain_route = format!("ripr explain {finding_id}");
+            // A finding id embeds the raw file path, so a path with a space,
+            // apostrophe or `;` must stay one argument when pasted.
+            let explain_route = format!("ripr explain {}", shell_arg(finding_id));
             sources.push(RepairCardDetailSource::current(
                 RepairCardDetailFamily::FixInstruction,
                 &explain_route,
@@ -640,7 +642,7 @@ pub(crate) fn workspace_identity_for(
         readiness,
         &format!(
             "ripr agent packet --seam-id {} --json",
-            entry.seam.id().as_str()
+            shell_arg(entry.seam.id().as_str())
         ),
     )
 }
@@ -910,6 +912,32 @@ mod tests {
         }
         if gap_names_seam(&gap, "gap-1", "pricing::other_total") {
             return Err("a gap id shared with another owner must not name the seam".to_string());
+        }
+        Ok(())
+    }
+
+    /// Finding ids embed the raw file path. A path with a space, apostrophe
+    /// and `;` must reach the pasted `ripr explain` route as one argument,
+    /// never splitting or running its tail as a second command.
+    #[test]
+    fn fix_instruction_route_quotes_a_path_bearing_finding_id() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let packet = packet_for(&entry);
+        let witness = super::super::repair_card_usability::measurement_witness();
+        let finding_id = "probe:src/it's;x rm.rs:2:predicate";
+        let mut facts = facts_for(&entry, &packet);
+        facts.witness = Some(&witness);
+        facts.finding_id = Some(finding_id);
+        let card = assemble_repair_card(&facts)?;
+        let route = card
+            .detail_references
+            .iter()
+            .find(|reference| reference.family == RepairCardDetailFamily::FixInstruction)
+            .and_then(|reference| reference.route.as_deref())
+            .ok_or_else(|| "fix instruction route missing".to_string())?;
+        let expected = r"ripr explain 'probe:src/it'\''s;x rm.rs:2:predicate'";
+        if route != expected {
+            return Err(format!("expected `{expected}`, got `{route}`"));
         }
         Ok(())
     }

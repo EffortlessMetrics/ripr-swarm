@@ -99,7 +99,7 @@ fn classified_entry() -> ClassifiedSeam {
 /// A witness-shaped instruction payload: fix site, suggested assertion, one
 /// limitation, one missing-discriminator fact. Field-for-field the same
 /// authority the check pipeline projects; only the values are synthetic.
-fn measurement_witness() -> DiagnosticWitness {
+pub(crate) fn measurement_witness() -> DiagnosticWitness {
     DiagnosticWitness {
         kind: "predicate_boundary".to_string(),
         probe_family: "predicate_boundary".to_string(),
