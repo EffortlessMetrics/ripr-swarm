@@ -1,0 +1,336 @@
+//! Parser-owned signature facts for the function that owns one seam offset.
+//!
+//! The Rust test-stub producer needs the owner's exact call shape (receiver,
+//! parameters, return type, enclosing impl) to write a call that compiles.
+//! Line-text heuristics cannot recover that, so this reads it from the same
+//! clean `ra_ap_syntax` parse the rest of the analyzer trusts and returns
+//! `None` when the file is not parser-valid.
+
+use super::parse_clean_source_file;
+use super::ra::module_attributes_require_test;
+use ra_ap_syntax::{
+    AstNode, TextSize,
+    ast::{self, HasGenericParams, HasName},
+};
+
+/// How the owner takes `self`, when it is a method.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerReceiver {
+    Value,
+    Ref,
+    RefMut,
+}
+
+/// One non-`self` parameter as written in the signature.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OwnerParam {
+    /// The binding name when the pattern is a plain identifier.
+    pub(crate) name: Option<String>,
+    pub(crate) ty: String,
+}
+
+/// Where the owner sits relative to `impl` and `trait` items.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerContainer {
+    /// A module-level `fn`.
+    Free,
+    /// An inherent `impl` whose self type is a plain path.
+    Inherent { self_type: String },
+    /// A trait `impl` whose self type is a plain path.
+    TraitImpl { self_type: String },
+    /// Anything the stub cannot call by name: a trait body, a generic or
+    /// non-path impl, or a function nested inside another function body.
+    Unsupported(&'static str),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OwnerSignature {
+    pub(crate) name: String,
+    pub(crate) container: OwnerContainer,
+    pub(crate) receiver: Option<OwnerReceiver>,
+    pub(crate) params: Vec<OwnerParam>,
+    /// `None` for `()`-returning functions.
+    pub(crate) return_type: Option<String>,
+    pub(crate) is_async: bool,
+    pub(crate) is_unsafe: bool,
+    /// Type or const generic parameters (lifetimes do not count).
+    pub(crate) has_type_generics: bool,
+    /// Production (non-`cfg(test)`) modules enclosing the owner, outermost
+    /// first, matching `production_owner_module_path`.
+    pub(crate) parent_modules: Vec<String>,
+}
+
+/// Signature of the innermost `fn` whose text range contains `byte_offset`.
+pub(crate) fn owner_signature_at(source: &str, byte_offset: usize) -> Option<OwnerSignature> {
+    let parse = parse_clean_source_file(source)?;
+    let offset = TextSize::try_from(byte_offset).ok()?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| function.syntax().text_range().contains_inclusive(offset))
+        .max_by_key(|function| function.syntax().text_range().start())?;
+    Some(signature_of(&function))
+}
+
+/// Whether `source` parses without errors under the analyzer's own parse.
+pub(crate) fn rust_source_parses_cleanly(source: &str) -> bool {
+    parse_clean_source_file(source).is_some()
+}
+
+/// 1-based inclusive line span of the innermost `fn` containing `line`.
+pub(crate) fn owner_fn_line_span(source: &str, line: usize) -> Option<(usize, usize)> {
+    let parse = parse_clean_source_file(source)?;
+    let line_of = |at: TextSize| {
+        source
+            .get(..usize::from(at))
+            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            let range = function.syntax().text_range();
+            line_of(range.start()) <= line && line <= line_of(range.end())
+        })
+        .max_by_key(|function| function.syntax().text_range().start())
+        .map(|function| {
+            let range = function.syntax().text_range();
+            (line_of(range.start()), line_of(range.end()))
+        })
+}
+
+fn signature_of(function: &ast::Fn) -> OwnerSignature {
+    let name = function
+        .name()
+        .map(|name| name.text().to_string())
+        .unwrap_or_default();
+    let param_list = function.param_list();
+    let receiver = param_list
+        .as_ref()
+        .and_then(|list| list.self_param())
+        .map(|self_param| {
+            if self_param.amp_token().is_none() {
+                OwnerReceiver::Value
+            } else if self_param.mut_token().is_some() {
+                OwnerReceiver::RefMut
+            } else {
+                OwnerReceiver::Ref
+            }
+        });
+    let params = param_list
+        .map(|list| {
+            list.params()
+                .map(|param| OwnerParam {
+                    name: param.pat().and_then(|pat| match pat {
+                        ast::Pat::IdentPat(ident) if ident.pat().is_none() => {
+                            ident.name().map(|name| name.text().to_string())
+                        }
+                        _ => None,
+                    }),
+                    ty: param
+                        .ty()
+                        .map(|ty| ty.syntax().text().to_string())
+                        .unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let return_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .map(|ty| ty.syntax().text().to_string())
+        .filter(|ty| ty.trim() != "()");
+    let has_type_generics = function.generic_param_list().is_some_and(|list| {
+        list.generic_params()
+            .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
+    });
+    let mut parent_modules = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .filter(|module| !module_attributes_require_test(module))
+        .filter_map(|module| module.name().map(|name| name.text().to_string()))
+        .collect::<Vec<_>>();
+    parent_modules.reverse();
+    OwnerSignature {
+        name,
+        container: container_of(function),
+        receiver,
+        params,
+        return_type,
+        is_async: function.async_token().is_some(),
+        is_unsafe: function.unsafe_token().is_some(),
+        has_type_generics,
+        parent_modules,
+    }
+}
+
+fn container_of(function: &ast::Fn) -> OwnerContainer {
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if ast::Fn::can_cast(ancestor.kind()) {
+            return OwnerContainer::Unsupported("owner is nested inside another function body");
+        }
+        if ast::Trait::can_cast(ancestor.kind()) {
+            return OwnerContainer::Unsupported("owner is a trait default method");
+        }
+        if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+            let has_generics = item.generic_param_list().is_some_and(|list| {
+                list.generic_params()
+                    .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
+            });
+            if has_generics {
+                return OwnerContainer::Unsupported("owner is in a generic impl");
+            }
+            let Some(ast::Type::PathType(path)) = item.self_ty() else {
+                return OwnerContainer::Unsupported("owner impl self type is not a plain path");
+            };
+            let self_type = path.syntax().text().to_string();
+            if self_type.contains('<') {
+                return OwnerContainer::Unsupported("owner impl self type has generic arguments");
+            }
+            return if item.trait_().is_some() {
+                OwnerContainer::TraitImpl { self_type }
+            } else {
+                OwnerContainer::Inherent { self_type }
+            };
+        }
+        if ast::Module::can_cast(ancestor.kind()) || ast::SourceFile::can_cast(ancestor.kind()) {
+            return OwnerContainer::Free;
+        }
+    }
+    OwnerContainer::Free
+}
+
+/// A top-level comparison `lhs op rhs` in a seam expression, as written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ComparisonFact {
+    pub(crate) lhs: String,
+    pub(crate) op: String,
+    pub(crate) rhs: String,
+}
+
+/// Parse `expression` and return its comparison when the whole expression
+/// is exactly one `<`, `<=`, `>`, `>=`, `==`, or `!=` (an optional leading
+/// `if` is ignored). Compound conditions return `None`.
+pub(crate) fn single_comparison(expression: &str) -> Option<ComparisonFact> {
+    let trimmed = expression.trim();
+    let condition = trimmed.strip_prefix("if ").unwrap_or(trimmed).trim();
+    let wrapped = format!("fn ripr_probe() {{ let _ = {condition}; }}");
+    let parse = parse_clean_source_file(&wrapped)?;
+    let let_stmt = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    let ast::Expr::BinExpr(binary) = let_stmt.initializer()? else {
+        return None;
+    };
+    let op = binary.op_token()?.text().to_string();
+    if !matches!(op.as_str(), "<" | "<=" | ">" | ">=" | "==" | "!=") {
+        return None;
+    }
+    Some(ComparisonFact {
+        lhs: binary.lhs()?.syntax().text().to_string(),
+        op,
+        rhs: binary.rhs()?.syntax().text().to_string(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_function_signature_reads_params_and_return() -> Result<(), String> {
+        let source = "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n";
+        let offset = source.find(">=").ok_or("fixture has a predicate")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.name, "price");
+        assert_eq!(signature.container, OwnerContainer::Free);
+        assert_eq!(signature.receiver, None);
+        assert_eq!(
+            signature.params,
+            vec![
+                OwnerParam {
+                    name: Some("amount".to_string()),
+                    ty: "u32".to_string()
+                },
+                OwnerParam {
+                    name: Some("threshold".to_string()),
+                    ty: "u32".to_string()
+                },
+            ]
+        );
+        assert_eq!(signature.return_type.as_deref(), Some("u32"));
+        assert!(signature.parent_modules.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn method_signature_reads_receiver_and_inherent_self_type() -> Result<(), String> {
+        let source = "mod units {\n    pub struct ByteSize(u64);\n    impl ByteSize {\n        pub fn as_whole_units(&self, unit: u64) -> u64 {\n            if unit == 0 { 0 } else { self.0 / unit }\n        }\n    }\n}\n";
+        let offset = source.find("unit == 0").ok_or("fixture has a predicate")?;
+        let signature = owner_signature_at(source, offset).ok_or("signature parses")?;
+        assert_eq!(signature.name, "as_whole_units");
+        assert_eq!(
+            signature.container,
+            OwnerContainer::Inherent {
+                self_type: "ByteSize".to_string()
+            }
+        );
+        assert_eq!(signature.receiver, Some(OwnerReceiver::Ref));
+        assert_eq!(signature.parent_modules, vec!["units".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn trait_default_and_generic_owners_are_unsupported() -> Result<(), String> {
+        let trait_source =
+            "trait T {\n    fn f(&self, x: u8) -> u8 { if x > 3 { 1 } else { 0 } }\n}\n";
+        let offset = trait_source.find("x > 3").ok_or("predicate")?;
+        let signature = owner_signature_at(trait_source, offset).ok_or("parses")?;
+        assert!(matches!(
+            signature.container,
+            OwnerContainer::Unsupported(_)
+        ));
+
+        let generic_source =
+            "fn g<T: Into<u8>>(x: T) -> u8 { let v = x.into(); if v > 3 { 1 } else { 0 } }\n";
+        let offset = generic_source.find("v > 3").ok_or("predicate")?;
+        let signature = owner_signature_at(generic_source, offset).ok_or("parses")?;
+        assert!(signature.has_type_generics);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_fn_line_span_finds_the_innermost_function() {
+        let source =
+            "fn a() {\n    1;\n}\n\nfn b(x: u8) -> u8 {\n    if x > 1 { 2 } else { 3 }\n}\n";
+        assert_eq!(owner_fn_line_span(source, 6), Some((5, 7)));
+        assert_eq!(owner_fn_line_span(source, 2), Some((1, 3)));
+        assert_eq!(owner_fn_line_span(source, 4), None);
+    }
+
+    #[test]
+    fn single_comparison_accepts_one_operator_and_refuses_compounds() {
+        assert_eq!(
+            single_comparison("amount >= threshold"),
+            Some(ComparisonFact {
+                lhs: "amount".to_string(),
+                op: ">=".to_string(),
+                rhs: "threshold".to_string(),
+            })
+        );
+        assert_eq!(
+            single_comparison("if x < 10").map(|fact| fact.rhs),
+            Some("10".to_string())
+        );
+        assert_eq!(single_comparison("a > 1 && b < 2"), None);
+        assert_eq!(single_comparison("is_ready(x)"), None);
+    }
+}

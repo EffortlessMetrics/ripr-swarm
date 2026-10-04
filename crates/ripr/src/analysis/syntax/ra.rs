@@ -1045,7 +1045,7 @@ pub(crate) fn production_owner_module_path(source: &str, start_line: usize) -> O
     })
 }
 
-fn module_attributes_require_test(module: &ast::Module) -> bool {
+pub(super) fn module_attributes_require_test(module: &ast::Module) -> bool {
     cfg_predicates::attributes_require_test(
         module.attrs().map(|attr| attr.syntax().text().to_string()),
     )
