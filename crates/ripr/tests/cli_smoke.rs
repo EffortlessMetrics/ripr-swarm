@@ -10303,7 +10303,6 @@ fn perl_doctor_workspace_with_exporter_stub(
     label: &str,
     perllsp_body: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    use std::os::unix::fs::PermissionsExt;
     let root = unique_temp_workspace(label);
     std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
     std::fs::write(
@@ -10315,22 +10314,107 @@ fn perl_doctor_workspace_with_exporter_stub(
         .map_err(|err| err.to_string())?;
     std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
         .map_err(|err| err.to_string())?;
+    // #5103: a checkout-local exporter must not steal PATH resolution or
+    // the displayed bin path.
+    write_probe_stub(
+        &root.join("perllsp"),
+        "#!/bin/sh\necho 'cwd-hijack 0.0.0'\nexit 0\n",
+        "@echo off\r\necho cwd-hijack 0.0.0\r\nexit /b 0\r\n",
+    )?;
     let shim_dir = root.join("exporter-shims");
     std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
-    for (name, body) in [
-        ("perl-ripr-facts", "#!/bin/sh\nexit 127\n"),
-        ("perllsp", perllsp_body),
-    ] {
-        let path = shim_dir.join(name);
-        std::fs::write(&path, body).map_err(|err| format!("write {name} stub: {err}"))?;
-        let mut permissions = std::fs::metadata(&path)
-            .map_err(|err| format!("stat {name} stub: {err}"))?
+    write_probe_stub(
+        &shim_dir.join("perl-ripr-facts"),
+        "#!/bin/sh\nexit 127\n",
+        "@echo off\r\nexit /b 127\r\n",
+    )?;
+    write_probe_stub(&shim_dir.join("perllsp"), perllsp_body, perllsp_body)?;
+    Ok((root, shim_dir))
+}
+
+fn write_probe_stub(path: &Path, unix_body: &str, windows_body: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = windows_body;
+        std::fs::write(path, unix_body)
+            .map_err(|err| format!("write {}: {err}", path.display()))?;
+        let mut permissions = std::fs::metadata(path)
+            .map_err(|err| format!("stat {}: {err}", path.display()))?
             .permissions();
         permissions.set_mode(0o755);
-        std::fs::set_permissions(&path, permissions)
-            .map_err(|err| format!("chmod {name} stub: {err}"))?;
+        std::fs::set_permissions(path, permissions)
+            .map_err(|err| format!("chmod {}: {err}", path.display()))?;
     }
-    Ok((root, shim_dir))
+    #[cfg(windows)]
+    {
+        let _ = unix_body;
+        std::fs::write(path, windows_body)
+            .map_err(|err| format!("write {}: {err}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn mixed_perl_doctor_workspace(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(root.join("t")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Makefile.PL"),
+        "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("lib/Pricing.pm"),
+        "package Pricing;\nuse strict;\nsub discount { return 0; }\n1;\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("t/pricing.t"),
+        "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(root)
+}
+
+fn plant_cwd_prove_decoys(root: &Path) -> Result<(), String> {
+    write_probe_stub(
+        &root.join("prove.cmd"),
+        "#!/bin/sh\necho 'cwd prove.cmd hijack'\nexit 0\n",
+        "@echo off\r\necho cwd prove.cmd hijack\r\nexit /b 0\r\n",
+    )?;
+    write_probe_stub(
+        &root.join("prove"),
+        "#!/bin/sh\necho 'cwd prove hijack'\nexit 0\n",
+        "@echo off\r\necho cwd prove hijack\r\nexit /b 0\r\n",
+    )
+}
+
+fn prove_path_stub_name() -> &'static str {
+    if cfg!(windows) { "prove.cmd" } else { "prove" }
+}
+
+fn doctor_perl_stdout_with_path(
+    root: &Path,
+    search_path: &std::ffi::OsString,
+) -> Result<String, String> {
+    let root_str = root.display().to_string();
+    let search_path = search_path
+        .to_str()
+        .ok_or_else(|| "search PATH is not UTF-8".to_string())?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &["doctor", "--root", &root_str],
+        &[("PATH", search_path)],
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(unix)]
@@ -10412,6 +10496,10 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
         "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
     );
     assert!(
+        !exporter_line.contains("cwd-hijack") && !stdout.contains("cwd-hijack"),
+        "checkout-local perllsp must not be the displayed exporter:\n{stdout}"
+    );
+    assert!(
         !stdout.contains("not a compatible exporter"),
         "compatible control must not be reported incompatible:\n{stdout}"
     );
@@ -10433,6 +10521,69 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
     );
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_does_not_treat_a_repo_local_prove_cmd_as_path_prove() -> Result<(), String> {
+    // #5103: Windows `where` searches cwd first. A checkout prove.cmd (and a
+    // Unix cwd `prove` decoy) must not print "prove available on PATH".
+    let root = mixed_perl_doctor_workspace("doctor-perl-cwd-prove")?;
+    plant_cwd_prove_decoys(&root)?;
+    let empty_bin = root.join("empty-bin");
+    std::fs::create_dir_all(&empty_bin).map_err(|err| format!("mkdir empty-bin: {err}"))?;
+    let stdout = doctor_perl_stdout_with_path(&root, &empty_bin.into_os_string())?;
+    assert!(
+        stdout.contains("perl: prove NOT found on PATH"),
+        "repo-local prove.cmd must not read as PATH prove:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("perl: prove available on PATH"),
+        "repo-local prove.cmd must not read as available:\n{stdout}"
+    );
+    let runners = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("runners:"))
+        .unwrap_or("");
+    assert!(
+        runners.contains("none found on PATH") || !runners.contains("prove"),
+        "runners must not name a cwd prove: {runners}\n{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd() -> Result<(), String> {
+    // Discriminating control: the same cwd decoys, plus a PATH stub named the
+    // way this host actually resolves `prove`.
+    let root = mixed_perl_doctor_workspace("doctor-perl-path-prove")?;
+    plant_cwd_prove_decoys(&root)?;
+    let shim_dir = root.join("path-bin");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("mkdir path-bin: {err}"))?;
+    write_probe_stub(
+        &shim_dir.join(prove_path_stub_name()),
+        "#!/bin/sh\necho 'path prove'\nexit 0\n",
+        "@echo off\r\necho path prove\r\nexit /b 0\r\n",
+    )?;
+    let stdout = doctor_perl_stdout_with_path(&root, &shim_dir.into_os_string())?;
+    assert!(
+        stdout.contains("perl: prove available on PATH"),
+        "PATH prove must still count:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("perl: prove NOT found on PATH"),
+        "PATH prove must not be reported missing:\n{stdout}"
+    );
+    let runners = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("runners:"))
+        .unwrap_or("");
+    assert!(
+        runners.contains("prove"),
+        "runners must name PATH prove: {runners}\n{stdout}"
+    );
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11246,11 +11397,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("ripr agent review-summary"));
     assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
     assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(stdout.contains("#### First-run status"));
-    assert!(stdout.contains("Start-here artifact:"));
-    assert!(stdout.contains("missing_start_here"));
-    assert!(stdout.contains("cat target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("### Language preview grouping"));
+    assert!(stdout.contains("ripr reports ci-summary --root ."));
     assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
     assert!(!workspace.join("ripr.toml").exists());
     assert!(!workspace.join(".github/workflows/ripr.yml").exists());
@@ -11301,7 +11448,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The steps use the generating version's CLI, so the install is pinned
     // to it rather than taking the newest crates.io release.
     assert!(workflow.contains(&format!(
-        "run: cargo install ripr --version {} --locked\n",
+        "          version={}\n",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(workflow.contains(&format!(
+        "            cargo install ripr --version {} --locked\n",
         env!("CARGO_PKG_VERSION")
     )));
     assert!(!workflow.contains("cargo install ripr --locked"));
@@ -11310,9 +11461,9 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains(
         "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
     ));
-    // Every third-party action is pinned to a commit SHA (#4452).
-    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
-    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
+    // The prebuilt install needs no third-party toolchain or cache action.
+    assert!(!workflow.contains("dtolnay/rust-toolchain"));
+    assert!(!workflow.contains("Swatinem/rust-cache"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
@@ -11351,16 +11502,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("Run RIPR PR guidance report"));
     assert!(workflow.contains("Emit RIPR PR guidance annotations"));
     assert!(workflow.contains("Add RIPR advisory summary"));
-    assert!(workflow.contains("## RIPR advisory summary"));
-    assert!(workflow.contains("### Start here"));
-    assert!(workflow.contains("#### First-run status"));
-    assert!(workflow.contains("Start-here artifact:"));
-    assert!(workflow.contains("missing_start_here"));
-    assert!(workflow.contains("cat target/ripr/reports/start-here.md"));
-    assert!(workflow.contains("### Language preview grouping"));
-    assert!(workflow.contains("### SARIF and badge status"));
-    assert!(workflow.contains("### PR guidance annotations"));
-    assert!(workflow.contains("### Known limits"));
+    assert!(workflow.contains("ripr reports ci-summary --root ."));
     assert!(!workflow.contains("cargo xtask"));
     assert!(workflow.contains("continue-on-error: true"));
     assert!(workflow.contains("actions/upload-artifact@v7"));
@@ -19624,6 +19766,37 @@ fn impacted_evidence_unknown_arg_fails_clearly() {
     );
 }
 
+#[test]
+fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<(), String> {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
+    let dir = unique_temp_workspace("impacted-missing");
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let _cleanup = Scratch(dir.clone());
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing evidence must be an operational failure:\n{stderr}"
+    );
+    assert!(stderr.contains("missing.json"), "{stderr}");
+    assert!(
+        !dir.join("target").exists(),
+        "nothing may be written into the cwd"
+    );
+    Ok(())
+}
+
 // ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
 
 #[test]
@@ -20666,6 +20839,94 @@ fn no_origin_master_repo(label: &str, initial_branch: &str) -> Result<PathBuf, S
     .map_err(|err| format!("write work lib.rs: {err}"))?;
     run_git(&root, &["commit", "-am", "work"])?;
     Ok(root)
+}
+
+/// `pr-evidence` reads Git history and writes from the invocation directory.
+/// A `--root` naming another repository, a missing directory, or a file used
+/// to pair the invocation repository's diff with the selected root's source
+/// and stamp a clean packet with the selected root. Each must refuse before
+/// any packet is written in either tree.
+#[test]
+fn pr_evidence_refuses_root_outside_invocation_repository() -> Result<(), String> {
+    let selected = no_origin_master_repo("pr-evidence-foreign-selected", "master")?;
+    let invocation = no_origin_master_repo("pr-evidence-foreign-invocation", "master")?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let missing = selected.join("missing-member");
+    let file_root = selected.join("Cargo.toml");
+    let mut failures = Vec::new();
+    for (label, root, expected) in [
+        (
+            "foreign repository",
+            &selected,
+            "is not inside the Git work tree",
+        ),
+        ("missing directory", &missing, "is not a directory"),
+        ("file", &file_root, "is not a directory"),
+    ] {
+        let root_arg = root.to_string_lossy().into_owned();
+        let output = run_command(
+            bin,
+            Some(&invocation),
+            &[
+                "pr-evidence",
+                "--root",
+                &root_arg,
+                "--base",
+                "master",
+                "--head",
+                "HEAD",
+            ],
+        )
+        .map_err(|err| format!("spawn ripr pr-evidence: {err}"))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let written =
+            invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+        if output.status.code() != Some(2) || !stderr.contains(expected) || written {
+            failures.push(format!(
+                "{label} root must refuse with `{expected}` and write nothing; status {:?}, written {written}, stderr:\n{stderr}",
+                output.status.code()
+            ));
+        }
+    }
+    // An inherited repository selector (as a Git hook exports) must not make
+    // both top-level probes answer for the invocation repository.
+    let selected_arg = selected.to_string_lossy().into_owned();
+    let git_dir = invocation.join(".git").to_string_lossy().into_owned();
+    let work_tree = invocation.to_string_lossy().into_owned();
+    let output = run_command_with_env(
+        bin,
+        &invocation,
+        &[
+            "pr-evidence",
+            "--root",
+            &selected_arg,
+            "--base",
+            "master",
+            "--head",
+            "HEAD",
+        ],
+        &[("GIT_DIR", &git_dir), ("GIT_WORK_TREE", &work_tree)],
+    )
+    .map_err(|err| format!("spawn ripr pr-evidence with GIT_DIR: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let written =
+        invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+    if output.status.code() != Some(2)
+        || !stderr.contains("is not inside the Git work tree")
+        || written
+    {
+        failures.push(format!(
+            "foreign root under inherited GIT_DIR/GIT_WORK_TREE must still refuse; status {:?}, written {written}, stderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    ignore_remove_dir_all(&selected);
+    ignore_remove_dir_all(&invocation);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }
 
 fn json_string_at(path: &Path, pointer: &str) -> Result<serde_json::Value, String> {
