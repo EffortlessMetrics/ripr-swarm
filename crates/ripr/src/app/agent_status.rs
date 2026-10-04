@@ -4114,10 +4114,7 @@ mod tests {
             "pilot_rust_excluded_no_repair_target",
         ] {
             assert!(
-                report
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.kind == kind),
+                report.warnings.iter().any(|warning| warning.kind == kind),
                 "expected {kind}: {:?}",
                 report.warnings
             );
