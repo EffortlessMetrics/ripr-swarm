@@ -11863,8 +11863,9 @@ outputs = [
 metrics = [
   "intervention_study_valid_protocols",
   "intervention_study_falsifiers_rejected",
+id = "RIPR-SPEC-0217"
 name = "Repair-attempt discovery selection and fresh-process resume"
-spec = "docs/specs/RIPR-SPEC-0216-agent-attempt-status-selection.md"
+spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
 tests = [
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_selects_and_resumes_an_awaiting_attempt",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
@@ -11890,7 +11891,7 @@ code = [
   "crates/ripr/src/cli/help/agent.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0216-agent-attempt-status-selection.md",
+  "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/REPAIR_ATTEMPT.md",
 ]

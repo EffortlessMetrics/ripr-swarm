@@ -1,4 +1,4 @@
-# RIPR-SPEC-0216: Repair-attempt discovery selection and fresh-process resume
+# RIPR-SPEC-0217: Repair-attempt discovery selection and fresh-process resume
 
 Status: proposed
 

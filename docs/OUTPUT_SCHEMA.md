@@ -57,7 +57,7 @@ map is:
 | `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
 | `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
-| `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0216, #4798) | `schema_version` | `0.1` |
+| `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
@@ -12847,7 +12847,7 @@ command, warnings, and static-only limits. Generated CI writes it to
 `target/ripr/workflow/agent-status.md` next to
 `target/ripr/workflow/agent-status.json`.
 
-### Exact attempt selection (`agent_attempt_status`, RIPR-SPEC-0216, #4798)
+### Exact attempt selection (`agent_attempt_status`, RIPR-SPEC-0217, #4798)
 
 `ripr agent status --root <workspace> --attempt <repair-attempt-id>` selects
 exactly one attempt from the resolved attempt store (with `--store`, the
