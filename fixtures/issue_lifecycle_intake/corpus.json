@@ -12,6 +12,7 @@
     "snapshot_path": "snapshots/issue-5439.json",
     "comments_path": "snapshots/issue-5439-comments.json",
     "timeline_path": "snapshots/issue-5439-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:707a573f54df96f4a1b926cfaad976fd5f691f15ed463e92dd63b0e1fc7d5a91",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:cc44974a5062196b4cbb05052c6840452b9bfd948bf89a5425db42361d97ea31",
     "comments_snapshot_id": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
@@ -194,6 +195,7 @@
     "snapshot_path": "snapshots/issue-5440.json",
     "comments_path": "snapshots/issue-5440-comments.json",
     "timeline_path": "snapshots/issue-5440-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:df01a118ae329a1f05318fc9335609c39f7ea07df6df98dbe0527b9cb286d9bd",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:670c49b96ed34a88842863247ea4a13b7be1cf3e675c0924b14e9f95218086a4",
     "comments_snapshot_id": "gh-issue-comments:sha256:b10c48f80ea91c2a8a1f65dc15934800b0bd65f16c6f58157a9424c549b10051"
@@ -380,6 +382,7 @@
     "snapshot_path": "snapshots/issue-5399.json",
     "comments_path": "snapshots/issue-5399-comments.json",
     "timeline_path": "snapshots/issue-5399-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:a70efccb300cd9c4f2900f0114ad2bbec813d1438c4e50ecf016ec5d64e59981",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:76704c40aab7eb448f2bb7be9ab07a0340a544af216eb5841e20cabcc1c52c9a",
     "comments_snapshot_id": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
@@ -500,7 +503,7 @@
        "bytes": 105843
       },
       {
-       "identity": "gh-issue-timeline:sha256:03bf79d06398e743e08d9e39e5b5679e0d48e54c660a0de4fd577b0c1e2ef9b9",
+       "identity": "gh-issue-timeline:sha256:a70efccb300cd9c4f2900f0114ad2bbec813d1438c4e50ecf016ec5d64e59981",
        "bytes": 94433
       }
      ],
@@ -571,7 +574,7 @@
      "claims no MCP protocol change beyond what PR #5408 itself claims",
      "claims no LSP receipt parity (explicitly out of the PR's own boundary)"
     ],
-    "row_digest": "24ea6b18a61091e3ac09c0f37b307b0b5d4c6492865367c12a1f00a24ac00e7b"
+    "row_digest": "1c4b3cbee56af34472505822047ad095720c2a86209d7f11952b351f27f6491c"
    }
   },
   {
@@ -583,6 +586,7 @@
     "snapshot_path": "snapshots/issue-5373.json",
     "comments_path": "snapshots/issue-5373-comments.json",
     "timeline_path": "snapshots/issue-5373-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:3677886af747d876fe1893b9f33a8508327ce67f49ca9fd0bbfd33b9092c6ac0",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:d0c0a1fd852c2190dbbc8d3f3b81701268094e5e7c6285f00dd46ad77fd18c90",
     "comments_snapshot_id": "gh-issue-comments:sha256:a323ae2f8e6d1b20fa79ce0ba1c6c5699db99cd14728a8739ff4456cb53e5f88"
@@ -771,6 +775,7 @@
     "snapshot_path": "snapshots/issue-2928.json",
     "comments_path": "snapshots/issue-2928-comments.json",
     "timeline_path": "snapshots/issue-2928-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:e6b4c4aff9c8258e9d9741a988e396af8fff1157de86845ed65e815fe7dd7ac8",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:f6028fcca5a61a8f00ba9a8a86748249c7991886bb624344d784880a64450d86",
     "comments_snapshot_id": "gh-issue-comments:sha256:8cb87107ea1c03c7b5e310ccba412a8652f5dc1ff3d73b5c794dc2472b2e8609"
@@ -974,6 +979,7 @@
     "snapshot_path": "snapshots/issue-5441.json",
     "comments_path": "snapshots/issue-5441-comments.json",
     "timeline_path": "snapshots/issue-5441-timeline.json",
+    "timeline_snapshot_id": "gh-issue-timeline:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     "captured_at": "2026-10-04T11:02:59Z",
     "issue_snapshot_id": "gh-issue-snapshot:sha256:0cb29bf154e2aaada496cb42df9d930500fd05870683c0e0a457396c440e5677",
     "comments_snapshot_id": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"

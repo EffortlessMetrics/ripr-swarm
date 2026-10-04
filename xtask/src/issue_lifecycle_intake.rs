@@ -125,6 +125,7 @@ pub(crate) struct IssueLifecycleIntakeSnapshotV1 {
     pub snapshot_path: Option<String>,
     pub comments_path: Option<String>,
     pub timeline_path: Option<String>,
+    pub timeline_snapshot_id: Option<String>,
     pub captured_at: String,
     pub issue_snapshot_id: String,
     pub comments_snapshot_id: String,
@@ -403,6 +404,60 @@ pub(crate) fn verify_intake_row_snapshot(
             row.id, row.snapshot.comments_snapshot_id
         ));
     }
+    if let Some(timeline_path) = &row.snapshot.timeline_path {
+        let timeline_body = fs::read(root.join(timeline_path)).map_err(|error| {
+            format!(
+                "intake row `{}` timeline {} is unreadable: {error}",
+                row.id, timeline_path
+            )
+        })?;
+        let computed = crate::blind_journey::sha256_hex(&timeline_body);
+        let recorded = row
+            .snapshot
+            .timeline_snapshot_id
+            .as_deref()
+            .ok_or_else(|| format!("intake row `{}` timeline records no digest", row.id))?;
+        if !identity_matches(recorded, "gh-issue-timeline", &computed) {
+            return Err(format!(
+                "intake row `{}` timeline digest drifted: recorded `{recorded}`, recomputed `gh-issue-timeline:sha256:{computed}`",
+                row.id
+            ));
+        }
+        verify_retrieval_step_bytes(row, "issue", snapshot_body.len())?;
+        verify_retrieval_step_bytes(row, "comments", comments_body.len())?;
+        verify_retrieval_step_bytes(row, "timeline", timeline_body.len())?;
+    }
+    Ok(())
+}
+
+/// Bind recorded retrieval-step byte claims to the committed snapshot bytes:
+/// a step that names one of the three capture commands must carry a measured
+/// byte count equal to the committed file it produced. A fabricated or stale
+/// count fails closed.
+fn verify_retrieval_step_bytes(
+    row: &IssueLifecycleIntakeRowV1,
+    surface: &str,
+    committed_len: usize,
+) -> Result<(), String> {
+    let suffix = match surface {
+        "issue" => format!("/issues/{}", row.snapshot.issue_number),
+        "comments" => format!("/issues/{}/comments", row.snapshot.issue_number),
+        "timeline" => format!("/issues/{}/timeline", row.snapshot.issue_number),
+        other => return Err(format!("unknown retrieval surface `{other}`")),
+    };
+    for step in &row.retrieval_steps {
+        if !step.command.ends_with(&suffix) {
+            continue;
+        }
+        if let IssueLifecycleIntakeBytesV1::Measured(bytes) = step.bytes {
+            if bytes as usize != committed_len {
+                return Err(format!(
+                    "intake row `{}` retrieval step `{}` claims {bytes} bytes, committed bytes measure {committed_len}",
+                    row.id, step.command
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -463,23 +518,21 @@ pub(crate) struct IssueLifecycleIntakePacketProjectionV1 {
     pub selected_bytes: IssueLifecycleIntakeBytesV1,
     pub omitted_bytes: IssueLifecycleIntakeBytesV1,
     pub overflow_bytes: IssueLifecycleIntakeBytesV1,
-    pub candidate_identities: Vec<String>,
+    pub candidates: Vec<IssueLifecycleIntakeCandidateV1>,
+    pub triager_findings: Vec<String>,
     pub missing_evidence_questions: Vec<String>,
     pub root_rationale: String,
-    pub limitation_count: usize,
-    pub false_candidate_count: usize,
-    pub non_claim_count: usize,
+    pub retrieval_steps: Vec<IssueLifecycleIntakeRetrievalStepV1>,
+    pub limitations: Vec<String>,
+    pub false_candidates: Vec<String>,
+    pub non_claims: Vec<String>,
 }
 
 pub(crate) fn build_intake_packet_projection(
     row: &IssueLifecycleIntakeRowV1,
 ) -> IssueLifecycleIntakePacketProjectionV1 {
-    let mut candidate_identities: Vec<String> = row
-        .open_candidates
-        .iter()
-        .map(|candidate| candidate.identity.clone())
-        .collect();
-    candidate_identities.sort();
+    let mut candidates = row.open_candidates.clone();
+    candidates.sort_by(|left, right| left.identity.cmp(&right.identity));
     IssueLifecycleIntakePacketProjectionV1 {
         schema_version: "issue_lifecycle_intake_packet.v1".to_string(),
         id: row.id.clone(),
@@ -490,12 +543,14 @@ pub(crate) fn build_intake_packet_projection(
         selected_bytes: row.packet_bytes.selected,
         omitted_bytes: row.packet_bytes.omitted,
         overflow_bytes: row.packet_bytes.overflow,
-        candidate_identities,
+        candidates,
+        triager_findings: row.triager_findings.clone(),
         missing_evidence_questions: row.missing_evidence_questions.clone(),
         root_rationale: row.root_disposition.rationale.clone(),
-        limitation_count: row.limitations.len(),
-        false_candidate_count: row.false_candidates.len(),
-        non_claim_count: row.non_claims.len(),
+        retrieval_steps: row.retrieval_steps.clone(),
+        limitations: row.limitations.clone(),
+        false_candidates: row.false_candidates.clone(),
+        non_claims: row.non_claims.clone(),
     }
 }
 
@@ -714,6 +769,14 @@ pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), St
             failures.push(format!(
                 "intake row `{}` attempt was rejected by the RIPR-SPEC-0218 counting law: {:?}",
                 row.id, assessment.reasons
+            ));
+        }
+        if assessment.disposition != Some(row.root_disposition.disposition) {
+            failures.push(format!(
+                "intake row `{}` root disposition {:?} disagrees with the assessed disposition {:?}",
+                row.id,
+                row.root_disposition.disposition,
+                assessment.disposition
             ));
         }
     }

@@ -2029,33 +2029,34 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
         }
     }
     let controls_path = root.join("controls.json");
-    if !controls_path.exists() {
-        return Ok(());
-    }
-    let body = read_text_lossy(&controls_path)?;
-    match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_control_corpus(&body) {
-        Ok(controls) => {
-            for failure in crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls) {
-                violations.push(format!(
-                    "issue lifecycle intake control corpus assessment failed: {failure}"
-                ));
-            }
-            for control in &controls.rows {
-                let assessment = crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(
-                    &control.row.attempt,
-                );
-                if !assessment.counted {
+    if controls_path.exists() {
+        let body = read_text_lossy(&controls_path)?;
+        match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_control_corpus(&body) {
+            Ok(controls) => {
+                for failure in crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls)
+                {
                     violations.push(format!(
-                        "issue lifecycle intake control `{}` was rejected by the RIPR-SPEC-0218 counting law: {:?}",
-                        control.id, assessment.reasons
+                        "issue lifecycle intake control corpus assessment failed: {failure}"
                     ));
                 }
+                for control in &controls.rows {
+                    let assessment =
+                        crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(
+                            &control.row.attempt,
+                        );
+                    if !assessment.counted {
+                        violations.push(format!(
+                            "issue lifecycle intake control `{}` was rejected by the RIPR-SPEC-0218 counting law: {:?}",
+                            control.id, assessment.reasons
+                        ));
+                    }
+                }
             }
-        }
-        Err(error) => {
-            violations.push(format!(
-                "issue lifecycle intake controls are invalid: {error}"
-            ));
+            Err(error) => {
+                violations.push(format!(
+                    "issue lifecycle intake controls are invalid: {error}"
+                ));
+            }
         }
     }
     let provenance_path = root.join("provenance.json");
@@ -2070,6 +2071,18 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
                     "issue lifecycle intake provenance must name {} rows, got {}",
                     corpus.rows.len(),
                     provenance.rows.len()
+                ));
+            }
+            if provenance.base_main != corpus.base_main {
+                violations.push(format!(
+                    "issue lifecycle intake provenance base_main `{}` disagrees with corpus `{}`",
+                    provenance.base_main, corpus.base_main
+                ));
+            }
+            if provenance.captured_at != corpus.captured_at {
+                violations.push(format!(
+                    "issue lifecycle intake provenance captured_at `{}` disagrees with corpus `{}`",
+                    provenance.captured_at, corpus.captured_at
                 ));
             }
             for row in &corpus.rows {
