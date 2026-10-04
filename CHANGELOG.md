@@ -20,6 +20,12 @@ are scoped or reviewed.
   get `invalid params` (#5209).
 ### Added
 
+- Bounded repair states its inline-test boundary as permanent scope:
+  repositories whose only tests are inline `#[cfg(test)]` modules in
+  non-test-surface files are out of repair scope
+  (`docs/REPAIR_ATTEMPT.md` Boundary, `ripr agent repair --help`), and
+  the CLI, pilot, and MCP refusals name it so no surface promises what
+  another refuses (#5210).
 - `ripr check --help` now chooses one `--format` per task (eye review,
   drill-in listing, machine JSON, Actions annotations, code scanning,
   README badge, PR/CI badge, repo inventory, agent packets) above the
@@ -63,6 +69,27 @@ are scoped or reviewed.
   through a helper, a closure of the same name or a foreign import, when
   the match may be skipped, when the diff changed the arm's pattern (credit
   only), or for guards, ranges, tuples and refutable payloads.
+- Repair attempts preserve literal Unix backslashes in the canonical root
+  stored by the before producer. Newly published manifests reopen in the
+  selected repository while authentic copies in another root remain refused
+  (#5744).
+- Repo-exposure snapshots retain native Unix repository root characters for
+  artifact admission, including literal filename backslashes (#5744).
+- Agent verify preserves native Unix characters in its before/after input
+  paths so receipt admission can reopen the selected snapshots (#5744).
+- CLI/MCP: selected failed or open-gap repair attempts preserve literal Unix
+  backslashes in the restart command's `--root` argument. Such a directory no
+  longer redirects restart advice to the corresponding slash path (#5608).
+- CLI: `ripr doctor --profile source-build` warns when the workspace's
+  `.cargo/config.toml` redirects linker temp variables (`TEMP`, `TMP`,
+  `TMPDIR`) into a workspace-relative directory that does not exist. ripr's
+  own config force-redirects them into `target/` (PR #397), so a fresh
+  `git worktree add` building with an isolated `CARGO_TARGET_DIR` failed
+  MSVC linking with an opaque `LNK1104 ... target\lnk{GUID}.tmp` until the
+  directory was hand-created; the advisory names the redirect and the
+  `mkdir` repair. The redirect stays — it protects full system temp drives —
+  and the constraint is now documented in
+  `docs/agent-context/validation.md` (#5280).
 - Repair attempts: concurrent `ripr agent repair --phase after` invocations
   against one attempt no longer lose a verdict to a last-writer-wins
   manifest replace. Manifest commits serialize on a short-held exclusive
@@ -243,6 +270,10 @@ are scoped or reviewed.
   this verdict" section: each examined test with the assertion it was judged
   by, what a test would need to change the verdict, and what each stop reason
   means (#5356). No verdict changes.
+
+- `ripr explain` and `ripr context` explain `file:line` syntax after a malformed
+  location misses and retain the scoped listing command for recovery. Finding
+  IDs remain opaque; selection and exit status are unchanged (#5581, #5252).
 
 ### Changed
 
