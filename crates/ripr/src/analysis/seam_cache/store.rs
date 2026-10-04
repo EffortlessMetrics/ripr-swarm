@@ -1461,7 +1461,7 @@ mod tests {
         for handle in handles {
             let id = handle
                 .join()
-                .map_err(|_| "publication_id thread did not finish".to_string())?;
+                .map_err(|_join| "publication_id thread did not finish".to_string())?;
             ids.push(id);
         }
         let mut unique = ids.clone();
