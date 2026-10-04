@@ -5,10 +5,6 @@ use super::measure::{
     contradiction_outcome, extract_commands, hostile_outcome, parse_test_result, probe_result,
     repo_exposure_contradictions, rss_sample,
 };
-// Symlink probes compile only where symlinks do (#5447 corpus); the import
-// follows its only callers so Windows hosts stay clippy-clean.
-#[cfg(unix)]
-use super::measure::linked_target;
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput};
 
