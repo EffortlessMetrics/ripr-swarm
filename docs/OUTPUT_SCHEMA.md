@@ -14141,8 +14141,8 @@ producer-consumed configuration, including an untracked `ripr.toml`; a changed
 or invalid relevant configuration therefore fails closed as stale or
 `not_evaluated`. `refresh_commands` replay the ledger's own source route when
 that route can be replayed faithfully, and `refresh_replayable` types that
-guarantee: `true` with the runnable commands, `false` with an empty
-`refresh_commands` array. A repo-exposure ledger gets
+guarantee: `true` only for a repo-exposure ledger, whose commands regenerate
+its own recorded route. A repo-exposure ledger gets
 `ripr check --format repo-exposure-json` and
 `ripr reports gap-ledger --repo-exposure` with `refresh_replayable: true`. A
 check-output ledger (the Python/TypeScript preview route) stays
@@ -14153,7 +14153,11 @@ so a regenerated check could silently rebuild the ledger at a different
 scope, or truncate the recorded check output through its own redirect. To
 refresh, rerun the original `ripr check` invocation with the same `--diff`
 when one was used, then run `ripr reports gap-ledger --check-output` for the
-fresh check output; the blocked reason carries this route.
+fresh check output; the blocked reason carries this route. A records or
+unidentified source kind also renders `refresh_replayable: false`: its
+commands are the repo-exposure regeneration route as a recovery path, which
+replaces rather than replays the recorded records input, and the blocked
+reason names that regeneration.
 
 `staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
 proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
@@ -14277,14 +14281,18 @@ the receipt.
 
 Edited and forbidden path entries are compared after canonicalization
 (#5984): backslashes fold to `/`, `.` and `..` segments resolve, absolute
-paths under the selected root become root-relative, and comparison folds
-ASCII case (Windows convention), so `SRC/PRICING.py`, an absolute path under
-the root, or `tests/../src/pricing.py` all match a forbidden
-`src/pricing.py` entry and still classify `edited_forbidden_file` before any
-verify or receipt success. `evidence.edited_files_outside_root` lists edited
-entries that do not resolve inside the selected root — absolute paths not
-under it or `..` climbs above it — as unmatched evidence for review; they
-cannot equal a root-relative forbidden entry, so they do not fire the guard.
+paths under the selected root become root-relative, entries that name an
+existing file resolve against the filesystem (so symlinked-root, verbatim
+`\\?\`, and drive-relative spellings anchor to their real location), and
+comparison folds ASCII case (Windows convention), so `SRC/PRICING.py`, an
+absolute path under the root, or `tests/../src/pricing.py` all match a
+forbidden `src/pricing.py` entry and still classify `edited_forbidden_file`
+before any verify or receipt success. `evidence.edited_files_outside_root`
+lists edited entries that do not resolve inside the selected root — absolute
+paths not under it, `..` climbs above it, or spellings whose containment
+cannot be established (a drive-relative entry that resolves to nothing) — as
+unmatched evidence for review; they cannot equal a root-relative forbidden
+entry, so they do not fire the guard.
 
 `classification.reason` carries a machine-readable string for every outcome.
 For `unknown` outcomes it is always one of the following closed set of

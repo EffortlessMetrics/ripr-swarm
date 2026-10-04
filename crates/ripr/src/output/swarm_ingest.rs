@@ -495,42 +495,73 @@ fn receipt_presence_outcome(facts: &SwarmIngestFacts) -> &'static str {
 /// Windows is a supported platform and agent output arrives from
 /// heterogeneous hosts, so the fold is unconditional; its failure direction
 /// is over-flagging a match, which fails closed.
-fn canonical_compare_key(path: &str, root: Option<&Path>) -> String {
-    canonical_path(path, root).key
+fn canonical_compare_key(path: &str, root_segments: Option<&[String]>) -> String {
+    canonical_path(path, root_segments).key
 }
 
 struct CanonicalPath {
     /// Lowercased comparison key: root-relative when the path resolves
-    /// inside `root`, otherwise the resolved absolute or `..`-prefixed form.
+    /// inside the root, otherwise the resolved absolute or `..`-prefixed
+    /// form.
     key: String,
-    /// `false` when the path is absolute outside `root` or climbs above it
-    /// with `..`, so it cannot match a root-relative forbidden entry.
+    /// `false` when the path is absolute outside the root, climbs above it
+    /// with `..`, or cannot be established to resolve inside it (a
+    /// drive-relative spelling whose file does not exist here), so it cannot
+    /// match a root-relative forbidden entry.
     under_root: bool,
 }
 
-fn canonical_path(path: &str, root: Option<&Path>) -> CanonicalPath {
+fn canonical_path(path: &str, root_segments: Option<&[String]>) -> CanonicalPath {
     let unix = path.replace('\\', "/");
-    let absolute = is_absolute_unix_path(&unix);
-    let segments = lexical_segments(&unix, absolute);
-    if absolute {
-        if let Some(relative) = root
-            .and_then(absolute_root_segments)
-            .and_then(|root_segments| strip_segment_prefix(&segments, &root_segments))
+    // A path that names the filesystem directly — POSIX-absolute, a Windows
+    // drive path, or drive-relative — resolves against the actual filesystem
+    // when it exists, so symlinked roots, verbatim `\\?\` prefixes, and
+    // drive-relative forms anchor to their real location under the
+    // canonicalized root (PR review on #5984). Only direct spellings resolve
+    // here: a bare relative entry is root-relative by packet convention, and
+    // resolving it against the process working directory could match an
+    // unrelated file.
+    let names_filesystem_directly = unix.starts_with('/') || has_windows_drive_prefix(&unix);
+    if names_filesystem_directly {
+        if let Some(segments) = std::fs::canonicalize(&unix)
+            .ok()
+            .and_then(|resolved| absolute_unix_segments(&resolved.to_string_lossy()))
         {
-            return CanonicalPath {
-                key: relative.join("/").to_ascii_lowercase(),
-                under_root: true,
-            };
+            return anchor_under_root(segments, root_segments);
         }
+        if let Some(segments) = absolute_unix_segments(&unix) {
+            return anchor_under_root(segments, root_segments);
+        }
+        // Drive-relative `C:name`: its meaning depends on that drive's
+        // current directory and it resolved to nothing here, so containment
+        // in the root cannot be established. Surface it for review instead
+        // of treating it as inside the root.
         return CanonicalPath {
-            key: segments.join("/").to_ascii_lowercase(),
+            key: unix.to_ascii_lowercase(),
             under_root: false,
         };
     }
+    let segments = lexical_segments(&unix, false);
     let under_root = segments.first().is_none_or(|first| first != "..");
     CanonicalPath {
         key: segments.join("/").to_ascii_lowercase(),
         under_root,
+    }
+}
+
+/// Anchor absolute segments to the resolved root: root-relative when the
+/// root prefix matches (case-insensitive, component-wise), otherwise outside
+/// the root.
+fn anchor_under_root(segments: Vec<String>, root_segments: Option<&[String]>) -> CanonicalPath {
+    if let Some(relative) = root_segments.and_then(|root| strip_segment_prefix(&segments, root)) {
+        return CanonicalPath {
+            key: relative.join("/").to_ascii_lowercase(),
+            under_root: true,
+        };
+    }
+    CanonicalPath {
+        key: segments.join("/").to_ascii_lowercase(),
+        under_root: false,
     }
 }
 
@@ -539,14 +570,17 @@ fn edited_forbidden_files(
     forbidden_files: &[String],
     root: &Path,
 ) -> Vec<String> {
+    let root_segments = resolved_root_segments(root);
     let forbidden: BTreeSet<_> = forbidden_files
         .iter()
-        .map(|file| canonical_compare_key(file, Some(root)))
+        .map(|file| canonical_compare_key(file, root_segments.as_deref()))
         .collect();
     dedup(
         edited_files
             .iter()
-            .filter(|file| forbidden.contains(&canonical_compare_key(file, Some(root))))
+            .filter(|file| {
+                forbidden.contains(&canonical_compare_key(file, root_segments.as_deref()))
+            })
             .cloned()
             .collect(),
     )
@@ -556,13 +590,25 @@ fn edited_forbidden_files(
 /// root (#5984). They cannot equal a root-relative forbidden entry, so the
 /// guard surfaces them as unmatched evidence instead of silently passing.
 fn edited_files_outside_root(edited_files: &[String], root: &Path) -> Vec<String> {
+    let root_segments = resolved_root_segments(root);
     dedup(
         edited_files
             .iter()
-            .filter(|file| !canonical_path(file, Some(root)).under_root)
+            .filter(|file| !canonical_path(file, root_segments.as_deref()).under_root)
             .cloned()
             .collect(),
     )
+}
+
+/// Segments of the selected root: filesystem-resolved when the root exists,
+/// so a symlinked `--root` anchors edited paths to the same location the
+/// CLI's canonicalized root names (PR review on #5984); lexical fallback for
+/// a root that does not exist on this host.
+fn resolved_root_segments(root: &Path) -> Option<Vec<String>> {
+    if let Ok(resolved) = root.canonicalize() {
+        return absolute_unix_segments(&resolved.to_string_lossy().replace('\\', "/"));
+    }
+    absolute_unix_segments(&root.to_string_lossy().replace('\\', "/"))
 }
 
 /// `//server/share`, `/abs`, and `X:/` drive paths are absolute after the
@@ -571,8 +617,13 @@ fn is_absolute_unix_path(path: &str) -> bool {
     if path.starts_with('/') {
         return true;
     }
+    has_windows_drive_prefix(path) && path.len() >= 3 && path.as_bytes()[2] == b'/'
+}
+
+/// `X:` or `X:/...` — a Windows drive prefix, absolute or drive-relative.
+fn has_windows_drive_prefix(path: &str) -> bool {
     let bytes = path.as_bytes();
-    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 /// Resolve `.` and `..` lexically. Relative paths keep leading `..` segments
@@ -597,17 +648,16 @@ fn lexical_segments(unix: &str, absolute: bool) -> Vec<String> {
     segments
 }
 
-/// Segments of `root` as an absolute path, unwrapping the verbatim prefix
-/// that `Path::canonicalize` produces on Windows (`\\?\C:\dir`,
-/// `\\?\UNC\server\share`). `None` when `root` is not absolute.
-fn absolute_root_segments(root: &Path) -> Option<Vec<String>> {
-    let unix = root.to_string_lossy().replace('\\', "/");
+/// Segments of an absolute backslash-folded path, unwrapping the verbatim
+/// prefix Windows canonicalization produces (`//?/C:/dir`,
+/// `//?/UNC/server/share`). `None` when the path is not absolute.
+fn absolute_unix_segments(unix: &str) -> Option<Vec<String>> {
     let unix = if let Some(rest) = unix.strip_prefix("//?/UNC/") {
         format!("//{rest}")
     } else if let Some(rest) = unix.strip_prefix("//?/") {
         rest.to_string()
     } else {
-        unix
+        unix.to_string()
     };
     if !is_absolute_unix_path(&unix) {
         return None;
@@ -916,6 +966,115 @@ mod tests {
                 "../outside.py",
                 "tests/../../outside-too.py"
             ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_spelled_with_verbatim_prefix() -> Result<(), String> {
+        // PR review on #5984: the agent may report the very `\\?\` verbatim
+        // prefix a Windows canonicalized root carries; the edited path is
+        // normalized symmetrically with the root, so it still matches.
+        let value = render_value_with_root(
+            Path::new(r"\\?\F:\Temp\r3-queue\scratch\app"),
+            &forbidden_edit_repro_json(
+                r#"["tests/test_pricing.py", "\\\\?\\F:\\Temp\\r3-queue\\scratch\\app\\src\\pricing.py"]"#,
+            ),
+        )?;
+        assert_forbidden_edit_witness(
+            &value,
+            &[r"\\?\F:\Temp\r3-queue\scratch\app\src\pricing.py"],
+        );
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_existing_absolute_edit_via_filesystem_resolution() -> Result<(), String> {
+        // PR review on #5984: when an absolute spelling exists on this host,
+        // filesystem resolution anchors it under the root even when the
+        // spellings differ (canonicalized case, separators).
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ingest-fs-resolve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create root: {error}"))?;
+        std::fs::write(root.join("src").join("pricing.py"), "def x(): pass")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let edited = root.join("src").join("pricing.py");
+        let edited_json = serde_json::to_string(&edited.to_string_lossy())
+            .map_err(|error| format!("encode edited path: {error}"))?;
+        let value = render_value_with_root(
+            &root,
+            &forbidden_edit_repro_json(&format!(r#"["tests/test_pricing.py", {edited_json}]"#)),
+        )?;
+        assert_forbidden_edit_witness(&value, &[edited.to_string_lossy().as_ref()]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove root: {error}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ingest_flags_forbidden_edit_reported_through_a_symlinked_root() -> Result<(), String> {
+        // PR review on #5984: the edited path may reach the checkout through
+        // a symlink alias of --root; filesystem resolution must anchor both
+        // to the same real location.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let real = std::env::temp_dir().join(format!("ripr-ingest-symlink-real-{nanos}"));
+        let link = std::env::temp_dir().join(format!("ripr-ingest-symlink-link-{nanos}"));
+        std::fs::create_dir_all(real.join("src"))
+            .map_err(|error| format!("create real root: {error}"))?;
+        std::fs::write(real.join("src").join("pricing.py"), "def x(): pass")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        std::os::unix::fs::symlink(&real, &link)
+            .map_err(|error| format!("create symlink: {error}"))?;
+        let edited = format!("{}/src/pricing.py", link.display());
+        let edited_json = serde_json::to_string(&edited)
+            .map_err(|error| format!("encode edited path: {error}"))?;
+        let value = render_value_with_root(
+            &link,
+            &forbidden_edit_repro_json(&format!(r#"["tests/test_pricing.py", {edited_json}]"#)),
+        )?;
+        assert_forbidden_edit_witness(&value, &[edited.as_str()]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        std::fs::remove_dir_all(&link).map_err(|error| format!("remove link: {error}"))?;
+        std::fs::remove_dir_all(&real).map_err(|error| format!("remove real: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_surfaces_unresolvable_drive_relative_edits_outside_the_root() -> Result<(), String> {
+        // PR review on #5984: a drive-relative `X:name` spelling resolves
+        // against that drive's current directory, not the selected root.
+        // When it resolves to nothing here, containment cannot be
+        // established, so it is surfaced for review instead of silently
+        // counting as inside the root.
+        let value = render_value(&forbidden_edit_repro_json(
+            r#"["tests/test_pricing.py", "Z:definitely-absent-r3/src/pricing.py"]"#,
+        ))?;
+        assert_eq!(value["classification"]["state"], "closed");
+        assert_eq!(value["safety"]["forbidden_edit_flagged"], false);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!(["Z:definitely-absent-r3/src/pricing.py"])
         );
         Ok(())
     }

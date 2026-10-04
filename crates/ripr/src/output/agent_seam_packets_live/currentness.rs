@@ -17,6 +17,7 @@ pub(super) const QUEUED: &str = "queued";
 pub(super) const BLOCKED_STALE: &str = "blocked_stale";
 pub(super) const BLOCKED_NOT_EVALUATED: &str = "blocked_not_evaluated";
 const DEFAULT_REPO_EXPOSURE_PATH: &str = "target/ripr/reports/repo-exposure.json";
+const REPO_EXPOSURE_SOURCE_KIND: &str = "repo_exposure";
 const CHECK_OUTPUT_SOURCE_KIND: &str = "check_output";
 
 pub(crate) struct GapRecordSourceInput<'a> {
@@ -93,12 +94,16 @@ impl GapRecordSourceCurrentness {
     }
 
     /// Typed refresh authority (#5985): `true` only when `refresh_commands`
-    /// can faithfully replay the recorded source route. A check-output source
-    /// records no `--diff` scope, so its check route cannot be replayed
-    /// faithfully; `refresh_commands` stays empty and the blocked reason
-    /// names the manual rerun-with-same-`--diff` route instead.
+    /// reproduce the ledger's own recorded source route — the
+    /// producer-validated repo-exposure route. A check-output source records
+    /// no `--diff` scope, so its route cannot be replayed faithfully;
+    /// `refresh_commands` stays empty and the blocked reason names the
+    /// manual rerun-with-same-`--diff` route instead. A records or
+    /// unidentified source receives the repo-exposure regeneration commands
+    /// as its recovery path, which replace rather than replay the recorded
+    /// input, so it also reports `false`.
     pub(crate) fn refresh_replayable(&self) -> bool {
-        self.source_kind.as_deref() != Some(CHECK_OUTPUT_SOURCE_KIND)
+        self.source_kind.as_deref() == Some(REPO_EXPOSURE_SOURCE_KIND)
     }
 
     pub(super) fn json(&self) -> Value {
@@ -203,7 +208,7 @@ pub(crate) fn evaluate_gap_record_source_currentness(
             source_path_owned,
         );
     }
-    if input.source_kind != Some("repo_exposure") {
+    if input.source_kind != Some(REPO_EXPOSURE_SOURCE_KIND) {
         return GapRecordSourceCurrentness::not_evaluated(
             format!(
                 "gap ledger source kind {} has no live snapshot authority; regenerate from a canonical repo-exposure artifact",
@@ -712,6 +717,39 @@ mod tests {
             serde_json::json!(true)
         );
         Ok(())
+    }
+
+    #[test]
+    fn records_ledger_is_not_replayable_but_keeps_its_recovery_route() {
+        // PR review on #5985: a records-kind ledger receives the repo-exposure
+        // regeneration commands as its recovery path, which replace rather
+        // than replay the recorded records input. The typed field must not
+        // advertise that as a replay.
+        let currentness = GapRecordSourceCurrentness::not_evaluated(
+            "gap ledger source kind records has no live snapshot authority",
+            vec![
+                "ripr check --format repo-exposure-json".to_string(),
+                "ripr reports gap-ledger --repo-exposure".to_string(),
+            ],
+            Some("records".to_string()),
+            None,
+        );
+        assert!(
+            !currentness.refresh_replayable(),
+            "records input is not reproduced by the regeneration route"
+        );
+        assert_eq!(
+            currentness.json()["refresh_replayable"],
+            serde_json::json!(false)
+        );
+        // An unidentified source kind is likewise not a replay.
+        let legacy = GapRecordSourceCurrentness::not_evaluated(
+            "legacy ledger has no live snapshot binding",
+            vec!["refresh source".to_string()],
+            None,
+            None,
+        );
+        assert!(!legacy.refresh_replayable());
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {
