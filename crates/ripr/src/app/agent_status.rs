@@ -1273,6 +1273,17 @@ fn legacy_next_command(
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
                 message: pilot_python_repair_card_message(&card, root_display),
             });
+            // #5205/#5248 review: a Python card and a Rust exclusion
+            // coexist (Python-only workspace with Rust files present).
+            // The card stays the preferred action; the exclusion's config
+            // remedy rides alongside, as in the routed branch above.
+            if let Some(excluded) = pilot_rust_excluded_from_scope(root) {
+                warnings.push(AgentStatusWarning {
+                    kind: "pilot_rust_excluded_no_repair_target".to_string(),
+                    artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                    message: pilot_rust_excluded_message(&excluded),
+                });
+            }
             return None;
         }
         // #5205 (Codex P1): a Rust-disabled packet carries no seams and no
@@ -4111,6 +4122,35 @@ mod tests {
         );
         for kind in [
             "pilot_routed_to_check_no_repair_target",
+            "pilot_rust_excluded_no_repair_target",
+        ] {
+            assert!(
+                report.warnings.iter().any(|warning| warning.kind == kind),
+                "expected {kind}: {:?}",
+                report.warnings
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5205/#5248 review: a Python repair card plus a Rust exclusion keeps
+    /// the card as the preferred action and the exclusion's config remedy
+    /// alongside it.
+    #[test]
+    fn agent_status_keeps_rust_exclusion_alongside_python_card() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-card-plus-excluded");
+        let text = r#"{"status": "complete", "top_actionable_seams": [], "python_first_use": {"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "d", "verify_command": "v"}}, "language_routes": {"rust_excluded_from_scope": {"language": "rust", "file_count": 3, "enabled": false, "guidance": "g"}}, "next": {"repair_command": null}}"#;
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), text)?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "card plus excluded must stop: {:?}",
+            report.next_command
+        );
+        for kind in [
+            "pilot_python_repair_card_no_agent_repair",
             "pilot_rust_excluded_no_repair_target",
         ] {
             assert!(
