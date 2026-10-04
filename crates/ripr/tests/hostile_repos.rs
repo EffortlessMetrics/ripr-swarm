@@ -42,7 +42,11 @@ impl Scratch {
     fn new_under(parent: &Path, label: &str) -> Result<Self, String> {
         let n = NEXT_BASE.fetch_add(1, Ordering::Relaxed);
         let path = parent.join(format!("ripr-hostile-{label}-{}-{n}", std::process::id()));
-        fs::create_dir_all(&path).map_err(|e| format!("create scratch failed: {e}"))?;
+        // `create_dir` (not `_all`) on the leaf: a path another process
+        // pre-created or symlinked must fail the test, never be adopted and
+        // later removed recursively.
+        fs::create_dir_all(parent).map_err(|e| format!("create scratch parent failed: {e}"))?;
+        fs::create_dir(&path).map_err(|e| format!("create scratch failed: {e}"))?;
         Ok(Self { path })
     }
 }
@@ -373,6 +377,8 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
     )
 }
 
+// `file://` clone URLs are POSIX-shaped; Windows needs `file:///C:/...`.
+#[cfg(unix)]
 #[test]
 fn shallow_clone_without_merge_base_names_the_repair() -> Result<(), String> {
     let scratch = Scratch::new("shallow")?;
@@ -435,6 +441,16 @@ fn repository_without_a_usable_base_refuses_with_a_route() -> Result<(), String>
     #[cfg(unix)]
     {
         let outside = Scratch::new_under(Path::new("/tmp"), "notgit")?;
+        // Some hosts keep /tmp inside a work tree; the refusal cannot be
+        // observed there.
+        let enclosing = Command::new("git")
+            .current_dir(&outside.path)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .map_err(|e| format!("spawn git failed: {e}"))?;
+        if enclosing.status.success() {
+            return Ok(());
+        }
         let ran = ripr(&outside.path, &["check"], &[])?;
         assert_sane(&ran, "not a git repository")?;
         if ran.code != Some(2) || !ran.stderr.contains("not inside a Git work tree") {
