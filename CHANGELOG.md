@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
 - Verdicts: ripr credits more `assert_eq!` oracles that real tests run and
   says why when it does not. A macro that only invokes `assert_eq!` in its
   arguments (ripgrep's `rgtest!`), a `macro_rules! assert_eq` confined to one
