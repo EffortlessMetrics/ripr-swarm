@@ -48,8 +48,8 @@ struct MutationOutcomeRecord {
     file: Option<String>,
     line: Option<usize>,
     span: Option<RuntimeSpan>,
-    /// Set when merged duplicates of this mutant carried different complete
-    /// spans; the span is then dropped rather than choosing one.
+    /// Set when merged duplicates of this mutant disagreed on complete span,
+    /// file or line; the span is then dropped rather than choosing one.
     span_conflict: bool,
     mutation_operator: String,
     runtime_outcome: String,
@@ -589,8 +589,9 @@ enum LocationJoin {
 
 /// Unmatched reason: the runtime record names no file or no line.
 const UNMATCHED_NO_LOCATION: &str = "no_location";
-/// Unmatched reason: merged duplicates of the record carried different
-/// complete spans, so its location is untrusted and only a `seam_id` joins it.
+/// Unmatched reason: merged duplicates of the record disagreed on complete
+/// span, file or line, so its location is untrusted and only a `seam_id`
+/// joins it.
 const UNMATCHED_CONFLICTING_LOCATION: &str = "conflicting_runtime_location";
 /// Unmatched reason: no static seam starts on the runtime record's line and
 /// no seam span is available to compare against.
