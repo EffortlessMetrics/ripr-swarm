@@ -922,3 +922,41 @@ const _: () = {
     }
     Ok(())
 }
+
+#[test]
+fn a_proptest_sibling_module_does_not_outrank_one_naming_the_owner() -> Result<(), String> {
+    // A macro-only `proptest!` module is nearer, but the module that already
+    // calls the owner wins.
+    let source = "pub fn early(x: u32) -> u32 { if x > 40 { 1 } else { 0 } }
+
+#[cfg(test)]
+mod props {
+    proptest::proptest! {
+        #[test]
+        fn any(x in 0u32..10) { let _ = x; }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn early_works() { assert_eq!(early(0), 0); }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "x > 40",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    match rust_test_stub(&seam, None, source).map_err(|r| r.as_str().to_string())? {
+        RustTestStub {
+            placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
+            ..
+        } => assert_eq!(module_name, "tests"),
+        other => return Err(format!("unexpected placement {:?}", other.placement)),
+    }
+    Ok(())
+}
