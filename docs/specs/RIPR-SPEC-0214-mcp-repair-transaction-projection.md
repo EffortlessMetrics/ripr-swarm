@@ -19,6 +19,8 @@ Linked issues:
   repair boundary and repair-attempt link)
 - #4668 (RepairCard MCP projection consumer; the seam list this slice
   exposes lets that work proceed)
+- #5399 (durable read-time HEAD applicability and continuation parity;
+  producer completeness remains separately owned by #5199)
 - ADR 0022 (bounded read-only MCP adapter; this slice adds no execution
   authority)
 
@@ -186,6 +188,17 @@ read-only and without execution authority (ADR 0022):
    `no_snapshot` and the two reads fail closed with `attempt_not_found`; a
    refresh that changes the evidence fails an old transaction with the
    reserved `superseded` state and the current snapshot identity.
+6. Durable reads share CLI's read-time HEAD applicability, independently of
+   retained byte authentication and recorded after admission. An ordinary
+   awaiting attempt remains current on a descendant; a diverged or unreadable
+   HEAD suppresses stored continuation and typed routes. A finished attempt
+   uses its exact after HEAD, so a later descendant is historical. Both
+   documents expose `currentness.state`, `head_current` and `evidence_head`;
+   recorded `after_current` remains separate. Historical/unknown applicability
+   weakens otherwise actionable receipt status to `stale`/`limited` while
+   retaining its document; invalid/limited producer results stay non-success.
+   This checks HEAD applicability, not dirty-byte identity. Reads never alter
+   the manifest or reconstruct evidence from a compatibility receipt.
 
 ## Test Mapping
 

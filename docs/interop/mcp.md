@@ -164,6 +164,16 @@ routes when the retained packet carries valid ones — each projected exactly,
 with the human display string marked as never execution authority. The
 host-local root path is intentionally not projected.
 
+Durable attempt and receipt reads report live HEAD applicability in
+`currentness.state` (`current`, `historical`, or `unknown`), `head_current`
+and `evidence_head`. This is the shared CLI attempt reading: awaiting ordinary
+attempts admit descendant commits; finished evidence requires its exact after
+HEAD. Historical or unknown applicability suppresses `next_command` and
+`command_routes`. The operational manifest state and retained receipt bytes
+remain readable. `after.current` and receipt `currentness.after_current` are
+recorded finish-time admission, not live freshness or a test result. This HEAD
+check does not establish that dirty working-tree bytes still match the evidence.
+
 `ripr_get_receipt_status` (and `ripr://receipt/{receipt_id}`) projects the
 current receipt state for one attempt identity (receipt ids are
 attempt-bound) onto the vocabulary `awaiting_edit`, `after_pending`,
@@ -171,7 +181,9 @@ attempt-bound) onto the vocabulary `awaiting_edit`, `after_pending`,
 `limited`, `stale`, `invalid`. Session transactions report `awaiting_edit`
 with an explicit `null` receipt; a finished durable attempt with a
 digest-bound terminal receipt projects the receipt document with its exact
-byte bindings and the movement-derived status. RIPR performs no verification
+byte bindings and the movement-derived status. A historical HEAD weakens an
+otherwise actionable status to `stale`; unknown HEAD weakens it to `limited`.
+Existing invalid or limited producer states remain non-success. RIPR performs no verification
 and issues no receipt: the external client owns the edit, the verification
 execution, and the receipt under its own authority.
 
