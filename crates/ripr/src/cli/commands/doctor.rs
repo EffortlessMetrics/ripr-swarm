@@ -1584,6 +1584,9 @@ Point RIPR_CACHE_DIR at a writable directory or free space there."
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
 /// one could. Probes the nearest existing ancestor with a short-lived
 /// exclusive file so doctor does not create the cache directory itself.
+/// When the base exists, every layer directory that already exists beneath
+/// it is probed too (entries are written there, not in the base); missing
+/// layers are left uncreated because the writer creates them under the base.
 fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
     let mut probe_dir = cache_dir;
     loop {
@@ -1613,6 +1616,37 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
             },
         }
     }
+    if let Some(reason) = probe_writable(probe_dir) {
+        return Some(reason);
+    }
+    if probe_dir != cache_dir {
+        return None;
+    }
+    analysis::seam_cache::CACHE_LAYER_NAMES.iter().find_map(
+        |layer| match std::fs::symlink_metadata(cache_dir.join(layer)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => Some(format!(
+                "cannot inspect {}: {error}",
+                cache_dir.join(layer).display()
+            )),
+            Ok(_) => match std::fs::metadata(cache_dir.join(layer)) {
+                Ok(metadata) if metadata.is_dir() => probe_writable(&cache_dir.join(layer)),
+                Ok(_) => Some(format!(
+                    "{} is not a directory",
+                    cache_dir.join(layer).display()
+                )),
+                Err(error) => Some(format!(
+                    "cannot inspect {}: {error}",
+                    cache_dir.join(layer).display()
+                )),
+            },
+        },
+    )
+}
+
+/// Creates and removes one exclusive probe file in `dir`; the error when
+/// that fails.
+fn probe_writable(probe_dir: &Path) -> Option<String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
@@ -2018,6 +2052,24 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().contains("doctor-probe"))
             .count();
         assert_eq!(probes, 0, "probe file must be removed");
+        // An existing layer directory is probed too; a layer path that is a
+        // regular file blocks every entry of that layer even though the
+        // base itself is writable.
+        let base = root.join("cache-base");
+        std::fs::create_dir_all(base.join("repo-seam-facts")).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        assert!(
+            !base.join("repo-file-facts").exists(),
+            "missing layers must not be created"
+        );
+        std::fs::write(base.join("repo-file-facts"), "file").map_err(|error| error.to_string())?;
+        let layer_reason = cache_unwritable_reason(&base);
+        assert!(
+            layer_reason.as_deref().is_some_and(
+                |text| text.contains("repo-file-facts") && text.contains("is not a directory")
+            ),
+            "{layer_reason:?}"
+        );
         // A relative cache path with no parent component probes the cwd.
         assert_eq!(
             cache_unwritable_reason(Path::new("ripr-cache-nonexistent")),

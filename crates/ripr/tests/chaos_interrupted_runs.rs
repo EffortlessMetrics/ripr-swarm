@@ -426,6 +426,12 @@ fn doctor_says_when_the_cache_cannot_be_written() -> Result<(), String> {
         .output()
         .map_err(|error| format!("run ripr doctor: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
+    // The cache is optional: an unwritable one is a warning, not a failure.
+    assert!(
+        output.status.success(),
+        "doctor must not fail on an unwritable cache: {}\nstdout: {stdout}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         stdout.contains("! Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
         "doctor must name the unwritable cache and the remedy: {stdout}"
