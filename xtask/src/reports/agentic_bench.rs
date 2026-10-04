@@ -549,8 +549,14 @@ mod tests {
 
     #[test]
     fn bench_dir_without_manifest_reports_missing_manifest() -> Result<(), String> {
-        let dir =
-            std::env::temp_dir().join(format!("ripr-agentic-bench-missing-{}", std::process::id()));
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock error: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-agentic-bench-missing-{}-{stamp}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(dir.join("no-manifest"))
             .map_err(|err| format!("create temp bench dir: {err}"))?;
         let outcome = verify_bench(&dir, &dir.join("no-manifest").join("manifest.json"));
