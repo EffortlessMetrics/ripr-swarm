@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
+- Config: a `ripr.toml` that is a dangling or self-referencing symlink is
+  reported as an unreadable config naming the file. It was treated as absent,
+  so the run silently used built-in defaults while a directory or non-UTF-8
+  `ripr.toml` already failed loudly.
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
@@ -52,6 +57,24 @@ are scoped or reviewed.
   human-readable recovery prose is unchanged (#5274).
 
 ### Changed
+
+- Performance: cold `ripr pilot` parses each production file once for
+  new-test placement instead of twice per seam, and a run that passes the
+  default 30s deadline keeps going instead of restarting. On a 4-core Linux
+  host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
+  ripgrep and 114s to 27s on regex, with pilot artifacts byte-identical after
+  normalizing the output path. An explicit `--timeout-ms`, including
+  `--timeout-ms 30000`, remains a hard limit and gets no extension. When the
+  extended run also times out, the pilot summary reports the 270000 ms budget
+  actually spent and suggests a retry budget scaled from it. Seam inventory
+  resolves owning functions with one sorted pass per file instead of a scan
+  of every function per seam, so a generated 200k-function file that
+  previously exhausted the 270s budget completes in 112s, and a hard deadline
+  now cancels within about a second instead of waiting out the scan. A warm
+  `ripr check` scans workspace files for shadowed assertion macros on all
+  cores and stops once one file already leaves every trusted macro
+  unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
+  (8.0s to 4.4s on two cores) with identical output.
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
@@ -184,6 +207,14 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
+  second semver and bytesize pins), now 32 cases across 10 subjects. The
+  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
+  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
+  `no_static_path_with_related_tests` contradictions, for 10 of 20
+  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
+  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
+  later (RIPR-SPEC-0219, #5332).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards
@@ -205,6 +236,14 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
+- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
+  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
+  bytesize excerpts, each labeled by running mutants against the crate's own
+  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
+  actionable, false exposed or false silent and counts contradictions inside
+  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
+  (false actionable), no case is credited, and 2 of 29 findings contradict
+  themselves. It runs no mutation testing or network access.
 - Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
   a frozen protocol names study identity, assignment, equal budgets, the named
   RIPR evidence surface, leakage controls, retries, stopping, non-compensating
