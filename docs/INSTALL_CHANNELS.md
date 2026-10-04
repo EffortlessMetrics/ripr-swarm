@@ -91,7 +91,9 @@ end
 ```
 
 Open points before this is real: the Linux archives are built on `ubuntu-22.04`
-(glibc 2.35), which is fine for Homebrew on Linux; the Windows archive has no
+(glibc 2.35), and release qualification caps the required glibc symbol version at
+2.34. Linux compatibility is therefore established only for glibc 2.34+ hosts;
+older Homebrew Linux systems are unverified. The Windows archive has no
 Homebrew analogue (Scoop or winget would be the equivalent, not drafted).
 
 ## Decisions that need the owner
