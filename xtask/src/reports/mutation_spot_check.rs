@@ -312,7 +312,14 @@ fn require_mutants_match_checkout(
     revision: &str,
     mutant_records: &Value,
 ) -> Result<usize, String> {
-    let records = mutant_records.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let records = match mutant_records.as_array() {
+        Some(records) if !records.is_empty() => records,
+        _ => {
+            return Err(format!(
+                "mutants.json for `{name}` is not a non-empty array of mutants, so nothing can be checked against the checkout at {revision}. Pass the mutants.out directory of a cargo-mutants 27 or later run that found mutants."
+            ));
+        }
+    };
     check_mutant_diffs(records, |file| {
         fs::read_to_string(checkout.join(file))
             .ok()
@@ -340,7 +347,7 @@ fn check_mutant_diffs(
             record.get("diff").and_then(Value::as_str),
         ) else {
             return Err(
-                "mutants.json has a mutant without `file` and `diff`, so its source revision cannot be checked. Re-run with cargo-mutants 27 or later, which records each mutant's diff.".to_string(),
+                "mutants.json has a mutant without `file` or `diff`, so its source revision cannot be checked. Re-run with cargo-mutants 27 or later, which records each mutant's diff.".to_string(),
             );
         };
         let lines = sources
