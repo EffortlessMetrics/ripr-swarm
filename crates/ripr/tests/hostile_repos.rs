@@ -512,6 +512,8 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
 /// A clone of a feature branch has `origin/HEAD` tracking that branch, so the
 /// default base is the checked-out commit and the range is empty by
 /// construction. The run must say so and name `--base`, not read as clean.
+// `file://` clone URLs are POSIX-shaped; Windows needs `file:///C:/...`.
+#[cfg(unix)]
 #[test]
 fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
     let scratch = Scratch::new("basehead")?;
