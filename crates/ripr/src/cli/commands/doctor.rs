@@ -1490,19 +1490,30 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
         match std::fs::metadata(probe_dir) {
             Ok(metadata) if metadata.is_dir() => break,
             Ok(_) => return Some(format!("{} is not a directory", probe_dir.display())),
+            Err(_) if std::fs::symlink_metadata(probe_dir).is_ok() => {
+                return Some(format!("{} is a dangling symlink", probe_dir.display()));
+            }
             Err(_) => match probe_dir.parent() {
-                Some(parent) if !parent.as_os_str().is_empty() => probe_dir = parent,
-                _ => return None,
+                Some(parent) if parent.as_os_str().is_empty() => {
+                    probe_dir = Path::new(".");
+                }
+                Some(parent) => probe_dir = parent,
+                None => return None,
             },
         }
     }
-    let probe = probe_dir.join(format!(".ripr-doctor-probe-{}", std::process::id()));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let probe = probe_dir.join(format!(".ripr-doctor-probe-{}-{nonce}", std::process::id()));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&probe)
     {
-        Ok(_) => {
+        Ok(file) => {
+            drop(file);
             let _ = std::fs::remove_file(&probe);
             None
         }
@@ -1692,6 +1703,11 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().contains("doctor-probe"))
             .count();
         assert_eq!(probes, 0, "probe file must be removed");
+        // A relative cache path with no parent component probes the cwd.
+        assert_eq!(
+            cache_unwritable_reason(Path::new("ripr-cache-nonexistent")),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
