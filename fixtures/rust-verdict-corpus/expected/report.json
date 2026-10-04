@@ -10,25 +10,25 @@
   },
   "by_outcome": {
     "abstained": 34,
-    "false_actionable": 33,
+    "false_actionable": 30,
     "false_exposed": 4,
-    "ideal": 33
+    "ideal": 36
   },
   "by_observed_verdict": {
-    "credited": 10,
-    "gap": 60,
+    "credited": 13,
+    "gap": 57,
     "limited": 33,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 37,
+    "numerator": 34,
     "denominator": 104,
-    "rate": "0.3558"
+    "rate": "0.3269"
   },
   "false_actionable_rate": {
-    "numerator": 33,
+    "numerator": 30,
     "denominator": 56,
-    "rate": "0.5893"
+    "rate": "0.5357"
   },
   "false_exposed_rate": {
     "numerator": 4,
@@ -41,9 +41,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 33,
+    "numerator": 36,
     "denominator": 104,
-    "rate": "0.3173"
+    "rate": "0.3462"
   },
   "abstention_rate": {
     "numerator": 34,
@@ -62,20 +62,20 @@
     "authored": {
       "cases_total": 70,
       "by_observed_verdict": {
-        "credited": 10,
-        "gap": 45,
+        "credited": 13,
+        "gap": 42,
         "limited": 14,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 27,
+        "numerator": 24,
         "denominator": 70,
-        "rate": "0.3857"
+        "rate": "0.3429"
       },
       "false_actionable_rate": {
-        "numerator": 23,
+        "numerator": 20,
         "denominator": 36,
-        "rate": "0.6389"
+        "rate": "0.5556"
       },
       "false_exposed_rate": {
         "numerator": 4,
@@ -88,9 +88,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 28,
+        "numerator": 31,
         "denominator": 70,
-        "rate": "0.4000"
+        "rate": "0.4429"
       },
       "abstention_rate": {
         "numerator": 15,
@@ -1515,14 +1515,14 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "propagation_unknown",
-        "weakly_exposed"
+        "exposed",
+        "propagation_unknown"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": []
     },
     {
@@ -1535,14 +1535,14 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "propagation_unknown",
-        "weakly_exposed"
+        "exposed",
+        "propagation_unknown"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": []
     },
     {
@@ -1557,8 +1557,9 @@
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
+        "exposed",
         "weakly_exposed"
       ],
       "outcome": "ideal",
@@ -1880,8 +1881,9 @@
       "ideal_verdict": "credited",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
+        "exposed",
         "weakly_exposed"
       ],
       "outcome": "false_actionable",
@@ -2088,13 +2090,13 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": []
     },
     {

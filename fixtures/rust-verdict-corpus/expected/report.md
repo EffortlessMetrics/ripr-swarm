@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.5. Cases: 104.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 37/104 | 0.3558 |
-| False actionable (of discriminated) | 33/56 | 0.5893 |
+| False verdicts (all cases) | 34/104 | 0.3269 |
+| False actionable (of discriminated) | 30/56 | 0.5357 |
 | False exposed (of not fully discriminated) | 4/48 | 0.0833 |
 | False silent (of not fully discriminated) | 0/48 | 0.0000 |
-| Ideal verdict | 33/104 | 0.3173 |
+| Ideal verdict | 36/104 | 0.3462 |
 | Abstained (limited or silent where acceptable) | 34/104 | 0.3269 |
 | Findings with a contradiction | 2/138 | 0.0145 |
 
@@ -16,7 +16,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 | 15/70 |
+| authored | 70 | 24/70 | 20/36 | 4/34 | 0/34 | 31/70 | 15/70 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -92,9 +92,9 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
 | `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
-| `checkout-daily-limit-imported-const` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
-| `checkout-minimum-same-file-const` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
-| `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | yes | none |
+| `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | yes | none |
+| `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | yes | none |
 | `checkout-bulk-custom-assert-macro` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-region-literal-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
@@ -111,7 +111,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `tokens-add-fee-integration-api` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `tokens-ext-start-map-or-binding` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | no | none |
 | `tokens-fits-binding-predicate` | authored | discriminated | credited | limited | propagation_unknown | abstained | no | none |
-| `tokens-long-flag-strip-prefix` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `tokens-long-flag-strip-prefix` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | yes | none |
 | `tokens-byte-at-unsafe-fn` | authored | discriminated | credited | gap | static_unknown, weakly_exposed | false_actionable | no | none |
 | `shop-score-imported-across-crates` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `shop-rebate-same-name-other-crate` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
@@ -122,7 +122,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `shop-cart-add-other-collection-observed` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `shop-quote-total-result-field` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `shop-cap-literal-only-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `shop-gate-let-bound-input` | authored | discriminated | credited | credited | exposed | ideal | yes | none |
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
 

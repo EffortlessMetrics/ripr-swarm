@@ -32,12 +32,17 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 ///
 /// Non-predicate probes are not this gate; the caller must not use a `true`
 /// result to promote a family this function does not judge.
+///
+/// `owner_pinned` is reveal's owner-return pin (RIPR-SPEC-0197): an
+/// `assert!(owner(x))` on a bool owner discriminates its whole result even
+/// though the classifier reads a bare `assert!` as a weak relational check.
 pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
         return false;
@@ -46,7 +51,14 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
         return false;
     };
     related_tests.iter().any(|test| {
-        test_pairs_boundary_input_with_oracle(probe, owner, test, activation, assertion_admitted)
+        test_pairs_boundary_input_with_oracle(
+            probe,
+            owner,
+            test,
+            activation,
+            assertion_admitted,
+            owner_pinned,
+        )
     })
 }
 
@@ -56,10 +68,13 @@ fn test_pairs_boundary_input_with_oracle(
     test: &TestSummary,
     activation: &ActivationEvidence,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
     test.assertions.iter().any(|assertion| {
-        if !assertion_admitted(test, assertion) || !assertion_is_discriminating(assertion) {
+        if !assertion_admitted(test, assertion)
+            || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
+        {
             return false;
         }
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, activation)
@@ -351,7 +366,14 @@ mod tests {
         tests: &[&TestSummary],
         activation: &ActivationEvidence,
     ) -> bool {
-        has_same_test_boundary_oracle_pairing(probe, owner, tests, activation, &|_, _| true)
+        has_same_test_boundary_oracle_pairing(
+            probe,
+            owner,
+            tests,
+            activation,
+            &|_, _| true,
+            &|_, _| false,
+        )
     }
 
     #[test]

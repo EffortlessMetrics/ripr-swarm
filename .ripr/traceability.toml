@@ -11154,6 +11154,10 @@ tests = [
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::test_build_availability_preserves_unknown_and_boolean_identity",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::test_build_availability_refuses_raw_attribute_heads",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_review_admission_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::bool_owner_assert_pin_matched_static_and_runtime_controls",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_pins_a_bool_owner_to_true_or_false",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_pins_nothing_on_a_non_bool_owner",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_keeps_the_owner_binding_defeats",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
