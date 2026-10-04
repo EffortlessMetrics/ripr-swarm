@@ -841,18 +841,24 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     let mut child = match OwnedProcess::spawn(command) {
         Ok(child) => child,
         Err(err) => {
-            let _ = fs::remove_file(&stdout_tmp_path);
+            remove_stdout_capture_temp(&stdout_tmp_path);
             return Err(format!("failed to run {error_context}: {err}"));
         }
     };
-    let stdout = child
-        .stdout_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
-    let stderr = child
-        .stderr_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
+    let stdout = match child.stdout_pipe().take() {
+        Some(stdout) => stdout,
+        None => {
+            remove_stdout_capture_temp(&stdout_tmp_path);
+            return Err(format!("failed to capture stdout for {error_context}"));
+        }
+    };
+    let stderr = match child.stderr_pipe().take() {
+        Some(stderr) => stderr,
+        None => {
+            remove_stdout_capture_temp(&stdout_tmp_path);
+            return Err(format!("failed to capture stderr for {error_context}"));
+        }
+    };
     let echo_latency_trace = envs
         .iter()
         .any(|(name, _)| *name == "RIPR_REPO_EXPOSURE_LATENCY_TRACE");
@@ -865,7 +871,13 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     };
 
     let wait_outcome =
-        wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context)?;
+        match wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context) {
+            Ok(wait_outcome) => wait_outcome,
+            Err(err) => {
+                remove_stdout_capture_temp(&stdout_tmp_path);
+                return Err(err);
+            }
+        };
 
     // Use bounded drains for the same reason as in `capture_output_with_timeout`:
     // after a group-kill an escaped descendant may keep the pipe open.
@@ -878,7 +890,7 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     ) {
         Ok(stdout_bytes) => stdout_bytes,
         Err(err) => {
-            let _ = fs::remove_file(&stdout_tmp_path);
+            remove_stdout_capture_temp(&stdout_tmp_path);
             return Err(err);
         }
     };
@@ -913,6 +925,10 @@ fn stdout_capture_temp_path(stdout_path: &Path) -> std::path::PathBuf {
         std::process::id(),
         unique
     ))
+}
+
+fn remove_stdout_capture_temp(path: &Path) {
+    let _ = fs::remove_file(path);
 }
 
 fn publish_stdout_capture(
@@ -1106,12 +1122,17 @@ fn terminate_timed_process_tree(child: &OwnedProcess) -> bool {
 
 #[cfg(not(windows))]
 fn signal_process_group(pgid: u32, signal: &str) -> std::io::Result<ExitStatus> {
+    run_kill_on_group(pgid, signal).map(|output| output.status)
+}
+
+#[cfg(not(windows))]
+fn run_kill_on_group(pgid: u32, signal: &str) -> std::io::Result<std::process::Output> {
     let group = format!("-{pgid}");
     Command::new("kill")
         .args([signal, "--", group.as_str()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
 }
 
 /// After a timeout kill, confirm the child's Unix process group has no live
@@ -1144,28 +1165,108 @@ fn confirm_process_group_gone(
 }
 
 /// Live members of `pgid`, fail-closed: a probe that cannot run is an error,
-/// not an empty group. On Linux, `/proc` is the authority so a SIGKILL zombie
-/// that `kill -0` still sees is not treated as still-running.
+/// not an empty group. A complete Linux `/proc` scan of same-uid processes is
+/// the authority for *which* PIDs are live, so SIGKILL zombies are omitted.
+/// An empty complete scan still consults `kill -0`: ESRCH or a successful
+/// probe (zombie) may confirm gone, but EPERM/unknown must not, because a
+/// setuid descendant can leave the same-uid listing while still running.
+/// An incomplete scan (unreadable or unparseable same-uid `stat`) uses the
+/// probe alone.
 #[cfg(unix)]
 fn process_group_live_members(pgid: u32) -> Result<Vec<u32>, String> {
     #[cfg(target_os = "linux")]
-    if let Some(pids) = scan_proc_pgrp(pgid) {
-        return Ok(pids);
+    {
+        let scan = scan_proc_pgrp(pgid);
+        let probe = match &scan {
+            Some(ProcGroupScan::Complete { live }) if !live.is_empty() => {
+                Ok(GroupProbe::SignaledAlive)
+            }
+            _ => probe_process_group_alive(pgid),
+        };
+        members_from_group_scan(pgid, scan, probe)
     }
-    match signal_process_group(pgid, "-0") {
-        Ok(status) if status.success() => Ok(vec![pgid]),
-        Ok(_) => Ok(Vec::new()),
-        Err(err) => Err(format!("could not probe process group {pgid}: {err}")),
+    #[cfg(not(target_os = "linux"))]
+    {
+        members_from_group_scan(pgid, None, probe_process_group_alive(pgid))
     }
 }
 
-/// Non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`. `None` if
-/// `/proc` cannot be listed, so the caller can fall back to `kill -0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(any(unix, test))]
+enum ProcGroupScan {
+    Complete { live: Vec<u32> },
+    Incomplete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(unix, test))]
+enum GroupProbe {
+    SignaledAlive,
+    Gone,
+    Inaccessible,
+}
+
+#[cfg(any(unix, test))]
+fn members_from_group_scan(
+    pgid: u32,
+    scan: Option<ProcGroupScan>,
+    probe: Result<GroupProbe, String>,
+) -> Result<Vec<u32>, String> {
+    match scan {
+        Some(ProcGroupScan::Complete { live }) if !live.is_empty() => Ok(live),
+        Some(ProcGroupScan::Complete { .. }) => match probe {
+            Ok(GroupProbe::Gone | GroupProbe::SignaledAlive) => Ok(Vec::new()),
+            Ok(GroupProbe::Inaccessible) => Ok(vec![pgid]),
+            Err(err) => Err(err),
+        },
+        Some(ProcGroupScan::Incomplete) | None => match probe {
+            Ok(GroupProbe::Gone) => Ok(Vec::new()),
+            Ok(GroupProbe::SignaledAlive | GroupProbe::Inaccessible) => Ok(vec![pgid]),
+            Err(err) => Err(err),
+        },
+    }
+}
+
+#[cfg(unix)]
+fn probe_process_group_alive(pgid: u32) -> Result<GroupProbe, String> {
+    let output = run_kill_on_group(pgid, "-0")
+        .map_err(|err| format!("could not probe process group {pgid}: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(classify_group_probe(output.status.success(), &stderr))
+}
+
+#[cfg(any(unix, test))]
+fn classify_group_probe(success: bool, stderr: &str) -> GroupProbe {
+    if success {
+        return GroupProbe::SignaledAlive;
+    }
+    // Fail closed: only ESRCH is an empty group. EPERM and unknown kill
+    // diagnostics mean a member may still exist.
+    if stderr.contains("No such process") {
+        GroupProbe::Gone
+    } else {
+        GroupProbe::Inaccessible
+    }
+}
+
+/// Same-uid non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`.
+/// `None` if `/proc` cannot be listed. `Incomplete` if a same-uid numeric
+/// entry exists but its `stat` is unreadable for a reason other than NotFound.
 #[cfg(target_os = "linux")]
-fn scan_proc_pgrp(pgid: u32) -> Option<Vec<u32>> {
+fn scan_proc_pgrp(pgid: u32) -> Option<ProcGroupScan> {
+    use std::os::unix::fs::MetadataExt;
+    let self_uid = fs::metadata("/proc/self").ok()?.uid();
     let entries = fs::read_dir("/proc").ok()?;
-    let mut pids = Vec::new();
-    for entry in entries.flatten() {
+    let mut live = Vec::new();
+    let mut complete = true;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
+        };
         let name = entry.file_name();
         let Some(pid_str) = name.to_str() else {
             continue;
@@ -1173,32 +1274,58 @@ fn scan_proc_pgrp(pgid: u32) -> Option<Vec<u32>> {
         let Ok(pid) = pid_str.parse::<u32>() else {
             continue;
         };
-        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
-            continue;
+        let path = entry.path();
+        let meta = match fs::metadata(&path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
         };
-        if let Some((_, group)) = parse_stat_pgrp(&stat)
-            && group == pgid
-        {
-            pids.push(pid);
+        if meta.uid() != self_uid {
+            continue;
+        }
+        match fs::read_to_string(path.join("stat")) {
+            Ok(stat) => match parse_stat_pgrp(&stat) {
+                Some(ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid => live.push(pid),
+                Some(_) => {}
+                None => complete = false,
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => complete = false,
         }
     }
-    Some(pids)
+    Some(if complete {
+        ProcGroupScan::Complete { live }
+    } else {
+        ProcGroupScan::Incomplete
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(target_os = "linux", test))]
+enum ProcStatPgrp {
+    Live { state: char, pgrp: u32 },
+    NotLive,
 }
 
 /// `/proc/<pid>/stat` state and pgrp. `comm` may contain spaces and
 /// parentheses, so this splits only after the last `)`. Zombies and dead
-/// tasks are omitted: they are not still-running descendants.
-fn parse_stat_pgrp(stat: &str) -> Option<(char, u32)> {
+/// tasks are `NotLive`. Unparseable text is `None` so the scan stays
+/// incomplete instead of pretending the member was gone.
+#[cfg(any(target_os = "linux", test))]
+fn parse_stat_pgrp(stat: &str) -> Option<ProcStatPgrp> {
     let close = stat.rfind(')')?;
     let rest = stat.get(close.saturating_add(1)..)?;
     let mut fields = rest.split_whitespace();
     let state = fields.next()?.chars().next()?;
     if matches!(state, 'Z' | 'X') {
-        return None;
+        return Some(ProcStatPgrp::NotLive);
     }
     let _ppid = fields.next()?;
     let pgrp = fields.next()?.parse().ok()?;
-    Some((state, pgrp))
+    Some(ProcStatPgrp::Live { state, pgrp })
 }
 
 fn read_stream<T: Read>(mut stream: T) -> Result<String, String> {
@@ -1428,10 +1555,10 @@ mod tests {
         CapturedOutput, POST_KILL_DRAIN_GRACE, POST_KILL_GROUP_CONFIRM_GRACE, capture_output,
         capture_output_with_timeout, capture_output_without_timeout,
         capture_stdout_to_file_with_timeout, command_success_owned, drain_stream_reader_bounded,
-        parse_env_timeout_secs, parse_stat_pgrp, read_stream_with_latency_progress, run,
-        run_in_dir, run_output, run_output_optional, run_output_owned, run_output_owned_with_envs,
-        run_output_owned_with_timeout, run_owned, spawn_stream_reader_channel,
-        terminate_after_timeout, timeout_was_enforced,
+        parse_env_timeout_secs, parse_stat_pgrp, read_stream_with_latency_progress,
+        remove_stdout_capture_temp, run, run_in_dir, run_output, run_output_optional,
+        run_output_owned, run_output_owned_with_envs, run_output_owned_with_timeout, run_owned,
+        spawn_stream_reader_channel, terminate_after_timeout, timeout_was_enforced,
     };
     use crate::acquire_test_cwd_read_guard;
     use ripr::process_owner::OwnedProcess;
@@ -2090,20 +2217,181 @@ mod tests {
 
     #[test]
     fn parse_stat_pgrp_reads_the_field_after_comm() -> Result<(), String> {
-        if parse_stat_pgrp("42 (sleep) S 1 99 0 -1") != Some(('S', 99)) {
+        if parse_stat_pgrp("42 (sleep) S 1 99 0 -1")
+            != Some(super::ProcStatPgrp::Live {
+                state: 'S',
+                pgrp: 99,
+            })
+        {
             return Err("pgrp is the third field after the closing comm parenthesis".to_string());
         }
-        if parse_stat_pgrp("7 (name with spaces) R 3 88 0") != Some(('R', 88)) {
+        if parse_stat_pgrp("7 (name with spaces) R 3 88 0")
+            != Some(super::ProcStatPgrp::Live {
+                state: 'R',
+                pgrp: 88,
+            })
+        {
             return Err("comm may contain spaces; parse after the last ')'".to_string());
         }
-        if parse_stat_pgrp("10 (weird)name) S 1 3 0") != Some(('S', 3)) {
+        if parse_stat_pgrp("10 (weird)name) S 1 3 0")
+            != Some(super::ProcStatPgrp::Live {
+                state: 'S',
+                pgrp: 3,
+            })
+        {
             return Err("comm may contain ')'; parse after the last ')'".to_string());
         }
-        if parse_stat_pgrp("9 (sleep) Z 1 9 9 0").is_some() {
+        if parse_stat_pgrp("9 (sleep) Z 1 9 9 0") != Some(super::ProcStatPgrp::NotLive) {
             return Err("zombie group members are not still-running".to_string());
         }
         if parse_stat_pgrp("no-paren-line").is_some() {
             return Err("malformed stat should not invent a pgrp".to_string());
+        }
+        if parse_stat_pgrp("9 (sleep) S").is_some() {
+            return Err("truncated non-zombie stat must stay unparseable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn members_from_group_scan_fails_closed_on_incomplete_readable_probe() -> Result<(), String> {
+        let live = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: vec![9] }),
+            Ok(super::GroupProbe::Gone),
+        )?;
+        if live != vec![9] {
+            return Err(format!("complete live scan should win: {live:?}"));
+        }
+        let empty_zombie = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
+            Ok(super::GroupProbe::SignaledAlive),
+        )?;
+        if !empty_zombie.is_empty() {
+            return Err(
+                "complete empty scan must ignore kill -0 zombies and not invent members"
+                    .to_string(),
+            );
+        }
+        let empty_gone = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
+            Ok(super::GroupProbe::Gone),
+        )?;
+        if !empty_gone.is_empty() {
+            return Err("complete empty scan plus ESRCH must confirm gone".to_string());
+        }
+        let setuid = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
+            Ok(super::GroupProbe::Inaccessible),
+        )?;
+        if setuid != vec![1234] {
+            return Err(format!(
+                "complete empty scan plus EPERM must not confirm gone: {setuid:?}"
+            ));
+        }
+        let unread = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Incomplete),
+            Ok(super::GroupProbe::SignaledAlive),
+        )?;
+        if unread != vec![1234] {
+            return Err(format!(
+                "incomplete scan plus a live probe must not confirm gone: {unread:?}"
+            ));
+        }
+        let unread_gone = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Incomplete),
+            Ok(super::GroupProbe::Gone),
+        )?;
+        if !unread_gone.is_empty() {
+            return Err("incomplete scan plus ESRCH may confirm gone".to_string());
+        }
+        let unread_eperm = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Incomplete),
+            Ok(super::GroupProbe::Inaccessible),
+        )?;
+        if unread_eperm != vec![1234] {
+            return Err(format!(
+                "incomplete scan plus EPERM must not confirm gone: {unread_eperm:?}"
+            ));
+        }
+        let missing =
+            super::members_from_group_scan(7, None, Ok(super::GroupProbe::SignaledAlive))?;
+        if missing != vec![7] {
+            return Err(format!(
+                "unavailable /proc must use the group probe: {missing:?}"
+            ));
+        }
+        let complete_ignores_probe_on_live = super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: vec![9] }),
+            Err("probe failed".to_string()),
+        )?;
+        if complete_ignores_probe_on_live != vec![9] {
+            return Err("complete live scan must not surface a skipped probe error".to_string());
+        }
+        if super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
+            Err("could not probe process group 1234: e".to_string()),
+        )
+        .is_ok()
+        {
+            return Err("empty complete scan plus probe failure must fail closed".to_string());
+        }
+        if super::members_from_group_scan(
+            1234,
+            Some(super::ProcGroupScan::Incomplete),
+            Err("could not probe process group 1234: e".to_string()),
+        )
+        .is_ok()
+        {
+            return Err("incomplete scan plus probe failure must fail closed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classify_group_probe_treats_non_esrch_as_populated() -> Result<(), String> {
+        if super::classify_group_probe(true, "") != super::GroupProbe::SignaledAlive {
+            return Err("successful kill -0 means the group is populated".to_string());
+        }
+        if super::classify_group_probe(false, "kill: (-9): No such process\n")
+            != super::GroupProbe::Gone
+        {
+            return Err("ESRCH must mean the group is gone".to_string());
+        }
+        if super::classify_group_probe(false, "kill: (-9): Operation not permitted\n")
+            != super::GroupProbe::Inaccessible
+        {
+            return Err("EPERM must not confirm the group is gone".to_string());
+        }
+        if super::classify_group_probe(false, "") != super::GroupProbe::Inaccessible {
+            return Err("unknown nonzero kill status must not confirm gone".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn remove_stdout_capture_temp_deletes_the_file() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-xtask-stdout-tmp-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::write(&path, "capture").map_err(|err| format!("write temp capture: {err}"))?;
+        remove_stdout_capture_temp(&path);
+        if path.exists() {
+            let _ = fs::remove_file(&path);
+            return Err("wait-error cleanup must remove the stdout temp file".to_string());
         }
         Ok(())
     }

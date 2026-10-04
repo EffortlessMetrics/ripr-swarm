@@ -18,6 +18,12 @@ succeeds. Do not treat Job Object containment on Windows as covering this Unix
 group-confirm gap, and do not fold the check into scale-cliff or another
 caller: the shared wait/timeout owner is the authority.
 
+On Linux, a complete same-uid `/proc` scan is the member list so SIGKILL zombies
+are not "still running", but an empty scan is not gone by itself: `kill -0`
+ESRCH (or a successful probe of a zombie) may confirm empty, while EPERM or an
+unreadable/unparseable same-uid `stat` must not. A stdout-to-file capture must
+delete its temp file when confirmation fails.
+
 ## 2026-10-03: Windows `where` is not a PATH probe (#5103)
 
 `where prove` searches the process current directory first. Doctor's Perl
