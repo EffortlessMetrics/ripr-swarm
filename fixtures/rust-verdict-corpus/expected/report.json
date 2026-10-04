@@ -10,22 +10,23 @@
   },
   "by_outcome": {
     "abstained": 13,
-    "false_actionable": 7,
-    "ideal": 3
+    "false_actionable": 6,
+    "ideal": 4
   },
   "by_observed_verdict": {
-    "gap": 10,
+    "credited": 1,
+    "gap": 9,
     "limited": 13
   },
   "false_verdict_rate": {
-    "numerator": 7,
+    "numerator": 6,
     "denominator": 23,
-    "rate": "0.3043"
+    "rate": "0.2609"
   },
   "false_actionable_rate": {
-    "numerator": 7,
+    "numerator": 6,
     "denominator": 15,
-    "rate": "0.4667"
+    "rate": "0.4000"
   },
   "false_exposed_rate": {
     "numerator": 0,
@@ -38,9 +39,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 3,
+    "numerator": 4,
     "denominator": 23,
-    "rate": "0.1304"
+    "rate": "0.1739"
   },
   "abstention_rate": {
     "numerator": 13,
@@ -220,13 +221,12 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
-      "changed_since_labeling": false,
+      "observed_verdict": "credited",
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed",
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": []
     },
     {
@@ -239,9 +239,9 @@
       "truth": "discriminated",
       "ideal_verdict": "credited",
       "observed_verdict": "gap",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed"
+        "weakly_exposed"
       ],
       "outcome": "false_actionable",
       "contradictions": []
@@ -256,9 +256,9 @@
       "truth": "partially_discriminated",
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed"
+        "weakly_exposed"
       ],
       "outcome": "ideal",
       "contradictions": []
@@ -273,9 +273,9 @@
       "truth": "partially_discriminated",
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed"
+        "weakly_exposed"
       ],
       "outcome": "ideal",
       "contradictions": []
