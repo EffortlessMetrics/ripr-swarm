@@ -460,9 +460,7 @@ mod tests {
         assert_eq!(entry["basis"], FINDINGS_BOUND_BASIS);
         assert_eq!(entry["downstream_consumable"], false);
         assert_eq!(entry["repair_route"], FINDINGS_BOUND_REPAIR_ROUTE);
-        let message = entry["message"]
-            .as_str()
-            .ok_or("entry needs a message")?;
+        let message = entry["message"].as_str().ok_or("entry needs a message")?;
         assert!(
             message.contains("1 of 3"),
             "message must reconcile rendered/total: {message}"
@@ -516,7 +514,11 @@ mod tests {
         let output = three_finding_output();
         let config = RiprConfig::default();
         let unbounded = render_with_config(&output, &config, None);
-        let huge = render_with_config(&output, &config, Some((usize::MAX, FindingsBudgetSource::Default)));
+        let huge = render_with_config(
+            &output,
+            &config,
+            Some((usize::MAX, FindingsBudgetSource::Default)),
+        );
         assert_eq!(
             huge, unbounded,
             "an unengaged budget must not change one byte"
@@ -556,12 +558,16 @@ mod tests {
                 700,
                 Ok(value.to_string()),
             ) else {
-                return Err(format!("`{value}` must be refused, not a cap or the opt-out"));
+                return Err(format!(
+                    "`{value}` must be refused, not a cap or the opt-out"
+                ));
             };
             if !(error.starts_with("RIPR_CHECK_FINDINGS_BYTES `")
                 && error.contains("or 0 to remove the cap"))
             {
-                return Err(format!("error must name the variable and the repair: {error}"));
+                return Err(format!(
+                    "error must name the variable and the repair: {error}"
+                ));
             }
         }
         let Err(error) = check_findings_byte_budget_from_env(
@@ -621,10 +627,7 @@ mod tests {
         );
         let bounded_value: serde_json::Value = serde_json::from_str(&bounded)
             .map_err(|err| format!("bounded check JSON should parse: {err}"))?;
-        assert_eq!(
-            bounded_value["findings"].as_array().map(Vec::len),
-            Some(1)
-        );
+        assert_eq!(bounded_value["findings"].as_array().map(Vec::len), Some(1));
         let alignment = &bounded_value["finding_alignment"];
         assert!(
             alignment.is_object(),

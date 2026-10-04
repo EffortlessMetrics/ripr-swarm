@@ -162,8 +162,7 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             !gate.status.success(),
             "gate must fail on a bounded ledger, got success"
         );
-        let gate_text = std::fs::read_to_string(&gate_out)
-            .map_err(|error| error.to_string())?;
+        let gate_text = std::fs::read_to_string(&gate_out).map_err(|error| error.to_string())?;
         let gate_report: serde_json::Value =
             serde_json::from_str(&gate_text).map_err(|error| error.to_string())?;
         assert_eq!(gate_report["status"], "config_error");
