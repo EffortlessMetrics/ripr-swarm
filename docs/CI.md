@@ -61,7 +61,10 @@ workflow behavior documented in [Current Workflows](#current-workflows).
   - no-cancel preserves a running expensive job and allows only one pending
     replacement;
   - synchronize-cancel favors the latest commit and may abandon near-complete
-    work.
+    work;
+  - Ready-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
+    only on Draft -> Ready and cancels only when a second Ready transition
+    replaces it.
 - Any switch to or from `cancel-in-progress` must document the affected
   workflows, rollback path, cost tradeoff, and review impact.
 - Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
@@ -266,7 +269,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -560,32 +563,44 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
-Label events are not an implicit full-gate refresh:
+Label events are not an implicit full-gate refresh, and Draft iteration does not
+allocate the heavy required gate (#4986):
 
 ```text
-opened / reopened / synchronize / push to main / workflow_dispatch:
-  launch the required Rust or docs gate (unchanged)
+opened / reopened / synchronize while Draft:
+  no Routed Rust Small run; cheap feedback only
 
-labeled full-ci:
-  launch the required gate with advisory reports and success artifacts
+ready_for_review (Draft -> Ready):
+  the sole pull-request qualification request; validates the exact Ready head
 
-labeled windows-ci, coverage, release-check, or any other non-full-ci label:
-  do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
-  leave the previous exact-head Ripr Rust Small Result in place
+labeled / unlabeled (any label):
+  no Routed Rust Small run; labels never create or refresh the required context
 
-unlabeled (including windows-ci or full-ci removal):
-  do not start Routed Rust Small; the previous exact-head result remains
+push to main / workflow_dispatch:
+  launch under their own authorities, unchanged
 ```
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
-Removing that label does not imply Windows proof and must not spend a required
-Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
-the next opened/synchronize/reopened proof observes the current labels.
-`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
-distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
-replace a pending synchronize proof. An ignored labeled run is cheap, does not
-post the protected result context, and cannot manufacture a green required
-check for untested or previously failed code.
+`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
+group is qualified by `github.event_name`, so a second Ready transition replaces
+the prior admission attempt while independent main and manual work cannot replace
+each other. No run posts a pseudo-result, so a Draft PR with no required check
+blocks rather than inheriting stale proof. The result job keeps its static
+`Ripr Rust Small Result` name on every run. One gap is not enforced: a
+`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
+on the branch head, without the `pull_request`-scoped PR-evidence steps.
+Do not dispatch on PR branches; #5394 tracks enforcing this.
+
+What this means for authors and agents:
+
+- Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
+  directly as Ready never receives a `ready_for_review` event and never gets
+  the required check.
+- A push after Ready leaves the new head without the required check. Convert
+  to Draft and mark Ready again once the push is final. If the PR had
+  auto-merge armed, check that it is still armed after the toggle.
+- Labels such as `full-ci` take effect at the next Ready transition, not when
+  they are added.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -895,24 +910,28 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 #4923 ~35 minutes).
 `.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
-head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
-remedy used during the incidents — capped at 5 dispatches per sweep. The
-required check, not run existence, is the discriminator: an unrelated `labeled`
-event produces a same-workflow run whose result job renames itself to the
-non-required `Ripr Rust Small Ignored Label Event` (`routed-rust.yml:228`; two
-of the three runs on #4923's opened head). The next sweep's required-check
-check dedupes; its racy window after a dispatch is bounded by the cap plus the
-30-minute cadence. No PR comments are posted: the
-dispatched run itself delivers the required `Ripr Rust Small Result` check,
-and each sweep's summary table is the audit trail. The alert-only alternative
-(report the dark head instead of dispatching; zero duplicate-gate risk by
-construction) was deferred, not rejected:
-
-```text
-# To flip to alert-only (issue #4937 option ii): replace the dispatch step in
-# .github/workflows/pr-staleness-watchdog.yml with a summary-only report and
-# drop the `actions: write` permission.
-```
+head SHA, and reports them (step-summary row plus a workflow warning). It is
+alert-only (#4986; issue #4937 option ii): it never dispatches
+`routed-rust.yml` and holds no `actions: write` permission. With Ready-only
+admission, a Ready head without the required check is either a dropped
+Ready-triggered delivery or a push made after Ready, and the watchdog cannot
+tell the two apart. A head mutated after Ready has revoked its own admission
+and must not be qualified by a lighter branch-head dispatch (which skips the
+`pull_request`-scoped PR-evidence steps). The remedy for every reported head
+is the same: convert the PR to Draft and mark it Ready for review again, which
+runs the full Ready-triggered qualification on the exact head and also
+recovers a dropped delivery. The required check, not run existence, is the
+discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
+real qualification attempt on that exact head. That check run is created only
+when the `result` job starts, after every implementation job (up to 120
+minutes), so before calling a head dark the watchdog also lists
+`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
+in-progress run is reported as in flight. Re-toggling Draft -> Ready on such a
+head would cancel the real run, so the watchdog never recommends it. This uses
+`actions: read` only. Drafts and fork heads are
+skipped. No PR comments are posted; each sweep's summary table is the audit
+trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
+shape (no dispatch command, no `actions: write`) and the in-flight check.
 
 ### Self-Hosted Runner Placement
 
@@ -1037,31 +1056,36 @@ SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
 
-The generated workflow installs the exact `ripr` version that generated it,
-because its steps use that version's commands and flags; a later release does
-not change CI behavior until you regenerate. It downloads that release's
-prebuilt binary from the `EffortlessMetrics/ripr` GitHub Release and checks it
-against the release's published SHA-256, which takes seconds instead of the
-minutes `cargo install` spends compiling. A checksum mismatch fails the step.
-On a runner with no prebuilt archive (Windows), or when the download fails, it
-falls back to `cargo install ripr --version <that version> --locked`, which
-needs a Rust toolchain on the runner; on a runner without `cargo` the step
-fails and says to install Rust or add a toolchain step. Either way the version must be released:
-a workflow generated by an unreleased development build names a version with no
-release archive and no crates.io package, so its install step fails and no ripr
-step runs. The workflow also restores ripr's analysis cache
+A released `ripr` generates a workflow that installs the exact version
+that generated it, because its steps use that version's commands and flags;
+a later release does not change CI behavior until you regenerate. It
+downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
+GitHub Release and checks it against the release's published SHA-256, which
+takes seconds instead of the minutes `cargo install` spends compiling. A
+checksum mismatch fails the step. On a runner with no prebuilt archive
+(Windows), or when the download fails, it falls back to
+`cargo install ripr --version <that version> --locked`, which needs a Rust
+toolchain on the runner; on a runner without `cargo` the step fails and says
+to install Rust or add a toolchain step. A development build newer than the
+latest release cannot pin itself — that version has no release archive and
+no crates.io package, so both install routes would fail. Instead it pins the
+latest release and warns on stderr, naming both versions and the refresh
+command (#5208); the installed release may be older than the generating
+steps, so review the workflow and regenerate with a released `ripr` when one
+is available. The workflow also restores ripr's analysis cache
 (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache` (pinned to a commit SHA), so later pushes
 to a pull request reuse the facts of files they did not change. Entries are
 keyed on file contents, configuration, and the ripr version, so a restored
-entry that no longer matches is a miss rather than stale evidence. Generate
-the committed workflow with a released `ripr`. To upgrade, install
+entry that no longer matches is a miss rather than stale evidence. To upgrade, install
 the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
 output with the committed file (`--force` lets the dry run plan over the
 existing file; nothing is written). With `--ci`, `--force` replaces only the
 workflow: an existing `ripr.toml` is left unchanged, so refreshing CI keeps the
 repository's settings (`ripr init --force` without `--ci` resets the config).
 `ripr doctor` flags a workflow that installs ripr unpinned or at another
-version. On pull requests the workflow checks out the PR head
+version; when the pin is the intentional latest-release fallback for the
+running unreleased `ripr`, it says so and prescribes upgrading `ripr` first,
+since refreshing immediately would rewrite the identical pin. On pull requests the workflow checks out the PR head
 commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
 comment lines match the lines in the PR diff after the base branch moves. A
 newer push cancels the older run of the same PR. Dependabot runs get a
