@@ -14,14 +14,14 @@
 //!
 //! Captured files keep the decoder `Cow`: valid UTF-8, including a supported
 //! leading BOM strip, is borrowed from the loaded buffer; only a required
-//! lossy decode owns. UTF-8/16/32 scalar-boundary coordinates are built once
-//! per file and admitted endpoints are derived from that index.
+//! lossy decode owns. Only files some finding points at are captured, and
+//! UTF-8/16/32 endpoints are counted over an admitted span's own line.
 
 use super::facts::rust_source_text;
 use super::rust_index::RustIndex;
 use crate::domain::Finding;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Matches the LSP adapter's `MAX_LINE_SPAN_WIDTH`. This module cannot
@@ -121,111 +121,49 @@ struct CapturedFile<'a> {
     source: Cow<'a, str>,
     has_standalone_cr: bool,
     lines: Vec<LineSpan>,
-    coords: ScalarIndex,
     facts_match: bool,
     used_lexical_fallback: bool,
 }
 
-/// Scalar-boundary UTF-8/16/32 coordinates for one captured file.
-/// Offsets are file-absolute; line-relative LSP endpoints subtract the line start.
-struct ScalarIndex {
-    offsets: Vec<usize>,
-    utf16: Vec<u32>,
-    utf32: Vec<u32>,
-}
-
-impl ScalarIndex {
-    fn build(source: &str) -> Self {
-        let mut offsets = Vec::new();
-        let mut utf16 = Vec::new();
-        let mut utf32 = Vec::new();
-        offsets.push(0);
-        utf16.push(0);
-        utf32.push(0);
-        let mut byte = 0usize;
-        let mut u16_units = 0u32;
-        let mut u32_units = 0u32;
-        for ch in source.chars() {
-            byte = byte.saturating_add(ch.len_utf8());
-            u16_units = u16_units.saturating_add(ch.len_utf16() as u32);
-            u32_units = u32_units.saturating_add(1);
-            offsets.push(byte);
-            utf16.push(u16_units);
-            utf32.push(u32_units);
-        }
-        Self {
-            offsets,
-            utf16,
-            utf32,
-        }
-    }
-
-    fn index_of(&self, byte: usize) -> Option<usize> {
-        self.offsets.binary_search(&byte).ok()
-    }
-
-    fn units(&self, byte: usize, encoding: Encoding) -> Option<u32> {
-        let i = self.index_of(byte)?;
-        match encoding {
-            Encoding::Utf8 => u32::try_from(byte).ok(),
-            Encoding::Utf16 => self.utf16.get(i).copied(),
-            Encoding::Utf32 => self.utf32.get(i).copied(),
-        }
-    }
-
-    fn capped_end(&self, start: usize, end: usize, encoding: Encoding) -> Option<u32> {
-        let start_i = self.index_of(start)?;
-        let end_i = self.index_of(end)?;
-        let start_units = match encoding {
-            Encoding::Utf8 => u32::try_from(start).ok()?,
-            Encoding::Utf16 => *self.utf16.get(start_i)?,
-            Encoding::Utf32 => *self.utf32.get(start_i)?,
-        };
-        let mut last = start_units;
-        let mut i = start_i.saturating_add(1);
-        while i <= end_i {
-            let abs = match encoding {
-                Encoding::Utf8 => u32::try_from(*self.offsets.get(i)?).ok()?,
-                Encoding::Utf16 => *self.utf16.get(i)?,
-                Encoding::Utf32 => *self.utf32.get(i)?,
-            };
-            if abs.saturating_sub(start_units) > ORIGIN_MAX_SPAN_WIDTH {
-                break;
-            }
-            last = abs;
-            i = i.saturating_add(1);
-        }
-        Some(last)
-    }
-
-    fn line_span(
-        &self,
-        line_start: usize,
-        expr_start: usize,
-        expr_end: usize,
-        encoding: Encoding,
-    ) -> Option<EncodedSpan> {
-        let origin = self.units(line_start, encoding)?;
-        let start = self.units(expr_start, encoding)?.saturating_sub(origin);
-        let end = self
-            .capped_end(expr_start, expr_end, encoding)?
-            .saturating_sub(origin);
-        Some(EncodedSpan { start, end })
-    }
+/// Line-relative UTF-8/16/32 endpoints for one admitted span.
+///
+/// Coordinates are counted over the span's own line on demand rather than
+/// indexed for every captured scalar: a per-scalar index cost 16 bytes per
+/// source character for every loaded workspace file, while only admitted
+/// exact spans ever read it. `None` when an endpoint is not a scalar boundary.
+fn line_span(
+    source: &str,
+    line_start: usize,
+    expr_start: usize,
+    expr_end: usize,
+    encoding: Encoding,
+) -> Option<EncodedSpan> {
+    let start = encoding_width(source.get(line_start..expr_start)?, encoding);
+    let end = start.saturating_add(capped_width(source.get(expr_start..expr_end)?, encoding));
+    Some(EncodedSpan { start, end })
 }
 
 pub(crate) fn origins_for_rust_findings(
     findings: &[Finding],
     context: &OriginBuildContext<'_>,
 ) -> RustDiagnosticOrigins {
-    let captured = captured_file_index(context.loaded_files, context.index);
+    let relative_paths: Vec<Option<PathBuf>> = findings
+        .iter()
+        .map(|finding| relative_finding_path(context.root, finding))
+        .collect();
+    let wanted: BTreeSet<&Path> = relative_paths
+        .iter()
+        .flatten()
+        .map(PathBuf::as_path)
+        .collect();
+    let captured = captured_file_index(context.loaded_files, context.index, &wanted);
     let mut origins = RustDiagnosticOrigins::default();
-    for finding in findings {
-        let origin = match relative_finding_path(context.root, finding) {
+    for (finding, relative) in findings.iter().zip(&relative_paths) {
+        let origin = match relative {
             Some(relative) => origin_for_finding(
                 finding,
                 parser_span_for_finding(finding, context.parser_spans),
-                captured.get(&relative),
+                captured.get(relative),
             ),
             None => missing_input_origin(),
         };
@@ -234,12 +172,18 @@ pub(crate) fn origins_for_rust_findings(
     origins
 }
 
+/// Captures only the loaded files some finding points at. A repo or diff run
+/// loads every workspace Rust file, and no other file is ever looked up.
 fn captured_file_index<'a>(
     loaded_files: &'a [(PathBuf, Vec<u8>)],
     index: &RustIndex,
+    wanted: &BTreeSet<&Path>,
 ) -> BTreeMap<PathBuf, CapturedFile<'a>> {
     let mut captured = BTreeMap::new();
     for (path, bytes) in loaded_files {
+        if !wanted.contains(path.as_path()) {
+            continue;
+        }
         let source = rust_source_text(bytes).text;
         let facts = index.files().get(path);
         let text = source.as_ref();
@@ -248,7 +192,6 @@ fn captured_file_index<'a>(
             CapturedFile {
                 has_standalone_cr: has_standalone_cr(text),
                 lines: lsp_lines(text),
-                coords: ScalarIndex::build(text),
                 facts_match: facts.is_some_and(|facts| facts.source == text),
                 used_lexical_fallback: facts.is_some_and(|facts| facts.used_lexical_fallback),
                 source,
@@ -354,15 +297,9 @@ fn exact_origin(
     }
     Some(EncodedOrigin {
         line: line_index as u32,
-        utf8: captured
-            .coords
-            .line_span(line_span.start, start, end, Encoding::Utf8)?,
-        utf16: captured
-            .coords
-            .line_span(line_span.start, start, end, Encoding::Utf16)?,
-        utf32: captured
-            .coords
-            .line_span(line_span.start, start, end, Encoding::Utf32)?,
+        utf8: self::line_span(source, line_span.start, start, end, Encoding::Utf8)?,
+        utf16: self::line_span(source, line_span.start, start, end, Encoding::Utf16)?,
+        utf32: self::line_span(source, line_span.start, start, end, Encoding::Utf32)?,
         kind: OriginKind::Exact,
     })
 }
@@ -382,7 +319,6 @@ enum Encoding {
     Utf32,
 }
 
-#[cfg(test)]
 fn encoding_width(text: &str, encoding: Encoding) -> u32 {
     match encoding {
         Encoding::Utf8 => text.len() as u32,
@@ -391,7 +327,6 @@ fn encoding_width(text: &str, encoding: Encoding) -> u32 {
     }
 }
 
-#[cfg(test)]
 fn capped_width(expression: &str, encoding: Encoding) -> u32 {
     let mut width = 0u32;
     for ch in expression.chars() {
@@ -973,15 +908,12 @@ mod tests {
         assert_eq!(width, 119);
         let utf8 = capped_width(&expression, Encoding::Utf8);
         assert_eq!(utf8, 119);
-        let coords = ScalarIndex::build(&expression);
-        let utf16_end = coords
-            .capped_end(0, expression.len(), Encoding::Utf16)
+        let utf16_end = line_span(&expression, 0, 0, expression.len(), Encoding::Utf16)
             .ok_or_else(|| "astral expression leaves UTF-16 scalar boundaries".to_string())?;
-        assert_eq!(utf16_end, 119);
-        let utf8_end = coords
-            .capped_end(0, expression.len(), Encoding::Utf8)
+        assert_eq!(utf16_end.end, 119);
+        let utf8_end = line_span(&expression, 0, 0, expression.len(), Encoding::Utf8)
             .ok_or_else(|| "astral expression leaves UTF-8 scalar boundaries".to_string())?;
-        assert_eq!(utf8_end, 119);
+        assert_eq!(utf8_end.end, 119);
         Ok(())
     }
 
@@ -994,7 +926,8 @@ mod tests {
             (PathBuf::from("src/lib.rs"), ordinary),
             (PathBuf::from("src/bom.rs"), bom),
         ];
-        let captured = captured_file_index(&loaded, &RustIndex::default());
+        let wanted = BTreeSet::from([Path::new("src/lib.rs"), Path::new("src/bom.rs")]);
+        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
         let ordinary_file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "ordinary file missing".to_string())?;
@@ -1012,9 +945,25 @@ mod tests {
     }
 
     #[test]
+    fn captured_index_skips_files_no_finding_points_at() -> Result<(), String> {
+        let loaded = vec![
+            (PathBuf::from("src/lib.rs"), b"fn a() {}\n".to_vec()),
+            (PathBuf::from("src/other.rs"), b"fn b() {}\n".to_vec()),
+        ];
+        let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
+        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        if !captured.contains_key(Path::new("src/lib.rs")) {
+            return Err("wanted file must be captured".to_string());
+        }
+        assert_eq!(captured.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn captured_index_owns_lossy_non_utf8() -> Result<(), String> {
         let loaded = vec![(PathBuf::from("src/lib.rs"), vec![0xff, 0xfe, b'x'])];
-        let captured = captured_file_index(&loaded, &RustIndex::default());
+        let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
+        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
         let file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "lossy file missing".to_string())?;
@@ -1050,7 +999,8 @@ mod tests {
             },
         );
         let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
-        let captured = captured_file_index(&loaded, &index_with(&source));
+        let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
+        let captured = captured_file_index(&loaded, &index_with(&source), &wanted);
         let file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "captured file missing".to_string())?;
@@ -1077,14 +1027,22 @@ mod tests {
             .ok_or_else(|| "missing predicate line".to_string())?
             .start;
         for encoding in [Encoding::Utf8, Encoding::Utf16, Encoding::Utf32] {
-            let start_a_units = file
-                .coords
-                .line_span(line_start, start_a, start_a + PREDICATE.len(), encoding)
-                .ok_or_else(|| format!("{encoding:?} missing first span"))?;
-            let start_b_units = file
-                .coords
-                .line_span(line_start, start_b, start_b + SECOND.len(), encoding)
-                .ok_or_else(|| format!("{encoding:?} missing second span"))?;
+            let start_a_units = line_span(
+                &source,
+                line_start,
+                start_a,
+                start_a + PREDICATE.len(),
+                encoding,
+            )
+            .ok_or_else(|| format!("{encoding:?} missing first span"))?;
+            let start_b_units = line_span(
+                &source,
+                line_start,
+                start_b,
+                start_b + SECOND.len(),
+                encoding,
+            )
+            .ok_or_else(|| format!("{encoding:?} missing second span"))?;
             let origin_span = match encoding {
                 Encoding::Utf8 => origin_a.utf8,
                 Encoding::Utf16 => origin_a.utf16,
