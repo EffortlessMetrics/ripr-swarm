@@ -12326,10 +12326,13 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_earlier_arm_that_may_match_blocks_selection",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::non_ascii_receivers_and_mut_self_methods_are_read_safely",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::review_false_credit_shapes_stay_unjudged",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::typed_mutable_receivers_establish_nothing",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_free_owner_called_through_a_foreign_path_is_not_read",
   "crates/ripr/tests/match_arm_unselected_identity.rs::own_crate_call_with_a_sibling_input_names_the_unselected_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
 ]
 fixtures = [
   "fixtures/match_arm_blind",

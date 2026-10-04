@@ -307,3 +307,41 @@ fn a_helper_two_calls_away_may_select_the_arm() -> Result<(), String> {
     }
     Ok(())
 }
+
+const OWN_PATH_NONE_TEST: &str = r#"#[test]
+fn none_reads_zero() {
+    assert_eq!(match_arm_unselected_identity::reason(None), 0);
+}
+"#;
+
+const FOREIGN_PATH_NONE_TEST: &str = r#"#[test]
+fn none_reads_zero() {
+    assert_eq!(other_crate::reason(None), 0);
+}
+"#;
+
+#[test]
+fn a_call_through_another_crate_path_cannot_credit_the_arm() -> Result<(), String> {
+    let control = TempRepo::create(REASON_SOURCE, OWN_PATH_NONE_TEST, REASON_DIFF)?;
+    let output = control.check()?;
+    for finding in changed_none_arms(&output)? {
+        assert_eq!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "control: the package's own path selects and pins the changed arm: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+
+    let foreign = TempRepo::create(REASON_SOURCE, FOREIGN_PATH_NONE_TEST, REASON_DIFF)?;
+    let output = foreign.check()?;
+    for finding in changed_none_arms(&output)? {
+        assert_ne!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "`other_crate::reason` may be another function: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+    Ok(())
+}

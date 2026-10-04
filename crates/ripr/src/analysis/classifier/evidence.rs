@@ -143,7 +143,8 @@ impl ClassifiedProbeEvidence {
                     && context.workspace_complete
                     && callee_is_unique(&owner.name, context.index)
             })
-            .and_then(|owner| ArmSelector::establish(context.probe, owner));
+            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .map(|selector| selector.with_workspace_packages(&context.index.package_names));
         let package_defeats_by_file = FileDefeatMemo::default();
         let owner_locals = context
             .owner_fn

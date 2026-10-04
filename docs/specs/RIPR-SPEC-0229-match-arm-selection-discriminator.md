@@ -210,7 +210,11 @@ Implemented:
 - first-match order: a guarded earlier arm blocks selection, and an earlier
   arm that provably matches means the input selects another arm;
 - a changed pattern earns no selection credit, and names the arm only when
-  neither the original nor the changed pattern selects any observed input;
+  neither the original nor the changed pattern selects any observed input.
+  The diff pairs a changed line with an adjacent removed line by a shared
+  token, which a qualified enum name satisfies for every arm of a
+  multi-line hunk, so the original pattern counts as read only when it
+  shares an alternative with the changed one;
 - selection outranks tokens whenever the scrutinee is a direct owner input.
 
 Not yet implemented (each reads as not provable):
@@ -224,7 +228,11 @@ The implementation adds these fail-closed conditions, which the Behavior
 implies but does not spell out:
 
 - a `self` receiver is a scrutinee like a parameter, when it cannot change
-  before the `match`;
+  before the `match` (a `mut self`, `&mut self`, `self: &mut Self` or
+  `self: Pin<&mut Self>` receiver used anywhere else refuses);
+- a free owner called through a path (`a::reason(..)`) is read only when
+  the path starts with `crate`, `self`, `super`, `Self`, the owner's impl
+  type, or a workspace package;
 - selection credit requires the `match` to be the owner body's first
   unconditional expression, since a nested, short-circuited or
   early-returned match may never run;
@@ -304,9 +312,11 @@ the diff changes `None => 1` to `None => 0`.
 - `fixtures/match_arm_expected_side_trap` (example 6)
 - `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests: grammar
   elements, first-match order (examples 4 and 5), changed patterns, unread
-  inputs, and matches the call may skip.
+  inputs, matches the call may skip, mutable typed receivers and foreign
+  call paths.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
-  (foreign imports, a shadowing closure, a two-level helper).
+  (foreign imports, a foreign call path, a shadowing closure, a two-level
+  helper).
 - Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
   arguments are implemented.
 - Planned: a `gap_admission` test showing rule 3 keeps the gap once the arm is

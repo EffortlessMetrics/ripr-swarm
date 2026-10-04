@@ -72,6 +72,13 @@ pub(in crate::analysis) struct ArmSelector {
     /// pattern never earns credit from selection, and the arm is named
     /// unselected only when neither pattern selects any observed input.
     changed_from: Option<Option<Vec<PatternHead>>>,
+    /// First path segments that name this workspace: `crate`, `self`,
+    /// `super`, `Self`, the owner's impl type, and (once
+    /// `with_workspace_packages` runs) each workspace package. A free
+    /// owner called through any other path (`other_crate::reason(..)`) may
+    /// be a same-named function outside the index, so it is not read as an
+    /// owner call.
+    local_roots: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,15 +153,28 @@ impl ArmSelector {
         let changed_from = match (&probe.before, &probe.after) {
             (Some(before), Some(_)) => match arm_pattern_text(before) {
                 Some(original) if same_pattern(&original, &pattern_text) => None,
+                // The diff pairs an added line with the first adjacent
+                // removed line that shares any token, and a qualified enum
+                // name is shared by every arm in a multi-line hunk. The
+                // pairing is trusted only when the two patterns share an
+                // alternative; otherwise the original is unreadable.
                 Some(original) => Some(
                     top_level_alternatives(&original)
-                        .map(|alternatives| alternatives.into_iter().map(pattern_head).collect()),
+                        .map(|original| original.into_iter().map(pattern_head).collect::<Vec<_>>())
+                        .filter(|original| {
+                            original.iter().any(|head| {
+                                *head != PatternHead::Opaque && alternatives.contains(head)
+                            })
+                        }),
                 ),
                 None => Some(None),
             },
             _ => None,
         };
         let method = owner.item.has_self_param || owner_has_self_parameter(owner);
+        let mut local_roots = ["crate", "self", "super", "Self"]
+            .map(str::to_string)
+            .to_vec();
         let EnclosingMatch {
             scrutinee,
             earlier_patterns,
@@ -187,6 +207,16 @@ impl ArmSelector {
             }
             (ScrutineeBinding::Parameter(index), declared.type_name)
         };
+        if let crate::analysis::facts::FunctionImplContext::Impl { self_type } = &owner.impl_context
+            && let Some(type_name) = self_type
+                .split('<')
+                .next()
+                .and_then(|path| path.rsplit("::").next())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+        {
+            local_roots.push(type_name.to_string());
+        }
         Some(Self {
             alternatives,
             earlier,
@@ -198,7 +228,21 @@ impl ArmSelector {
             method,
             reached,
             changed_from,
+            local_roots,
         })
+    }
+
+    /// Admits each workspace package, in manifest and crate-identifier
+    /// form, as a path root of a free owner call.
+    pub(in crate::analysis) fn with_workspace_packages(
+        mut self,
+        package_names: &std::collections::BTreeSet<String>,
+    ) -> Self {
+        for name in package_names {
+            self.local_roots.push(name.clone());
+            self.local_roots.push(name.replace('-', "_"));
+        }
+        self
     }
 
     /// The scrutinee as the owner's `match` names it (`x`, `self`).
@@ -220,7 +264,7 @@ impl ArmSelector {
         };
         operands.iter().any(|operand| {
             let operand = operand.trim();
-            owner_calls_in(operand, &self.owner, self.method)
+            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
                 .into_iter()
                 .any(|call| {
                     call.span == (0, operand.len())
@@ -251,7 +295,7 @@ impl ArmSelector {
                 .find('\n')
                 .map_or(test.body.len(), |offset| line_start + offset);
             let line = &test.body[line_start..line_end];
-            let calls = owner_calls_in(line, &self.owner, self.method);
+            let calls = owner_calls_in(line, &self.owner, self.method, &self.local_roots);
             let line_mentions = mentions
                 .iter()
                 .filter(|offset| (line_start..line_end).contains(*offset))
@@ -984,15 +1028,30 @@ fn parameter_may_change(owner: &FunctionSummary, name: &str, mutable: bool) -> b
     })
 }
 
-/// Whether a `mut self`/`&mut self` method may change `self` before or
-/// between reads of the match: any use of `self` other than the match's own
-/// scrutinee refuses. An immutable receiver cannot be reassigned.
+/// Whether a `mut self`/`&mut self`/`self: &mut Self`/`self: Pin<&mut
+/// Self>` method may change `self` before or between reads of the match:
+/// any use of `self` other than the match's own scrutinee refuses. An
+/// immutable receiver cannot be reassigned. The signature is read up to the
+/// body's `{`, so a receiver on a later signature line is still seen.
 fn receiver_may_change(owner: &FunctionSummary) -> bool {
-    let signature = owner.body.lines().next().unwrap_or_default();
-    let masked_signature = mask_comments_and_strings(signature);
-    let mutable = whole_word_offsets(&masked_signature, "self")
+    let masked = mask_comments_and_strings(&owner.body);
+    let masked_signature = masked.split('{').next().unwrap_or_default();
+    let mutable = whole_word_offsets(masked_signature, "self")
         .into_iter()
-        .any(|offset| masked_signature[..offset].trim_end().ends_with("mut"));
+        .any(|offset| {
+            if masked_signature[..offset].trim_end().ends_with("mut") {
+                return true;
+            }
+            // A typed receiver: `mut` anywhere in its type (`&mut Self`,
+            // `Pin<&mut Self>`) lets the body change the scrutinee.
+            masked_signature[offset + "self".len()..]
+                .trim_start()
+                .strip_prefix(':')
+                .is_some_and(|rest| {
+                    let receiver_type = rest.split([',', ')']).next().unwrap_or_default();
+                    !whole_word_offsets(receiver_type, "mut").is_empty()
+                })
+        });
     if !mutable {
         return false;
     }
@@ -1014,10 +1073,16 @@ struct OwnerCall<'a> {
 
 /// Owner calls in one line or operand. A method owner is read only through
 /// `<receiver>.owner(..)` with a plain path or literal receiver; a free
-/// owner only through `owner(..)` or `Path::owner(..)`. Calls of the other
-/// form, or whose receiver is computed, are left out, so a caller that
-/// counts mentions sees the gap.
-fn owner_calls_in<'a>(text: &'a str, owner: &str, method: bool) -> Vec<OwnerCall<'a>> {
+/// owner only through `owner(..)` or `Path::owner(..)` whose first segment
+/// is one of `local_roots`. Calls of the other form, through another root,
+/// or whose receiver is computed, are left out, so a caller that counts
+/// mentions sees the gap.
+fn owner_calls_in<'a>(
+    text: &'a str,
+    owner: &str,
+    method: bool,
+    local_roots: &[String],
+) -> Vec<OwnerCall<'a>> {
     let masked = mask_comments_and_strings(text);
     let mut calls = Vec::new();
     for offset in whole_word_offsets(&masked, owner) {
@@ -1061,7 +1126,12 @@ fn owner_calls_in<'a>(text: &'a str, owner: &str, method: bool) -> Vec<OwnerCall
                 continue;
             }
             let start = if prefix.ends_with("::") {
-                path_start(&masked[..prefix.len()])
+                let start = path_start(&masked[..prefix.len()]);
+                let root = masked[start..offset].split("::").next().unwrap_or_default();
+                if !local_roots.iter().any(|local| local == root) {
+                    continue;
+                }
+                start
             } else {
                 offset
             };
@@ -1458,6 +1528,22 @@ mod tests {
             observed("kind(Kind::Alpha)"),
             Some(ArmSelection::SelectsOther)
         );
+        // A pairing whose patterns share no alternative may be another arm
+        // of a multi-line hunk (#5638 review P1): the original pattern is
+        // unreadable, so no input names the arm.
+        let mut mispaired = arm_probe("Kind::Beta => 2,", 4);
+        mispaired.before = Some("Kind::Gamma => 3,".to_string());
+        let selector = ArmSelector::establish(&mispaired, &owner(body, "kind"))
+            .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
+        assert_eq!(
+            selector
+                .observed_inputs(&test_with(
+                    "fn t() {\n    assert_eq!(kind(Kind::Alpha), 1);\n}\n"
+                ))
+                .map(|observed| observed.selection),
+            Some(ArmSelection::Unknown)
+        );
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Beta), 2);"));
         // A body-only change keeps selection credit.
         let mut body_only = arm_probe("Kind::Beta => 2,", 4);
         body_only.before = Some("Kind::Beta => 7,".to_string());
@@ -1519,6 +1605,54 @@ mod tests {
                 .map(|observed| observed.selection),
             Some(ArmSelection::SelectsOther)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn typed_mutable_receivers_establish_nothing() -> Result<(), String> {
+        let shape = |signature: &str| {
+            format!(
+                "pub fn level({signature}) -> u8 {{\n    self.bump();\n    match *self {{\n        Mode::Cold => 0,\n        Mode::Hot => 1,\n    }}\n}}\n"
+            )
+        };
+        // Control: an immutable typed receiver cannot change between reads.
+        let shared = shape("self: &Self");
+        let selector =
+            ArmSelector::establish(&arm_probe("Mode::Hot => 1,", 5), &owner(&shared, "level"))
+                .ok_or_else(|| "premise: `self: &Self` reads the receiver".to_string())?;
+        assert_eq!(selector.binding, ScrutineeBinding::Receiver);
+        // `self.bump()` may change a mutable typed receiver before the match.
+        for signature in ["self: &mut Self", "self: Pin<&mut Self>", "mut self: Self"] {
+            let body = shape(signature);
+            assert!(
+                ArmSelector::establish(&arm_probe("Mode::Hot => 1,", 5), &owner(&body, "level"))
+                    .is_none(),
+                "{signature}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_free_owner_called_through_a_foreign_path_is_not_read() -> Result<(), String> {
+        let selector = reason_selector()?;
+        // `other_crate::reason` may be another function: never credited,
+        // and a test that calls it gives no readable inputs.
+        assert!(!selector.assertion_selects("assert_eq!(other_crate::reason(None), 0);"));
+        assert_eq!(
+            selector.observed_inputs(&test_with(
+                "fn t() {\n    assert_eq!(reason(Some(5)), 6);\n    assert_eq!(other_crate::reason(None), 0);\n}\n"
+            )),
+            None
+        );
+        assert!(!selector.assertion_selects("assert_eq!(::reason(None), 0);"));
+        // Workspace-rooted paths still read.
+        assert!(selector.assertion_selects("assert_eq!(crate::reason(None), 0);"));
+        assert!(selector.assertion_selects("assert_eq!(super::reason(None), 0);"));
+        assert!(!selector.assertion_selects("assert_eq!(my_pkg::reason(None), 0);"));
+        let packages = std::collections::BTreeSet::from(["my-pkg".to_string()]);
+        let selector = selector.with_workspace_packages(&packages);
+        assert!(selector.assertion_selects("assert_eq!(my_pkg::reason(None), 0);"));
         Ok(())
     }
 
