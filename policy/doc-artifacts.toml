@@ -1275,7 +1275,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Makes ripr pilot's ranking normative: class order, rank key, one seam per owning function per round across classes (#6294), truncation and the headline-eligible Also in this function count."
+standalone_reason = "Makes ripr pilot's ranking normative: class order, rank key, one seam per owning function per round across classes (#6294), truncation and an Also in this function count over the same ranked set."
 
 [[artifact]]
 id = "RIPR-SPEC-0221"

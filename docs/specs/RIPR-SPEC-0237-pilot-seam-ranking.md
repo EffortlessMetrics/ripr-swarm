@@ -37,8 +37,8 @@ Support-tier impact:
 
 - No tier change. No seam changes class and no seam gains credit. Only
   the order of `top_actionable_seams[]` changes (the #6294 owner spread),
-  and the Markdown "Also in this function" count stops counting `opaque`
-  seams, so it can only fall relative to #6294. Claim boundaries remain
+  and the Markdown "Also in this function" line counts the same ranked
+  population as the list beside it, as #6294 does. Claim boundaries remain
   governed by [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
@@ -73,7 +73,7 @@ and fill the list. Measured and inferred behavior:
 | five spot-check crates, top 10 each | 19 distinct functions in 50 picks (humantime 2, semver 3) | #6294 PR body; not reproduced here | same, in the field |
 | same, with #6294's spread | 50 distinct functions in 50 picks | #6294 PR body; not reproduced here | the spread does what it says |
 | `strongly_gripped`, `intentional`, `suppressed`, `opaque` | `[opaque]` | main test `pilot_ranking_excludes_solved_governed_classes` | opaque is ranked, last |
-| #6294 head: weak and opaque seams in one function, the weak one listed | "Also in this function" counts the opaque seam as actionable | inferred from `actionable_in_owner`, which uses `class_rank` | the count overstates repairable work |
+| #6294 head: weak and opaque seams in one function, the weak one listed | "Also in this function" counts the opaque seam | inferred from `actionable_in_owner`, which uses `class_rank` | the count matches `top_actionable_seams` and `actionable_seams_total` (decision 2) |
 
 Test evidence: #6294 at `26b3ec51` passed
 `cargo test -p ripr --lib -- output::pilot` (32 passed, exit 0) in the
@@ -193,19 +193,18 @@ One seam per owner per round (cap 1).
 
 1. the seam is its owner's first seam in the listed top N; and
 2. N_more > 0, where N_more is the number of analyzed seams with the same
-   owner whose class is headline-eligible
-   (`SeamGripClass::is_headline_eligible`) and which are not in the listed
-   top N.
+   owner whose class has a rank in the class order above (the ranked
+   set, `opaque` included) and which are not in the listed top N.
 
 The line reads
 `   - Also in this function: {N_more} more actionable seam not listed here`
 for N_more = 1, and `seams` for more than one.
 
-Headline-eligible classes are `weakly_gripped`, `ungripped`,
-`reachable_unrevealed` and the four unknown classes. `opaque`,
-`strongly_gripped`, `intentional` and `suppressed` are never counted, even
-when `opaque` is ranked. A listed `opaque` seam is not subtracted from the
-count, because it was never in it.
+"Actionable" here means actionable per pilot ranking: the same
+population as `top_actionable_seams[]` and `actionable_seams_total`, so
+the line and the list beside it agree. `strongly_gripped`, `intentional`
+and `suppressed` are never counted. An `opaque` seam is counted; it is
+not headline-eligible, and the line does not claim it is.
 
 The line appears only in Markdown. JSON gains no field and the terminal
 gains no line.
@@ -282,13 +281,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    `26b3ec51` already counted rounds over the whole walk, and `aba66e8d`
    changed only a doc comment in `ranking.rs` and added tests. Per-class
    rounds were not measured.
-2. **"Also in this function" counts headline-eligible classes only.**
-   Adopted, failing closed: the line says "actionable", and the test is
-   `SeamGripClass::is_headline_eligible` alone, which excludes `opaque`.
-   The repair ceiling is not the reason: the four unknown classes share
-   `opaque`'s `static_limitation` ceiling and are counted.
-   Rejected: count every ranked class, as #6294 does, which calls an
-   opaque seam actionable work.
+2. **"Also in this function" counts the ranked set.** Adopted (project
+   coordinator, 2026-10-04, after the #6294 thread explained its
+   intent): the count covers every ranked class, `opaque` included, as
+   #6294 does. It counts the same actionable population as
+   `actionable_seams_total` and `top_actionable_seams[]`, whose
+   `class_rank` includes `opaque`, so the note never disagrees with the
+   list it sits beside. Rejected: counting headline-eligible classes
+   only (`SeamGripClass::is_headline_eligible`), which would make the
+   note's "actionable" mean something different from the list's.
 3. **Unknown classes tie.** Adopted: the four unknown classes share rank
    3. The missing-discriminator key already lifts unknown seams that carry
    a hint, which #5946 keeps on `activation_unknown` seams. Rejected:
@@ -316,8 +317,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   `top_actionable_seams` or `render_pilot_summary_md`.
 - A discriminating test for decision 1: example 13 differs between
   across-class and per-class rounds.
-- A discriminating test for decision 2: example 21 shows no line, where
-  #6294 shows "1 more actionable seam".
+- A test for decision 2: example 21 shows "1 more actionable seam" for
+  an unlisted `opaque` seam, so the line and `top_actionable_seams[]`
+  count the same population.
 - A permutation test: shuffling the input of example 13 does not change
   the output.
 - No change to any seam's class, `actionable_seams_total`, the JSON field
@@ -413,13 +415,14 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `W src/b.rs b::parse 5`, `SG src/b.rs b::parse 6`; N = 2: listed
     `src/a.rs:10`, `src/b.rs:5`; one line "2 more actionable seams" under
     `src/a.rs:10`, none under `src/b.rs:5`. N = 5: no line.
-21. Opaque is not counted. `W src/a.rs f 1`, `AU src/a.rs f 2`,
+21. Opaque is counted. `W src/a.rs f 1`, `AU src/a.rs f 2`,
     `O src/a.rs f 3`, `W src/b.rs g 1`; N = 3: listed `src/a.rs:1`,
-    `src/b.rs:1`, `src/a.rs:2`; no "Also in this function" line (#6294
-    head: "1 more actionable seam" under `src/a.rs:1`).
-22. Opaque not counted when unlisted. `W src/a.rs f 1`, `O src/a.rs f 9`,
-    `W src/b.rs g 1`; N = 2: listed `src/a.rs:1`, `src/b.rs:1`; no line
-    (#6294 head: "1 more actionable seam").
+    `src/b.rs:1`, `src/a.rs:2`;
+    `   - Also in this function: 1 more actionable seam not listed here`
+    under `src/a.rs:1` (the unlisted `opaque` seam; same as #6294 head).
+22. Opaque counted when unlisted. `W src/a.rs f 1`, `O src/a.rs f 9`,
+    `W src/b.rs g 1`; N = 2: listed `src/a.rs:1`, `src/b.rs:1`;
+    "1 more actionable seam" under `src/a.rs:1` (same as #6294 head).
 23. Unknown classes are counted, singular. `W src/a.rs f 1`,
     `PU src/a.rs f 5`, `W src/b.rs g 1`; N = 2: listed `src/a.rs:1`,
     `src/b.rs:1`;
@@ -469,8 +472,9 @@ unless stated. Output lists `file:line` in final order. "today" is main
 
 - `crates/ripr/src/output/pilot/ranking.rs`: `class_rank`, `RankKey`,
   `top_actionable_seams`, `actionable_total`; on #6294,
-  `spread_across_owners` and `actionable_in_owner` (decision 2 changes
-  the class filter to `is_headline_eligible` and counts a set difference).
+  `spread_across_owners` and `actionable_in_owner` (decision 2 keeps
+  its `class_rank` filter; the count is the owner's ranked seams not in
+  the listed top N).
 - `crates/ripr/src/output/pilot/render/complete.rs`: JSON and Markdown
   use `max_seams`; the terminal uses 1; `next.repair_command` reads the
   first seam; #6294 adds the Markdown line.
@@ -478,8 +482,7 @@ unless stated. Output lists `file:line` in final order. "today" is main
   positive only; applies the pilot seam budget before rendering.
 - `crates/ripr/src/analysis/seam_inventory.rs`:
   `apply_pilot_seam_budget`, `DEFAULT_PILOT_SEAM_BUDGET`.
-- `crates/ripr/src/analysis/seams.rs`:
-  `SeamGripClass::is_headline_eligible`, `RepoSeam::owner`.
+- `crates/ripr/src/analysis/seams.rs`: `RepoSeam::owner`.
 - `crates/ripr/src/output/path.rs`: `display_path` (`/` normalization).
 - `docs/OUTPUT_SCHEMA.md`: `top_actionable_seams[]` note.
 
