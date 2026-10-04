@@ -390,15 +390,15 @@ the gap commits. #5352, #5353 and #5358 were still open.
 | humantime | 21 → 29 → 35 | 3/3 | 6/6 caught (1 unviable) | 2 exposed, 2 weakly_exposed, 1 static_unknown |
 | semver | 20 → 24 → 20 | 3/3 | 2/2 caught (1 unviable) | 5 exposed, 1 reachable_unrevealed |
 
-Outcomes again did not change, and the final verdicts on all three targets
-match passes 1 and 2, so #5569 left no measurable mark here. #5424 did:
-the humantime agent called the "Why this verdict" block the most useful
-output ripr gave.
+Outcomes again did not change, and the final verdict counts on all three
+targets match passes 1 and 2, so #5569 changed nothing measurable
+here. #5424 did: in its final report the humantime agent called the "Why this verdict"
+block the most useful output ripr gave.
 
 The stub route now produces stubs: four of five calls returned one, against
-none in pass 2. Two of those four do not help, and one call still fails:
+none in pass 2. Three of those four do not help, and one call still fails:
 
-- bytesize: after the agent's first test, `check` suggested
+- bytesize (two calls): after the agent's first test, `check` suggested
   `agent stub --at src/lib.rs:259` for the `return None` probe. The stub it
   printed targets the line-258 predicate, and `--at 261` printed the same
   stub (#6298).
@@ -408,11 +408,13 @@ none in pass 2. Two of those four do not help, and one call still fails:
 - semver: `--at src/lib.rs:403`, as suggested by `check --worktree`, was
   still refused with `no reported gap is in the function` (#5458).
 
-Humantime's 35 commands are mostly 15 `explain` calls spent on one surprise.
+Humantime's 35 commands include 15 `explain` calls: one first drill-in,
+eleven while the agent worked out which test shape moved a verdict, and
+three right after one surprise.
 Rewriting the `matches!` assertions in `test_fortnight_unit_from_str`, which
 does not call `parse_unit`, moved both `parse_unit` arms from `exposed` to
 `weakly_exposed`. The evaluator reproduced this in a minimal crate. The
 token that confirms observation can come from any related test while the
-oracle's strength comes from another, so the baseline `exposed` was credited
-by a test that cannot observe the arm (#6297). Each agent again lost one
+oracle's strength comes from another, so the `exposed` before the edit was
+credited by a test that cannot observe the arm (#6297). Each agent again lost one
 re-check to reading HEAD before switching to `--worktree` (#5358).
