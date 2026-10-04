@@ -179,7 +179,11 @@ joins `precommit` or CI.
 ## Required Evidence
 
 - A real end-to-end run on a clean checkout writing both report files
-  with populated M1–M5 samples (no zero-subject populations).
+  with populated M1–M5 samples for every corpus whose population can
+  exist (no zero-subject populations there); repo M1/M3 are bounded by
+  the structural outcomes already specified above (the typed
+  diff-scope refusal and the M3 per-sample timeout) and satisfy this
+  clause as named `recorded_limitation` entries, not as silent gaps.
 - A `--compare` negative control: a prior receipt with artificially
   lowered p50s (so the real child looks more than 25% slower) is flagged
   `regressed` with the named metric.
