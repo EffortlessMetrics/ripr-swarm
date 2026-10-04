@@ -282,10 +282,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// seams reference it by index; evidence is unchanged.
 /// `1.31`: a seam with no related test reads reach `opaque`, not `no`, when
 /// a transitive, macro or trait-dispatch path is unresolved (#5411).
-/// `1.32`: `RepoSeam.owner_call` (#5357) carries the owner's call shape, and
-/// path constants carry `ValueContext::Constant`. A warm `1.31` hit would
+/// `1.32`: weak grip requires established activation; a seam whose
+/// activation is unknown classifies `activation_unknown`, not
+/// `weakly_gripped` (#5946). Old entries would keep the weak-grip class.
+/// `1.33`: `RepoSeam.owner_call` (#5357) carries the owner's call shape, and
+/// path constants carry `ValueContext::Constant`. A warm `1.32` hit would
 /// serve every seam with an `Unknown` call shape and the old enum label.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.33";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -353,8 +356,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
-/// `0.38`: same owner call shape and constant label as full `1.32` (#5357).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
+/// `0.39`: same owner call shape and constant label as full `1.33` (#5357).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -424,8 +428,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
-/// `0.38`: same owner call shape and constant label as full `1.32` (#5357).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
+/// `0.39`: same owner call shape and constant label as full `1.33` (#5357).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3696,8 +3701,9 @@ mod tests {
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
         // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
         // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
-        // 1.31 -> 1.32: seam owner call shape and constant value context (#5357).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.32");
+        // 1.31 -> 1.32: weak grip requires established activation (#5946).
+        // 1.32 -> 1.33: seam owner call shape and constant value context (#5357).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.33");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3722,9 +3728,10 @@ mod tests {
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
         // 0.35 -> 0.36: same related-test table body as the outer cache.
         // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
-        // 0.37 -> 0.38: same owner call shape transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
+        // 0.37 -> 0.38: same weak-grip activation transition as the outer cache.
+        // 0.38 -> 0.39: same owner call shape transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
     }
 
     #[test]

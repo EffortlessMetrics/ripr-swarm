@@ -42,6 +42,7 @@ mod fixture_contracts;
 mod gap_source_subject_shared;
 mod identity_registry;
 mod issue_lifecycle_attempt;
+mod issue_lifecycle_intake;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
@@ -14150,6 +14151,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "stop_reason"
             | "value_context"
             | "oracle_alignment"
+            | "related_test_miss"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind" => {
