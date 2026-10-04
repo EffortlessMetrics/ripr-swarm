@@ -30,11 +30,11 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. The `oracle_kind` and `oracle_strength` that ripr reports
-  for a Rust related test stop overstating what the assertion pins. No
-  finding moves to a stronger class (gains credit) from this spec. Under the
-  #5416 unknown-not-a-gap rule 3, a finding whose only strong oracle this
-  spec weakens may move from `static_unknown` back to its named gap. Claim boundaries remain governed by
-  [support tiers](../status/SUPPORT_TIERS.md).
+  for a Rust related test stop overstating what the assertion pins. No finding
+  moves to a stronger class (gains credit) from this spec. Under the #5416
+  unknown-not-a-gap rule 3, a finding whose only strong oracle this spec
+  weakens may move from `static_unknown` back to its named gap. Claim
+  boundaries remain governed by [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
@@ -149,26 +149,26 @@ they are read through their sub-pattern.
    assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
    `!=` in an `ensure!` condition, a negated `!matches!(..)` (which today
    reads `exact_error_variant` / strong at step 1 when its pattern is
-   `Err(E::X)`), and a custom helper whose name has a
-   `ne`, `not` or `neq` segment that step 10 admits today. At step 4, every
-   `assert_ne!` assigns weak strength: a struct-literal operand keeps the
-   `whole_object_equality` kind, as RIPR-SPEC-0225 says, with no field
-   credit; any other `{` (a closure or block operand) assigns
-   `relational_check`.
+   `Err(E::X)`), and a custom helper whose name has a `ne`, `not` or `neq`
+   segment that step 10 admits today. At step 4, every `assert_ne!` assigns
+   weak strength: a struct-literal operand keeps the `whole_object_equality`
+   kind, as RIPR-SPEC-0225 says, with no field credit; any other `{` (a
+   closure or block operand) assigns `relational_check`. A negated pattern
+   assertion takes rule 1 before rules 2 and 3.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is `_`, `..`
-   or a catch-all binding assigns `broad_error` / weak, guard or not. `Err(E::X)`,
-   `Err(E::X(..))` and `Err(E::X { .. })` stay `exact_error_variant`.
-   `assert_eq!` against `Err(value)` with any expression stays
-   `exact_error_variant`, because equality pins the value.
-3. **Pattern assertions follow their pattern.** At steps 0 and 5, a
-   `matches!` or `assert_matches!` whose whole pattern is a guarded `_` or a
-   catch-all binding assigns `relational_check` / weak; the wildcard pre-check already covers an unguarded `_`. A
-   constructor pattern whose only content is wildcards (`Some(_)`, `Ok(_)`,
-   `Ok(..)`), and `None`, assign `smoke_only` / smoke when unguarded,
-   because they only check the side (RIPR-SPEC-0227); with a guard they
-   assign `relational_check` / weak. Any other
-   pattern stays `exact_value`.
+   or a catch-all binding assigns `broad_error` / weak, guard or not.
+   `Err(E::X)`, `Err(E::X(..))` and `Err(E::X { .. })` stay
+   `exact_error_variant`. `assert_eq!` against `Err(value)` with any
+   expression stays `exact_error_variant`, because equality pins the value.
+3. **Pattern assertions follow their pattern.** At steps 0 and 5, a `matches!`
+   or `assert_matches!` whose whole pattern is a guarded `_` or a catch-all
+   binding assigns `relational_check` / weak; the wildcard pre-check already
+   covers an unguarded `_`. A constructor pattern whose only content is
+   wildcards (`Some(_)`, `Ok(_)`, `Ok(..)`), and `None`, assign `smoke_only` /
+   smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
+   with a guard they assign `relational_check` / weak. Any other pattern stays
+   `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
