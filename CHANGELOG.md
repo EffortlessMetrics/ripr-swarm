@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
+  the default base and HEAD each resolve to the same commit after analysis (for
+  example `origin/HEAD` tracking the checked-out branch in a clone of a feature
+  branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
+  skips it. The empty result alone is not a clean pass, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
 - `ripr check`: the uncommitted-changes note no longer offers `--worktree`
   as the remedy for untracked files, which the flag never sees. The tracked
   wording now says "staged and unstaged tracked edits" (matching
@@ -182,6 +188,16 @@ are scoped or reviewed.
   about 1,150. The new command prints the same Markdown from the same
   artifacts and can be run locally against a `target/ripr` tree.
 
+- Classified seam-cache publication serializes borrowed records through a
+  bounded atomic writer. Encoded bytes are the primary single-entry/shard
+  ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, default 8 MiB); record
+  count remains a secondary cap. Ordinary store no longer deep-clones a shard
+  or retains the complete encoded `Vec<u8>`. One oversized record skips with
+  `skipped_oversized_record_index_*` instead of claiming a populated cache
+  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
+  through the related-test table the loader expects. Cache load/decode bounds
+  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
+
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
   `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
@@ -287,6 +303,15 @@ are scoped or reviewed.
   explicit and never assigned an inferred package (#5043).
 
 ### Added
+
+- `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
+  into a test that compiles and fails at its own labelled `todo!()` until
+  you write the expected value; `--write` places it in the existing inline
+  test module, a new one, or the producer-admitted integration file.
+  Inputs come from the changed comparison; the expected value is never
+  invented. `ripr check` prints the command under "Write a test for it:"
+  for Rust predicate, return-value, error-path and match-arm gaps, and
+  unsupported shapes refuse with a typed reason (#5355, #5357).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
