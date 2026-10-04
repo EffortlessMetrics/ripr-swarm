@@ -29,9 +29,9 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
     CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
-    RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext,
-    WorkspaceState, classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
-    corpus_fingerprint,
+    FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache,
+    WorkspaceKeyContext, classified_seam_cache_store_limit,
+    compact_classified_seam_cache_store_limit, corpus_fingerprint,
 };
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -708,7 +708,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+    let mut cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
@@ -754,7 +754,7 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+    let mut cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
@@ -898,7 +898,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+    let mut cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
@@ -1508,7 +1508,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+    let mut cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
@@ -1879,7 +1879,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+    let mut cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
@@ -1927,12 +1927,11 @@ fn production_files_from_state_with_role(
     let context = production_role_context(
         &state.workspace_root,
         config,
-        state.files.iter().map(|(path, _)| path.as_path()),
+        state.files.iter().map(PathBuf::as_path),
     );
     state
         .files
         .iter()
-        .map(|(path, _)| path)
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
         .collect()
@@ -1978,24 +1977,36 @@ fn collect_workspace_state(
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
-/// Read the contents of a pre-discovered corpus file list. Callers that
-/// already ran discovery for the corpus fingerprint scan (issue #2108)
-/// pass the list through so the directory walk is not repeated.
+/// Collect the workspace state for a pre-discovered corpus file list.
+/// Callers that already ran discovery for the corpus fingerprint scan
+/// (issue #2108) pass the list through so the directory walk is not
+/// repeated.
+///
+/// Streaming form (issue #4996): each file is read once to fold its
+/// content identity into the aggregate corpus hash, then its bytes are
+/// released immediately. The state retains sorted paths plus the final
+/// `files_content_hash` — never the raw corpus — so peak live source
+/// bytes stay bounded by the largest single file while the hash remains
+/// byte-identical to [`super::seam_cache::files_content_hash`].
 fn collect_workspace_state_from_files(
     root: &Path,
     config: &RiprConfig,
     rust_files: Vec<PathBuf>,
 ) -> Result<OwnedWorkspaceState, String> {
-    let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(rust_files.len());
-    for path in rust_files {
+    let mut sorted_files = rust_files;
+    sorted_files.sort();
+    let mut builder = FilesContentHashBuilder::new();
+    for path in &sorted_files {
         cancellation::checkpoint()?;
-        let bytes = std::fs::read(root.join(&path))
+        let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-        files.push((path, bytes));
+        builder.push(path, &bytes);
+        // `bytes` drops here, before the next file is read.
     }
     Ok(OwnedWorkspaceState {
         workspace_root: root.to_path_buf(),
-        files,
+        files: sorted_files,
+        files_content_hash: builder.finish(),
         config_text: config.source_text().map(str::to_string),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
@@ -2076,8 +2087,7 @@ fn store_corpus_fingerprint_mapping(
     let Some(fingerprint) = pre_read_fingerprint else {
         return;
     };
-    let paths: Vec<PathBuf> = state.files.iter().map(|(path, _)| path.clone()).collect();
-    let post_read = corpus_fingerprint(&state.workspace_root, &paths);
+    let post_read = corpus_fingerprint(&state.workspace_root, &state.files);
     if post_read.as_deref() != Some(fingerprint.as_str()) {
         // The corpus changed while it was being read; the signature no
         // longer describes the hashed bytes, so storing would be dishonest.
@@ -2096,12 +2106,20 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Owned form of `WorkspaceState` so the inventory function can return
-/// it across the cache call boundary. `WorkspaceState` borrows; this
-/// converts to it on demand.
+/// Owned workspace state for the inventory pipeline (issue #4996).
+///
+/// Holds sorted corpus paths plus the aggregate `files_content_hash` —
+/// never the raw source bytes. The hash is folded incrementally at
+/// collect time and stays byte-identical to
+/// [`super::seam_cache::files_content_hash`], so cache keys keep their
+/// exact meaning while peak live source bytes stay bounded. The
+/// `files: Vec<PathBuf>` type (no `Vec<u8>` anywhere) is the
+/// compile-time bound: reintroducing a retained corpus breaks the
+/// `workspace_state_holds_no_source_bytes` test build.
 struct OwnedWorkspaceState {
     workspace_root: PathBuf,
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Vec<PathBuf>,
+    files_content_hash: String,
     config_text: Option<String>,
     test_intent_text: Option<String>,
     suppressions_text: Option<String>,
@@ -2110,15 +2128,14 @@ struct OwnedWorkspaceState {
 impl OwnedWorkspaceState {
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
-        WorkspaceState {
+        WorkspaceKeyContext {
             workspace_root: &self.workspace_root,
-            files: &self.files,
             cfg_features: cfg_features.as_deref(),
             config_text: self.config_text.as_deref(),
             test_intent_text: self.test_intent_text.as_deref(),
             suppressions_text: self.suppressions_text.as_deref(),
         }
-        .cache_key()
+        .cache_key(self.files_content_hash.clone())
     }
 }
 
@@ -3128,6 +3145,197 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
         out.sort();
         Ok(out)
+    }
+
+    // ---- streaming workspace state (issue #4996) ----------------------
+    //
+    // Production inventory folds content identity incrementally and builds
+    // file facts from bounded on-demand reads. These tests pin the
+    // streaming path to the legacy retain-everything oracle on the same
+    // fixture: identical hash, identical cache key, identical index, and
+    // identical seam identities/order.
+
+    fn streaming_probe_fixture(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value > 0 }\n",
+        )?;
+        write_file(
+            &root.join("src/other.rs"),
+            "pub fn other(flag: bool) -> i32 { if flag { 1 } else { 0 } }\n",
+        )?;
+        write_file(
+            &root.join("tests/basic.rs"),
+            "#[test]\nfn basic() {\n    assert!(crate::check(1));\n}\n",
+        )?;
+        // Enough tiny production files to cross the 64-file parse-batch
+        // boundary, so the streaming path must drain several chunks.
+        for i in 0..200 {
+            write_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("pub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        // Legacy oracle load in reverse discovery order: the hash must not
+        // depend on enumeration order.
+        let discovered = workspace::discover_rust_files(root)?;
+        let mut reversed = discovered;
+        reversed.reverse();
+        let mut loaded = Vec::with_capacity(reversed.len());
+        for rel in reversed {
+            let bytes = std::fs::read(root.join(&rel))
+                .map_err(|err| format!("read oracle {}: {err}", rel.display()))?;
+            loaded.push((rel, bytes));
+        }
+        Ok(loaded)
+    }
+
+    #[test]
+    fn streaming_collect_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let config = RiprConfig::default();
+
+        let legacy_hash = super::super::seam_cache::files_content_hash(&loaded);
+        let state = collect_workspace_state(&root, &config)?;
+        // Compile-time bound (issue #4996 acceptance): the state retains
+        // sorted paths only — reintroducing a `Vec<u8>` corpus breaks
+        // this build.
+        let _: &Vec<PathBuf> = &state.files;
+        if state.files_content_hash != legacy_hash {
+            return Err(format!(
+                "streaming hash {} must equal legacy hash {legacy_hash}",
+                state.files_content_hash
+            ));
+        }
+        if state.files.windows(2).any(|pair| pair[0] > pair[1]) {
+            return Err("streaming state must retain paths in sorted order".into());
+        }
+
+        // Reverse-order input must fold to the same paths and hash.
+        let reversed_paths: Vec<PathBuf> =
+            loaded.iter().map(|(path, _)| path.clone()).rev().collect();
+        let restated = collect_workspace_state_from_files(&root, &config, reversed_paths)?;
+        if restated.files != state.files || restated.files_content_hash != legacy_hash {
+            return Err("collect must be independent of input enumeration order".into());
+        }
+
+        // The streaming key must equal the legacy snapshot key field for
+        // field, so warm cache entries stay authoritative across the cutover.
+        let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
+        let legacy_key = super::super::seam_cache::WorkspaceState {
+            workspace_root: &root,
+            files: &loaded,
+            cfg_features: cfg_features.as_deref(),
+            config_text: config.source_text(),
+            test_intent_text: None,
+            suppressions_text: None,
+        }
+        .cache_key();
+        if state.cache_key() != legacy_key {
+            return Err("streaming cache key must equal the legacy snapshot key".into());
+        }
+
+        // A changed byte must change the aggregate identity.
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value >= 0 }\n",
+        )?;
+        let changed = collect_workspace_state(&root, &config)?;
+        if changed.files_content_hash == legacy_hash {
+            return Err("changed source bytes must change files_content_hash".into());
+        }
+        if changed.cache_key() == legacy_key {
+            return Err("changed source bytes must invalidate the workspace cache key".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_index_build_matches_loaded_oracle() -> Result<(), String> {
+        let root = make_tempdir("stream-index-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
+
+        // Streaming first, so it runs cold (misses, parses, stores); the
+        // legacy oracle then runs warm against the same file-fact entries.
+        let streamed =
+            rust_index::build_index_from_paths_with_cache_and_test_harnesses(&root, &paths, &[])?;
+        if streamed.file_fact_cache.misses != paths.len() || streamed.file_fact_cache.hits != 0 {
+            return Err(format!(
+                "streaming cold build must miss every file, got {} misses {} hits over {} files",
+                streamed.file_fact_cache.misses,
+                streamed.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        let legacy = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+            &root,
+            &loaded,
+            &[],
+        )?;
+        if legacy.file_fact_cache.hits != paths.len() {
+            return Err(format!(
+                "legacy build after streaming must hit every file fact, got {} hits over {} files",
+                legacy.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        if streamed.index.files.len() != legacy.index.files.len()
+            || streamed.index.functions.len() != legacy.index.functions.len()
+            || streamed.index.tests.len() != legacy.index.tests.len()
+        {
+            return Err(format!(
+                "streaming index must match legacy oracle: {} vs {} files, {} vs {} functions, {} vs {} tests",
+                streamed.index.files.len(),
+                legacy.index.files.len(),
+                streamed.index.functions.len(),
+                legacy.index.functions.len(),
+                streamed.index.tests.len(),
+                legacy.index.tests.len()
+            ));
+        }
+
+        let config = RiprConfig::default();
+        let state = collect_workspace_state(&root, &config)?;
+        let production = production_files_from_state_with_role(&state, &config);
+        if production.is_empty() {
+            return Err("probe fixture must yield production files".into());
+        }
+        let streamed_seams = inventory_seams_from_index(&production, &streamed.index);
+        let legacy_seams = inventory_seams_from_index(&production, &legacy.index);
+        if streamed_seams != legacy_seams {
+            return Err("streaming seam identities and order must match the legacy oracle".into());
+        }
+        if streamed_seams.is_empty() {
+            return Err("probe fixture must yield at least one seam".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_collect_fails_closed_on_unreadable_file() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-missing")?;
+        let config = RiprConfig::default();
+        match collect_workspace_state_from_files(
+            &root,
+            &config,
+            vec![PathBuf::from("src/missing.rs")],
+        ) {
+            Ok(_) => Err("collect must fail closed for an unreadable file".into()),
+            Err(err) => {
+                if err.contains("read ") && err.contains("missing.rs") {
+                    let _ = std::fs::remove_dir_all(&root);
+                    Ok(())
+                } else {
+                    Err(format!("unexpected collect error shape: {err}"))
+                }
+            }
+        }
     }
 
     #[test]

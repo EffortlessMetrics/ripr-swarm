@@ -85,6 +85,37 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     Ok(cached)
 }
 
+/// Streaming twin of
+/// [`build_index_from_loaded_files_with_cache_and_test_harnesses`]
+/// (issue #4996): identical post-processing over an index built from
+/// on-demand reads, so production inventory never retains the whole raw
+/// source corpus.
+pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    let mut cached = index_phase("index_cached_parse", || {
+        build::build_index_from_paths_with_cache(root, paths)
+    })?;
+    index_phase("index_parameterized_tests", || {
+        parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
+        Ok(())
+    })?;
+    index_phase("index_test_styles", || {
+        test_styles::normalize_index_test_styles(&mut cached.index)
+    })?;
+    index_phase("index_role_composition", || {
+        role_composition::compose_index_source_roles(&mut cached.index, root);
+        Ok(())
+    })?;
+    index_phase("index_harness_registry", || {
+        harness_registry::apply_registrations(&mut cached.index, root, registrations);
+        Ok(())
+    })?;
+    Ok(cached)
+}
+
 // The Cargo-validated file-wide harness evidence grant (#3608) is shared
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.

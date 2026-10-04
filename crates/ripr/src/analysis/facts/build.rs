@@ -50,6 +50,154 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     })
 }
 
+/// Streaming variant of [`build_index_from_loaded_files_with_cache`]
+/// (issue #4996): builds the same index from on-demand per-file reads
+/// instead of a caller-retained `&[(PathBuf, Vec<u8>)]` corpus.
+///
+/// `paths` are consumed in the given order in `PARSE_BATCH_FILES` chunks;
+/// each chunk's raw bytes are released before the next chunk is read, so
+/// peak live source bytes scale with one batch plus the owned index facts,
+/// not the whole corpus. Cache lookup, parallel-parse batching, store, and
+/// insert ordering mirror the loaded-files path chunk-for-chunk, so stats,
+/// same-phase error precedence, and checkpoint granularity are identical.
+///
+/// One deliberate precedence delta: the loaded path reads every file before
+/// parsing any, so a later-file read error beats an earlier-file parse
+/// error; here an earlier chunk resolves fully (including parse errors)
+/// before a later chunk is read. Both orders fail closed with an error —
+/// no consumer branches on which error wins — and ordering within a chunk
+/// keeps first-error-in-input-order exactly.
+pub(crate) fn build_index_from_paths_with_cache(
+    root: &Path,
+    paths: &[PathBuf],
+) -> Result<CachedRustIndex, String> {
+    build_index_from_paths_with_cache_and_adapters(
+        root,
+        paths,
+        &RaRustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter,
+    )
+}
+
+fn build_index_from_paths_with_cache_and_adapters(
+    root: &Path,
+    paths: &[PathBuf],
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+) -> Result<CachedRustIndex, String> {
+    let cache = RepoFileFactCache::at(root);
+    let mut load_known_file_paths = || cache.known_file_paths();
+    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
+    let mut stats = FileFactCacheStats::default();
+    let mut index = RustIndex::default();
+
+    enum Pending {
+        Ready(super::FileFacts),
+        Parse {
+            key: RepoFileFactCacheKey,
+            bytes: Vec<u8>,
+        },
+    }
+
+    for chunk in paths.chunks(PARSE_BATCH_FILES) {
+        // Phase 1 (sequential, chunk order): read one chunk and resolve
+        // cache lookups. Raw bytes live only inside this chunk's `pending`.
+        let mut pending: Vec<(PathBuf, Pending)> = Vec::with_capacity(chunk.len());
+        for file in chunk {
+            cancellation::checkpoint()?;
+            let bytes = std::fs::read(root.join(file))
+                .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            let key = RepoFileFactCacheKey::new(file, &bytes);
+            match cache.load_file_facts(&key) {
+                CacheLoad::Hit(facts) => {
+                    stats.hits += 1;
+                    pending.push((file.clone(), Pending::Ready(facts)));
+                }
+                CacheLoad::Miss => {
+                    stats.misses += 1;
+                    if known_cached_file_paths
+                        .get_or_insert_with(&mut load_known_file_paths)
+                        .contains(file)
+                    {
+                        stats.invalidated_files.insert(file.clone());
+                    }
+                    pending.push((file.clone(), Pending::Parse { key, bytes }));
+                }
+                CacheLoad::CorruptIgnored { reason } => {
+                    stats.corrupt_ignored += 1;
+                    eprintln!("ripr: repo file fact cache entry ignored ({reason})");
+                    pending.push((file.clone(), Pending::Parse { key, bytes }));
+                }
+            }
+        }
+
+        // Phase 2 (parallel, chunk order): parse misses on the rayon pool.
+        // Collecting only the pending-parse inputs (total `match`, no
+        // panic-family fallback) keeps the no-panic policy intact.
+        let parse_inputs: Vec<(usize, &PathBuf, &Vec<u8>)> = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(position, (file, entry))| match entry {
+                Pending::Ready(_) => None,
+                Pending::Parse { bytes, .. } => Some((position, file, bytes)),
+            })
+            .collect();
+        let mut parsed: Vec<Option<Result<super::FileFacts, String>>> = Vec::new();
+        parsed.resize_with(pending.len(), || None);
+        for batch in parse_inputs.chunks(PARSE_BATCH_FILES) {
+            cancellation::checkpoint()?;
+            let results: Vec<(usize, Result<super::FileFacts, String>)> = batch
+                .par_iter()
+                .map(|(position, file, bytes)| {
+                    (
+                        *position,
+                        summarize_loaded_file(file, bytes, adapter, fallback),
+                    )
+                })
+                .collect();
+            for (position, result) in results {
+                parsed[position] = Some(result);
+            }
+        }
+
+        // Phase 3 (sequential, chunk order): store fresh facts, then insert.
+        // The first error in overall input order wins because chunks drain
+        // in order and each chunk drains in order.
+        for (position, (file, entry)) in pending.into_iter().enumerate() {
+            let summary = match entry {
+                Pending::Ready(facts) => facts,
+                Pending::Parse { key, .. } => {
+                    let facts = match parsed[position].take() {
+                        Some(result) => result?,
+                        None => {
+                            return Err(format!(
+                                "missing parse result for {}",
+                                root.join(&file).display()
+                            ));
+                        }
+                    };
+                    match cache.store_file_facts(&key, &facts) {
+                        Ok(()) => stats.stores += 1,
+                        Err(error) => stats.record_store_failure(file.clone(), error),
+                    }
+                    facts
+                }
+            };
+            insert_file_summary(&mut index, file, summary);
+            cancellation::checkpoint()?;
+        }
+        // Chunk `pending` (and every chunk's raw bytes) drops here.
+    }
+
+    super::includes::resolve_repository_local_includes(root, &mut index);
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    index.package_names = manifest_package_names(root);
+    Ok(CachedRustIndex {
+        index,
+        file_fact_cache: stats,
+    })
+}
+
 fn build_index_with_file_fact_cache(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
