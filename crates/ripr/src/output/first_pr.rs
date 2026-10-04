@@ -6176,7 +6176,7 @@ mod tests {
         assert!(
             base["next_command"]
                 .as_str()
-                .is_some_and(|command| command.contains("git fetch origin missing-base"))
+                .is_some_and(|command| command.contains("git fetch origin -- missing-base"))
         );
         let config = preflight_check(&packet, "ripr_config")?;
         assert_eq!(config["status"], "defaulted");
