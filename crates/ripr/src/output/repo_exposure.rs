@@ -150,7 +150,7 @@ fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
     }
 }
 
-pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
+pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.4";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
 /// Cap on related-tests rendered per seam in the JSON output. The
@@ -793,6 +793,11 @@ fn push_classified_json(
         json_escape(&display_path(seam.file()))
     ));
     out.push_str(&format!("      \"line\": {},\n", seam.display_line()));
+    if let Some(span) = seam.span() {
+        out.push_str(&format!("      \"column\": {},\n", span.start_column));
+        out.push_str(&format!("      \"end_line\": {},\n", span.end_line));
+        out.push_str(&format!("      \"end_column\": {},\n", span.end_column));
+    }
     out.push_str(&format!(
         "      \"owner\": \"{}\",\n",
         json_escape(seam.owner())
@@ -1346,7 +1351,7 @@ mod tests {
     fn json_carries_schema_version_scope_and_metrics() {
         let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
-            "\"schema_version\": \"0.3\"",
+            "\"schema_version\": \"0.4\"",
             "\"scope\": \"repo\"",
             "\"run_status\": \"complete\"",
             "\"seams_total\": 1",
@@ -1359,6 +1364,34 @@ mod tests {
         assert!(
             !json.contains("\"limitations\""),
             "limitations must be absent on complete run:\n{json}"
+        );
+    }
+
+    #[test]
+    fn json_carries_span_coordinates_when_seam_has_span() {
+        use crate::analysis::seams::SeamSpan;
+        let mut entry = weakly_gripped_classified();
+        entry.seam = entry.seam.with_span(SeamSpan {
+            start_line: 42,
+            start_column: 9,
+            end_line: 42,
+            end_column: 38,
+        });
+        let json = render_repo_exposure_json(&[entry], None, None, None);
+        for needle in ["\"column\": 9", "\"end_line\": 42", "\"end_column\": 38"] {
+            assert!(json.contains(needle), "missing {needle:?} in json:\n{json}");
+        }
+    }
+
+    #[test]
+    fn json_omits_span_coordinates_when_seam_lacks_span() {
+        // The seam header must go straight from "line" to "owner" when no
+        // span geometry exists. (Nested projections such as evidence_record
+        // carry their own end_line keys; this asserts the seam object shape.)
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
+        assert!(
+            json.contains("\"line\": 42,\n      \"owner\""),
+            "seam header grew span fields without geometry in json:\n{json}"
         );
     }
 

@@ -23,6 +23,9 @@ struct StaticSeamRecord {
     seam_kind: String,
     file: String,
     line: usize,
+    column: Option<usize>,
+    end_line: Option<usize>,
+    end_column: Option<usize>,
     seam_grip_class: String,
     oracle_kind: String,
     oracle_strength: String,
@@ -385,6 +388,9 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
         let seam_kind = required_json_string(seam, "kind")?;
         let file = normalize_report_path(&required_json_string(seam, "file")?);
         let line = required_json_usize(seam, "line")?;
+        let column = seam.get("column").and_then(json_scalar_as_usize);
+        let end_line = seam.get("end_line").and_then(json_scalar_as_usize);
+        let end_column = seam.get("end_column").and_then(json_scalar_as_usize);
         let seam_grip_class = required_json_string(seam, "grip_class")?;
         let (oracle_kind, oracle_strength) = strongest_related_oracle(seam);
         records.push(StaticSeamRecord {
@@ -392,6 +398,9 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
             seam_kind,
             file,
             line,
+            column,
+            end_line,
+            end_column,
             seam_grip_class,
             oracle_kind,
             oracle_strength,
@@ -1210,6 +1219,48 @@ mod tests {
     }
 
     #[test]
+    fn mutation_calibration_parses_optional_static_spans() -> Result<(), String> {
+        let repo = r#"{
+  "schema_version": "0.4",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-spanned",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "column": 8,
+      "end_line": 42,
+      "end_column": 36,
+      "grip_class": "weakly_gripped",
+      "related_tests": [],
+      "observed_values": [],
+      "missing_discriminators": []
+    },
+    {
+      "seam_id": "seam-lines-only",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 50,
+      "grip_class": "weakly_gripped",
+      "related_tests": [],
+      "observed_values": [],
+      "missing_discriminators": []
+    }
+  ]
+}"#;
+        let records = parse_repo_exposure_static_seams(repo)?;
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].column, Some(8));
+        assert_eq!(records[0].end_line, Some(42));
+        assert_eq!(records[0].end_column, Some(36));
+        assert_eq!(records[1].column, None);
+        assert_eq!(records[1].end_line, None);
+        assert_eq!(records[1].end_column, None);
+        Ok(())
+    }
+
+    #[test]
     fn mutation_calibration_renders_empty_ambiguous_unmatched_and_inconclusive()
     -> Result<(), String> {
         let empty_report = build_mutation_calibration_report(Vec::new(), Vec::new());
@@ -1362,6 +1413,9 @@ mod tests {
             seam_kind: "predicate_boundary".to_string(),
             file: file.to_string(),
             line,
+            column: None,
+            end_line: None,
+            end_column: None,
             seam_grip_class: grip_class.to_string(),
             oracle_kind: "exact_value".to_string(),
             oracle_strength: "unknown".to_string(),

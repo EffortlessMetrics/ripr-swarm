@@ -278,7 +278,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.29`: postmerge opaque-body oracle/reach refusal and ordinary generic
 /// call preservation (#5131). `1.28` remains a separate integration proposal,
 /// not an accepted generation owned by this candidate.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.29";
+/// `1.30`: probe shapes gain the parser-owned end byte (#5336); old fact
+/// entries lack span geometry and must cold-recompute.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.30";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -344,7 +346,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.29";
 /// `0.33`: property-only call/fallback admission and package-scoped mentions.
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
+/// `0.36`: seams gain optional span geometry (#5336) — same semantic
+/// transition as the outer classified-seam cache.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.36";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -412,7 +416,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
 /// `0.33`: property-only call/fallback admission and package-scoped mentions.
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
+/// `0.36`: seams gain optional span geometry (#5336) — same semantic
+/// transition as the outer classified-seam cache.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.36";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -540,7 +546,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// fabricate property-body functions/tests. Published 1.16 facts must miss.
 /// `1.18`: parser raw oracle scans exclude opaque property bodies (#5131).
 /// Published `1.17` favorable discarded-oracle facts cannot replay.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.18";
+/// `1.19`: probe shapes gain the parser-owned end byte (#5336).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.19";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3580,7 +3587,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.18");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.19");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3626,7 +3633,7 @@ mod tests {
         // 1.19 -> 1.20: owner-return pins (#4478) confirm return-value
         // probes the token rule left unconfirmed.
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.29");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.30");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3649,8 +3656,8 @@ mod tests {
         // 0.26 (sharded) / 0.26 (compact): owner-return pins (#4478) —
         // same semantic transition as the outer cache.
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.35");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.35");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.36");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.36");
     }
 
     #[test]

@@ -163,6 +163,14 @@ are scoped or reviewed.
 
 ### Added
 
+- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
+  seams (schema `0.2`) now carry the parser-owned span coordinates
+  `column`, `end_line`, and `end_column` (1-based byte columns, exclusive
+  end) when span geometry is available, matching cargo-mutants span columns
+  for calibration joins. Seam IDs are unchanged; span-less entries omit the
+  fields and consumers must treat them as line-only. `agent verify`
+  requires the current `0.4` envelope, so regenerate snapshots rather than
+  hand-editing versions (#5336).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards

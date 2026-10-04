@@ -36,7 +36,7 @@ use super::seam_cache::{
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
-use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, byte_span_to_lines};
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
@@ -2233,7 +2233,7 @@ pub(crate) fn inventory_seams_from_index(
             continue;
         };
         for shape in &facts.probe_shapes {
-            let Some(seam) = build_seam_from_shape(path, shape, index) else {
+            let Some(seam) = build_seam_from_shape(path, shape, index, &facts.source) else {
                 continue;
             };
             seams.push(seam);
@@ -2271,6 +2271,7 @@ fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
     index: &RustIndex,
+    source: &str,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(&shape.kind)?;
     let owner_fact = rust_index::find_owner_function(index, path, shape.start_line)?;
@@ -2288,7 +2289,7 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
-    Some(RepoSeam::new(
+    let seam = RepoSeam::new(
         path,
         owner,
         kind,
@@ -2297,7 +2298,14 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    ))
+    );
+    // Span geometry is additional precision: when derivation fails (stale or
+    // mismatched source), the seam keeps line-only behavior rather than
+    // carrying wrong coordinates.
+    match byte_span_to_lines(source, shape.start_line, shape.start_byte, shape.end_byte) {
+        Some(span) => Some(seam.with_span(span)),
+        None => Some(seam),
+    }
 }
 
 fn seam_kind_from_probe_shape(kind: &str) -> Option<SeamKind> {
@@ -3541,6 +3549,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 2,
                     end_line: 2,
                     start_byte: 16,
+                    end_byte: 26,
                     kind: "shape_kind_that_is_not_recognized".to_string(),
                     text: "owner_body".to_string(),
                 }],
@@ -3593,6 +3602,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 11,
                     end_line: 11,
                     start_byte: 120,
+                    end_byte: 126,
                     kind: PROBE_SHAPE_PREDICATE.to_string(),
                     text: "x >= 0".to_string(),
                 }],

@@ -613,7 +613,7 @@ fn write_bound_repo_exposure_fixture(
     let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     let raw = format!(
         r#"{{
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "artifact": {{
     "kind": "repo_exposure",
     "schema_version": "1",
@@ -830,7 +830,7 @@ fn bind_repo_exposure_fixture_with_worktree(
     worktree: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(source)?)?;
-    value["schema_version"] = serde_json::Value::String("0.3".to_string());
+    value["schema_version"] = serde_json::Value::String("0.4".to_string());
     value["run_status"] = serde_json::Value::String("complete".to_string());
     let head = concrete_fixture_repository_head(root)?;
     let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
@@ -8193,7 +8193,7 @@ fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn
     write_bound_repo_exposure_fixture(&root, &before, seam)?;
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
     let altered = std::fs::read_to_string(&before)?
-        .replace("\"schema_version\": \"0.3\"", "\"schema_version\": \"9.0\"");
+        .replace("\"schema_version\": \"0.4\"", "\"schema_version\": \"9.0\"");
     std::fs::write(&before, altered)?;
 
     let before_path = before.display().to_string();
