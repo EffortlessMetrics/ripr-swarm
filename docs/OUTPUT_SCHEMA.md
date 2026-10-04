@@ -2015,7 +2015,10 @@ the bounded check itself. `pr-evidence` renders its internal check input
 unbounded: routing counts the full finding set regardless of the external
 budget, since that JSON never leaves the process. The run exit code is
 unchanged (analysis completed); consumers must read `run_limitations[]`
-before treating `findings[]` as the full set.
+before treating `findings[]` as the full set. When the limitation is
+present, `summary.findings` can exceed `findings.len()`; consumers that
+require equal counts must disable the bound (`=0`) or handle the limited
+output.
 
 Example (budget engaged after the first of 61 findings):
 
