@@ -13,7 +13,7 @@ use super::{
     uninserted_facts,
 };
 use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
-use crate::analysis::facts::FileFacts;
+use crate::analysis::facts::{FactSlice, FileFacts, FunctionFact};
 use crate::analysis::syntax::{SyntaxNodeFact, TextRange};
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -114,14 +114,14 @@ impl BatchFixture {
     /// Cached result must equal an independent uncached parse of the files.
     fn assert_matches_uncached(&self, cached: &CachedRustIndex) -> TestResult<()> {
         let uncached = build_index(&self.root, &self.files)?;
-        assert_eq!(cached.index.files, uncached.files);
-        assert_eq!(cached.index.functions, uncached.functions);
-        assert_eq!(cached.index.tests, uncached.tests);
+        assert_eq!(cached.index.files(), uncached.files());
+        assert_eq!(cached.index.functions(), uncached.functions());
+        assert_eq!(cached.index.tests(), uncached.tests());
         assert_eq!(cached.index.package_names, uncached.package_names);
         assert_eq!(cached.index.non_utf8_sources, uncached.non_utf8_sources);
         let names = cached
             .index
-            .tests
+            .tests()
             .iter()
             .map(|test| test.name.clone())
             .collect::<Vec<_>>();
@@ -187,8 +187,12 @@ impl RustSyntaxAdapter for ObservingAdapter<'_> {
         RaRustSyntaxAdapter.summarize_file(path, text)
     }
 
-    fn changed_nodes(&self, facts: &FileFacts, ranges: &[TextRange]) -> Vec<SyntaxNodeFact> {
-        RaRustSyntaxAdapter.changed_nodes(facts, ranges)
+    fn changed_nodes(
+        &self,
+        functions: FactSlice<'_, FunctionFact>,
+        ranges: &[TextRange],
+    ) -> Vec<SyntaxNodeFact> {
+        RaRustSyntaxAdapter.changed_nodes(functions, ranges)
     }
 }
 
@@ -203,8 +207,12 @@ impl RustSyntaxAdapter for RefusingFallback<'_> {
         LexicalRustSyntaxAdapter.summarize_file(path, text)
     }
 
-    fn changed_nodes(&self, facts: &FileFacts, ranges: &[TextRange]) -> Vec<SyntaxNodeFact> {
-        LexicalRustSyntaxAdapter.changed_nodes(facts, ranges)
+    fn changed_nodes(
+        &self,
+        functions: FactSlice<'_, FunctionFact>,
+        ranges: &[TextRange],
+    ) -> Vec<SyntaxNodeFact> {
+        LexicalRustSyntaxAdapter.changed_nodes(functions, ranges)
     }
 }
 
@@ -237,7 +245,7 @@ fn cold_warm_and_edited_builds_hold_at_most_one_batch_outside_the_index() -> Tes
         "cache-hit facts must not be retained across later batches"
     );
     fixture.assert_matches_uncached(&warm)?;
-    assert_eq!(warm.index.files, cold.index.files);
+    assert_eq!(warm.index.files(), cold.index.files());
 
     // One same-size edit in each batch: three invalidated misses, one
     // inventory read, and still one batch of uninserted facts at most.
@@ -261,7 +269,7 @@ fn cold_warm_and_edited_builds_hold_at_most_one_batch_outside_the_index() -> Tes
     assert_eq!(inventory_reads, 1);
     assert_eq!(high_water, PARSE_BATCH_FILES);
     fixture.assert_matches_uncached(&mixed)?;
-    assert_ne!(mixed.index.files, cold.index.files);
+    assert_ne!(mixed.index.files(), cold.index.files());
     Ok(())
 }
 
