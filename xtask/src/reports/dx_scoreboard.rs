@@ -1621,6 +1621,7 @@ pub(crate) fn compare_with_baseline(
             "regressed": true,
             "reason": "a repository stopped completing or regressed; see each repository below",
             "regressed_repos": lost,
+            "recovered_repos": recovered_repos(row, base_row),
         });
     }
     if def.runner_dependent
@@ -1987,6 +1988,7 @@ fn baseline_cell(baseline: &Value) -> String {
             .as_str()
             .unwrap_or("not compared")
             .to_string()
+            + &repo_note(baseline, "recovered_repos", "completed again")
     }
 }
 

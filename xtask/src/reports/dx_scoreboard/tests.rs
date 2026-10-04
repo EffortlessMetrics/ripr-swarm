@@ -1436,6 +1436,42 @@ fn a_repo_that_starts_completing_again_is_not_a_time_regression() -> Result<(), 
 }
 
 #[test]
+fn a_recovery_is_listed_next_to_a_lost_completion_and_when_nothing_compares() -> Result<(), String>
+{
+    let row_of = |report: &Value| -> Result<Value, String> {
+        report["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+            .cloned()
+            .ok_or_else(|| "corpus.check_ms row missing".to_string())
+    };
+    // a stops completing while c starts again: the gate fails for a and still
+    // lists c.
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
+    let swapped = smoke_receipt(&[("a", "diff_scope_oversized", 40), ("c", "analyzed", 900)]);
+    let report = corpus_gate(&base, &swapped)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    assert_eq!(
+        row_of(&report)?["baseline"]["recovered_repos"],
+        json!(["c"])
+    );
+    // Only c, which recovered, completed: nothing compares, and the Markdown
+    // cell still names the recovery.
+    let only_c = smoke_receipt(&[("c", "diff_scope_oversized", 40)]);
+    let report = corpus_gate(&only_c, &smoke_receipt(&[("c", "analyzed", 900)]))?;
+    let row = row_of(&report)?;
+    assert_eq!(
+        row["baseline"]["comparable"],
+        json!(false),
+        "{}",
+        row["baseline"]
+    );
+    let rendered = render_markdown(&report);
+    assert!(rendered.contains("completed again: c"), "{rendered}");
+    Ok(())
+}
+
+#[test]
 fn an_analyzed_smoke_row_without_a_duration_is_refused() -> Result<(), String> {
     let receipt = json!({
         "schema_version": "ripr-rust-corpus-smoke-v1",
