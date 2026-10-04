@@ -17,6 +17,11 @@ are scoped or reviewed.
   emitted the catalog, so a consumer following human help or the catalog
   itself could not discover the machine-discovery route (#5266).
 
+- `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
+  `--root` is not a directory or the gap-ledger input cannot be read, instead
+  of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
+  names the path and the next step. A root that exists but is not a workspace
+  still gets the `first-pr` recovery packet.
 - Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
   has a focused test but no `ripr agent repair` command, and closes with
   `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
@@ -73,6 +78,12 @@ are scoped or reviewed.
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
   `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
   instead of telling every client to set the VS Code-only name (#5094).
+- Git invocation timeout is a crate-internal typed `CoreError` variant. Semantic
+  consumers match the variant (including through structured context) instead of
+  the `git_invocation_timeout` Display prefix. Public wording, LSP
+  `git_invocation_timeout` kind (#2811), exit mapping, and process cleanup are
+  unchanged.
+
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
   exposure classification remain unchanged. (#5146)
@@ -679,6 +690,14 @@ are scoped or reviewed.
   directory ripr creates and writes outside the checkout. The cache directory
   now resolves under the analyzed root rather than the working directory, so
   `--root <checkout>` cannot place it elsewhere either (#4745).
+- A Python or TypeScript `ripr agent packet` built from a check-output gap
+  ledger (the `first-pr` preview route) printed refresh commands for the
+  Rust-only repo-exposure route. Running them overwrote `check.json` and
+  rebuilt the ledger without any Python or TypeScript records, so the same
+  packet command then failed with "gap_id ... was not found". The refresh now
+  reruns `ripr check --json` with the base the check output recorded and
+  rebuilds the ledger with `--check-output`. The blocked reason says the
+  record's repair route stays usable as advisory guidance.
 - Security: `ripr doctor` probes every language runtime (`node`, `bun`,
   `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
   `yarn`. Run inside it, pnpm fetched and ran the release a project's
