@@ -433,8 +433,54 @@ fn lifetime_annotated_mut_reference_binds_the_referent_mutably() -> Result<(), S
 
 #[test]
 fn integration_stub_leaves_a_named_constant_as_a_fill_in() -> Result<(), String> {
-    const SOURCE: &str = "const LIMIT: u8 = 3;
+    let proposal = NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/gate.rs"),
+        owner: "demo::gate".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+    };
+    for source in [
+        "const LIMIT: u8 = 3;
 pub fn gate(n: u8) -> u8 {
+    if n > LIMIT { n } else { 0 }
+}
+",
+        "pub(crate) const LIMIT: u8 = 3;
+pub fn gate(n: u8) -> u8 {
+    if n > LIMIT { n } else { 0 }
+}
+",
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            source,
+            "n > LIMIT",
+            SeamKind::PredicateBoundary,
+            boundary("n == LIMIT"),
+        )?;
+        // Inline, the private constant is in scope through `use super::*`.
+        let inline = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+        assert!(
+            inline.text.contains("let n: u8 = LIMIT;"),
+            "{}",
+            inline.text
+        );
+        // A `tests/` file cannot see private or `pub(crate)` constants.
+        let stub =
+            rust_test_stub(&seam, Some(&proposal), source).map_err(|r| r.reason().to_string())?;
+        assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
+        assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
+        assert!(stub.derived_inputs.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_stub_rebases_crate_paths_and_keeps_a_public_constant() -> Result<(), String> {
+    const SOURCE: &str = "pub const LIMIT: u8 = 3;
+pub struct Tag;
+pub fn gate(n: u8, tag: crate::Tag) -> u8 {
+    let _ = tag;
     if n > LIMIT { n } else { 0 }
 }
 ";
@@ -451,19 +497,62 @@ pub fn gate(n: u8) -> u8 {
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
-    // Inline, the private constant is in scope through `use super::*`.
-    let inline = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
-    assert!(
-        inline.text.contains("let n: u8 = LIMIT;"),
-        "{}",
-        inline.text
-    );
-    // A `tests/` file cannot see it, so the input stays a todo!().
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
-    assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
-    assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
-    assert!(stub.derived_inputs.is_empty());
+    assert_eq!(
+        stub.placement,
+        TestStubPlacement::NewIntegrationFile {
+            file: PathBuf::from("tests/gate.rs")
+        }
+    );
+    assert_eq!(stub.derived_inputs, vec!["n = LIMIT".to_string()]);
+    assert!(stub.text.contains("use demo::*;\n"), "{}", stub.text);
+    assert!(stub.text.contains("let n: u8 = LIMIT;"), "{}", stub.text);
+    assert!(
+        stub.text.contains("let tag: demo::Tag = todo!("),
+        "{}",
+        stub.text
+    );
+    assert!(
+        !stub.text.contains("crate::"),
+        "integration stubs must rebase crate:: to the crate name: {}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_stub_refuses_self_and_super_parameter_paths() -> Result<(), String> {
+    let proposal = |owner: &str| NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/flag.rs"),
+        owner: owner.to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+    };
+    let self_source = "pub struct Cfg { pub on: bool }
+pub fn flag(cfg: &self::Cfg, n: i32) -> bool {
+    if n < 0 { cfg.on } else { !cfg.on }
+}
+";
+    let super_source = "pub struct Cfg { pub on: bool }
+pub fn flag(cfg: &super::Cfg, n: i32) -> bool {
+    if n < 0 { cfg.on } else { !cfg.on }
+}
+";
+    for (source, needle) in [(self_source, "n < 0"), (super_source, "n < 0")] {
+        let seam = seam_at(
+            "src/lib.rs",
+            source,
+            needle,
+            SeamKind::PredicateBoundary,
+            boundary(""),
+        )?;
+        assert_eq!(
+            rust_test_stub(&seam, Some(&proposal("demo::flag")), source),
+            Err(TestStubRefusal::ParameterUnsupported),
+            "{source}"
+        );
+    }
     Ok(())
 }
 

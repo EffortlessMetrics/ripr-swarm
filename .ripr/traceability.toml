@@ -8274,6 +8274,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir",
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base",
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
+  "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_rebases_crate_paths_and_keeps_a_public_constant",
+  "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_refuses_self_and_super_parameter_paths",
+  "crates/ripr/tests/agent_stub_compiles.rs::written_integration_stub_compiles_under_cargo_test_and_stops_at_its_own_todo",
 ]
 fixtures = []
 code = [

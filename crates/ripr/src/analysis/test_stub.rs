@@ -408,12 +408,13 @@ fn stub_body(
     let mut derived_inputs = Vec::new();
     let mut boundary = boundary_inputs(seam, signature);
     if matches!(path_scope, PathScope::Integration(_)) {
-        // A `tests/` file sees only the crate's public items; a named
-        // constant may be private, so it stays a fill-in there.
+        // A `tests/` file sees crate-root `pub const` items through
+        // `use crate_name::*;`. Private and `pub(crate)` constants stay
+        // fill-ins; numeric literals always remain.
         boundary.retain(|(_, value)| {
-            value
-                .trim_start_matches('-')
-                .starts_with(|c: char| c.is_ascii_digit())
+            let ident = value.trim_start_matches('-');
+            ident.starts_with(|c: char| c.is_ascii_digit())
+                || crate_public_const_declared(source, ident)
         });
     }
 
@@ -598,6 +599,26 @@ fn boundary_inputs(seam: &RepoSeam, signature: &OwnerSignature) -> Vec<(String, 
             .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// True when `name` is a crate-root `pub const` in `source`. `pub(crate)`
+/// and private constants are not visible from a `tests/` file.
+fn crate_public_const_declared(source: &str, name: &str) -> bool {
+    if name.is_empty()
+        || !name.starts_with(|c: char| c.is_ascii_uppercase())
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return false;
+    }
+    source.lines().any(|line| {
+        let Some(rest) = line.trim().strip_prefix("pub const ") else {
+            return false;
+        };
+        rest.strip_prefix(name)
+            .is_some_and(|after| after.starts_with(|c: char| c == ':' || c.is_whitespace()))
+    })
 }
 
 fn boundary_value(operand: &str, ty: &str) -> Option<String> {

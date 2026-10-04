@@ -313,6 +313,12 @@ are scoped or reviewed.
   invented. `ripr check` prints the command under "Write a test for it:"
   for Rust predicate, return-value, error-path and match-arm gaps, and
   unsupported shapes refuse with a typed reason (#5355, #5357).
+- Integration-file stubs from `ripr agent stub --write` keep a crate-root
+  `pub const` comparison as a derived input, rebase `crate::` parameter
+  types to the library crate name, and compile under the printed
+  `cargo test --manifest-path … --test <stem>` command until they stop at
+  the labelled `ripr:` todo. Private and `pub(crate)` constants stay
+  fill-ins; `self::` and `super::` parameter paths still refuse (#5453).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
