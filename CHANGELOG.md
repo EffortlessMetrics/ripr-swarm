@@ -59,6 +59,18 @@ are scoped or reviewed.
   unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
   (8.0s to 4.4s on two cores) with identical output.
 
+- Performance: the per-seam evidence pass behind `ripr pilot` and repo
+  exposure runs on all cores, parses each related test file once instead of
+  once per seam, and resolves each seam's owner arguments once. Cold pilot
+  on a 4-core Linux host fell from 212s to 68s on ripr-swarm, 32s to 14s on
+  regex, 23s to 8.6s on ripgrep and 3.0s to 2.1s on serde, with pilot
+  artifacts byte-identical. Crediting same-file assertion helpers parses only
+  files that hold tests, in parallel, so a warm draft-mode check of a
+  four-file ripr-swarm diff fell from 16.1s to 12.6s. The transitive-reach
+  limitation check builds its call graph once per run and walks backwards
+  from each owner, so a 22-file rust-lang/rust diff checks in 24s instead of
+  594s, with identical JSON.
+
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
   compiling ripr with `cargo install` on every run, so it no longer sets up a
