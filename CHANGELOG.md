@@ -18,6 +18,12 @@ are scoped or reviewed.
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
   filled.
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
+  the default base and HEAD each resolve to the same commit after analysis (for
+  example `origin/HEAD` tracking the checked-out branch in a clone of a feature
+  branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
+  skips it. The empty result alone is not a clean pass, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
 - `ripr check`: the uncommitted-changes note no longer offers `--worktree`
   as the remedy for untracked files, which the flag never sees. The tracked
   wording now says "staged and unstaged tracked edits" (matching
@@ -175,6 +181,16 @@ are scoped or reviewed.
   bash and `jq`, so the generated workflow drops from about 2,400 lines to
   about 1,150. The new command prints the same Markdown from the same
   artifacts and can be run locally against a `target/ripr` tree.
+
+- Classified seam-cache publication serializes borrowed records through a
+  bounded atomic writer. Encoded bytes are the primary single-entry/shard
+  ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, default 8 MiB); record
+  count remains a secondary cap. Ordinary store no longer deep-clones a shard
+  or retains the complete encoded `Vec<u8>`. One oversized record skips with
+  `skipped_oversized_record_index_*` instead of claiming a populated cache
+  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
+  through the related-test table the loader expects. Cache load/decode bounds
+  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
