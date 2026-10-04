@@ -34,6 +34,7 @@ mod driver;
 mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
+mod first_run;
 mod fixture_contracts;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
@@ -5375,19 +5376,7 @@ fn rust_conversion_candidates_json(
 fn check_executable_files_impl() -> Result<(), String> {
     let allowlist = read_path_allowlist_optional("policy/executable_allowlist.txt")?;
     let output = run_output("git", &["ls-files", "--stage"])?;
-    let mut violations = Vec::new();
-
-    for line in output.lines() {
-        let Some((mode, path)) = parse_git_stage_line(line) else {
-            continue;
-        };
-        let normalized = normalize_slashes(path);
-        if mode == "100755" && !allowlist.contains(&normalized) {
-            violations.push(format!(
-                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
-            ));
-        }
-    }
+    let violations = executable_file_violations(&allowlist, &output);
 
     finish_policy_report(
         PolicyReportSpec {
@@ -5399,12 +5388,59 @@ fn check_executable_files_impl() -> Result<(), String> {
                 "Remove the executable bit from ordinary files.",
                 "Move script behavior into xtask.",
                 "If an executable file is truly required, add a reviewed allowlist entry.",
+                "If an allowlist path is missing or no longer mode 100755, remove the entry.",
             ],
             rerun_command: "cargo xtask check-executable-files",
             exception_template: Some("policy/executable_allowlist.txt entry:\npath/to/file"),
         },
         &violations,
     )
+}
+
+fn executable_file_violations(
+    allowlist: &BTreeSet<String>,
+    git_ls_files_stage: &str,
+) -> Vec<String> {
+    let mut staged_modes = BTreeMap::new();
+    let mut violations = Vec::new();
+
+    for line in git_ls_files_stage.lines() {
+        let Some((mode, path)) = parse_git_stage_line(line) else {
+            continue;
+        };
+        let normalized = normalize_slashes(path);
+        staged_modes.insert(normalized.clone(), mode);
+        if mode == "100755" && !allowlist.contains(&normalized) {
+            violations.push(format!(
+                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
+            ));
+        }
+    }
+
+    violations.extend(executable_allowlist_stale_row_violations(
+        allowlist,
+        &staged_modes,
+    ));
+    violations
+}
+
+fn executable_allowlist_stale_row_violations(
+    allowlist: &BTreeSet<String>,
+    staged_modes: &BTreeMap<String, &str>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for path in allowlist {
+        match staged_modes.get(path).copied() {
+            Some("100755") => {}
+            Some(mode) => violations.push(format!(
+                "{path} allowlist entry is stale: mode is {mode}, expected 100755; remove the entry"
+            )),
+            None => violations.push(format!(
+                "{path} allowlist entry is stale: path is not in git ls-files --stage; remove the entry"
+            )),
+        }
+    }
+    violations
 }
 
 fn check_workflows_impl() -> Result<(), String> {
@@ -10753,6 +10789,8 @@ struct RepoExposureLatencyRun {
     trace: Vec<RepoExposureLatencyTrace>,
     file_fact_cache: Option<RepoExposureFileFactCache>,
     file_fact_cache_limitation: Option<String>,
+    resource_cost: Option<RepoExposureResourceCost>,
+    resource_cost_limitation: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -10783,6 +10821,59 @@ struct RepoExposureLatencyTrace {
     phase: String,
     status: String,
     duration_ms: u128,
+}
+
+/// Prefix of the analyzer's end-of-run resource-cost receipt (#5213). The
+/// receipt rides the same opt-in trace switch as the phase lines above.
+const REPO_EXPOSURE_RESOURCE_COST_PREFIX: &str = "ripr_resource_cost_receipt ";
+
+/// The analyzer's own process cost: CPU time and peak resident memory, either
+/// observed on the analyzer's host or explicitly unavailable with a named
+/// reason. Independent mirror of the producer's wire shape rather than a
+/// reuse, so a drift between producer and consumer fails this parse instead of
+/// being silently accepted by shared code.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureResourceCost {
+    schema_version: String,
+    /// Attribution: the numbers belong to the analyzed `ripr` process, not to
+    /// this harness.
+    observer: String,
+    observer_pid: u32,
+    host_os: String,
+    host_arch: String,
+    cpu: RepoExposureCpuCost,
+    peak_resident_bytes: RepoExposureMeasurement,
+}
+
+/// CPU time split into user and kernel. Observed or not at all, so a partial
+/// CPU reading can never reach the report as a complete one.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+// A receipt that adds a number to the unavailable arm is a producer defect, not
+// a new field to accept: refusing it keeps a zero from reading as an
+// observation this consumer then renders.
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum RepoExposureCpuCost {
+    Observed {
+        source_unit: String,
+        source_unit_per_second: u64,
+        user_source: u64,
+        system_source: u64,
+        user_ms: u64,
+        system_ms: u64,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+/// One resource number. `Observed` carries the value; `Unavailable` carries a
+/// reason and never a zero standing in for an absent observation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum RepoExposureMeasurement {
+    Observed { value: u64 },
+    Unavailable { reason: String },
 }
 
 /// Write a bounded repo exposure latency report without changing the
@@ -10843,6 +10934,8 @@ where
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("format_skipped".to_string()),
+            resource_cost: None,
+            resource_cost_limitation: Some("format_skipped".to_string()),
         });
     }
 
@@ -10906,6 +10999,8 @@ fn repo_exposure_latency_run_from_output(
     };
     let (file_fact_cache, file_fact_cache_limitation) =
         repo_exposure_file_fact_cache_from_stderr(&output.stderr);
+    let (resource_cost, resource_cost_limitation) =
+        repo_exposure_resource_cost_from_stderr(&output.stderr);
     RepoExposureLatencyRun {
         format: format.to_string(),
         status: status.to_string(),
@@ -10916,7 +11011,36 @@ fn repo_exposure_latency_run_from_output(
         trace: repo_exposure_latency_trace(&output.stderr),
         file_fact_cache,
         file_fact_cache_limitation,
+        resource_cost,
+        resource_cost_limitation,
     }
+}
+
+fn repo_exposure_resource_cost_from_stderr(
+    stderr: &str,
+) -> (Option<RepoExposureResourceCost>, Option<String>) {
+    let mut records = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(REPO_EXPOSURE_RESOURCE_COST_PREFIX));
+    let Some(record) = records.next() else {
+        return (None, Some("resource_cost_receipt_not_observed".to_string()));
+    };
+    if records.next().is_some() {
+        return (None, Some("duplicate_resource_cost_receipt".to_string()));
+    }
+    let Ok(cost) = serde_json::from_str::<RepoExposureResourceCost>(record) else {
+        return (None, Some("malformed_resource_cost_receipt".to_string()));
+    };
+    // The producer owns these identities. A receipt that misattributes its
+    // cost, or that claims a schema this consumer does not know, is not
+    // usable evidence even when it parses.
+    if cost.schema_version != "0.1"
+        || cost.observer != "ripr_process_self"
+        || cost.observer_pid == 0
+    {
+        return (None, Some("invalid_resource_cost_receipt".to_string()));
+    }
+    (Some(cost), None)
 }
 
 fn repo_exposure_file_fact_cache_from_stderr(
@@ -11005,7 +11129,10 @@ fn repo_exposure_latency_trace(stderr: &str) -> Vec<RepoExposureLatencyTrace> {
 fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     let mut body = String::new();
     body.push_str("{\n");
-    body.push_str("  \"schema_version\": \"0.2\",\n");
+    // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
+    // because the JSON gained fields a 0.2 reader does not know; nothing in
+    // the 0.2 shape changed.
+    body.push_str("  \"schema_version\": \"0.3\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
@@ -11045,6 +11172,17 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         }
         body.push_str(",\n      \"file_fact_cache_limitation\": ");
         match &run.file_fact_cache_limitation {
+            Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n");
+        body.push_str("      \"resource_cost\": ");
+        match &run.resource_cost {
+            Some(cost) => body.push_str(&serde_json::json!(cost).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"resource_cost_limitation\": ");
+        match &run.resource_cost_limitation {
             Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
             None => body.push_str("null"),
         }
@@ -11111,6 +11249,66 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 ));
             }
             body.push('\n');
+        }
+    }
+    body.push_str("\n## Analyzer Resource Cost\n\n");
+    body.push_str(
+        "Measured by the analyzed `ripr` process about itself, not by this \
+         harness. CPU time and peak resident memory are reported only when the \
+         host offers a safe per-process source; otherwise the named unavailable \
+         state is reported and no zero is inferred.\n\n",
+    );
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        let Some(cost) = &run.resource_cost else {
+            body.push_str(&format!(
+                "Unavailable: `{}`. No zero CPU or memory figures are inferred.\n\n",
+                run.resource_cost_limitation.as_deref().unwrap_or("unknown")
+            ));
+            continue;
+        };
+        body.push_str(&format!(
+            "Observed on `{}`/`{}`; observer `{}` (pid `{}`).\n\n",
+            latency_markdown_cell(&cost.host_os),
+            latency_markdown_cell(&cost.host_arch),
+            latency_markdown_cell(&cost.observer),
+            cost.observer_pid
+        ));
+        match &cost.cpu {
+            RepoExposureCpuCost::Observed {
+                source_unit,
+                source_unit_per_second,
+                user_source,
+                system_source,
+                user_ms,
+                system_ms,
+            } => {
+                body.push_str(&format!(
+                    "CPU: user {} ms ({} source units), system {} ms ({} source units); \
+                     source unit `{}` at {} per second.\n\n",
+                    user_ms,
+                    user_source,
+                    system_ms,
+                    system_source,
+                    source_unit,
+                    source_unit_per_second
+                ));
+            }
+            RepoExposureCpuCost::Unavailable { reason } => {
+                body.push_str(&format!(
+                    "CPU unavailable: `{}`. No zero CPU time is inferred.\n\n",
+                    latency_markdown_cell(reason)
+                ));
+            }
+        }
+        match &cost.peak_resident_bytes {
+            RepoExposureMeasurement::Observed { value } => {
+                body.push_str(&format!("Peak resident: {} bytes.\n\n", value))
+            }
+            RepoExposureMeasurement::Unavailable { reason } => body.push_str(&format!(
+                "Peak resident unavailable: `{}`. No zero memory figure is inferred.\n\n",
+                latency_markdown_cell(reason)
+            )),
         }
     }
     body.push_str("\n## File Fact Cache\n\n");
@@ -21018,8 +21216,16 @@ fn read_path_allowlist(path: &str) -> Result<BTreeSet<String>, String> {
 }
 
 fn read_count_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
-    let mut allowed = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    parse_count_allowlist(path, &text)
+}
+
+fn parse_count_allowlist(
+    path: &str,
+    text: &str,
+) -> Result<BTreeMap<(String, String), usize>, String> {
+    let mut allowed = BTreeMap::new();
+    let mut first_line = BTreeMap::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -21035,17 +21241,30 @@ fn read_count_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>,
         let max_count = parts[2]
             .parse::<usize>()
             .map_err(|err| format!("{path}:{} invalid max_count: {err}", line_number + 1))?;
-        allowed.insert(
-            (normalize_slashes(parts[0]), parts[1].to_string()),
+        insert_unique_count_allowlist_row(
+            &mut allowed,
+            &mut first_line,
+            path,
+            line_number + 1,
+            parts[0],
+            parts[1],
             max_count,
-        );
+        )?;
     }
     Ok(allowed)
 }
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
-    let mut allowed = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    parse_count_policy_allowlist(path, &text)
+}
+
+fn parse_count_policy_allowlist(
+    path: &str,
+    text: &str,
+) -> Result<BTreeMap<(String, String), usize>, String> {
+    let mut allowed = BTreeMap::new();
+    let mut first_line = BTreeMap::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -21071,12 +21290,37 @@ fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), 
         let max_count = parts[2]
             .parse::<usize>()
             .map_err(|err| format!("{path}:{} invalid max_count: {err}", line_number + 1))?;
-        allowed.insert(
-            (normalize_slashes(parts[0]), parts[1].to_string()),
+        insert_unique_count_allowlist_row(
+            &mut allowed,
+            &mut first_line,
+            path,
+            line_number + 1,
+            parts[0],
+            parts[1],
             max_count,
-        );
+        )?;
     }
     Ok(allowed)
+}
+
+fn insert_unique_count_allowlist_row(
+    allowed: &mut BTreeMap<(String, String), usize>,
+    first_line: &mut BTreeMap<(String, String), usize>,
+    source_path: &str,
+    line_number: usize,
+    row_path: &str,
+    pattern: &str,
+    max_count: usize,
+) -> Result<(), String> {
+    let key = (normalize_slashes(row_path), pattern.to_string());
+    if let Some(&first) = first_line.get(&key) {
+        return Err(format!(
+            "{source_path}:{line_number} path|pattern `{row_path}|{pattern}` is duplicated (first declared near line {first})"
+        ));
+    }
+    first_line.insert(key.clone(), line_number);
+    allowed.insert(key, max_count);
+    Ok(())
 }
 
 fn read_local_context_allowlist(path: &str) -> Result<Vec<LocalContextAllow>, String> {

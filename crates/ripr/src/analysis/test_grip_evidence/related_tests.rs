@@ -6,7 +6,7 @@ pub(super) mod context;
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
 
-/// Walk `index.tests` and return tests that plausibly relate to `seam`,
+/// Walk `index.tests()` and return tests that plausibly relate to `seam`,
 /// each tagged with the single highest-priority `RelationReason` it
 /// satisfies. The two-step "match then rank" replaces the old binary
 /// `calls_owner || same_file_or_named` check from earlier campaigns.
@@ -67,20 +67,11 @@ impl OwnerContext {
         let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
-            .and_then(|file| context.index.files.get(file))
+            .and_then(|file| context.index.files().get(file))
             .map(fixture_names_for_owner_file)
             .unwrap_or_default();
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
-        let same_name_count = if name.is_empty() {
-            0
-        } else {
-            context
-                .index
-                .functions
-                .iter()
-                .filter(|function| function.name == name)
-                .count()
-        };
+        let same_name_count = context.function_name_count(&name);
         Self {
             name,
             name_lower,
@@ -585,7 +576,9 @@ pub(super) fn related_test_rank_key(
     }
 }
 
-pub(super) fn fixture_names_for_owner_file(facts: &rust_index::FileFacts) -> BTreeSet<String> {
+pub(super) fn fixture_names_for_owner_file(
+    facts: rust_index::FileFactsView<'_>,
+) -> BTreeSet<String> {
     facts
         .functions
         .iter()

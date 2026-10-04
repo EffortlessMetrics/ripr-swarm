@@ -108,6 +108,11 @@ pub(super) struct AgentStatusOptions {
     /// Explicit repair-attempt store locator, resolved against `root`.
     /// `None` is the repository-local default.
     pub(super) store: Option<PathBuf>,
+    /// Select exactly one attempt by ID and report its typed state,
+    /// currentness, and one next or recovery action (#4798). `None` lists
+    /// every attempt in the store and selects a next command only when that
+    /// choice is unambiguous.
+    pub(super) attempt_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -505,7 +510,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 );
             }
             if seam_id.is_none() {
-                return Err("agent repair --phase before requires --seam-id <id>".to_string());
+                let pilot_root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                );
+                return Err(format!(
+                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list seam IDs with their exact repair commands (the `probe:...` IDs from `ripr check` are not seam IDs)"
+                ));
             }
         }
         AgentRepairPhase::After => match (seam_id.is_some(), attempt_id.is_some()) {
@@ -978,6 +988,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
     let mut json = false;
     let mut out_dir = None;
     let mut store: Option<PathBuf> = None;
+    let mut attempt_id: Option<String> = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -999,6 +1010,16 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 }
                 store = Some(PathBuf::from(value));
             }
+            "--attempt" => {
+                i += 1;
+                let value = expect_value(args, i, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "agent status --attempt requires a non-empty repair attempt ID".to_string(),
+                    );
+                }
+                attempt_id = Some(value.to_string());
+            }
             other => return Err(unknown_argument("agent status", other)),
         }
         i += 1;
@@ -1009,6 +1030,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
         json,
         out_dir,
         store,
+        attempt_id,
     })
 }
 
@@ -1505,6 +1527,26 @@ mod tests {
             error.contains("--verify-rollback requires --verify-authorized"),
             "verify-phase rollback reported {error}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_repair_missing_seam_id_hint_names_the_selected_root() -> Result<(), String> {
+        let err = parse_agent_args(&args(&[
+            "repair",
+            "--phase",
+            "before",
+            "--root",
+            "other repo",
+        ]))
+        .err()
+        .ok_or_else(|| "a before phase without --seam-id must be refused".to_string())?;
+        if !err.contains("ripr pilot --root ")
+            || !err.contains("other repo")
+            || err.contains("--root .`")
+        {
+            return Err(format!("hint must carry the typed root: {err}"));
+        }
         Ok(())
     }
 
@@ -2237,6 +2279,7 @@ mod tests {
                 json: true,
                 out_dir: None,
                 store: None,
+                attempt_id: None,
             })
         );
         assert_eq!(
@@ -2246,6 +2289,7 @@ mod tests {
                 json: true,
                 out_dir: None,
                 store: None,
+                attempt_id: None,
             }))
         );
     }
@@ -2265,11 +2309,47 @@ mod tests {
                 json: true,
                 out_dir: None,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
+                attempt_id: None,
             })
         );
         assert_eq!(
             parse_agent_status_options(&args(&["--store", ""])),
             Err("agent status --store requires a non-empty path".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_status_parses_exact_attempt_selection_and_rejects_empty() {
+        let attempt = "repair-attempt-0123456789abcdef01234567";
+        assert_eq!(
+            parse_agent_status_options(&args(&["--root", "repo", "--attempt", attempt])),
+            Ok(AgentStatusOptions {
+                root: PathBuf::from("repo"),
+                json: false,
+                out_dir: None,
+                store: None,
+                attempt_id: Some(attempt.to_string()),
+            })
+        );
+        assert_eq!(
+            parse_agent_status_options(&args(&[
+                "--attempt",
+                attempt,
+                "--store",
+                "target/ripr/alt-attempts",
+                "--json",
+            ])),
+            Ok(AgentStatusOptions {
+                root: PathBuf::from("."),
+                json: true,
+                out_dir: None,
+                store: Some(PathBuf::from("target/ripr/alt-attempts")),
+                attempt_id: Some(attempt.to_string()),
+            })
+        );
+        assert_eq!(
+            parse_agent_status_options(&args(&["--attempt", ""])),
+            Err("agent status --attempt requires a non-empty repair attempt ID".to_string())
         );
     }
 
@@ -2282,6 +2362,7 @@ mod tests {
                 json: false,
                 out_dir: None,
                 store: None,
+                attempt_id: None,
             })
         );
         assert_eq!(
