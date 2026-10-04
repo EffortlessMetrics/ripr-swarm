@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
+  recovery messages bind a relative `--root` to the selected directory in the
+  commands they print, so `--root .` no longer yields a command that fails
+  when pasted from another directory. The card's `full packet:` line and the
+  identity refusal now carry `--root` at all; the card's typed command args and
+  detail routes stay portable (#3999).
+
 - LSP: `session_value_sources` reports `initialization` only for applied
   initialization options. A malformed value such as `checkMode: "Deep"` keeps
   the session up, discloses the `repo` or `default` fallback, and emits one

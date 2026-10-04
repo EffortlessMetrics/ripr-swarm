@@ -20,6 +20,7 @@ use std::path::Path;
 
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
+use crate::agent::loop_commands::bound_root;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
     RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
@@ -163,18 +164,26 @@ pub(crate) fn repair_card_for_entry(
         })?
         .trim()
         .to_string();
-    // #5007: an unnameable portable identity is a deliberate named refusal
-    // (the remedy is the full packet route), not an operational failure.
-    let workspace_identity = workspace_identity_for(entry, &eligibility.readiness)
-        .map_err(AgentCardError::identity_unnameable)?;
     let seam_id = entry.seam.id().as_str().to_string();
+    // #5007: an unnameable portable identity is a deliberate named refusal
+    // (the remedy is the full packet route), not an operational failure. The
+    // CLI prints this refusal to a user who may paste it from any directory,
+    // so its packet route binds the selected root (#3999).
+    let workspace_identity = workspace_identity_naming_route(
+        entry,
+        &eligibility.readiness,
+        &bound_packet_command(root, &seam_id),
+    )
+    .map_err(AgentCardError::identity_unnameable)?;
     let attempt = latest_attempt_for_seam(root, &seam_id).map_err(AgentCardError::operational)?;
     let currentness =
         evidence_tree_currentness(root, entry).map_err(AgentCardError::operational)?;
     let packet_json = card_packet_json(entry);
+    // The typed args stay portable (`--root .`); only the display a CLI user
+    // pastes binds the selected root (#3999). Display never enters identity.
     let next_command = agent_inspection_command_spec(
         AgentArtifactRoute::Packet,
-        &root.to_string_lossy(),
+        &bound_root(&root.to_string_lossy()),
         &seam_id,
     );
 
@@ -626,6 +635,38 @@ pub(crate) fn workspace_identity_for(
     entry: &ClassifiedSeam,
     readiness: &RepairRouteReadiness,
 ) -> Result<String, String> {
+    workspace_identity_naming_route(
+        entry,
+        readiness,
+        &format!(
+            "ripr agent packet --seam-id {} --json",
+            entry.seam.id().as_str()
+        ),
+    )
+}
+
+/// The `ripr agent packet` command a CLI user can paste from any working
+/// directory: the root binds against the invocation's working directory
+/// (#3999), the way `first-pr` and the `agent card` refusal remedies bind it.
+/// Presentation only; the card's typed next action and its detail routes
+/// keep their portable spelling and never enter identity with a checkout path.
+pub(crate) fn bound_packet_command(root: &Path, seam_id: &str) -> String {
+    agent_inspection_command_spec(
+        AgentArtifactRoute::Packet,
+        &bound_root(&root.to_string_lossy()),
+        seam_id,
+    )
+    .display
+}
+
+/// [`workspace_identity_for`] with the caller's packet route in the refusal:
+/// the editor and MCP projections name the portable route, the CLI names the
+/// bound one.
+fn workspace_identity_naming_route(
+    entry: &ClassifiedSeam,
+    readiness: &RepairRouteReadiness,
+    packet_route: &str,
+) -> Result<String, String> {
     if let RepairTargetSelection::Existing(target) = &readiness.target_selection {
         return Ok(target.workspace_identity().to_string());
     }
@@ -635,8 +676,7 @@ pub(crate) fn workspace_identity_for(
         }
     }
     Err(format!(
-        "agent card cannot name the portable workspace identity for seam `{}`: no admitted test-target evidence names it; run `ripr agent packet --seam-id {} --json` for the full evidence packet",
-        entry.seam.id().as_str(),
+        "agent card cannot name the portable workspace identity for seam `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
         entry.seam.id().as_str()
     ))
 }
