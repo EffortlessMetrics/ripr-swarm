@@ -217,6 +217,12 @@ pub(crate) fn is_python_test_path(relative: &Path) -> bool {
         })
 }
 
+fn is_named_python_test(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.starts_with("test_") || stem.ends_with("_test"))
+}
+
 /// Count Python test files in the workspace with a bounded, no-follow walk that
 /// skips the same directories as the other discovery walks. `None` when none
 /// exist. Used only to name, in human output, that a Rust change may be covered
@@ -253,9 +259,12 @@ pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTe
                 let relative = path.strip_prefix(root).unwrap_or(&path);
                 if is_python_test_path(relative) {
                     count += 1;
-                    let better = example
-                        .as_ref()
-                        .is_none_or(|current| relative < current.as_path());
+                    // Prefer a `test_*.py` / `*_test.py` example over a helper
+                    // such as `tests/__init__.py`, then the smallest path.
+                    let better = example.as_ref().is_none_or(|current| {
+                        (!is_named_python_test(relative), relative)
+                            < (!is_named_python_test(current), current.as_path())
+                    });
                     if better {
                         example = Some(relative.to_path_buf());
                     }
@@ -385,18 +394,20 @@ mod tests {
         fs::write(dir.join("src/lib.rs"), "")?;
         fs::write(dir.join("tests/test_b.py"), "")?;
         fs::write(dir.join("tests/test_a.py"), "")?;
+        fs::write(dir.join("tests/__init__.py"), "")?;
         fs::write(dir.join("target/test_ignored.py"), "")?;
         let found = discover_python_test_files(&dir);
         assert_eq!(
             found,
             Some(UnlinkedPythonTests {
-                count: 2,
+                count: 3,
                 example: "tests/test_a.py".to_string(),
                 at_least: false,
             })
         );
         fs::remove_file(dir.join("tests/test_a.py"))?;
         fs::remove_file(dir.join("tests/test_b.py"))?;
+        fs::remove_file(dir.join("tests/__init__.py"))?;
         assert_eq!(discover_python_test_files(&dir), None);
         let _ = fs::remove_dir_all(&dir);
         Ok(())

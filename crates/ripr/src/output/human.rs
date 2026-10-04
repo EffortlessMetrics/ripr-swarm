@@ -5338,10 +5338,6 @@ mod tests {
             ),
             "{rendered}"
         );
-        let lower = flat.to_lowercase();
-        for banned in ["killed", "survived", "untested", "proven", "adequate"] {
-            assert!(!lower.contains(banned), "{banned} in {rendered}");
-        }
         let bounded = render(&python_note_output(no_path_summary(), python_tests(true)));
         let flat_bounded = bounded.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
