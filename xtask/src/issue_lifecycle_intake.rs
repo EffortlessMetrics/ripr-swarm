@@ -223,6 +223,9 @@ pub(crate) fn load_issue_lifecycle_intake_corpus(
             corpus.schema_version
         ));
     }
+    if corpus.captured_at.trim().is_empty() || corpus.base_main.trim().is_empty() {
+        return Err("issue lifecycle intake corpus must record captured_at and base_main".to_string());
+    }
     if corpus.rows.len() != REQUIRED_ISSUE_LIFECYCLE_INTAKE_CATEGORIES.len() {
         return Err(format!(
             "issue lifecycle intake corpus must carry exactly {} rows, got {}",
@@ -295,6 +298,12 @@ pub(crate) fn load_issue_lifecycle_intake_control_corpus(
                 control.id
             ));
         }
+        if control.control.trim().is_empty() || control.scenario.trim().is_empty() {
+            return Err(format!(
+                "issue lifecycle intake control row `{}` must name its control and scenario",
+                control.id
+            ));
+        }
         if !control.row.attempt.synthetic {
             return Err(format!(
                 "issue lifecycle intake control row `{}` must be synthetic",
@@ -322,6 +331,12 @@ pub(crate) fn load_issue_lifecycle_intake_provenance(
             "issue lifecycle intake provenance must record captured_at and base_main".to_string(),
         );
     }
+    if provenance.repository.trim().is_empty() || provenance.capture_method.trim().is_empty() {
+        return Err(
+            "issue lifecycle intake provenance must record repository and capture_method"
+                .to_string(),
+        );
+    }
     Ok(provenance)
 }
 
@@ -346,6 +361,12 @@ pub(crate) fn verify_intake_row_snapshot(
         .comments_path
         .as_ref()
         .ok_or_else(|| format!("intake row `{}` has no comments path", row.id))?;
+    if row.snapshot.captured_at.trim().is_empty() {
+        return Err(format!(
+            "intake row `{}` snapshot records no captured_at",
+            row.id
+        ));
+    }
     let snapshot_body = fs::read(root.join(snapshot_path)).map_err(|error| {
         format!(
             "intake row `{}` snapshot {} is unreadable: {error}",
@@ -387,6 +408,7 @@ pub(crate) fn verify_intake_row_snapshot(
 /// observed current main, PR/claim candidates and merged PR references.
 /// Movement of any bound identity invalidates the row; movement outside the
 /// set is unrelated and leaves the row intact.
+#[cfg(test)]
 pub(crate) fn intake_row_identity_set(row: &IssueLifecycleIntakeRowV1) -> BTreeSet<String> {
     let mut identities = BTreeSet::new();
     identities.insert(row.current_main.clone());
@@ -414,6 +436,7 @@ pub(crate) fn intake_row_identity_set(row: &IssueLifecycleIntakeRowV1) -> BTreeS
 /// The portfolio-movement law: a movement whose identity the row binds
 /// (current main, snapshot, overlapping PR, claim, merge) invalidates the
 /// row; any other movement is unrelated and does not.
+#[cfg(test)]
 pub(crate) fn movement_invalidates_row(
     row: &IssueLifecycleIntakeRowV1,
     movement_identity: &str,
@@ -716,6 +739,7 @@ pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), St
         &crate::reports::issue_lifecycle_scorecard_markdown(&scorecard),
     )?;
     println!("{json_body}");
+    println!("{}", ISSUE_LIFECYCLE_INTAKE_CLAIM_BOUNDARY);
     let mut projections: Vec<IssueLifecycleIntakePacketProjectionV1> = corpus
         .rows
         .iter()
