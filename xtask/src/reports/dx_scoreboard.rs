@@ -1950,6 +1950,22 @@ fn display_value(value: &Value) -> String {
     }
 }
 
+/// `; <label>: a, b` for the repositories a baseline comparison lists under
+/// `key`, or nothing when it lists none.
+fn repo_note(baseline: &Value, key: &str, label: &str) -> String {
+    let repos: Vec<&str> = baseline[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if repos.is_empty() {
+        String::new()
+    } else {
+        format!("; {label}: {}", repos.join(", "))
+    }
+}
+
 fn baseline_cell(baseline: &Value) -> String {
     if baseline["comparable"].as_bool() == Some(true) {
         let verdict = if baseline["regressed"].as_bool() == Some(true) {
@@ -1959,17 +1975,8 @@ fn baseline_cell(baseline: &Value) -> String {
         } else {
             "ok"
         };
-        let new_repos: Vec<&str> = baseline["new_repos"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
-        let new_note = if new_repos.is_empty() {
-            String::new()
-        } else {
-            format!("; not in baseline: {}", new_repos.join(", "))
-        };
+        let new_note = repo_note(baseline, "new_repos", "not in baseline")
+            + &repo_note(baseline, "recovered_repos", "completed again");
         format!(
             "{} (Δ {}) {verdict}{new_note}",
             display_value(&baseline["value"]),

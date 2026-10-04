@@ -1405,6 +1405,24 @@ fn a_repo_that_starts_completing_again_is_not_a_time_regression() -> Result<(), 
         "{}",
         row["baseline"]
     );
+    // A repository the baseline never sampled is new, not recovered.
+    let grown = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("c", "analyzed", 800),
+        ("d", "analyzed", 700),
+    ]);
+    let report = corpus_gate(&base, &grown)?;
+    let row = report["metrics"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+        .ok_or("corpus.check_ms row missing")?;
+    assert_eq!(row["baseline"]["recovered_repos"], json!(["c"]));
+    assert_eq!(row["baseline"]["new_repos"], json!(["d"]));
+    let rendered = render_markdown(&report);
+    assert!(
+        rendered.contains("not in baseline: d; completed again: c"),
+        "{rendered}"
+    );
     // A repository that completed in both runs still regresses on time.
     let slower = smoke_receipt(&[("a", "analyzed", 9000), ("c", "analyzed", 4000)]);
     let report = corpus_gate(&base, &slower)?;

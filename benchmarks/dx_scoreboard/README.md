@@ -158,6 +158,9 @@ more than `max(regression_pct% of baseline, regression_floor)` (their sum for
 an instrument breaks. The worst value is compared over the repositories both
 reports measured, so a repository new to the corpus is listed as "not in
 baseline" instead of failing the gate; one that does not complete still fails.
+A repository that completes again after an incomplete baseline sample has no
+value to compare, so it is listed as "completed again" and left out of the
+compared worst.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. Wall-time and memory
 metrics compare only against a baseline from the
