@@ -448,7 +448,14 @@ pub(crate) struct Report {
     pub(crate) non_claims: Vec<String>,
 }
 
-pub(crate) fn case_row(case: &Case, check: &Value) -> (CaseRow, usize, usize) {
+/// Per-case scoring. Contradictions are counted per candidate-current
+/// finding across the whole check, not only the anchor line: a
+/// self-contradicting finding anywhere in the run is an internal ripr
+/// inconsistency. Summary-count codes are per check.
+pub(crate) fn case_row(
+    case: &Case,
+    check: &Value,
+) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
     let anchored = anchored_findings(check, &case.anchor);
     let observed = case_verdict(&anchored);
     let mut classes: Vec<String> = anchored
@@ -461,6 +468,7 @@ pub(crate) fn case_row(case: &Case, check: &Value) -> (CaseRow, usize, usize) {
     let mut contradictions = BTreeSet::new();
     let mut scored = 0;
     let mut contradicted = 0;
+    let mut code_counts = BTreeMap::new();
     for finding in check
         .get("findings")
         .and_then(Value::as_array)
@@ -473,9 +481,15 @@ pub(crate) fn case_row(case: &Case, check: &Value) -> (CaseRow, usize, usize) {
         if !codes.is_empty() {
             contradicted += 1;
         }
-        contradictions.extend(codes.into_iter().map(str::to_string));
+        for code in codes {
+            *code_counts.entry(code.to_string()).or_insert(0) += 1;
+            contradictions.insert(code.to_string());
+        }
     }
-    contradictions.extend(summary_contradictions(check));
+    for code in summary_contradictions(check) {
+        *code_counts.entry(code.clone()).or_insert(0) += 1;
+        contradictions.insert(code);
+    }
     let row = CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
@@ -492,7 +506,7 @@ pub(crate) fn case_row(case: &Case, check: &Value) -> (CaseRow, usize, usize) {
         outcome: score(case.truth.state, observed),
         contradictions: contradictions.into_iter().collect(),
     };
-    (row, scored, contradicted)
+    (row, scored, contradicted, code_counts)
 }
 
 pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Result<Report, String> {
@@ -500,13 +514,17 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
     let mut rows = Vec::new();
     let mut findings_scored = 0;
     let mut findings_contradicted = 0;
+    let mut by_code = BTreeMap::new();
     for case in &corpus.cases {
         let check = by_id
             .get(case.case_id.as_str())
             .ok_or_else(|| format!("no ripr result for case `{}`", case.case_id))?;
-        let (row, scored, contradicted) = case_row(case, check);
+        let (row, scored, contradicted, code_counts) = case_row(case, check);
         findings_scored += scored;
         findings_contradicted += contradicted;
+        for (code, n) in code_counts {
+            *by_code.entry(code).or_insert(0) += n;
+        }
         rows.push(row);
     }
     let count = |outcome: Outcome| rows.iter().filter(|r| r.outcome == outcome).count();
@@ -520,7 +538,6 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
     let mut by_truth = BTreeMap::new();
     let mut by_outcome = BTreeMap::new();
     let mut by_observed = BTreeMap::new();
-    let mut by_code = BTreeMap::new();
     for row in &rows {
         *by_truth.entry(row.truth.as_str().to_string()).or_insert(0) += 1;
         *by_outcome
@@ -529,9 +546,6 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
         *by_observed
             .entry(row.observed_verdict.as_str().to_string())
             .or_insert(0) += 1;
-        for code in &row.contradictions {
-            *by_code.entry(code.clone()).or_insert(0) += 1;
-        }
     }
     Ok(Report {
         schema_version: REPORT_SCHEMA.to_string(),
@@ -645,6 +659,11 @@ pub(crate) fn load_corpus(dir: &Path) -> Result<Corpus, String> {
         .map_err(|err| format!("parse {}: {err}", normalize_path(&path)))
 }
 
+/// An identifier that becomes one directory name under the run root.
+fn safe_id(id: &str) -> bool {
+    safe_relative(id) && !id.contains('/')
+}
+
 fn safe_relative(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
@@ -700,6 +719,12 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
         if !ids.insert(case.case_id.as_str()) {
             violations.push(format!("duplicate case `{}`", case.case_id));
         }
+        if !safe_id(&case.case_id) {
+            violations.push(format!(
+                "case id `{}` is not a single safe path segment; use letters, digits and dashes",
+                case.case_id
+            ));
+        }
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -723,6 +748,11 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
 fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     let id = &subject.subject_id;
+    if !safe_id(id) {
+        violations.push(format!(
+            "subject id `{id}` is not a single safe path segment; use letters, digits and dashes"
+        ));
+    }
     if subject.commit.len() != 40 || !subject.commit.chars().all(|c| c.is_ascii_hexdigit()) {
         violations.push(format!("subject `{id}` commit is not a 40-hex sha"));
     }
@@ -1202,6 +1232,14 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         }
         "report" | "check" => {
             let corpus = validated_corpus(dir)?;
+            // Read the golden before writing anything, so an `--out` that
+            // aliases the expected directory cannot make the check pass.
+            let expected_path = dir.join("expected").join("report.json");
+            let expected = if sub == "check" {
+                Some(read(&expected_path)?)
+            } else {
+                None
+            };
             let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
             let json = render_report_json(&report)?;
             let markdown = render_report_markdown(&report);
@@ -1221,17 +1259,15 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 report.contradiction_rate.denominator,
                 normalize_path(&out)
             );
-            if sub == "check" {
-                let expected_path = dir.join("expected").join("report.json");
-                let expected = read(&expected_path)?;
-                if expected != json {
-                    return Err(format!(
-                        "verdict-corpus: report drifted from {} ({}). A verdict changed; read {} and, if the change is intended, copy it over the expected report with the reason in the PR.",
-                        normalize_path(&expected_path),
-                        first_differing_line(&expected, &json),
-                        normalize_path(&out.join("report.md"))
-                    ));
-                }
+            if let Some(expected) = expected
+                && expected != json
+            {
+                return Err(format!(
+                    "verdict-corpus: report drifted from {} ({}). A verdict changed; read {} and, if the change is intended, copy it over the expected report with the reason in the PR.",
+                    normalize_path(&expected_path),
+                    first_differing_line(&expected, &json),
+                    normalize_path(&out.join("report.md"))
+                ));
             }
             Ok(())
         }

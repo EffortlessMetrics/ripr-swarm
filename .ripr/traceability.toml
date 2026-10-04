@@ -11894,12 +11894,11 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_expected_verdict_outside_the_truth_table",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_retained_file_whose_digest_moved",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_anchor_the_diff_does_not_add",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_ids_that_are_not_one_safe_path_segment",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_both_truth_directions",
   "xtask/src/reports/verdict_corpus_tests.rs::expected_report_rows_agree_with_corpus_labels",
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
-  "xtask/src/reports/verdict_corpus_tests.rs::verdict_corpus_false_verdict_rate",
-  "xtask/src/reports/verdict_corpus_tests.rs::verdict_corpus_false_actionable_rate",
-  "xtask/src/reports/verdict_corpus_tests.rs::verdict_corpus_contradiction_rate",
+  "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

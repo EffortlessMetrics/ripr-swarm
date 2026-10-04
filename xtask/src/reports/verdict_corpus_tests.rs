@@ -318,6 +318,27 @@ fn validator_rejects_an_anchor_the_diff_does_not_add() -> Result<(), String> {
 }
 
 #[test]
+fn validator_rejects_ids_that_are_not_one_safe_path_segment() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        raw["cases"][0]["case_id"] = json!("../escape");
+        raw["subjects"][0]["subject_id"] = json!("a/b");
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("case id `../escape` is not a single safe path segment")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("subject id `a/b` is not a single safe path segment")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn validator_requires_both_truth_directions() -> Result<(), String> {
     let violations = tampered(|raw| {
         if let Some(cases) = raw["cases"].as_array_mut() {
@@ -412,4 +433,44 @@ fn relativize_probe_files_strips_only_the_run_root() {
     );
     // `./src/lib.rs` already reads as root-relative; the foreign root does not.
     assert_eq!(anchored_findings(&check, &anchor()).len(), 2);
+}
+
+#[test]
+fn contradiction_counts_use_one_per_finding_unit() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let mut contradicted = finding("reachable_unrevealed", 10, "candidate_current");
+    contradicted["related_tests_total"] = json!(0);
+    contradicted["related_tests"] = json!([]);
+    let mut other_line = contradicted.clone();
+    other_line["probe"]["line"] = json!(99);
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .enumerate()
+        .map(|(i, case)| {
+            let findings = if i == 0 {
+                json!([contradicted, other_line])
+            } else {
+                json!([])
+            };
+            (case.case_id.clone(), json!({"findings": findings}))
+        })
+        .collect();
+    let report = build_report(&corpus, &checks)?;
+    // Two contradicted findings in one case: the rate and the per-code count
+    // agree, while the row lists the code once.
+    assert_eq!(report.contradiction_rate.numerator, 2);
+    assert_eq!(report.contradiction_rate.denominator, 2);
+    assert_eq!(
+        report
+            .contradictions_by_code
+            .get("reach_yes_without_related_tests"),
+        Some(&2)
+    );
+    assert_eq!(
+        report.rows[0].contradictions,
+        vec!["reach_yes_without_related_tests".to_string()]
+    );
+    Ok(())
 }

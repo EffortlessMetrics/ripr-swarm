@@ -38,8 +38,9 @@ Policy impact:
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - Add `fixtures/rust-verdict-corpus` to the manifest-only fixture set.
-- One `.ripr/allow-attributes.txt` row for an `allow(dead_code)` inside a
-  retained upstream file; retained files are byte-identical to upstream.
+- Two `.ripr/allow-attributes.txt` rows (`allow(dead_code)` in semver
+  `tests/util/mod.rs`, `allow(unused_imports)` in semver `src/lib.rs`) for
+  retained upstream files; retained files are byte-identical to upstream.
 - No new crates, binaries, dependencies, network allowlist rows, process
   spawn sites, or support-tier changes. The harness reuses the fixture
   runner's ripr build and process owner.
@@ -123,6 +124,13 @@ cases), false-exposed and false-silent (over the rest), ideal, abstention,
 and contradiction rates as exact fractions, plus one row per case with a
 `changed_since_labeling` flag.
 
+The contradiction rate counts candidate-current findings across each case's
+whole `ripr check` run, not only the anchor line, because a
+self-contradicting finding anywhere is an internal inconsistency.
+`contradictions_by_code` uses the same unit: findings carrying each code,
+plus one per run for a summary-count code. A row's `contradictions` lists
+the distinct codes seen in that case's run.
+
 ## Required Evidence
 
 - The committed corpus validates and contains both a `discriminated` and a
@@ -178,9 +186,11 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_rejects_an_expected_verdict_outside_the_truth_table`
 - `validator_rejects_a_retained_file_whose_digest_moved`
 - `validator_rejects_an_anchor_the_diff_does_not_add`
+- `validator_rejects_ids_that_are_not_one_safe_path_segment`
 - `validator_requires_both_truth_directions`
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
+- `contradiction_counts_use_one_per_finding_unit`
 
 ## Implementation Mapping
 
