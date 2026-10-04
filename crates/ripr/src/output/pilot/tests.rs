@@ -1725,7 +1725,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
 
     // An uncommitted change is invisible to plain `ripr check`, which reads
     // committed history, so the command pilot names selects the working tree.
-    let uncommitted = changed("src/other.rs", 3).from_working_tree(true);
+    let uncommitted = changed("src/other.rs", 3).with_working_tree(true);
     let (worktree_terminal, worktree_md, _) = render(Some(&uncommitted))?;
     assert!(
         worktree_terminal.contains("For the change itself, run: ripr check --root . --worktree\n"),

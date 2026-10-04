@@ -322,14 +322,18 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
     let git_timeout = Some(app::default_cli_git_timeout());
     let mut from_working_tree = false;
     // Resolve the base first: a root with no resolvable base (outside a Git
-    // work tree, say) is `unavailable` without the working-tree probe, whose
-    // failure warning would otherwise be new stderr noise there.
+    // work tree, say) is `unavailable` without running the working-tree
+    // probe at all.
     let loaded = analysis::resolve_effective_base(&input.root, input.base.as_deref(), git_timeout)
         .map_err(|err| {
             current_change_unavailable_reason(&CoreError::from(err), "no default base resolved")
         })
         .and_then(|base| {
-            from_working_tree = analysis::working_tree_has_tracked_changes(&input.root);
+            // A failed probe is not a clean tree: loading `<base>...HEAD`
+            // then would silently drop uncommitted edits from the change.
+            from_working_tree = analysis::probe_working_tree_tracked_changes(&input.root)
+                .ok()
+                .ok_or("git status failed")?;
             if from_working_tree {
                 analysis::load_worktree_diff_with_effective_base_core(
                     &input.root,
@@ -348,7 +352,7 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
         })
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
-        .from_working_tree(from_working_tree)
+        .with_working_tree(from_working_tree)
 }
 
 /// A few fixed words for why the current change could not be loaded, shown

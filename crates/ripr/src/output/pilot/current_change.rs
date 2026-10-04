@@ -81,7 +81,7 @@ impl PilotCurrentChange {
     }
 
     /// Mark a change whose diff came from the live working tree.
-    pub(crate) fn from_working_tree(mut self, from_working_tree: bool) -> Self {
+    pub(crate) fn with_working_tree(mut self, from_working_tree: bool) -> Self {
         if let Self::Changed { working_tree, .. } = &mut self {
             *working_tree = from_working_tree;
         }

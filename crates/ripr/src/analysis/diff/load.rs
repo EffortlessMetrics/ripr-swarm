@@ -809,6 +809,17 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
     }
 }
 
+/// The working-tree probe with its failure kept distinct from a clean tree,
+/// for callers that must not read a failed probe as "no uncommitted
+/// changes" (pilot's current change records it as unavailable instead).
+pub fn probe_working_tree_tracked_changes(root: &Path) -> Result<bool, String> {
+    match working_tree_probe(root) {
+        WorkingTreeProbe::Dirty => Ok(true),
+        WorkingTreeProbe::Clean => Ok(false),
+        WorkingTreeProbe::Error(reason) => Err(reason),
+    }
+}
+
 /// The stderr warning for a failed working-tree probe (#2074). Pure so the
 /// exact phrasings ("git could not be run", "git status exited with") are
 /// unit-testable without capturing stderr.
@@ -2378,6 +2389,13 @@ mod tests {
         if working_tree_has_tracked_changes(&file) {
             return Err(std::io::Error::other(
                 "a failed probe must not report tracked changes",
+            ));
+        }
+        // The Result form keeps the failure, so pilot can say the change is
+        // unavailable instead of reading the tree as clean.
+        if probe_working_tree_tracked_changes(&file).is_ok() {
+            return Err(std::io::Error::other(
+                "a failed probe must surface as an error, not clean or dirty",
             ));
         }
 

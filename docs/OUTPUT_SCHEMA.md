@@ -15160,8 +15160,8 @@ that diff ahead of the others, keeping the repo-wide order inside each group.
 tree; the ranking stays repo-wide and this is not evidence that nothing
 changed). `base` is the resolved base, or `null` when unavailable. `reason` is
 a short fixed phrase for an unavailable change (`not a Git work tree`, `no
-default base resolved`, `git is not on PATH`, `git timed out`, `git diff
-failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
+default base resolved`, `git is not on PATH`, `git timed out`, `git status
+failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
 carries a matching scope line: `change-first (seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
