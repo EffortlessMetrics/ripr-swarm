@@ -1000,6 +1000,55 @@ mod tests {
     }
 
     #[test]
+    fn absolute_finding_path_under_root_selects_its_captured_file() -> Result<(), String> {
+        let source =
+            "fn price() {\n    if montant_é > discount_threshold {\n        true\n    }\n}\n";
+        let start = require_find(source, PREDICATE, "predicate")?;
+        // Production findings carry root-joined paths; the wanted set must
+        // come from the same root-relative path the lookup uses.
+        let finding = finding_on(
+            "probe:abs",
+            "/workspace/src/lib.rs",
+            2,
+            PREDICATE,
+            SourceCurrentness::CandidateCurrent,
+        );
+        let outside = finding_on(
+            "probe:outside",
+            "/elsewhere/src/lib.rs",
+            2,
+            PREDICATE,
+            SourceCurrentness::CandidateCurrent,
+        );
+        let mut spans = BTreeMap::new();
+        for id in ["probe:abs", "probe:outside"] {
+            spans.insert(id.to_string(), ParserByteSpan { start_byte: start });
+        }
+        let loaded = vec![
+            (PathBuf::from("src/other.rs"), b"fn other() {}\n".to_vec()),
+            (PathBuf::from("src/lib.rs"), source.as_bytes().to_vec()),
+        ];
+        let origins = origins_for_rust_findings(
+            &[finding, outside],
+            &OriginBuildContext {
+                root: Path::new("/workspace"),
+                loaded_files: &loaded,
+                index: &index_with(source),
+                parser_spans: &spans,
+            },
+        );
+        assert_eq!(
+            require_origin(&origins, "probe:abs")?.kind,
+            OriginKind::Exact
+        );
+        assert_eq!(
+            require_origin(&origins, "probe:outside")?,
+            &missing_input_origin()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn captured_index_skips_files_no_finding_points_at() -> Result<(), String> {
         let loaded = vec![
             (PathBuf::from("src/lib.rs"), b"fn a() {}\n".to_vec()),
