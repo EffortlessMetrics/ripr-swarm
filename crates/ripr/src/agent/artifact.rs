@@ -640,7 +640,7 @@ fn canonical_root(root: &Path) -> Result<PathBuf, String> {
 }
 
 fn display_root(root: &Path) -> String {
-    root.to_string_lossy().replace('\\', "/")
+    crate::agent::loop_commands::root_path_display(root)
 }
 
 pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {

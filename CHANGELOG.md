@@ -23,6 +23,8 @@ are scoped or reviewed.
   stored by the before producer. Newly published manifests reopen in the
   selected repository while authentic copies in another root remain refused
   (#5744).
+- Repo-exposure snapshots retain native Unix repository root characters for
+  artifact admission, including literal filename backslashes (#5744).
 - Preview-language refusals (parse budget, read caps, walk cap) no longer
   downgrade a diff that touches none of that language. A Rust-only change in a
   repository with an unrelated, deeply nested Python fixture (found trialing
