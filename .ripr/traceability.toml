@@ -749,6 +749,14 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file",
   "crates/ripr/src/output/doctor.rs::tests::doctor_root_path_recovery_guidance_does_not_borrow_sibling_wording",
   "crates/ripr/src/cli/commands/doctor.rs::tests::source_build_profile_keeps_enabled_language_runtime_failure_advisory",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_ignores_a_repo_local_prove_cmd",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_prefers_path_prove_over_repo_local_prove_cmd",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_windows_prefers_pathext_over_extensionless",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::is_cwd_path_entry_treats_empty_dot_and_backslash_dot_as_cwd",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_unix_prove_cmd_is_not_a_prove_binary",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_program_keeps_explicit_paths_and_skips_bare_names_off_path",
+  "crates/ripr/tests/cli_smoke.rs::doctor_does_not_treat_a_repo_local_prove_cmd_as_path_prove",
+  "crates/ripr/tests/cli_smoke.rs::doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd",
   "crates/ripr/tests/cli_smoke.rs::doctor_discloses_missing_verification_tools_but_still_checks_manifest",
   "crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing",
   "crates/ripr/tests/cli_help_hierarchy.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build"
@@ -11863,4 +11871,41 @@ outputs = [
 metrics = [
   "intervention_study_valid_protocols",
   "intervention_study_falsifiers_rejected",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0217"
+name = "Repair-attempt discovery selection and fresh-process resume"
+spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
+tests = [
+  "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_selects_and_resumes_an_awaiting_attempt",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",
+  "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_renders_byte_stable_across_repeated_reads",
+  "crates/ripr/src/cli/agent.rs::tests::agent_status_parses_exact_attempt_selection_and_rejects_empty",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_resumes_and_finishes_one_attempt_across_fresh_processes",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_historical_after_head_moves",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_keeps_same_seam_attempts_distinct_by_id",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_round_trips_an_explicit_store",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_types_a_malformed_row_and_isolates_valid_rows",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_never_reconstructs_a_tampered_result",
+  "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_legacy_manifest_at_compatibility_strength",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/app/agent_status.rs",
+  "crates/ripr/src/cli/agent.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/cli/help/agent.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/REPAIR_ATTEMPT.md",
+]
+metrics = [
+  "unit_test_pass_rate",
 ]
