@@ -37,3 +37,16 @@ No blanket bless, class promotion or representative accuracy claim is made.
 Updated:
 - expected/human.txt
 - expected/human-full.txt
+
+## Pending — wildcard_oracle_wildcard_wrong (1)
+
+Reason:
+RIPR-SPEC-0224: the examined wildcard test names why it misses the change (weak_assertion); verdict unchanged
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
