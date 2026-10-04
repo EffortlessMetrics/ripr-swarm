@@ -101,12 +101,16 @@ impl OwnerPinSyntax {
         // ripr-swarm). Files are independent and the result is a set, so the
         // scan runs on the rayon pool with an order-independent answer.
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            index
-                .files
+            let sources = index
+                .files()
+                .values()
+                .map(|facts| facts.data().source.as_str())
+                .collect::<Vec<_>>();
+            sources
                 .par_iter()
-                .flat_map_iter(|(_, facts)| {
+                .flat_map_iter(|source| {
                     trusted_macro_binding_ambiguities(
-                        &facts.source,
+                        source,
                         &index.package_names,
                         NON_RETURNING_MACROS,
                     )
@@ -114,7 +118,7 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let Some(facts) = index
-            .files
+            .files()
             .get(&test.file)
             .filter(|facts| !facts.used_lexical_fallback)
         else {
@@ -130,7 +134,7 @@ impl OwnerPinSyntax {
                 return BTreeSet::new();
             }
             index
-                .files
+                .files()
                 .iter()
                 .flat_map(|(path, file)| {
                     empty_macro_binding_ambiguities(
@@ -151,7 +155,7 @@ impl OwnerPinSyntax {
                 return false;
             }
             let Some(parent) = index
-                .files
+                .files()
                 .get(&edge.parent)
                 .filter(|facts| !facts.used_lexical_fallback)
             else {
@@ -226,7 +230,7 @@ impl OwnerReturnPin {
             return None;
         }
         let parser_backed = index
-            .files
+            .files()
             .get(&owner.file)
             .is_some_and(|facts| !facts.used_lexical_fallback);
         if !parser_backed {
@@ -325,9 +329,9 @@ impl OwnerReturnPin {
             return false;
         }
         let test_source = index
-            .files
+            .files()
             .get(&test.file)
-            .map(|facts| facts.source.as_str());
+            .map(|facts| facts.data().source.as_str());
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -790,7 +794,7 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
 fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method: bool) -> bool {
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
-    let indexed_competes = index.functions.iter().any(|function| {
+    let indexed_competes = index.functions().iter().any(|function| {
         if function.name != name || is_owner(&function.file, function.start_line) {
             return false;
         }
@@ -809,7 +813,7 @@ fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method:
     if indexed_competes {
         return true;
     }
-    index.files.iter().any(|(path, facts)| {
+    index.files().iter().any(|(path, facts)| {
         // Masking only erases text, so a file whose raw source has no
         // `fn <name>` has none after masking either; skip the mask.
         if !facts.source.contains(name) || fn_definition_offsets(&facts.source, name).is_empty() {
@@ -949,7 +953,7 @@ fn declared_receiver(self_ty: &str, index: &RustIndex) -> Option<ReceiverType> {
 /// the workspace.
 fn trait_impl_receivers(trait_name: &str, index: &RustIndex) -> Vec<ReceiverType> {
     let mut receivers = Vec::new();
-    for facts in index.files.values() {
+    for facts in index.files().values() {
         if whole_word_offsets(&facts.source, trait_name).is_empty() {
             continue;
         }
@@ -1007,7 +1011,7 @@ fn type_declared_in_workspace(name: &str, index: &RustIndex) -> bool {
         })
     };
     // The raw check is a superset of the masked one; mask only on a hit.
-    index.files.values().any(|facts| {
+    index.files().values().any(|facts| {
         facts.source.contains(name)
             && declares(&facts.source)
             && declares(&mask_comments_and_strings(&facts.source))
@@ -1228,7 +1232,7 @@ fn constructor_returns_self(
         "try_from" => return unwrapped,
         _ => {}
     }
-    let mut definitions = index.functions.iter().filter(|function| {
+    let mut definitions = index.functions().iter().filter(|function| {
         function.name == constructor
             && !function.item.has_self_param
             && matches!(
