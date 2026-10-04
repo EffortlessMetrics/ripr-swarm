@@ -656,6 +656,10 @@ pub(super) fn admit_dependents(
     })
 }
 
+/// One caller level's admitted files, parsed (`None` when no withheld file
+/// spells a name), and the `macro_rules!` names they define.
+type LevelAdmission = (Option<RustIndex>, Vec<String>);
+
 /// One owner's caller closure.
 enum Closure {
     /// The withheld files the closure admits.
@@ -853,7 +857,7 @@ impl NarrowedScope {
         names: &BTreeSet<String>,
         admitted_now: &mut BTreeSet<PathBuf>,
         limit: usize,
-    ) -> Result<Option<(Option<RustIndex>, Vec<String>)>, String> {
+    ) -> Result<Option<LevelAdmission>, String> {
         let mut new_files = Vec::new();
         let mut macros = Vec::new();
         for id in self.tokens.spelling(names) {
