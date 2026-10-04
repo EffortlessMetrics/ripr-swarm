@@ -977,7 +977,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>",
             false,
             false,
-            "Same scoring as verdict-corpus check without the expected-report comparison; --out fixtures/rust-verdict-corpus/expected refreshes the reviewed expected report.",
+            "Same scoring as verdict-corpus check without the expected-report comparison. Writes depending on --out: by default under target/ripr/reports/verdict-corpus; --out fixtures/rust-verdict-corpus/expected refreshes the reviewed expected report.",
         ),
         command_entry(
             "test-oracle-report",

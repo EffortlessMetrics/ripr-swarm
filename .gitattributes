@@ -32,3 +32,9 @@ fixtures/evidence-quality-benchmark/regex-word-boundary-empty/patches/*.patch -t
 # Exact Git commit object used only by the custody boundary fixture. Its signed
 # header contains significant space-only continuation lines; never normalize it.
 xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit -text -whitespace
+
+# Labeled verdict corpus (RIPR-SPEC-0217): case diffs carry patch-syntax
+# context spaces, and retained subjects are byte-identical upstream files
+# pinned by sha256, so whitespace rules cannot rewrite either.
+fixtures/rust-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
+fixtures/rust-verdict-corpus/subjects/** -whitespace
