@@ -21,10 +21,11 @@ allowlist order, report directory setup, generated indexes, or gate ordering.
 The release cut assembles its `Unreleased` section from the swarm and source
 changelogs as a semantic union. A contract-changing PR should normally add a
 short changelog fragment under `changelog.d/` (see `changelog.d/README.md`),
-folded into `Unreleased` at the release cut, with an issue or PR link,
-including compatibility effects such as a newly refused path or a changed finding class. The author
-and reviewer decide whether a change is notable; a path-only check cannot
-establish that a user contract changed or that a useful note was written.
+folded into `Unreleased` at the release cut. The entry carries an issue or
+PR link and states compatibility effects such as a newly refused path or a
+changed finding class. The author and reviewer decide whether a change is
+notable; a path-only check cannot establish that a user contract changed or
+that a useful note was written.
 
 An entry may instead be drafted retrospectively during the release cut. In
 that case, the PR should say where the change will be found in the release

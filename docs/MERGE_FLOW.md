@@ -1,8 +1,8 @@
 # Merge flow for swarm PRs
 
 How many agent-authored PRs reach `main` without stepping on each other. The
-live queue is `/mnt/project-files/merge-queue/status.md` in the project's
-shared folder; this page is the rule set behind it.
+project's shared `/mnt/project-files/merge-queue/status.md` keeps an advisory
+order and the merge log; this page is the rule set behind it.
 
 ## Who merges
 
@@ -10,18 +10,23 @@ The thread that owns a PR merges it with a protected squash merge once:
 
 1. required CI is green on the current head;
 2. `review-pr` on the exact published head returns `REVIEW_READY`, and a
-   reviewer separate from the author found nothing blocking (correctness,
-   compiles against current `main`, refusals say why and what to do next);
+   directed agentic review from several angles (for example correctness,
+   factual accuracy against current source, tooling and policy effects,
+   adversarial use) found nothing blocking. The reviewers run separately from
+   the authoring pass, and a review-of-record comment on the PR names the head
+   SHA, the angles, the findings, and how each was resolved. A GitHub approval
+   is not required;
 3. review threads are resolved, or answered with source-backed evidence;
-4. `status.md` does not list an unresolved conflict or earlier PR for it.
+4. the head merges cleanly into current `main`.
 
 A PR needing a settings, ruleset, release, or publication change waits for the
 repository owner. Protection is never weakened to clear a merge.
 
 ## Order
 
-`status.md` keeps a recommended order. It is advice, built from local
-`git merge-tree` runs of each PR head against `main` and against each other:
+`status.md` may keep a recommended order. It is advice, not a merge gate, and
+a thread does not need to consult it before merging. When kept, it comes from
+local `git merge-tree` runs of open PR heads against `main`:
 
 - ready and conflict-free first;
 - a PR that adds shared plumbing (a new `xtask` command, a changed type or
