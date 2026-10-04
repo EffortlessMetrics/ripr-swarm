@@ -12054,7 +12054,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
 /// #5205: pilot honors `[languages] enabled` like `check` does. With Rust
 /// disabled, pilot ranks no Rust seam and discloses the exclusion — in the
 /// terminal and the summary packet — instead of silently ranking Rust.
+/// Requires `lang-python`: the fixture excludes Rust via `enabled = ["python"]`,
+/// which is a (correct, fail-closed) config error on binaries built without
+/// that feature, so the rust-only lane cannot express this case.
 #[test]
+#[cfg(feature = "lang-python")]
 fn pilot_excludes_rust_when_disabled_in_language_config() -> Result<(), String> {
     let root = unique_temp_workspace("pilot-rust-disabled");
     std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
