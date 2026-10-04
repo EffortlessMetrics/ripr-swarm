@@ -422,7 +422,7 @@ pub(crate) fn render_pilot_terminal(
     // Pilot ranks seams across the whole repository, never just a branch's
     // diff; saying so keeps a recommendation outside the change from reading
     // as a contradiction of `ripr check` (#5309).
-    out.push_str("  scope: whole repository; for your branch's change run `ripr check`\n");
+    out.push_str("  scope: whole repository, not limited to your branch's change\n");
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
