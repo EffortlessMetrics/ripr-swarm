@@ -31,8 +31,10 @@ repository owner. Protection is never weakened to clear a merge.
 
 ## Conflicts
 
-- A behind-only branch needs no update. Squash merge does not require an
-  up-to-date branch.
+- A behind-only branch normally needs no update: PRs have merged while
+  behind `main`. `.github/settings.yml` declares `strict: true` for the
+  required check, but the live ruleset could not be read to confirm it, so if
+  the server rejects a merge as out of date, update the branch and re-run.
 - Conflict repair belongs to the owning thread. Nobody pushes to another
   thread's branch.
 - Changelog entries are separate files under `changelog.d/`, so they should not

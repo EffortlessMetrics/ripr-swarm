@@ -8,7 +8,8 @@ no longer has to be rebased by hand at merge time.
 
 Create `changelog.d/<pr-or-issue>-<short-slug>.md`, for example
 `changelog.d/5188-first-pr-quoting.md`. If the PR number is not known yet, use
-the issue number or a unique slug; do not rename the file after merge.
+a unique slug (not just an issue number, since two PRs for one issue would
+collide); do not rename the file after merge.
 
 The first line is the section, as an HTML comment. The rest is the entry in the
 same prose style `CHANGELOG.md` already uses, with the issue or PR reference in
