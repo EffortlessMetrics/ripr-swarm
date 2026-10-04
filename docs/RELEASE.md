@@ -213,6 +213,10 @@ custody for the installed doctor and authentic corpus chain. Ordinary archive
 entries must match raw committed source blobs; transformed/sparse checkouts and
 unsupported generated entries refuse. These unlocked checks do not authenticate
 provenance, select a release pin, or complete the full qualification matrix.
+Archive, extracted-input and executable rereads are bounded by their admitted
+byte lengths and require ordinary files. Initial archive/executable capture and
+archive decompression retain their separate, currently unbounded memory surface;
+the reread bound is not a total package/install memory or storage budget.
 
 For `0.11.0`, the Rust gap-repair support claim remains `usable alpha`.
 Fixture, installed-package, packaged-editor, bounded test-only transaction, and
@@ -353,13 +357,18 @@ happens, check crates.io manually before retrying.
 
 ## Post-Publish
 
-After the crates.io publication is verified, bump
+The release commit bumps the package version and
 `LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs`
-to the published version as its own commit — never in the release-prep PR
-and never for a release candidate (#5208). The constant must always name a
-published version: `init --ci github` self-pins generators at or below it,
-so a premature bump would make candidate-built generators emit an
-unresolvable install pin with no warning.
+together to the release version, and publication runs from that commit —
+never for a release candidate (#5208). The constant must travel with the
+version it names: `init --ci github` self-pins generators at or below it,
+so a constant bumped only after publication would make the just-published
+generator pin its predecessor with a spurious "not released" warning, on
+every release, permanently. The first post-release commit moves the package
+version to the next development version while the constant stays. Between
+the release commit and verified publication, a dev-built generator self-pins
+a version whose archive is not up yet — publish promptly, and refresh CI
+with the previous release until publication verifies.
 
 ```bash
 cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force

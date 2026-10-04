@@ -106,7 +106,7 @@ struct InitTarget {
 fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if !options.root.is_dir() {
         return Err(format!(
-            "init root {} is not a directory",
+            "init root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
     }
@@ -361,7 +361,9 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(format!("unknown init --ci provider {value:?}")),
+        _ => Err(format!(
+            "unknown init --ci provider {value:?}. Accepted: github."
+        )),
     }
 }
 
@@ -452,8 +454,8 @@ mod tests {
             "the workflow must pin bash for every job:\n{workflow}"
         );
         assert!(
-            workflow.contains("gate_args=("),
-            "bash-only syntax the pin protects"
+            workflow.contains("<<< \"$operation\""),
+            "bash-only syntax (a here-string) the pin protects"
         );
     }
 
@@ -474,7 +476,7 @@ mod tests {
     fn generated_workflow_reruns_when_pull_request_labels_change() -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
         assert!(
-            workflow.contains("\"$GITHUB_EVENT_PATH\" > target/ci/labels.json"),
+            include_str!("ci_packet.rs").contains("event.pointer(\"/pull_request/labels\")"),
             "labels are no longer read from the event payload; revisit #4726"
         );
         let on_block: Vec<&str> = workflow
