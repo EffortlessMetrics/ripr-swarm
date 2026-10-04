@@ -2619,7 +2619,7 @@ fn git_success_with_ceiling(
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
         format!(
-            "git -C {} fetch origin {}",
+            "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
             shell_arg(branch)
         )
@@ -3803,7 +3803,7 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["next_command"],
-            format!("git -C {} fetch origin missing-base", bound_arg("."))
+            format!("git -C {} fetch origin -- missing-base", bound_arg("."))
         );
         cleanup(&repo)
     }
