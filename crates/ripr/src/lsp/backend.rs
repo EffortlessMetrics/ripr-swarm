@@ -179,6 +179,12 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    /// Liveness bound for one server→client request round-trip (#5278,
+    /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
+    /// loop fuses, a client response can never arrive, so an unbounded await
+    /// would pin a handler task forever and leave the sidecar alive but
+    /// silent. Expiry fails the one request through its ordinary error arm.
+    client_request_timeout: Duration,
     #[cfg(test)]
     consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
@@ -283,10 +289,42 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
+        }
+    }
+
+    /// Overrides the server→client request liveness bound (#5278). The
+    /// in-process composition tests shorten it so the uniform mid-session
+    /// exit contract stays fast.
+    pub(super) fn with_client_request_timeout(mut self, timeout: Duration) -> Self {
+        self.client_request_timeout = timeout;
+        self
+    }
+
+    /// One bounded server→client request round-trip (#5278). A client that
+    /// never answers must not pin this handler task forever: after a framing
+    /// violation the transport read loop has fused, so the response can
+    /// never arrive. The expiry surfaces as an ordinary request error
+    /// (`Internal error` naming the liveness bound) so every call site's
+    /// existing failure arm discloses it.
+    async fn bounded_client_request<T>(
+        &self,
+        request: impl std::future::Future<Output = tower_lsp_server::jsonrpc::Result<T>>,
+    ) -> tower_lsp_server::jsonrpc::Result<T> {
+        match tokio::time::timeout(self.client_request_timeout, request).await {
+            Ok(result) => result,
+            Err(_) => Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+                message: std::borrow::Cow::Owned(format!(
+                    "ripr server-to-client request exceeded its {}s liveness bound; treating the unanswered client as failed (#5278)",
+                    self.client_request_timeout.as_secs()
+                )),
+                data: None,
+            }),
         }
     }
 
@@ -836,7 +874,9 @@ impl Backend {
         }
         if self.pull_diagnostics_enabled()
             && self.diagnostic_refresh_support_enabled()
-            && let Err(error) = self.client.workspace_diagnostic_refresh().await
+            && let Err(error) = self
+                .bounded_client_request(self.client.workspace_diagnostic_refresh())
+                .await
         {
             self.client
                 .log_message(
@@ -1212,8 +1252,7 @@ impl Backend {
                 method: "workspace/didChangeWatchedFiles".to_string(),
             };
             if let Err(error) = self
-                .client
-                .unregister_capability(vec![unregistration])
+                .bounded_client_request(self.client.unregister_capability(vec![unregistration]))
                 .await
             {
                 self.client
@@ -1252,7 +1291,10 @@ impl Backend {
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: Some(serde_json::json!({ "watchers": watchers })),
         };
-        match self.client.register_capability(vec![registration]).await {
+        match self
+            .bounded_client_request(self.client.register_capability(vec![registration]))
+            .await
+        {
             Ok(()) => watch.registered = true,
             Err(error) => {
                 self.client
@@ -1369,7 +1411,10 @@ impl Backend {
     /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
     /// by the view-changed and view-cleared paths.
     async fn send_code_lens_refresh(&self) {
-        if let Err(error) = self.client.code_lens_refresh().await {
+        if let Err(error) = self
+            .bounded_client_request(self.client.code_lens_refresh())
+            .await
+        {
             self.client
                 .log_message(
                     MessageType::WARNING,
@@ -1879,15 +1924,17 @@ impl Backend {
                         .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
+                    withheld_unknown_summary(value),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome) = match snapshot_state {
-            Some((identity, components, analysis_outcome)) => {
-                (identity, components, analysis_outcome)
-            }
-            None => (None, Vec::new(), None),
-        };
+        let (snapshot_identity, components, analysis_outcome, withheld_summary) =
+            match snapshot_state {
+                Some((identity, components, analysis_outcome, withheld)) => {
+                    (identity, components, analysis_outcome, withheld)
+                }
+                None => (None, Vec::new(), None, None),
+            };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -1973,6 +2020,12 @@ impl Backend {
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "analysis_outcome": analysis_outcome,
+            // Profile-withholding disclosure (#5276): when the actionable
+            // profile withholds live `*_unknown` findings from every
+            // diagnostic/listing surface, this names the count, the classes,
+            // and the `diagnostic_profile = "full"` recovery route, so
+            // `finding_count` and the served listings reconcile on the wire.
+            "withheld_findings": withheld_findings_status_payload(withheld_summary),
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -2605,11 +2658,10 @@ impl Backend {
             }
         };
         let result = self
-            .client
-            .configuration(vec![ConfigurationItem {
+            .bounded_client_request(self.client.configuration(vec![ConfigurationItem {
                 scope_uri: Some(scope_uri),
                 section: Some("ripr".to_string()),
-            }])
+            }]))
             .await;
         // Epoch guard: a response for an older epoch is dropped; the queued
         // re-pull for the current epoch owns the disclosed state.
@@ -3815,6 +3867,7 @@ pub(super) struct RefreshLogSummary {
     gap_static_limits: usize,
     gap_artifact_rejections: usize,
     gap_artifact_rejection_kinds: Vec<&'static str>,
+    withheld_unknown: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -3876,6 +3929,7 @@ impl RefreshLogSummary {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -4033,7 +4087,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -4048,6 +4102,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_static_limits,
         summary.gap_artifact_rejections,
         summary.gap_artifact_rejection_kinds.join("|"),
+        summary.withheld_unknown,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -4449,6 +4504,45 @@ impl Backend {
                 })
             })
             .collect::<Vec<_>>();
+        // The `*_unknown` findings the actionable profile withholds from
+        // diagnostics AND from `hidden_gaps` (#4418) are disclosed as their
+        // own additive list (#5276): `status: "ok"` with all-zero counts
+        // must never be the only word about a live finding.
+        let withheld_unknown = if snapshot.diagnostic_profile == LspDiagnosticProfile::Actionable {
+            super::diagnostics::canonical_finding_groups(&snapshot.findings)
+                .into_iter()
+                .map(|(primary, _)| primary)
+                .filter(finding_is_withheld_unknown)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let withheld_unknown_items = withheld_unknown
+            .iter()
+            .take(LIST_ACTIONABLE_HIDDEN_MAX)
+            .map(|finding| {
+                serde_json::json!({
+                    "finding_id": finding.id,
+                    "file": display_path(
+                        finding
+                            .probe
+                            .location
+                            .file
+                            .strip_prefix(&snapshot.root)
+                            .unwrap_or(&finding.probe.location.file),
+                    ),
+                    "line": finding.probe.location.line,
+                    "class": finding.class.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let suppression_disclosure = (!withheld_unknown.is_empty()).then(|| {
+            format!(
+                "{} finding(s) withheld by the actionable diagnostic profile (RIPR-SPEC-0069: missing static evidence is not published as a diagnostic or a gap); {}",
+                withheld_unknown.len(),
+                diagnostic_profile_full_recovery_route()
+            )
+        });
         Ok(Some(serde_json::json!({
             "kind": "actionable_items",
             "status": "ok",
@@ -4467,6 +4561,10 @@ impl Backend {
             "omitted_truncated": result.omitted.len() > LIST_ACTIONABLE_OMITTED_MAX,
             "hidden_gaps": hidden_gaps,
             "hidden_gap_count": hidden.len(),
+            "withheld_unknown_count": withheld_unknown.len(),
+            "withheld_unknown_findings": withheld_unknown_items,
+            "withheld_unknown_truncated": withheld_unknown.len() > LIST_ACTIONABLE_HIDDEN_MAX,
+            "suppression_disclosure": suppression_disclosure,
             "budget_identity": result.snapshot_profile_budget_identity,
             "complete_evidence_identity": result.complete_evidence_identity,
             "continuation_or_inspect_route": result.continuation_or_inspect_route,
@@ -4547,7 +4645,10 @@ impl LanguageServer for Backend {
                     "watchers": workspace_input_watchers()
                 })),
             };
-            if let Err(error) = self.client.register_capability(vec![registration]).await {
+            if let Err(error) = self
+                .bounded_client_request(self.client.register_capability(vec![registration]))
+                .await
+            {
                 self.client
                     .log_message(
                         MessageType::WARNING,
@@ -4559,9 +4660,12 @@ impl LanguageServer for Backend {
         self.diagnostics_input_watch.lock().await.armed = true;
         self.sync_diagnostics_input_watch().await;
         // Emit ignored-initialization warnings before the first
-        // `workspace/configuration` pull (#5092). The pull awaits the client
-        // with no timeout; a pull-mode client that never answers must not
-        // suppress the bounded disclosure that a default is in effect.
+        // `workspace/configuration` pull (#5092). A pull-mode client that
+        // never answers must not suppress the bounded disclosure that a
+        // default is in effect; the pull itself is bounded by the #5278
+        // client-request liveness bound, so a non-answering client fails
+        // the pull through the ordinary error arm instead of pinning this
+        // handler task forever.
         self.disclose_ignored_initialization_options().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
@@ -4793,8 +4897,12 @@ impl LanguageServer for Backend {
         };
         // 2. Optional full-list reconciliation: a separately versioned
         //    confirmation step, never a substitute for the delta. A client
-        //    that cannot answer keeps the delta-derived state.
-        let queried = self.client.workspace_folders().await.unwrap_or(None);
+        //    that cannot answer keeps the delta-derived state; the round
+        //    trip is bounded by the #5278 client-request liveness bound.
+        let queried = self
+            .bounded_client_request(self.client.workspace_folders())
+            .await
+            .unwrap_or(None);
         // 3. Drop the round-trip when a newer event or transition won the
         //    race, then apply at most one transition derived from the stored
         //    set.
@@ -5395,6 +5503,11 @@ impl Backend {
                 .log_message(MessageType::WARNING, disclosure)
                 .await;
         }
+        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+            self.client
+                .log_message(MessageType::WARNING, disclosure)
+                .await;
+        }
         let diagnostics = snapshot.served_diagnostics_for_uri(&uri);
         Ok(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
@@ -5468,6 +5581,11 @@ impl Backend {
             }
             if !disclosed {
                 if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
+                    self.client
+                        .log_message(MessageType::WARNING, disclosure)
+                        .await;
+                }
+                if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
                     self.client
                         .log_message(MessageType::WARNING, disclosure)
                         .await;
@@ -6063,6 +6181,78 @@ const LIST_ACTIONABLE_OMITTED_MAX: usize = 200;
 /// Most profile-hidden gaps `ripr/listActionableItems` lists;
 /// `hidden_gap_count` still reports the full number.
 const LIST_ACTIONABLE_HIDDEN_MAX: usize = 50;
+
+/// The `*_unknown`-class findings the actionable profile withholds from
+/// every diagnostic and gap-listing surface (RIPR-SPEC-0069; the exclusion
+/// is locked by #4418 — missing static evidence is neither a diagnostic nor
+/// a gap). #5276: they are disclosed, never published, so an agent can tell
+/// "analysis complete, nothing to do" apart from "a finding exists but the
+/// profile withholds it".
+fn finding_is_withheld_unknown(finding: &crate::domain::Finding) -> bool {
+    matches!(
+        finding.class,
+        crate::domain::ExposureClass::StaticUnknown
+            | crate::domain::ExposureClass::InfectionUnknown
+            | crate::domain::ExposureClass::PropagationUnknown
+    ) && finding.is_candidate_actionable()
+}
+
+/// The `diagnostic_profile = "full"` recovery route named wherever profile
+/// withholding is disclosed (#5276). One owner so every agent-facing surface
+/// words the escape hatch identically.
+fn diagnostic_profile_full_recovery_route() -> &'static str {
+    "set the session initialization option {\"ripr\": {\"diagnosticProfile\": \"full\"}} to serve withheld findings on every channel"
+}
+
+/// Clone-free count/class summary of the `*_unknown` findings the
+/// actionable profile withholds. `None` when there is no snapshot; a
+/// non-actionable profile withholds nothing, so it summarizes as a zero
+/// count with no classes.
+fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&'static str>)> {
+    if snapshot.diagnostic_profile != LspDiagnosticProfile::Actionable {
+        return Some((0, Vec::new()));
+    }
+    let mut count = 0usize;
+    let mut classes = std::collections::BTreeSet::new();
+    for finding in &snapshot.findings {
+        if finding_is_withheld_unknown(finding) {
+            count += 1;
+            classes.insert(finding.class.as_str());
+        }
+    }
+    Some((count, classes.into_iter().collect()))
+}
+
+/// The status-surface payload for profile withholding (#5276): present with
+/// a zero count when nothing is withheld, and `null` only when no snapshot
+/// exists.
+fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>) -> LSPAny {
+    match summary {
+        None => serde_json::Value::Null,
+        Some((0, _)) => {
+            serde_json::json!({ "count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        }
+        Some((count, classes)) => serde_json::json!({
+            "count": count,
+            "classes": classes,
+            "recovery_route": diagnostic_profile_full_recovery_route(),
+        }),
+    }
+}
+
+/// Pull-side disclosure naming the profile-withheld `*_unknown` findings
+/// (#5276). A pull that serves zero items must not read as "no findings":
+/// the same one-line disclosure the status and listing surfaces carry names
+/// the withholding and the `full` escape hatch here too.
+fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
+    let (count, _) = withheld_unknown_summary(snapshot)?;
+    (count > 0).then(|| {
+        format!(
+            "ripr withheld {count} finding(s) of the *_unknown classes from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
+            diagnostic_profile_full_recovery_route()
+        )
+    })
+}
 
 fn omitted_diagnostic_reason_name(
     reason: crate::lsp::diagnostic_budget::OmittedDiagnosticReason,
@@ -7163,6 +7353,79 @@ mod top_limitation_selection_tests {
         assert_eq!(
             analysis_status["analysis_outcome"]["kind"],
             "unsupported_input"
+        );
+        Ok(())
+    }
+
+    /// #5276: under the actionable profile a live `static_unknown` finding
+    /// is withheld from every diagnostic/listing surface while
+    /// `analysis_outcome.finding_count` reports it. The status payload must
+    /// name the withholding — count, classes, and the
+    /// `diagnostic_profile = "full"` recovery route — so an agent can tell
+    /// "no findings" from "withheld by profile" on the wire.
+    #[test]
+    fn analysis_status_discloses_withheld_unknown_findings_with_full_route() -> Result<(), String> {
+        let repo_root = PathBuf::from("C:").join("repo");
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        let mut snapshot = snapshot_for_outcome(incomplete_outcome(1)?, None);
+        snapshot.findings = vec![unknown];
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let health = AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            snapshot_id: Some("snapshot:lsp-fixture".to_string()),
+            ..AnalysisHealth::default()
+        };
+        let (service, _socket) = LspService::new(|client| Backend::new(client, repo_root.clone()));
+        let backend = service.inner();
+        *backend
+            .latest_analysis
+            .lock()
+            .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
+            Some(std::sync::Arc::new(snapshot));
+        let payload = backend.analysis_status_payload_for_health(&health);
+        let withheld = &payload["withheld_findings"];
+        assert_eq!(withheld["count"], 1, "{payload:#}");
+        assert_eq!(withheld["classes"], serde_json::json!(["static_unknown"]));
+        assert!(
+            withheld["recovery_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("diagnosticProfile")),
+            "the disclosure must name the full-profile escape hatch: {withheld}"
+        );
+
+        // The same findings under the full profile withhold nothing: a
+        // present zero-count entry, no route.
+        let (full_service, _full_socket) =
+            LspService::new(|client| Backend::new(client, repo_root.clone()));
+        let full_backend = full_service.inner();
+        let mut full_snapshot = snapshot_for_outcome(incomplete_outcome(1)?, None);
+        full_snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        *full_backend
+            .latest_analysis
+            .lock()
+            .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
+            Some(std::sync::Arc::new(full_snapshot));
+        let full_payload = full_backend.analysis_status_payload_for_health(&health);
+        assert_eq!(
+            full_payload["withheld_findings"]["count"], 0,
+            "{full_payload:#}"
+        );
+        assert_eq!(
+            full_payload["withheld_findings"]["recovery_route"],
+            serde_json::Value::Null
+        );
+
+        // No snapshot at all: the disclosure is absent, not zero.
+        let (empty_service, _empty_socket) =
+            LspService::new(|client| Backend::new(client, repo_root));
+        let empty_payload = empty_service
+            .inner()
+            .analysis_status_payload_for_health(&health);
+        assert_eq!(
+            empty_payload["withheld_findings"],
+            serde_json::Value::Null,
+            "{empty_payload:#}"
         );
         Ok(())
     }
@@ -10827,6 +11090,32 @@ mod list_actionable_items_tests {
                 "class": "weakly_exposed",
             })
         );
+        // #5276: the withheld static_unknown finding is disclosed in its own
+        // additive list with the full-profile escape hatch — still never as
+        // a gap, and never as a diagnostic.
+        assert_eq!(response["withheld_unknown_count"], 1, "{response:#}");
+        assert_eq!(
+            response["withheld_unknown_truncated"], false,
+            "{response:#}"
+        );
+        assert_eq!(
+            response["withheld_unknown_findings"],
+            serde_json::json!([{
+                "finding_id": "probe:pricing:94:predicate",
+                "file": "src/pricing.rs",
+                "line": 88,
+                "class": "static_unknown",
+            }]),
+            "{response:#}"
+        );
+        assert!(
+            response["suppression_disclosure"]
+                .as_str()
+                .is_some_and(|text| {
+                    text.contains("withheld") && text.contains("diagnosticProfile")
+                }),
+            "the listing must name the full-profile escape hatch: {response:#}"
+        );
 
         snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
         let full_harness = handler_harness()?;
@@ -10834,6 +11123,47 @@ mod list_actionable_items_tests {
         let full = call_handler(&full_harness)?;
         assert_eq!(full["hidden_gap_count"], 0);
         assert_eq!(full["hidden_gaps"], serde_json::json!([]));
+        // The full profile withholds nothing: the disclosure stays silent.
+        assert_eq!(full["withheld_unknown_count"], 0);
+        assert_eq!(full["withheld_unknown_findings"], serde_json::json!([]));
+        assert_eq!(full["suppression_disclosure"], serde_json::Value::Null);
+        Ok(())
+    }
+
+    /// #5276: the pull channel names profile-withheld `*_unknown` findings
+    /// with the same escape hatch the status and listing surfaces carry, so
+    /// a zero-item pull never reads as "no findings" while one is withheld.
+    #[test]
+    fn profile_withholding_pull_disclosure_names_the_escape_hatch_only_when_withheld()
+    -> Result<(), String> {
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+        snapshot.findings = vec![unknown];
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("a withheld finding must disclose on the pull channel")?;
+        assert!(
+            disclosure.contains("1 finding(s)") && !disclosure.contains("static_unknown"),
+            "the pull disclosure names the count and the profile: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("diagnosticProfile"),
+            "the pull disclosure names the escape hatch: {disclosure}"
+        );
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "the full profile withholds nothing"
+        );
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        snapshot.findings.clear();
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "no findings means nothing to disclose"
+        );
         Ok(())
     }
 
@@ -10880,7 +11210,11 @@ mod list_actionable_items_tests {
                 "selected_count",
                 "snapshot_id",
                 "status",
+                "suppression_disclosure",
                 "total_count",
+                "withheld_unknown_count",
+                "withheld_unknown_findings",
+                "withheld_unknown_truncated",
             ]
         );
 
