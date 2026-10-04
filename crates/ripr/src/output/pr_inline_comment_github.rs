@@ -181,7 +181,6 @@ pub(crate) fn publish_requests(
         })
     };
     let create_count = with_operation("create").count();
-    let update_count = with_operation("update").count();
     let additional = summary_count(plan, "summary_only") + cap_skipped(plan);
     let suppressed = summary_count(plan, "suppressed");
 
@@ -204,6 +203,9 @@ pub(crate) fn publish_requests(
         });
     }
 
+    // Count the PATCHes actually queued: a skipped update must neither
+    // trigger a summary review nor be reported as done.
+    let update_count = out.requests.len();
     if create_count > 0 || (update_count > 0 && (additional > 0 || suppressed > 0)) {
         let mut payload = Map::new();
         payload.insert(

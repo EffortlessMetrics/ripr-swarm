@@ -225,3 +225,14 @@ fn the_card_runs_to_the_last_details_close_and_mixed_plans_publish_only_safe_cre
         ]
     );
 }
+
+#[test]
+fn a_skipped_update_does_not_post_a_summary_review() {
+    let plan = json!({
+        "summary": {"safe_to_publish": true, "publishable": 1, "summary_only": 1},
+        "operations": [{"operation": "update", "safe_to_publish": true, "dedupe_key": "no-id", "body": "x"}]
+    });
+    let requests = publish_requests(&plan, "7", "abc");
+    assert!(requests.requests.is_empty());
+    assert_eq!(requests.notes.len(), 1);
+}

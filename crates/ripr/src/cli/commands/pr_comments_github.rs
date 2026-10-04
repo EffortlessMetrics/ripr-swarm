@@ -126,6 +126,23 @@ pub(super) fn parse_pr_comments_requests_options(
         }
         i += 1;
     }
+    // The run replaces request files in this directory, so it must stay a
+    // relative path inside --root: no absolute path, no `..`.
+    if !options.out_dir.components().all(|part| {
+        matches!(
+            part,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) || options
+        .out_dir
+        .components()
+        .all(|part| part == std::path::Component::CurDir)
+    {
+        return Err(format!(
+            "{REQUESTS} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
+            options.out_dir.display()
+        ));
+    }
     if options
         .out_dir
         .to_string_lossy()
@@ -159,10 +176,26 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     let planned = publish_requests(&plan, &options.pull_request, &options.head_sha);
 
     let out_dir = options.root.join(&options.out_dir);
-    // Stale request files from an earlier run must never be replayed.
-    if out_dir.exists() {
-        fs::remove_dir_all(&out_dir)
-            .map_err(|err| format!("{REQUESTS} could not clear {}: {err}", out_dir.display()))?;
+    // Stale request files from an earlier run must never be replayed. Only
+    // files this command writes are removed, so a mistyped --out-dir cannot
+    // lose anything else.
+    if out_dir.is_dir() {
+        let entries = fs::read_dir(&out_dir)
+            .map_err(|err| format!("{REQUESTS} could not read {}: {err}", out_dir.display()))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|err| format!("{REQUESTS} could not read {}: {err}", out_dir.display()))?
+                .path();
+            let owned = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_request_file);
+            if owned && path.is_file() {
+                fs::remove_file(&path).map_err(|err| {
+                    format!("{REQUESTS} could not remove {}: {err}", path.display())
+                })?;
+            }
+        }
     }
     fs::create_dir_all(&out_dir)
         .map_err(|err| format!("{REQUESTS} could not create {}: {err}", out_dir.display()))?;
@@ -197,6 +230,19 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `requests.tsv` or an `NN-method.json` request file.
+fn is_request_file(name: &str) -> bool {
+    if name == REQUESTS_MANIFEST {
+        return true;
+    }
+    let Some((index, rest)) = name.split_once('-') else {
+        return false;
+    };
+    index.len() >= 2
+        && index.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(rest, "patch.json" | "post.json")
+}
+
 fn manifest_field(text: &str) -> String {
     text.replace(['\t', '\r', '\n'], " ")
 }
@@ -218,4 +264,60 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
     text.push('\n');
     fs::write(path, text)
         .map_err(|err| format!("{command} could not write {}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_request_file, parse_pr_comments_requests_options};
+
+    #[test]
+    fn only_request_files_are_cleared() {
+        for owned in [
+            "requests.tsv",
+            "01-patch.json",
+            "12-post.json",
+            "100-post.json",
+        ] {
+            assert!(is_request_file(owned), "{owned}");
+        }
+        for other in [
+            "lib.rs",
+            "1-post.json",
+            "01-get.json",
+            "ab-post.json",
+            "01-post.json.bak",
+        ] {
+            assert!(!is_request_file(other), "{other}");
+        }
+    }
+
+    fn parse(out_dir: &str) -> Result<String, String> {
+        let args: Vec<String> = [
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+            "--out-dir",
+            out_dir,
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        parse_pr_comments_requests_options(&args)
+            .map(|options| options.out_dir.display().to_string())
+    }
+
+    /// The run clears --out-dir, so only a dedicated directory under --root
+    /// may be named.
+    #[test]
+    fn requests_out_dir_must_stay_inside_the_root() {
+        assert_eq!(
+            parse("target/ripr/review/publish"),
+            Ok("target/ripr/review/publish".to_string())
+        );
+        assert_eq!(parse("./out"), Ok("./out".to_string()));
+        for escaping in ["/tmp/publish", "../sibling", "target/../..", ".", "a\tb"] {
+            assert!(parse(escaping).is_err(), "{escaping} was accepted");
+        }
+    }
 }

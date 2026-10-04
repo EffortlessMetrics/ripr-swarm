@@ -68,7 +68,7 @@ Requests options:
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --out-dir PATH              Request directory, cleared first. Defaults to target/ripr/review/publish.
+  --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths and `..` are refused. Defaults to target/ripr/review/publish.
 
 `existing` keeps only marked comments that github-actions[bot] posted.
 `requests` writes one JSON payload per call and requests.tsv, one line per
