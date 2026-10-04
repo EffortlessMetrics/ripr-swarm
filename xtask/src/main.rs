@@ -13654,7 +13654,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 10] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 11] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13665,6 +13665,9 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // the public-API path limit. Moved here from `language/rust/mod.rs`
         // so `ripr check` and seam reach (#5411) share one mapping.
         "crates/ripr/src/analysis/classify/transitive_reach.rs",
+        // #5577: a gated trait's syntax in a test-file helper counts for any
+        // type, like a test's; in production code only for types it names.
+        "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module

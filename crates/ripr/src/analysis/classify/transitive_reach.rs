@@ -229,9 +229,8 @@ impl<'a> ReachGraph<'a> {
     ) -> bool {
         let mut saw_reaching_function = false;
         for function in self.by_name.get(entry).into_iter().flatten() {
-            let reaches = calls_of(function).iter().any(|call| {
+            let reaches = calls_of(function).any(|call| {
                 !is_macro_call(&call.name)
-                    && !is_own_declaration(call, function)
                     && (call.name == owner_name || reaching.contains(call.name.as_str()))
             });
             if !reaches {
@@ -291,7 +290,7 @@ impl<'a> TransitiveReachIndex<'a> {
         let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
         for test in &graph.all_tests {
             let mut entry: Option<(bool, &str)> = None;
-            for callee in &test.calls {
+            for callee in test_calls(test) {
                 // Skip macro invocations.
                 if is_macro_call(&callee.name) {
                     continue;
@@ -350,7 +349,7 @@ impl<'a> TransitiveReachIndex<'a> {
     /// (#5411) reads it to ask whether any test-reached code names a type.
     pub(in crate::analysis) fn test_reached_functions(&self) -> Vec<&'a FunctionSummary> {
         let graph = self.graph();
-        let calls = graph.all_tests.iter().flat_map(|test| test.calls.iter());
+        let calls = graph.all_tests.iter().flat_map(|test| test_calls(test));
         self.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
     }
 
@@ -472,7 +471,7 @@ fn macro_reach_witness_with(
             }
         }
 
-        for callee in &test.calls {
+        for callee in test_calls(test) {
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
@@ -1041,19 +1040,30 @@ fn is_ascii_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn calls_of(f: &FunctionSummary) -> &[CallFact] {
-    &f.calls
+fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&f.name, &f.calls)
 }
 
-/// Whether `call` is the function's own declaration line (`fn build(&self)`),
-/// which call facts record under the function's own name. It is no evidence
-/// that the function leads anywhere: without this, `Cache::build` would
-/// "reach" through the name `build` (#5481). A real call to a same-named
-/// function on another type (`self.queue.build()`) still counts.
-fn is_own_declaration(call: &CallFact, function: &FunctionSummary) -> bool {
-    call.name == function.name
-        && contains_identifier(&call.text, "fn")
-        && call.text.contains(&format!("fn {}", function.name))
+fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&test.name, &test.calls)
+}
+
+/// `calls` without the function's own declaration (`fn build(&self)`), which
+/// call facts record under the function's own name. It is no evidence that
+/// the function leads anywhere. Left in, `Cache::build` "reaches" through the
+/// name `build` (#5481), a test named `test` calls every same-named helper,
+/// and a trait method's walk reaches every method sharing its name, so
+/// `Display::fmt` reached each `Debug::fmt` (#5577). A real call to a
+/// same-named function on another type (`self.queue.build()`) still counts.
+pub(in crate::analysis) fn calls_after_definition<'c>(
+    name: &'c str,
+    calls: &'c [CallFact],
+) -> impl Iterator<Item = &'c CallFact> + 'c {
+    calls.iter().filter(move |call| {
+        !(call.name == name
+            && contains_identifier(&call.text, "fn")
+            && call.text.contains(&format!("fn {name}")))
+    })
 }
 
 /// Returns true when the callee name looks like a macro invocation - i.e. it
