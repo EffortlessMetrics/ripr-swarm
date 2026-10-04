@@ -184,9 +184,12 @@ Two pattern terms are used below.
    wildcard pre-check, a `matches!` or `assert_matches!` whose whole
    pattern is irrefutable assigns `relational_check` / weak, guard or not,
    so `Ok(_) | Err(_)` never reaches step 2 as a result-side oracle that
-   RIPR-SPEC-0227 rules 3 and 3b could credit. At steps 0, 1 and 5, a
-   side-only pattern assigns `smoke_only` / smoke when unguarded, because
-   it only checks the side, and `relational_check` / weak with a guard; a
+   RIPR-SPEC-0227 rules 3 and 3b could credit. Rule 2 takes precedence
+   over the rest of this rule for an `Err(..)` pattern it covers, so
+   `Err(_)` and a guarded `Err(e)` stay `broad_error` / weak. At steps 0,
+   1 and 5, any other side-only pattern assigns `smoke_only` / smoke when
+   unguarded, because it only checks the side, and `relational_check` /
+   weak with a guard; a
    range pattern, or a constructor whose payload is a range (`1..=5`,
    `Some(1..=5)`), assigns `relational_check` / weak, and an `Err` range
    payload (`Err(1..=5)`) assigns `broad_error` / weak. At steps 0, 1 and
