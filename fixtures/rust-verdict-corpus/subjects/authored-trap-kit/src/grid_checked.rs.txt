@@ -22,7 +22,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "cell beyond the board")]
-    fn row_at_rejects_large_index() {
+    fn board_refuses_cell_one_hundred() {
         Board::new(4).row_at(100);
     }
 }

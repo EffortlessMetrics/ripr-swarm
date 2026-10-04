@@ -22,7 +22,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn slot_of_rejects_large_index() {
+    fn panel_refuses_slot_one_hundred() {
         Panel::new(4).slot_of(100);
     }
 }

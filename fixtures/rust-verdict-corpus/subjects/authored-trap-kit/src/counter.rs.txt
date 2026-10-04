@@ -1,11 +1,11 @@
 #[derive(Clone, Debug, Default)]
-pub struct Counter {
-    pub n: u32,
+pub struct Card {
+    pub points: u32,
 }
 
-pub fn with_bonus(base: &Counter) -> Counter {
-    Counter {
-        n: base.n * 3,
+pub fn with_bonus(base: &Card) -> Card {
+    Card {
+        points: base.points * 3,
     }
 }
 
@@ -14,11 +14,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bonus_moves_the_counter() {
-        let counter = Counter { n: 2 };
-        let snapshot = counter.clone();
-        let next = with_bonus(&counter);
-        assert_eq!(snapshot.n, 2);
+    fn bonus_triples_the_points() {
+        let card = Card { points: 2 };
+        let snapshot = card.clone();
+        let next = with_bonus(&card);
+        assert_eq!(snapshot.points, 2);
         let _ = next;
     }
 }

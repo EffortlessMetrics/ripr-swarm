@@ -685,7 +685,7 @@
         },
         {
           "path": "src/counter.rs",
-          "sha256": "84cd1e7d160dcdcdc860781329049bc028b2e206bf033748af1c78e2b1e446e9"
+          "sha256": "5df6bd0c3022115d2f22d6cf8e2d282a2df4063e5db142d34ede6af041dcc7c1"
         },
         {
           "path": "src/grid.rs",
@@ -693,11 +693,11 @@
         },
         {
           "path": "src/grid_checked.rs",
-          "sha256": "8c70a96fda85584e2d8650c4fd2a802e376c9fa96bdd2533b20e88b1d968d088"
+          "sha256": "17a0d7540598a9775f2612e06856b0bd2ca1f25835ba7c55a8591caec7998fad"
         },
         {
           "path": "src/grid_reached.rs",
-          "sha256": "bddd7854382f78da37d2dc3b8c315dba8e3296e1a751038d9b89fef27311b728"
+          "sha256": "d2130b465563810332af3c80a6d6abb50b675da10dc0ced87b122f8c6c2168a2"
         },
         {
           "path": "src/heaters.rs",
@@ -6032,8 +6032,8 @@
       },
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "field_construction",
-      "test_shape": "assert_on_stale_clone",
-      "hard_case": "The test asserts on a clone of the input taken before with_bonus() ran, so the constructed field is never read.",
+      "test_shape": "assert_on_stale_clone_same_field",
+      "hard_case": "The test asserts the `points` field of a clone taken before with_bonus() ran, so the constructed field is never read. The field name matches the changed field, so only the receiver tells them apart. Asserting next.points instead reads exposed.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6041,22 +6041,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "base.n * 4",
+            "replacement": "base.points * 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n * 4`, which changes the result, but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.points` with `base.points * 4`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "base.n + 3",
+            "replacement": "base.points + 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n + 3`, which changes the result, but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.points` with `base.points + 3`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "base.n / 3",
+            "replacement": "base.points / 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n / 3`, which changes the result, but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.points` with `base.points / 3`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6067,7 +6067,7 @@
           "limited"
         ]
       },
-      "reasoning": "bonus_moves_the_counter clones the counter, calls with_bonus(&counter) into next and asserts snapshot.n == 2. Adversarial shape (assert on the wrong variable: a stale snapshot). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
+      "reasoning": "bonus_triples_the_points clones the card, calls with_bonus(&card) into next and asserts snapshot.points == 2. Adversarial shape (assert on the wrong variable: a stale snapshot with the same field).",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6430,19 +6430,19 @@
           {
             "replacement": "index >= 101",
             "outcome": "tests_failed",
-            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "failing_test": "grid_reached::tests::panel_refuses_slot_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics"
           },
           {
             "replacement": "index < 100",
             "outcome": "tests_failed",
-            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "failing_test": "grid_reached::tests::panel_refuses_slot_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics"
           },
           {
             "replacement": "false",
             "outcome": "tests_failed",
-            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "failing_test": "grid_reached::tests::panel_refuses_slot_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
           }
         ]
@@ -6486,19 +6486,19 @@
           {
             "replacement": "index >= 101",
             "outcome": "tests_failed",
-            "failing_test": "grid_checked::tests::row_at_rejects_large_index",
+            "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics"
           },
           {
             "replacement": "index < 100",
             "outcome": "tests_failed",
-            "failing_test": "grid_checked::tests::row_at_rejects_large_index",
+            "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics"
           },
           {
             "replacement": "false",
             "outcome": "tests_failed",
-            "failing_test": "grid_checked::tests::row_at_rejects_large_index",
+            "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
             "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
           }
         ]

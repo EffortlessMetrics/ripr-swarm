@@ -2196,7 +2196,7 @@
       "origin": "authored",
       "anchor": "src/counter.rs:8",
       "behavior_family": "field_construction",
-      "test_shape": "assert_on_stale_clone",
+      "test_shape": "assert_on_stale_clone_same_field",
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
