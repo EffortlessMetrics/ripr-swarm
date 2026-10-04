@@ -130,9 +130,10 @@ fn discover_manifests(fixtures_dir: &Path, bench: Option<&str>) -> Result<Vec<Pa
             continue;
         }
         let manifest = entry.join("manifest.json");
-        if manifest.is_file() {
-            manifests.push(manifest);
-        }
+        // Every bench directory is reported, even without a manifest: a
+        // missing manifest is a `missing_manifest` outcome, never a silent
+        // denominator narrowing.
+        manifests.push(manifest);
     }
     if manifests.is_empty() {
         return Err(format!(
@@ -278,6 +279,14 @@ fn verify_bench(fixtures_dir: &Path, manifest_path: &Path) -> BenchOutcome {
             oracle_command: manifest.map(|loaded| loaded.oracle_command.clone()),
         }
     };
+    if !manifest_path.is_file() {
+        return outcome(
+            "missing_manifest",
+            None,
+            Some("manifest.json is missing".to_string()),
+            0,
+        );
+    }
     let bytes = match fs::read(manifest_path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -395,7 +404,9 @@ fn validate_manifest(manifest: &mut Manifest, dir_id: &str) -> Result<(), String
 }
 
 /// B6 bench-specific check: the selected target must sit inside the allowed
-/// surface and outside every forbidden path.
+/// surface and outside every forbidden path. No B6 manifest ships yet (the
+/// production-routed B6 rebuild is tracked separately); this stays as the
+/// bench-specific plug-in point.
 fn validate_edit_cage_surface(manifest: &Manifest) -> Result<(), String> {
     let target = manifest.selected_target.path.as_str();
     if !manifest
@@ -482,7 +493,9 @@ fn report_markdown(report: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_bench_id, normalize_repo_path, parse_options, valid_digest};
+    use super::{
+        normalize_bench_id, normalize_repo_path, parse_options, valid_digest, verify_bench,
+    };
 
     #[test]
     fn parses_bench_filter_and_fixtures_dir() -> Result<(), String> {
@@ -530,6 +543,26 @@ mod tests {
         }
         if valid_digest("nope") {
             return Err("valid_digest accepted an unshaped digest".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bench_dir_without_manifest_reports_missing_manifest() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-agentic-bench-missing-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("no-manifest"))
+            .map_err(|err| format!("create temp bench dir: {err}"))?;
+        let outcome = verify_bench(&dir, &dir.join("no-manifest").join("manifest.json"));
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove temp bench dir: {err}"))?;
+        if outcome.status != "missing_manifest" {
+            return Err(format!("expected missing_manifest, got {}", outcome.status));
+        }
+        if outcome.bench != "no-manifest" {
+            return Err(format!(
+                "expected dir-id bench label, got {}",
+                outcome.bench
+            ));
         }
         Ok(())
     }

@@ -784,11 +784,10 @@ fn b1_anti_gaming_stdout_only_verify_fails_the_oracle() -> Result<(), String> {
     let receipt_command = printed_command(&report, "receipt")?;
     let receipt_output = run_in_shell(&journey, &receipt_command)?;
     if receipt_output.status.success() {
-        let receipt: Value = serde_json::from_slice(&receipt_output.stdout)
-            .map_err(|error| format!("unexpected receipt stdout is not JSON: {error}"))?;
-        if assert_funnel_writes_bind_fresh_artifacts(&journey, &receipt).is_ok() {
-            return Err("the oracle accepted a stdout-only verify chain".to_string());
-        }
+        return Err(format!(
+            "the receipt step accepted a missing agent-verify.json:\n{}",
+            String::from_utf8_lossy(&receipt_output.stdout)
+        ));
     }
     println!("B1 anti-gaming twin 1: stdout-only verify failed the oracle as required");
     Ok(())

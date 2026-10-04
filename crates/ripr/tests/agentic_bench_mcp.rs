@@ -221,7 +221,14 @@ impl McpSession {
                     }
                     self.pending.insert(got, value);
                 }
-                Err(_) => {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(format!(
+                        "timed out after {timeout:?} waiting for MCP reply id {id:?}; \
+                         {} other replies buffered",
+                        self.pending.len()
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(format!(
                         "MCP reply stream ended while waiting for id {id:?}"
                     ));

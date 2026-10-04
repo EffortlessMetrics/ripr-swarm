@@ -73,6 +73,12 @@
       "expect": "AuthorityViolation"
     },
     {
+      "id": "capabilities-executes-project-commands",
+      "base": "capabilities",
+      "mutations": [{ "pointer": "/capabilities/0/executes_project_commands", "value": true }],
+      "expect": "AuthorityViolation"
+    },
+    {
       "id": "capabilities-duplicate",
       "base": "capabilities",
       "mutations": [

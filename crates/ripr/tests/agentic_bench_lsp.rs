@@ -709,6 +709,29 @@ fn lsp_agent_protocol_benchmark_sequence() -> Result<(), String> {
         started,
     ));
     expect_result(&probe_live, &live_request)?;
+    // The unsupported major must fail closed in the parsed profile, not
+    // just in the advertised identity: the receipt status projection must
+    // carry a null ripr_agent block.
+    let started = Instant::now();
+    let probe_status = probe.request(
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.collectReceiptStatus", "arguments": []}),
+    )?;
+    steps.push(record(
+        "major_probe_client_features",
+        "workspace/executeCommand",
+        &probe_status,
+        started,
+    ));
+    let probe_status_result = expect_result(&probe_status, "workspace/executeCommand")?;
+    if !matches!(
+        probe_status_result.pointer("/client_features/ripr_agent"),
+        Some(value) if value.is_null()
+    ) {
+        return Err(format!(
+            "unsupported client riprAgent major must fail closed: {probe_status}"
+        ));
+    }
     let started = Instant::now();
     let probe_shutdown = probe.request("shutdown", serde_json::Value::Null)?;
     steps.push(record(
