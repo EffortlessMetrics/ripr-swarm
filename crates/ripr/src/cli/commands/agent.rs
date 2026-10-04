@@ -66,6 +66,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),
+        // A named stub refusal is a decision (exit 3); a failed read or
+        // analysis stays exit 2.
+        AgentCommand::Stub(options) => super::agent_stub::run_agent_stub(options),
         // A deliberate named refusal (drifted analysis inputs, no movement)
         // maps to exit code 3, as it does inside `repair --phase after`.
         // Stdout stays empty on every refusal: the release negative corpus
@@ -92,6 +95,7 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         | AgentCommand::BriefHelp
         | AgentCommand::PacketHelp
         | AgentCommand::CardHelp
+        | AgentCommand::StubHelp
         | AgentCommand::VerifyHelp
         | AgentCommand::VerifyExecuteHelp
         | AgentCommand::ReceiptHelp
@@ -1111,13 +1115,33 @@ fn run_agent_repair_phase(
                 // This makes the durable delta the exact delta the receipt
                 // binds, while the receipt itself remains outside the measured
                 // edit window.
-                let cage_after = finish_repair_attempt_from(
+                let cage_after = match finish_repair_attempt_from(
                     &root,
                     store_ref,
                     &attempt.attempt_id,
                     &packet_path,
                     head_movement,
-                )?;
+                ) {
+                    Ok(after) => after,
+                    Err(error) => {
+                        // A commit lost to a concurrent after phase is a
+                        // deliberate named retry refusal (exit 3): nothing
+                        // broke, the attempt simply moved underfoot, and the
+                        // recovery is to retry. Other finish errors stay
+                        // operational (exit 2).
+                        if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
+                            &error,
+                        ) {
+                            for line in
+                                repair_after_commit_busy_lines(&root, store_ref, &attempt, &error)
+                            {
+                                refusal.narrate(line);
+                            }
+                            refusal.typed = true;
+                        }
+                        return Err(error);
+                    }
+                };
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -1599,6 +1623,40 @@ fn untracked_output_hints(
 /// Recovery narration for an after phase refused because the analysis input
 /// identity moved between the phases. The attempt is not finished, so it is
 /// still awaiting the edit: the lines name the changed inputs and the rerun.
+/// Narrated cause and recovery for a manifest commit lost to a concurrent
+/// after phase. Both outcomes (lock contention now, or a commit that
+/// landed mid-run) recover identically: wait for the other phase, retry
+/// this command. The cause line names which one this error reports.
+fn repair_after_commit_busy_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    error: &str,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let cause = if error.contains(crate::app::repair_attempt::REPAIR_ATTEMPT_CONTENTION_TAIL) {
+        format!(
+            "attempt `{}` is being finished by another process; this after phase did not commit.",
+            attempt.attempt_id.as_str()
+        )
+    } else {
+        format!(
+            "attempt `{}` changed while this after phase ran; this after phase did not commit.",
+            attempt.attempt_id.as_str()
+        )
+    };
+    vec![
+        cause,
+        format!(
+            "to recover: wait for the other after phase to complete, then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
+        ),
+    ]
+}
+
 fn repair_after_input_drift_lines(
     root: &Path,
     store: Option<&Path>,
@@ -1670,11 +1728,12 @@ fn repair_after_input_drift_lines(
 /// test-only edit. Names the seam and the reason in plain words, says that
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
-/// and points at the surfaces that only offer a repair start for seams that
-/// pass this check.
+/// points at the surfaces that only offer a repair start for seams that
+/// pass this check, and points at the repair help carrying the scope
+/// boundary (#5210).
 fn before_phase_refusal(seam_id: &str, error: &str) -> String {
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` (no repair target exists). Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
@@ -1910,7 +1969,7 @@ mod tests {
         assert_eq!(
             agent(&args(&["unknown"])),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `stub`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             ))
         );
@@ -1969,6 +2028,54 @@ mod tests {
     }
 
     #[test]
+    fn repair_after_commit_busy_lines_name_cause_and_retry() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL, REPAIR_ATTEMPT_CONTENTION_TAIL, RepairAttemptId,
+            ResolvedRepairAttempt,
+        };
+
+        let attempt = ResolvedRepairAttempt {
+            attempt_id: RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567".to_string(),
+            )?,
+            seam_id: "seam:sample".to_string(),
+            repository_head: "abc".to_string(),
+            manifest_path: PathBuf::from("attempt.json"),
+            before_snapshot_path: PathBuf::from("before.json"),
+            packet_path: PathBuf::from("packet.json"),
+        };
+        let root = Path::new("some-checkout");
+        let id = attempt.attempt_id.as_str();
+        for (tail, cause_fragment) in [
+            (
+                REPAIR_ATTEMPT_CONTENTION_TAIL,
+                "is being finished by another process",
+            ),
+            (
+                REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL,
+                "changed while this after phase ran",
+            ),
+        ] {
+            let error = format!("repair attempt {id} {tail}");
+            let lines = repair_after_commit_busy_lines(root, None, &attempt, &error);
+            if lines.len() != 2 {
+                return Err(format!("expected cause plus recovery lines, got {lines:?}"));
+            }
+            if !lines[0].contains(cause_fragment) || !lines[0].contains(id) {
+                return Err(format!(
+                    "cause line must name the outcome and attempt: {lines:?}"
+                ));
+            }
+            if !lines[1].contains("--phase after") || !lines[1].contains(id) {
+                return Err(format!(
+                    "recovery line must rerun this after phase: {lines:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn agent_start_rejects_missing_root_before_analysis() {
         assert_eq!(
             agent(&args(&[
@@ -1979,7 +2086,7 @@ mod tests {
                 "f3c9e4d21a0b7c88",
             ])),
             Err(CommandError::Failure(
-                "agent start root target/ripr/missing-agent-start-root is not a directory"
+                "agent start root target/ripr/missing-agent-start-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -1995,7 +2102,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent status root target/ripr/missing-agent-status-root is not a directory"
+                "agent status root target/ripr/missing-agent-status-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2011,7 +2118,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
+                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2029,7 +2136,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent packet root target/ripr/missing-agent-packet-root is not a directory"
+                "agent packet root target/ripr/missing-agent-packet-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2176,7 +2283,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent brief root target/ripr/missing-agent-brief-root is not a directory"
+                "agent brief root target/ripr/missing-agent-brief-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
