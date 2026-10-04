@@ -1,9 +1,8 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
-use ra_ap_syntax::{Parse, SourceFile};
-use std::cell::{OnceCell, RefCell};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
@@ -25,15 +24,17 @@ pub(crate) struct CompactGripContext<'a> {
     /// `index.functions` per seam.
     function_name_counts: BTreeMap<String, usize>,
     name_module_candidates: NameModuleCandidateIndex,
-    owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
-    same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
+    owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
+    same_module_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     pub(in crate::analysis::test_grip_evidence) source_digest_cache:
-        RefCell<BTreeMap<&'a Path, String>>,
+        Mutex<BTreeMap<&'a Path, String>>,
     /// Per test file: evidence-role function indices grouped by start line,
     /// built on first use. See [`Self::unique_evidence_function`].
-    evidence_functions_by_line_cache: RefCell<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
-    /// Run-scoped parser reuse for owner-result binding inspection.
-    parsed_sources: RefCell<BTreeMap<&'a Path, Option<Parse<SourceFile>>>>,
+    evidence_functions_by_line_cache: Mutex<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
+    /// Run-scoped parser reuse for owner-result binding inspection: the
+    /// parse, its line index, and its test-function lookup, built once per
+    /// file instead of once per seam and related test.
+    parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
     /// Per production file: the parser-backed module layout new-test-target
     /// admission reads. File-bounded and small, so it survives windows.
     pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
@@ -134,7 +135,7 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) code_lines: Vec<String>,
     /// Per-test facts; build through [`CompactTest::value_facts`] so the
     /// whole-file part comes from `file_value_scan`, never a fresh scan.
-    value_facts: OnceCell<ValueEnvFacts>,
+    value_facts: OnceLock<ValueEnvFacts>,
     /// Shared by every test in the same file.
     pub(in crate::analysis::test_grip_evidence) file_value_scan: Arc<OnceLock<FileValueScan>>,
 }
@@ -153,6 +154,12 @@ impl CompactTest<'_> {
             ValueEnvFacts::build(self.test, file_scan)
         })
     }
+}
+
+/// Lock a memo. Every memo holds keyed, deterministic results, so a panic
+/// on another worker cannot leave a wrong entry behind; recover the map.
+fn memo<T>(memo: &Mutex<T>) -> MutexGuard<'_, T> {
+    memo.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Opt-in phase timing keeps large-workspace context preparation attributable.
@@ -174,9 +181,9 @@ fn count_functions_by_name(index: &RustIndex) -> BTreeMap<String, usize> {
 
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn clear_window_memos(&self) {
-        self.owner_named_cache.borrow_mut().clear();
-        self.same_module_cache.borrow_mut().clear();
-        self.parsed_sources.borrow_mut().clear();
+        memo(&self.owner_named_cache).clear();
+        memo(&self.same_module_cache).clear();
+        memo(&self.parsed_sources).clear();
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -417,7 +424,7 @@ impl<'a> CompactGripContext<'a> {
                     target_affinity_owner_call_names,
                     ambiguous_target_affinity_owner_call_names,
                     code_lines,
-                    value_facts: OnceCell::new(),
+                    value_facts: OnceLock::new(),
                     file_value_scan: Arc::clone(
                         file_value_scans.entry(test.file.as_path()).or_default(),
                     ),
@@ -450,11 +457,11 @@ impl<'a> CompactGripContext<'a> {
             tests_by_import_token,
             function_name_counts,
             name_module_candidates,
-            owner_named_cache: RefCell::new(BTreeMap::new()),
-            same_module_cache: RefCell::new(BTreeMap::new()),
-            source_digest_cache: RefCell::new(BTreeMap::new()),
-            evidence_functions_by_line_cache: RefCell::new(BTreeMap::new()),
-            parsed_sources: RefCell::new(BTreeMap::new()),
+            owner_named_cache: Mutex::new(BTreeMap::new()),
+            same_module_cache: Mutex::new(BTreeMap::new()),
+            source_digest_cache: Mutex::new(BTreeMap::new()),
+            evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
+            parsed_sources: Mutex::new(BTreeMap::new()),
             inline_unit_layouts: Default::default(),
         })
     }
@@ -475,7 +482,7 @@ impl<'a> CompactGripContext<'a> {
         start_line: usize,
     ) -> Option<&'a FunctionSummary> {
         let (path, facts) = self.index.files().get_key_value(path)?;
-        let mut cache = self.evidence_functions_by_line_cache.borrow_mut();
+        let mut cache = memo(&self.evidence_functions_by_line_cache);
         let by_line = cache.entry(path.as_path()).or_insert_with(|| {
             let mut by_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
             for (position, function) in facts.functions.iter().enumerate() {
@@ -507,33 +514,30 @@ impl<'a> CompactGripContext<'a> {
         path: &Path,
     ) -> Option<String> {
         let (path, facts) = self.index.files().get_key_value(path)?;
-        if let Some(digest) = self.source_digest_cache.borrow().get(path.as_path()) {
+        if let Some(digest) = memo(&self.source_digest_cache).get(path.as_path()) {
             return Some(digest.clone());
         }
         let digest = crate::analysis::facts::source_digest(facts.source.as_bytes());
-        self.source_digest_cache
-            .borrow_mut()
-            .insert(path.as_path(), digest.clone());
+        memo(&self.source_digest_cache).insert(path.as_path(), digest.clone());
         Some(digest)
     }
 
-    /// Parser-backed source for `path`, or `None` on lexical fallback or
-    /// parse refusal. Cached once per file for the life of this context.
-    pub(in crate::analysis::test_grip_evidence) fn parsed_source(
+    /// Parser-backed layout for `path`, or `None` on lexical fallback or
+    /// parse refusal. Cached once per file until the next window boundary.
+    pub(in crate::analysis::test_grip_evidence) fn parsed_test_file(
         &self,
         path: &Path,
-    ) -> Option<Parse<SourceFile>> {
+    ) -> Option<Arc<ParsedTestFile>> {
         let (path, facts) = self.index.files().get_key_value(path)?;
         if facts.used_lexical_fallback {
             return None;
         }
-        if let Some(cached) = self.parsed_sources.borrow().get(path.as_path()) {
+        if let Some(cached) = memo(&self.parsed_sources).get(path.as_path()) {
             return cached.clone();
         }
-        let parsed = parse_clean_source_file(&facts.source);
-        self.parsed_sources
-            .borrow_mut()
-            .insert(path.as_path(), parsed.clone());
+        let parsed = parse_clean_source_file(&facts.source)
+            .map(|parse| Arc::new(ParsedTestFile::new(parse, &facts.source)));
+        memo(&self.parsed_sources).insert(path.as_path(), parsed.clone());
         parsed
     }
 
@@ -541,7 +545,7 @@ impl<'a> CompactGripContext<'a> {
         if owner_name_lower.is_empty() {
             return Vec::new();
         }
-        if let Some(indices) = self.owner_named_cache.borrow().get(owner_name_lower) {
+        if let Some(indices) = memo(&self.owner_named_cache).get(owner_name_lower) {
             return indices.clone();
         }
         let indices = self
@@ -550,9 +554,7 @@ impl<'a> CompactGripContext<'a> {
             .into_iter()
             .filter(|&index| self.tests[index].name_lower.contains(owner_name_lower))
             .collect::<Vec<_>>();
-        self.owner_named_cache
-            .borrow_mut()
-            .insert(owner_name_lower.to_string(), indices.clone());
+        memo(&self.owner_named_cache).insert(owner_name_lower.to_string(), indices.clone());
         indices
     }
 
@@ -560,7 +562,7 @@ impl<'a> CompactGripContext<'a> {
         if owner_module.is_empty() {
             return Vec::new();
         }
-        if let Some(indices) = self.same_module_cache.borrow().get(owner_module) {
+        if let Some(indices) = memo(&self.same_module_cache).get(owner_module) {
             return indices.clone();
         }
         let indices = self
@@ -587,9 +589,7 @@ impl<'a> CompactGripContext<'a> {
         } else {
             indices
         };
-        self.same_module_cache
-            .borrow_mut()
-            .insert(owner_module.to_string(), indices.clone());
+        memo(&self.same_module_cache).insert(owner_module.to_string(), indices.clone());
         indices
     }
 }

@@ -552,9 +552,10 @@ pub(super) fn sort_related_tests_for_seam(
     context: &CompactGripContext<'_>,
     related: &mut [(&CompactTest<'_>, RelationReason)],
 ) {
+    let owner = seam_owner_activation(seam, context.index);
     related.sort_by_cached_key(|entry| {
         let (indexed, reason) = *entry;
-        related_test_rank_key(seam, context, indexed, reason)
+        related_test_rank_key(seam, context, indexed, reason, owner.as_ref())
     });
 }
 
@@ -563,13 +564,14 @@ pub(super) fn related_test_rank_key(
     context: &CompactGripContext<'_>,
     indexed: &CompactTest<'_>,
     reason: RelationReason,
+    owner: Option<&SeamOwnerActivation<'_>>,
 ) -> RelatedTestRankKey {
     let (_oracle_kind, oracle_strength) = best_oracle(indexed.test, seam);
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),
         oracle_strength: Reverse(oracle_strength.rank()),
-        activation_overlap: Reverse(activation_overlap_score(seam, context, indexed)),
+        activation_overlap: Reverse(activation_overlap_score(seam, context, indexed, owner)),
         file: indexed.test.file.clone(),
         test_name: indexed.test.name.clone(),
         line: indexed.test.start_line,

@@ -37,10 +37,12 @@ use crate::domain::{
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Per-seam test-grip evidence record.
@@ -252,21 +254,34 @@ impl<'index> EvidencePass<'index> {
             return Vec::new();
         };
         let evidence_started = Instant::now();
-        let mut out: Vec<TestGripEvidence> = Vec::with_capacity(seams.len());
-        for (index, seam) in seams.iter().enumerate() {
-            if cancellation::checkpoint().is_err() {
-                break;
-            }
-            out.push(evidence_for_seam_with_context(seam, context));
-            let processed = index + 1;
-            if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
-                trace_latency_phase(
-                    "evidence_for_seams_progress",
-                    &format!("processed_{processed}_of_{}", seams.len()),
-                    evidence_started.elapsed(),
-                );
-            }
-        }
+        // Seams are independent and the context's memos are keyed, so the
+        // pass runs on the rayon pool. Workers inherit this thread's
+        // cancellation token and committed-source overlay; a cancelled
+        // worker drops its seam, and the caller's checkpoint discards the
+        // partial vector exactly as it did for the serial loop.
+        let token = cancellation::current_token();
+        let overlay = crate::analysis::committed_source::current_overlay();
+        let processed = AtomicUsize::new(0);
+        let mut out: Vec<TestGripEvidence> = seams
+            .par_iter()
+            .filter_map(|seam| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().ok()?;
+                        let evidence = evidence_for_seam_with_context(seam, context);
+                        let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
+                            trace_latency_phase(
+                                "evidence_for_seams_progress",
+                                &format!("processed_{processed}_of_{}", seams.len()),
+                                evidence_started.elapsed(),
+                            );
+                        }
+                        Some(evidence)
+                    })
+                })
+            })
+            .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
     }
@@ -425,20 +440,25 @@ fn activate_evidence(
     let observed_argument_selection =
         (!owner_name.is_empty()).then(|| observed_argument_selection(seam, index, owner_name));
 
-    if !owner_name.is_empty() {
+    if let Some(selection) = &observed_argument_selection {
         for indexed in related {
             observed.extend(observed_value_facts_for_test(
-                seam, indexed, index, owner_name,
+                seam, indexed, index, owner_name, selection,
             ));
         }
     }
     sort_value_facts(&mut observed);
 
     let field_assignment_value_unresolved = observed.is_empty()
-        && !owner_name.is_empty()
-        && related.iter().any(|indexed| {
-            field_assignment_value_unresolved_for_test(seam, indexed, index, owner_name)
-        });
+        && observed_argument_selection
+            .as_ref()
+            .is_some_and(|selection| {
+                related.iter().any(|indexed| {
+                    field_assignment_value_unresolved_for_test(
+                        seam, indexed, index, owner_name, selection,
+                    )
+                })
+            });
 
     // A boundary operand naming a constant (`amount >= DISCOUNT_THRESHOLD`)
     // is compared through the shared named-constant lookup: a visible
@@ -664,9 +684,9 @@ fn observed_value_facts_for_test(
     indexed: &CompactTest<'_>,
     index: &RustIndex,
     owner_name: &str,
+    observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
     let mut observed: Vec<ValueFact> = Vec::new();
-    let observed_argument_selection = observed_argument_selection(seam, index, owner_name);
     if matches!(
         observed_argument_selection,
         ObservedArgumentSelection::UnresolvedBoundaryOperands
@@ -686,7 +706,7 @@ fn observed_value_facts_for_test(
             continue;
         };
         for (arg_index, arg) in args.into_iter().enumerate() {
-            let argument_operand = match &observed_argument_selection {
+            let argument_operand = match observed_argument_selection {
                 ObservedArgumentSelection::ArgumentOperands(operands) => operands
                     .iter()
                     .find(|operand| operand.index == arg_index)
@@ -742,8 +762,8 @@ fn field_assignment_value_unresolved_for_test(
     indexed: &CompactTest<'_>,
     index: &RustIndex,
     owner_name: &str,
+    selection: &ObservedArgumentSelection,
 ) -> bool {
-    let selection = observed_argument_selection(seam, index, owner_name);
     let ObservedArgumentSelection::ArgumentOperands(operands) = selection else {
         return false;
     };
@@ -1084,9 +1104,10 @@ fn body_contains_wrapped_local_alias(
     operand: &str,
     parameter: &str,
 ) -> bool {
+    // Built once per body: this runs per seam, related test and parameter.
+    let prefix = format!("if let {wrapper}({operand}) = ");
     body.lines().any(|line| {
         let line = code_line_before_comment(line);
-        let prefix = format!("if let {wrapper}({operand}) = ");
         line.strip_prefix(&prefix)
             .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
     }) || (body_contains_match_parameter(body, parameter)
@@ -1147,25 +1168,48 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
+/// The seam's owner function and its argument selection, resolved once
+/// per seam so per-test ranking and activation do not re-derive them.
+pub(super) struct SeamOwnerActivation<'index> {
+    owner_fn: &'index FunctionSummary,
+    selection: ObservedArgumentSelection,
+}
+
+pub(super) fn seam_owner_activation<'index>(
+    seam: &RepoSeam,
+    index: &'index RustIndex,
+) -> Option<SeamOwnerActivation<'index>> {
+    let owner_fn = find_owner_function(seam, index)?;
+    if owner_fn.name.is_empty() {
+        return None;
+    }
+    Some(SeamOwnerActivation {
+        owner_fn,
+        selection: observed_argument_selection(seam, index, &owner_fn.name),
+    })
+}
+
 fn activation_overlap_score(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     indexed: &CompactTest<'_>,
+    owner: Option<&SeamOwnerActivation<'_>>,
 ) -> usize {
-    let Some(owner_fn) = find_owner_function(seam, context.index) else {
+    let Some(owner) = owner else {
         return 0;
     };
+    let owner_fn = owner.owner_fn;
     let owner_name = owner_fn.name.as_str();
-    if owner_name.is_empty() {
-        return 0;
-    }
 
     let mut score = boundary_equality_overlap_score(seam, indexed, context.index, owner_fn);
     let required_text = required_discriminator_text(seam);
-    score += observed_value_facts_for_test(seam, indexed, context.index, owner_name)
-        .iter()
-        .filter(|fact| observed_value_matches_required_discriminator(&fact.value, required_text))
-        .count();
+    score +=
+        observed_value_facts_for_test(seam, indexed, context.index, owner_name, &owner.selection)
+            .iter()
+            .filter(|fact| {
+                observed_value_matches_required_discriminator(&fact.value, required_text)
+            })
+            .count();
     score
 }
 

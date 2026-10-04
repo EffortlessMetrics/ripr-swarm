@@ -2599,6 +2599,102 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
+fn parallel_evidence_fixture() -> Result<(RustIndex, Vec<RepoSeam>), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub struct Quote { pub amount: i32, pub tier: u8 }
+
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn quote(amount: i32) -> Quote {
+    Quote { amount, tier: if amount > 500 { 2 } else { 1 } }
+}
+
+pub fn parse(value: &str) -> Result<i32, String> {
+    if value.is_empty() { return Err("empty".to_string()); }
+    value.parse::<i32>().map_err(|err| err.to_string())
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+#[test]
+fn quote_tier() {
+    let q = quote(600);
+    assert!(q.tier > 0);
+}
+#[test]
+fn parse_rejects_empty() {
+    assert!(parse("").is_err());
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.len() < 4 {
+        return Err(format!(
+            "fixture should yield several seams, got {}",
+            seams.len()
+        ));
+    }
+    Ok((index, seams))
+}
+
+#[test]
+fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let run = |threads: usize| -> Result<String, String> {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|err| format!("pool: {err}"))?;
+        let evidence = pool.install(|| evidence_for_seams(&seams, &index));
+        serde_json::to_string(&evidence).map_err(|err| format!("encode: {err}"))
+    };
+    let serial = run(1)?;
+    let parallel = run(4)?;
+    if serial != parallel {
+        return Err("parallel evidence differs from the single-thread pass".into());
+    }
+    if serial.matches("seam_id").count() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .map_err(|err| format!("pool: {err}"))?;
+    let live = AnalysisCancellationToken::new();
+    let completed =
+        pool.install(|| cancellation::with_token(&live, || evidence_for_seams(&seams, &index)));
+    if completed.len() != seams.len() {
+        return Err("a live token must not drop seams".into());
+    }
+    let cancelled = AnalysisCancellationToken::new();
+    cancelled.cancel(AnalysisAbortKind::Cancelled);
+    // Workers that did not inherit the token would see no cancellation and
+    // evaluate every seam.
+    let evidence = pool
+        .install(|| cancellation::with_token(&cancelled, || evidence_for_seams(&seams, &index)));
+    if !evidence.is_empty() {
+        return Err(format!(
+            "cancelled pass evaluated {} seams on rayon workers",
+            evidence.len()
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn given_compact_evidence_when_direct_owner_call_reaches_error_seam_then_activation_is_yes()
 -> Result<(), String> {

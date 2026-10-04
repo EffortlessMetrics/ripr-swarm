@@ -11,10 +11,9 @@ use crate::analysis::rust_index::{self, FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, SeamKind};
 use crate::analysis::syntax::{GovernedCfgTestModule, inline_unit_module_layout};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 mod integration;
 #[cfg(test)]
@@ -337,26 +336,30 @@ struct InlineUnitFileLayout {
 /// memo lives.
 #[derive(Debug, Default)]
 pub(crate) struct InlineUnitLayoutMemo {
-    layouts: RefCell<BTreeMap<PathBuf, Rc<InlineUnitFileLayout>>>,
+    layouts: Mutex<BTreeMap<PathBuf, Arc<InlineUnitFileLayout>>>,
 }
 
 impl InlineUnitLayoutMemo {
-    fn layout(&self, file: &Path, source: &str) -> Rc<InlineUnitFileLayout> {
-        if let Some(layout) = self.layouts.borrow().get(file) {
-            return Rc::clone(layout);
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<PathBuf, Arc<InlineUnitFileLayout>>> {
+        self.layouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn layout(&self, file: &Path, source: &str) -> Arc<InlineUnitFileLayout> {
+        if let Some(layout) = self.lock().get(file) {
+            return Arc::clone(layout);
         }
         let (modules, owner_module_paths) = match inline_unit_module_layout(source) {
             Some(layout) => (Some(layout.modules), layout.owner_module_paths),
             None => (None, BTreeMap::new()),
         };
-        let layout = Rc::new(InlineUnitFileLayout {
+        let layout = Arc::new(InlineUnitFileLayout {
             modules,
             owner_module_paths,
             source_digest: region::source_digest(source),
         });
-        self.layouts
-            .borrow_mut()
-            .insert(file.to_path_buf(), Rc::clone(&layout));
+        self.lock().insert(file.to_path_buf(), Arc::clone(&layout));
         layout
     }
 }
