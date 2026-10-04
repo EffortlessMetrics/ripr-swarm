@@ -220,7 +220,6 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
     out: &mut W,
 ) -> io::Result<()> {
     write_repo_exposure_json_document(
-        classified,
         limit_info,
         RepoExposureJsonDisclosures {
             ts_guidance,
@@ -257,7 +256,6 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         generated_skip,
     };
     write_repo_exposure_json_document(
-        classified,
         limit_info,
         disclosures,
         Some(&placeholder),
@@ -270,7 +268,6 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
     write_repo_exposure_json_document(
-        classified,
         limit_info,
         disclosures,
         Some(&metadata),
@@ -328,7 +325,9 @@ impl<'a> SeamJsons<'a> {
         let canonical_gaps = canonical_gap_identities(classified);
         let mut prefix = Vec::new();
         let mut total = 0usize;
-        for entry in classified {
+        // A zero budget (the plain streaming writer) keeps nothing, so it
+        // renders no entry just to discard it.
+        for entry in classified.iter().take_while(|_| budget_bytes > 0) {
             let seam_json = render_seam_json(entry, &canonical_gaps);
             total = total.saturating_add(seam_json.len());
             if total > budget_bytes {
@@ -400,7 +399,6 @@ struct RepoExposureJsonDisclosures<'a> {
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
-    classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
@@ -413,6 +411,8 @@ fn write_repo_exposure_json_document<W: io::Write>(
         python_guidance,
         generated_skip,
     } = disclosures;
+    // The seams' own slice: the entry index below can never run past it.
+    let classified = seams.classified;
     let metrics = ExposureMetrics::from(classified);
 
     writeln!(out, "{{")?;
@@ -1356,7 +1356,6 @@ mod tests {
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();
             write_repo_exposure_json_document(
-                &classified,
                 None,
                 disclosures,
                 None,

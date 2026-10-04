@@ -90,7 +90,6 @@ are scoped or reviewed.
   0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
   -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
 
-
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails
