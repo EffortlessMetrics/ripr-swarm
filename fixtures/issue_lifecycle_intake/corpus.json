@@ -424,7 +424,7 @@
      "step": "issue snapshot",
      "command": "gh api repos/EffortlessMetrics/ripr-swarm/issues/5399",
      "bytes": {
-      "measured": 11408
+      "measured": 11371
      }
     },
     {
@@ -438,7 +438,7 @@
      "step": "timeline snapshot",
      "command": "gh api repos/EffortlessMetrics/ripr-swarm/issues/5399/timeline",
      "bytes": {
-      "measured": 94433
+      "measured": 94396
      }
     },
     {
@@ -504,7 +504,7 @@
       },
       {
        "identity": "gh-issue-timeline:sha256:a70efccb300cd9c4f2900f0114ad2bbec813d1438c4e50ecf016ec5d64e59981",
-       "bytes": 94433
+       "bytes": 94396
       }
      ],
      "missing_evidence_questions": []
@@ -574,7 +574,7 @@
      "claims no MCP protocol change beyond what PR #5408 itself claims",
      "claims no LSP receipt parity (explicitly out of the PR's own boundary)"
     ],
-    "row_digest": "1c4b3cbee56af34472505822047ad095720c2a86209d7f11952b351f27f6491c"
+    "row_digest": "08a6b73808420e6a5e8117dd263b7d16fb11e96e10b735c60b7107874df1203e"
    }
   },
   {
