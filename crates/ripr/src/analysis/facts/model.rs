@@ -947,6 +947,11 @@ pub struct ProbeShapeFact {
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
     pub start_byte: usize,
+    /// Byte offset one past the shape's parser-owned end within the source
+    /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
+    /// the verbatim syntax range end, so span consumers must derive geometry
+    /// from these bytes, never from `text.len()`.
+    pub end_byte: usize,
     pub kind: String,
     pub text: String,
 }
@@ -1041,12 +1046,14 @@ mod tests {
             start_line: 10,
             end_line: 12,
             start_byte: 256,
+            end_byte: 261,
             kind: "predicate".to_string(),
             text: "x > 0".to_string(),
         };
         assert_eq!(shape.start_line, 10);
         assert_eq!(shape.end_line, 12);
         assert_eq!(shape.start_byte, 256);
+        assert_eq!(shape.end_byte, 261);
         assert_eq!(shape.kind, "predicate");
         assert_eq!(shape.text, "x > 0");
     }

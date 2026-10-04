@@ -47,7 +47,7 @@ map is:
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.3` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
-| `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.4` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
@@ -2660,7 +2660,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "scope": "repo",
   "seams": [
     {
@@ -2668,6 +2668,9 @@ introduced by RIPR-SPEC-0005. The artifact lands at
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "required_discriminator": {
@@ -2684,7 +2687,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`. Bumping requires updating this section,
+- `schema_version` — currently `"0.2"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
   consumers in lockstep.
 - `scope` — always `"repo"` for this artifact. Distinguishes the repo seam
@@ -2698,6 +2701,15 @@ Field contract:
 - `file` — repo-root-relative Unix-separator path (no leading `./`).
 - `line` — 1-based start line for human display only. Not part of the seam ID
   hash; `byte_offset` is the canonical position field internally.
+- `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
+  (columns count Unicode scalar values from the line start plus one; the
+  end is exclusive),
+  matching cargo-mutants span columns for calibration joins. Present only when
+  span geometry was available; absent on legacy or span-less entries, which
+  consumers must treat as line-only. Match-arm seams are span-less by policy:
+  the parser records the `match`/`=>` token range while the seam describes a
+  wider construct, so no span is emitted rather than a misleading one. Not
+  part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
   hashing. Test functions (e.g., `#[test] fn` inside `#[cfg(test)] mod tests`)
@@ -2974,7 +2986,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -2997,6 +3009,9 @@ Consumers must not treat limited artifacts as canonical actionable counts.
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "grip_class": "weakly_gripped",
@@ -3225,15 +3240,17 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. Bumping requires updating this
+- `schema_version` — currently `"0.4"`. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
   any downstream consumers in lockstep. `0.1` → `0.2`: per-related-test
   entries gained `relation_reason` and `relation_confidence` fields
   (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields. `relation_reason` is an
-  additive string enum within `0.3`; `helper_owner_call` extends the
-  existing relation taxonomy without changing the field shape.
+  preserving existing top-level seam fields. `0.3` → `0.4`: seams gained
+  the additive `column` / `end_line` / `end_column` span coordinates
+  (#5336). `relation_reason` is an additive string enum within `0.3`;
+  `helper_owner_call` extends the existing relation taxonomy without
+  changing the field shape.
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"` or
   `"seam_limit_applied"`. `"complete"` means the run analyzed all
@@ -3304,6 +3321,9 @@ Field contract:
   `strongly_gripped`, `weakly_gripped`, `ungripped`, `reachable_unrevealed`,
   `activation_unknown`, `propagation_unknown`, `observation_unknown`,
   `discrimination_unknown`, `opaque`, `intentional`, `suppressed`.
+- `seams[].column`, `seams[].end_line`, `seams[].end_column` — same span
+  contract as `repo-seams.json` (1-based, character columns, end-exclusive,
+  present only when geometry was available). Added in `0.4` (#5336).
 - `seams[].evidence` — per-stage `StageState` strings: `yes`, `weak`,
   `no`, `unknown`, `opaque`, `not_applicable`.
 - `seams[].related_tests_total` — number of related tests the analyzer
@@ -3888,7 +3908,7 @@ runtime execution.
     "root": ".",
     "source": "repo-exposure-json",
     "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.3",
+    "repo_exposure_schema_version": "0.4",
     "repo_exposure_generation": {
       "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
       "timeout_ms": 120000,
@@ -17223,7 +17243,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.18",
+    "schema_version": "1.19",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

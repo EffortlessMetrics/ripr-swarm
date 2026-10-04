@@ -9,7 +9,7 @@ use crate::analysis::{RepoSeam, RequiredDiscriminator};
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::table_code_span;
 
-pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.2";
 
 pub(crate) fn render_repo_seams_json(seams: &[RepoSeam]) -> String {
     let mut out = String::new();
@@ -52,6 +52,11 @@ fn push_seam_json(out: &mut String, seam: &RepoSeam) {
         json_escape(&seam.file().to_string_lossy())
     ));
     out.push_str(&format!("      \"line\": {},\n", seam.display_line()));
+    if let Some(span) = seam.span() {
+        out.push_str(&format!("      \"column\": {},\n", span.start_column));
+        out.push_str(&format!("      \"end_line\": {},\n", span.end_line));
+        out.push_str(&format!("      \"end_column\": {},\n", span.end_column));
+    }
     out.push_str(&format!(
         "      \"owner\": \"{}\",\n",
         json_escape(seam.owner())
@@ -153,7 +158,7 @@ mod tests {
     fn json_carries_schema_version_and_repo_scope() {
         let json = render_repo_seams_json(&[sample_seam()]);
         assert!(
-            json.contains("\"schema_version\": \"0.1\""),
+            json.contains("\"schema_version\": \"0.2\""),
             "missing schema_version: {json}"
         );
         assert!(
@@ -180,6 +185,38 @@ mod tests {
         ] {
             assert!(json.contains(needle), "missing {needle:?} in: {json}");
         }
+    }
+
+    #[test]
+    fn json_carries_span_coordinates_when_present() {
+        use crate::analysis::seams::SeamSpan;
+        let seam = sample_seam().with_span(SeamSpan {
+            start_line: 88,
+            start_column: 12,
+            end_line: 88,
+            end_column: 41,
+        });
+        let json = render_repo_seams_json(&[seam]);
+        for needle in [
+            "\"line\": 88",
+            "\"column\": 12",
+            "\"end_line\": 88",
+            "\"end_column\": 41",
+        ] {
+            assert!(json.contains(needle), "missing {needle:?} in: {json}");
+        }
+    }
+
+    #[test]
+    fn json_omits_span_coordinates_when_absent() {
+        // Seams without span geometry (legacy cache, fixture-built) keep
+        // the line-only shape: the header goes straight from "line" to
+        // "owner" and the emitter invents no coordinates.
+        let json = render_repo_seams_json(&[sample_seam()]);
+        assert!(
+            json.contains("\"line\": 88,\n      \"owner\""),
+            "seam header grew span fields without geometry in: {json}"
+        );
     }
 
     #[test]

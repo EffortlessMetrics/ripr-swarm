@@ -332,6 +332,14 @@ are scoped or reviewed.
   for Rust predicate, return-value, error-path and match-arm gaps, and
   unsupported shapes refuse with a typed reason (#5355, #5357).
 
+- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
+  seams (schema `0.2`) now carry the parser-owned span coordinates
+  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
+  end) when span geometry is available, matching cargo-mutants span columns
+  for calibration joins. Seam IDs are unchanged; span-less entries omit the
+  fields and consumers must treat them as line-only. `agent verify`
+  requires the current `0.4` envelope, so regenerate snapshots rather than
+  hand-editing versions (#5336).
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
   in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
