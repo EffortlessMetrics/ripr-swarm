@@ -2,6 +2,7 @@ use super::model::*;
 use super::{display_path, read_json_value_with_display, resolve_root_path, string_field};
 use crate::output::gap_decision_ledger::{self, GapRecord};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,17 +54,31 @@ pub(super) fn warn_for_optional_json_impl(
 pub(super) fn read_gap_ledger_impl(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
-) -> Option<Vec<GapRecord>> {
+) -> Option<(Vec<GapRecord>, Option<String>)> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
-    let text = match fs::read_to_string(&resolved) {
-        Ok(text) => text,
+    // Read once: the subject hash is computed from exactly the bytes parsed
+    // here, so the receipt cannot bind the decision to other contents
+    // (review round 1, #5263).
+    let bytes = match fs::read(&resolved) {
+        Ok(bytes) => bytes,
         Err(error) => {
             config_errors.push(format!(
                 "required gap decision ledger input {} is invalid: read failed: {error}",
                 display_path(path)
             ));
-            return Some(Vec::new());
+            return Some((Vec::new(), None));
+        }
+    };
+    let consumed_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            config_errors.push(format!(
+                "required gap decision ledger input {} is invalid: not valid UTF-8: {error}",
+                display_path(path)
+            ));
+            return Some((Vec::new(), Some(consumed_hash)));
         }
     };
     // RIPR-PROP-0019 decision 5: a ledger disclosing a `limited_partial_scope`
@@ -88,7 +103,7 @@ pub(super) fn read_gap_ledger_impl(
                 crate::analysis::PartialDiffScope::RUN_STATUS,
                 crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
             ));
-            return Some(Vec::new());
+            return Some((Vec::new(), Some(consumed_hash)));
         }
         if super::discloses_incomplete_analysis_outcome(&value) {
             let kind = super::incomplete_analysis_outcome_kind(&value);
@@ -97,7 +112,7 @@ pub(super) fn read_gap_ledger_impl(
                  outcome ({kind}); an incomplete denominator is never a gate input",
                 display_path(path),
             ));
-            return Some(Vec::new());
+            return Some((Vec::new(), Some(consumed_hash)));
         }
     }
     match gap_decision_ledger::parse_gap_records_json(&text) {
@@ -110,16 +125,16 @@ pub(super) fn read_gap_ledger_impl(
                         display_path(path)
                     ));
                 }
-                return Some(Vec::new());
+                return Some((Vec::new(), Some(consumed_hash)));
             }
-            Some(records)
+            Some((records, Some(consumed_hash)))
         }
         Err(error) => {
             config_errors.push(format!(
                 "required gap decision ledger input {} is invalid: {error}",
                 display_path(path)
             ));
-            Some(Vec::new())
+            Some((Vec::new(), Some(consumed_hash)))
         }
     }
 }

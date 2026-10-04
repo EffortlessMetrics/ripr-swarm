@@ -76,10 +76,19 @@ fn subject_json(subject: &super::model::GateSubject) -> Value {
             (name.clone(), entry)
         })
         .collect::<serde_json::Map<String, Value>>();
-    json!({
+    let mut rendered = json!({
         "analyzer_version": subject.analyzer_version,
         "inputs": Value::Object(inputs),
-    })
+    });
+    if let Some(labels_sha256) = &subject.labels_sha256
+        && let Some(object) = rendered.as_object_mut()
+    {
+        object.insert(
+            "labels_sha256".to_string(),
+            Value::String(labels_sha256.clone()),
+        );
+    }
+    rendered
 }
 
 fn exception_policy_json(report: &ExceptionPolicyReport) -> Value {

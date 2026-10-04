@@ -2311,9 +2311,14 @@ Field contract:
   use `canonical_actionable_gap` unless `--gap-ledger` is supplied. The
   `canonical_actionable_gap` count derives from the same full classified seam
   inventory `repo-exposure-json` renders, so the two artifacts cannot
-  contradict each other on one tree (#5261); these badge formats are
-  therefore full-repo audit-path surfaces and disclose the same invocation
-  cost class.
+  contradict each other on one tree (#5261); these badge formats — and the
+  repo badge-plus formats, whose measured path renders that same walk when a
+  test-efficiency report exists — are therefore full-repo audit-path
+  surfaces and disclose the same invocation cost class. When the classified
+  inventory was seam-capped, the public projection resolves to `limited`
+  (`run_status` `limited_seam_cap`, with the cap named in
+  `limited_reason`) instead of presenting a partial count as a full-scan
+  result.
 - `message` — the headline rendered as a string for Shields compatibility.
   Diff-scoped and internal badges render the bare count (for example `"5"`).
   Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
@@ -9051,17 +9056,32 @@ Field contract:
   targets instead of raw PR guidance candidates.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
-  records) plus one entry per consumed input document keyed by input name.
-  Each entry carries `content_hash`, the `sha256:<hex>` of the exact bytes
-  consumed (`null` only when the bytes could not be read; the read failure
-  itself surfaces as a `config_error` or warning). The `pr_guidance` entry
-  additionally carries `producer_subject` when its document recorded a
-  `run_receipt`: the producer's resolved `base_sha`, `head_sha`,
-  `root_identity`, and `reusable_cache_identity`, copied verbatim so a
-  `pr-ledger record --base/--head` assertion can be cross-checked against
-  what the gate actually consumed. The block has no timestamp: identical
-  evaluations stay byte-identical, and staleness is carried by the content
-  hashes and producer SHAs.
+  records) plus one entry per consumed input keyed by input name — every
+  CLI-supplied input that can change the decision (`pr_guidance`,
+  `gap_ledger`, `repo_exposure`, `sarif_policy`, `labels_json`,
+  `agent_verify`, `agent_receipt`, `recommendation_calibration`,
+  `mutation_calibration`, `baseline`, `exception_policy`), not only the
+  candidate sources. Each entry carries `content_hash`, the `sha256:<hex>`
+  of the exact bytes consumed (`null` only when the bytes could not be read;
+  the read failure itself surfaces as a `config_error` or warning). Read
+  model: the pr-guidance and gap-ledger hashes are computed from the same
+  bytes their readers parsed; the advisory optional inputs hash a fresh read
+  taken at subject-build time. The auto-loaded causal artifacts are outside
+  this block: they are workspace-durable files that self-identify (the
+  canonical-delta artifact carries its own identity fields), not invocation
+  inputs. `labels_sha256` appears when `--labels` strings were supplied on
+  the command line (SHA-256 over the label strings joined with NUL
+  separators); labels supplied through `--labels-json` hash as that file's
+  entry instead. The `pr_guidance` entry additionally carries
+  `producer_subject` only when its document recorded a `run_receipt` with
+  resolved, non-empty `base_sha` and `head_sha`; a receipt missing either is
+  treated as absent rather than partly quoted, so no identity value here is
+  ever inferred from a different field. The copied producer values mirror
+  the producer's receipt verbatim (`base_sha`, `head_sha`, `root_identity`,
+  `reusable_cache_identity`) so a `pr-ledger record --base/--head` assertion
+  can be cross-checked against what the gate actually consumed. The block
+  has no timestamp: identical evaluations stay byte-identical, and staleness
+  is carried by the content hashes and producer SHAs.
 - `policy.mode` - effective gate mode after config and CLI precedence.
 - `policy.threshold` - initially `high_confidence_new_gap`.
 - `policy.acknowledgement_labels` - configured labels that can turn a blocking

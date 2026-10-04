@@ -603,11 +603,16 @@ fn route_location(route: &RepairRoute) -> String {
 }
 
 /// Compare the caller-asserted PR identity against the producer subject the
-/// gate decision recorded for its pr-guidance input (#5263). Full-SHA or
-/// prefix agreement on both revisions passes; anything else — including a
-/// gate without a producer subject on only one side being unknown — stays
+/// gate decision recorded for its pr-guidance input (#5263). Comparison is
+/// only possible when both sides name revisions the same way: the asserted
+/// revision must be a full or abbreviated hex SHA, and prefix agreement
+/// additionally requires the recorded producer SHA to be a full hex SHA
+/// (review round 1: a caller passing `origin/main` / `HEAD` — the generated
+/// CI spelling — cannot be cross-checked without resolution and must stay
+/// silent rather than false-positive). Anything else — a revision name, an
+/// abbreviated recorded value, or a gate without a producer subject — stays
 /// silent here, because absence of evidence is not a mismatch. Returns the
-/// warning text when both producer SHAs are present and either revision
+/// warning text when both producer SHAs are comparable and either revision
 /// disagrees.
 fn pr_subject_mismatch_warning(
     base: &str,
@@ -617,14 +622,11 @@ fn pr_subject_mismatch_warning(
     let producer = gate?.pointer("/subject/inputs/pr_guidance/producer_subject")?;
     let recorded_base = producer.get("base_sha").and_then(Value::as_str)?;
     let recorded_head = producer.get("head_sha").and_then(Value::as_str)?;
-    if recorded_base.is_empty() || recorded_head.is_empty() {
+    if !is_comparable_revision(base) || !is_comparable_revision(head) {
         return None;
     }
     let agrees = |asserted: &str, recorded: &str| {
-        !asserted.is_empty()
-            && (recorded == asserted
-                || recorded.starts_with(asserted)
-                || asserted.starts_with(recorded))
+        asserted == recorded || (is_full_sha(recorded) && recorded.starts_with(asserted))
     };
     if agrees(base, recorded_base) && agrees(head, recorded_head) {
         return None;
@@ -632,6 +634,20 @@ fn pr_subject_mismatch_warning(
     Some(format!(
         "pr identity mismatch: the ledger records base `{base}` / head `{head}`, but the gate decision's producer subject resolved base `{recorded_base}` / head `{recorded_head}`; the ledger's pr identity and the gate's evaluated subject disagree"
     ))
+}
+
+/// A full 40-character hex SHA (`resolve_revision` emits full SHAs; a
+/// degraded receipt falls back to the caller's raw revision string, which
+/// this predicate rejects so a name can never prefix-agree).
+fn is_full_sha(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// An asserted revision this ledger can compare: a full or abbreviated hex
+/// SHA. Revision names (`origin/main`, `HEAD`, a tag) need resolution the
+/// ledger must not perform, so they are incomparable rather than mismatched.
+fn is_comparable_revision(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 40 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn parse_sources(input: &PrEvidenceLedgerInput) -> ParsedSources {
@@ -1745,6 +1761,39 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("pr identity mismatch")),
             "a gate without a producer subject cannot agree or disagree"
+        );
+
+        // Revision names (the generated CI spelling) cannot be cross-checked
+        // against resolved SHAs and must stay silent, not false-positive.
+        let named = build_pr_evidence_ledger_report(input(producer_subject, "origin/main", "HEAD"));
+        assert!(
+            !named
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("pr identity mismatch")),
+            "an unresolvable revision name must stay silent, got {:?}",
+            named.warnings
+        );
+
+        // A degraded recorded value ("a") must not prefix-agree everything.
+        let degraded_receipt = r#"{
+            "subject": {"inputs": {"pr_guidance": {"producer_subject": {
+                "base_sha": "a",
+                "head_sha": "b"
+            }}}},
+            "status": "advisory"
+        }"#;
+        let degraded = build_pr_evidence_ledger_report(input(
+            degraded_receipt,
+            "9999999999999999999999999999999999999999",
+            "2222222222222222222222222222222222222222",
+        ));
+        assert!(
+            degraded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("pr identity mismatch")),
+            "a non-SHA recorded value must not prefix-agree an asserted SHA"
         );
         Ok(())
     }

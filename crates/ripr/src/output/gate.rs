@@ -52,11 +52,17 @@ pub(crate) fn build_gate_decision_report(
         config_errors
             .push("gate evaluate requires --pr-guidance <path> or --gap-ledger <path>".to_string());
     }
+    let mut pr_guidance_bytes: Vec<u8> = Vec::new();
+    let mut gap_ledger_consumed_hash: Option<String> = None;
     let pr_guidance = match input.pr_guidance.as_ref() {
         Some(path) => {
             let pr_guidance_path = resolve_root_path(&input.root, path);
-            match read_json_value_with_display(&pr_guidance_path, path) {
-                Ok(value) => {
+            // Read once: the bytes parsed here are the bytes the subject
+            // hashes, so the receipt cannot bind the decision to contents
+            // it never evaluated (review round 1, #5263).
+            match read_json_value_and_bytes_with_display(&pr_guidance_path, path) {
+                Ok((value, bytes)) => {
+                    pr_guidance_bytes = bytes;
                     if let Some(defect) = pr_guidance_document_defect(&value) {
                         config_errors.push(format!(
                             "pr-guidance {} is not a recognized review-comments guidance document: {defect}",
@@ -107,7 +113,11 @@ pub(crate) fn build_gate_decision_report(
         }
         None => Value::Null,
     };
-    let gap_ledger = read_gap_ledger(input, &mut config_errors);
+    let gap_ledger_with_hash = read_gap_ledger(input, &mut config_errors);
+    let gap_ledger = gap_ledger_with_hash.map(|(records, hash)| {
+        gap_ledger_consumed_hash = hash;
+        records
+    });
     warn_for_optional_json(
         &input.root,
         input.repo_exposure.as_ref(),
@@ -248,6 +258,8 @@ pub(crate) fn build_gate_decision_report(
         // `Value::Null` stands in for an absent or rejected pr-guidance
         // document; the producer-subject read treats it as absent.
         (!pr_guidance.is_null()).then_some(&pr_guidance),
+        (!pr_guidance_bytes.is_empty()).then_some(pr_guidance_bytes.as_slice()),
+        gap_ledger_consumed_hash,
     );
     let exception_blocking = exception_policy
         .as_ref()
@@ -302,32 +314,62 @@ pub(crate) fn build_gate_decision_report(
 }
 
 /// Subject identity of this evaluation (#5263): the writing binary's build
-/// identity plus, per consumed input document, a `sha256` content hash of the
-/// exact bytes consumed. The pr-guidance entry additionally copies the
-/// producer's own `run_receipt` identity (resolved base/head SHAs, root
-/// identity, cache identity) verbatim when the document carries one, so a
-/// downstream `pr-ledger record --base/--head` can be cross-checked against
-/// what the gate actually consumed instead of the caller's assertion.
+/// identity plus, per consumed input, a `sha256` content hash — every
+/// CLI-supplied input that can change the decision (candidates, baseline,
+/// labels, calibration, receipts, policy ledgers) is covered, not only the
+/// candidate sources (review round 1). Where the reader returns the bytes it
+/// parsed, the hash is computed from those exact bytes; for the advisory
+/// optional inputs the hash is a fresh read at subject-build time, and the
+/// read model is documented in the output contract.
+///
+/// The auto-loaded causal artifacts are outside this block by boundary, not
+/// omission: they are workspace-durable files that self-identify (the
+/// canonical-delta artifact carries its own identity fields), not invocation
+/// inputs.
 ///
 /// Hashing is best-effort: an unreadable input leaves `content_hash` absent
 /// while the read failure itself already surfaces as a `config_error` or a
 /// warning, so the subject never invents an identity for bytes it did not
 /// see. Entries are keyed in a `BTreeMap`, so the rendered block is
 /// deterministic for identical inputs.
-fn build_gate_subject(input: &GateEvaluateInput, pr_guidance: Option<&Value>) -> GateSubject {
+fn build_gate_subject(
+    input: &GateEvaluateInput,
+    pr_guidance: Option<&Value>,
+    pr_guidance_bytes: Option<&[u8]>,
+    gap_ledger_consumed_hash: Option<String>,
+) -> GateSubject {
     let mut inputs = BTreeMap::new();
     for (name, path) in [
         ("gap_ledger", input.gap_ledger.as_ref()),
         ("pr_guidance", input.pr_guidance.as_ref()),
         ("repo_exposure", input.repo_exposure.as_ref()),
+        ("sarif_policy", input.sarif_policy.as_ref()),
+        ("labels_json", input.labels_json.as_ref()),
+        ("agent_verify", input.agent_verify.as_ref()),
+        ("agent_receipt", input.agent_receipt.as_ref()),
+        (
+            "recommendation_calibration",
+            input.recommendation_calibration.as_ref(),
+        ),
+        ("mutation_calibration", input.mutation_calibration.as_ref()),
+        ("baseline", input.baseline.as_ref()),
+        ("exception_policy", input.exception_policy.as_ref()),
     ] {
         let Some(path) = path else {
             continue;
         };
-        let resolved = resolve_root_path(&input.root, path);
-        let content_hash = std::fs::read(&resolved)
-            .ok()
-            .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)));
+        // The consumed-bytes hash wins where the reader captured them; a
+        // fresh read only ever backs the advisory optional inputs.
+        let content_hash = match (name, pr_guidance_bytes, &gap_ledger_consumed_hash) {
+            ("pr_guidance", Some(bytes), _) => Some(format!("sha256:{:x}", Sha256::digest(bytes))),
+            ("gap_ledger", _, Some(hash)) => Some(hash.clone()),
+            _ => {
+                let resolved = resolve_root_path(&input.root, path);
+                std::fs::read(&resolved)
+                    .ok()
+                    .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
+            }
+        };
         let producer_subject = if name == "pr_guidance" {
             pr_guidance.and_then(producer_subject_from_pr_guidance)
         } else {
@@ -341,9 +383,18 @@ fn build_gate_subject(input: &GateEvaluateInput, pr_guidance: Option<&Value>) ->
             },
         );
     }
+    let labels_sha256 = (!input.labels.is_empty()).then(|| {
+        let mut hasher = Sha256::new();
+        for label in &input.labels {
+            hasher.update(label.as_bytes());
+            hasher.update([0]);
+        }
+        format!("sha256:{:x}", hasher.finalize())
+    });
     GateSubject {
         analyzer_version: crate::build_identity::cache_identity().to_string(),
         inputs,
+        labels_sha256,
     }
 }
 
@@ -391,7 +442,7 @@ fn warn_for_optional_json(
 fn read_gap_ledger(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
-) -> Option<Vec<GapRecord>> {
+) -> Option<(Vec<GapRecord>, Option<String>)> {
     input::read_gap_ledger_impl(input, config_errors)
 }
 
@@ -1197,6 +1248,26 @@ fn acknowledgement_labels(input: &GateEvaluateInput) -> Vec<String> {
     } else {
         input.acknowledgement_labels.clone()
     }
+}
+
+/// Bytes-once reader: the returned bytes are exactly what the returned
+/// value was parsed from, so a subject hash over them identifies the
+/// content the evaluation consumed.
+fn read_json_value_and_bytes_with_display(
+    path: &Path,
+    display: &Path,
+) -> Result<(Value, Vec<u8>), String> {
+    let display = display_path(display);
+    let bytes = fs::read(path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!("read {display} failed: not found")
+        } else {
+            format!("read {display} failed: {err}")
+        }
+    })?;
+    let value =
+        serde_json::from_slice(&bytes).map_err(|err| format!("parse {display} failed: {err}"))?;
+    Ok((value, bytes))
 }
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {

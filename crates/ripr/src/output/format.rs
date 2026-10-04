@@ -88,7 +88,8 @@ struct OutputFormatSpec {
     /// invocation time (#4945). The seam-native repo badge formats joined
     /// this class when their `canonical_actionable_gap` basis moved onto the
     /// full classified inventory so it agrees with repo-exposure (#5261);
-    /// the repo badge-plus formats still render disk reports only.
+    /// the repo badge-plus measured path renders that same walk when a
+    /// test-efficiency report exists (#5263 review), so it discloses too.
     is_full_repo_analysis: bool,
     /// `true` only when warm reruns of the format's walk can hit a
     /// seam-facts cache: the classified and compact-classified inventory
@@ -183,15 +184,19 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::RepoBadgePlusJson,
         cli_names: &["repo-badge-plus-json"],
-        is_full_repo_analysis: false,
-        is_seam_fact_cache_backed: false,
+        // #5263 review: the measured repo ripr+ path renders the same full
+        // classified walk as repo-badge-json when a test-efficiency report
+        // exists, so it discloses the same cost class; the neutral
+        // missing-report path stays cheap and merely over-discloses.
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
         format: OutputFormat::RepoBadgePlusShields,
         cli_names: &["repo-badge-plus-shields"],
-        is_full_repo_analysis: false,
-        is_seam_fact_cache_backed: false,
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -484,11 +489,13 @@ mod tests {
             "repo-exposure-md",
             "repo-sarif",
             "agent-seam-packets-json",
-            // #5261: the seam-native repo badge walks the same full
-            // classified inventory as repo-exposure, so it discloses the
-            // same cost class.
+            // #5261/#5263 review: the seam-native repo badge formats walk
+            // the same full classified inventory as repo-exposure, so they
+            // disclose the same cost class.
             "repo-badge-json",
             "repo-badge-shields",
+            "repo-badge-plus-json",
+            "repo-badge-plus-shields",
         ];
         let mut observed: Vec<&str> = FORMAT_SPECS
             .iter()
@@ -517,10 +524,13 @@ mod tests {
             "repo-exposure-md",
             "repo-sarif",
             "agent-seam-packets-json",
-            // #5261: the seam-native repo badge reads the same classified
-            // cache, so its disclosure may claim warm reruns too.
+            // #5261/#5263 review: the seam-native repo badge formats read
+            // the same classified cache, so their disclosures may claim warm
+            // reruns too.
             "repo-badge-json",
             "repo-badge-shields",
+            "repo-badge-plus-json",
+            "repo-badge-plus-shields",
         ];
         let mut observed: Vec<&str> = FORMAT_SPECS
             .iter()

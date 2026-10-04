@@ -909,14 +909,18 @@ fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize
     let Some(value) = source_value else {
         return 0;
     };
-    let findings = value.get("findings").and_then(Value::as_array);
+    let findings = value
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(|findings| findings.iter().filter(|f| f.is_object()).count());
     let alignment_items = value
         .pointer("/finding_alignment/items")
-        .and_then(Value::as_array);
+        .and_then(Value::as_array)
+        .map(|items| items.len());
     match (findings, alignment_items) {
-        (Some(findings), Some(items)) => findings.len().max(items.len()),
-        (Some(findings), None) => findings.len(),
-        (None, Some(items)) => items.len(),
+        (Some(findings), Some(items)) => findings.max(items),
+        (Some(findings), None) => findings,
+        (None, Some(items)) => items,
         (None, None) => 0,
     }
 }
@@ -934,6 +938,17 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
             "expected check output object with finding_alignment.items or findings array"
                 .to_string(),
         );
+    }
+    // A non-object entry in the findings array is malformed input, not an
+    // unprojectable finding (review round 1, #5264): JSON decoding alone
+    // does not establish the expected record shape, and letting it through
+    // would render a corrupt document as a healthy no_records ledger.
+    if let Some(findings) = findings {
+        for (index, finding) in findings.iter().enumerate() {
+            if !finding.is_object() {
+                return Err(format!("findings array entry {index} is not a JSON object"));
+            }
+        }
     }
 
     let mut records = Vec::new();
@@ -3679,6 +3694,21 @@ mod tests {
         });
         assert_eq!(malformed.status, "blocked");
         assert!(malformed.warnings[0].contains("invalid JSON"));
+    }
+
+    /// A non-object entry in the findings array is malformed input, not an
+    /// unprojectable finding: it stays `blocked` with a parse warning, and
+    /// cannot ride the healthy `no_records` state (review round 1, #5264).
+    #[test]
+    fn gap_decision_ledger_rejects_malformed_check_output_findings_entries() {
+        let malformed = report_from_check_output(serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "findings": [null]
+        }));
+        assert_eq!(malformed.status, "blocked");
+        assert!(malformed.warnings[0].contains("findings array entry 0"));
+        assert_eq!(malformed.summary.records_total, 0);
     }
 
     /// A valid check output with zero findings derives zero records for the

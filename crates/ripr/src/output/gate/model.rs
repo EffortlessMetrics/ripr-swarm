@@ -136,9 +136,14 @@ pub(super) struct GateSubject {
     /// digest; `build_identity::cache_identity`), the same analyzer stamp
     /// `check --write-artifact` records.
     pub(super) analyzer_version: String,
-    /// One entry per consumed input document, keyed by input name
-    /// (`pr_guidance`, `gap_ledger`, `repo_exposure`).
+    /// One entry per consumed input, keyed by input name — every
+    /// CLI-supplied input that can change the decision, not only the
+    /// candidate sources (review round 1, #5263).
     pub(super) inputs: BTreeMap<String, GateSubjectInput>,
+    /// `sha256` over the caller-supplied `--labels` strings (joined with NUL
+    /// separators), present only when labels were supplied on the command
+    /// line rather than through `--labels-json`.
+    pub(super) labels_sha256: Option<String>,
 }
 
 /// Identity of one consumed gate input document (#5263).

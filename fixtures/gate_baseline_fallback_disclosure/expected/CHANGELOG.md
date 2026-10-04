@@ -3,6 +3,22 @@
 ## Pending
 
 Reason:
+PR review round 1: the gate `subject` block now covers every CLI-supplied
+decision-changing input, so the baseline scenario goldens gain a `baseline`
+content-hash entry beside `pr_guidance`. Decisions, warnings, and Markdown
+are unchanged; `analyzer_version` stays pinned.
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib -- baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs`
+
+Updated:
+- `expected/gate-baseline/*/gate-decision.json` (5 scenarios)
+
+# Golden Output Changes
+
+## Pending
+
+Reason:
 #5263: gate-decision.json now records an additive `subject` identity block
 (build `analyzer_version`, per-input sha256 content hashes, and the copied
 producer receipt). Decisions, warnings, `baseline_match_kind` disclosure,
