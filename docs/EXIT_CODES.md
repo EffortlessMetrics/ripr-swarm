@@ -37,6 +37,10 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
+`ripr help --json` projects this same mapping as a typed per-command `exit`
+object (RIPR-SPEC-0190). Orchestrators that discover commands from that
+document should branch on `exit`, not on free-text `stop_states`.
+
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable
@@ -87,6 +91,19 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   renders nothing to it (RIPR-SPEC-0134). The named cause is on stderr.
   Other verify rejections (unreadable or invalid artifacts, lineage or
   metadata mismatches) exit `2`.
+- **Agent stub refusal**: `ripr agent stub` found the gap but will not write
+  a stub for it (a side-effect or call-presence change, a changed field of a
+  struct the owner does not return directly, an async, unsafe, or generic
+  owner, an impl with type or const generics, an impl local to a function
+  body or `const` block, an owner behind a cfg in its own file that a plain
+  `cargo test` build may not enable, no return value, an out-of-line test module, or
+  inline test modules that are all gated by more than `cfg(test)`), or the
+  selector names no reported gap. Several inline test modules are not a
+  refusal: among those gated by plain `cfg(test)`, the stub goes into the
+  one that already names the owner, else the nearest one after it, else the
+  nearest one before it. The named reason is on stderr, with
+  a `rust_test_stub` `state: refused` envelope under `--json`; stdout stays
+  empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class

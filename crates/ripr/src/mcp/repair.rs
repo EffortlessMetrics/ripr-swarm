@@ -20,13 +20,17 @@ use super::workspace::{AttemptFailure, CODE_ITEM_NOT_FOUND, WorkspaceSession, bo
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
     find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, repair_attempt_state_label,
+    load_attempt_terminal_receipt, repair_attempt_head_reading, repair_attempt_state_label,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state_from_receipt_value;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+
+#[cfg(test)]
+#[path = "repair_freshness_tests.rs"]
+mod freshness_tests;
 
 pub(crate) const REPAIR_PACKET_SCHEMA_VERSION: &str = "ripr-mcp-repair-packet-v1";
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "ripr-mcp-repair-attempt-v1";
@@ -302,7 +306,30 @@ fn durable_attempt_document(
     root: &Path,
     root_identity: Option<&str>,
 ) -> Value {
-    let (command_routes, route_limitations) = durable_command_routes(root, manifest);
+    let current_head = crate::agent::artifact::current_git_head(root).ok();
+    let selected = crate::app::agent_status::selected_attempt_status_reading(
+        root,
+        root,
+        crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY,
+        "",
+        manifest,
+        current_head.as_deref(),
+    );
+    // Historical/unknown reads keep the freshness refusal. At a current HEAD,
+    // use the shared selected action: a finished result has none, and failed
+    // or open-gap work restarts before instead of repeating the old after.
+    let next_action = selected
+        .next_action
+        .as_ref()
+        .filter(|_| selected.view.head_current == Some(true));
+    let continues_after = next_action.is_some_and(|action| action.step == "repair_attempt_after");
+    let (command_routes, route_limitations) = if continues_after {
+        durable_command_routes(root, manifest)
+    } else {
+        (Vec::new(), vec![
+            "this selected attempt has no current after continuation; retained packet routes are not a restart authority".to_string(),
+        ])
+    };
     let terminal_receipt = match &manifest.state {
         RepairAttemptState::ReadyToFinish => match load_attempt_terminal_receipt(root, manifest) {
             AttemptTerminalReceipt::Issued { .. } => "issued",
@@ -339,8 +366,14 @@ fn durable_attempt_document(
             "sha256": artifact.sha256,
             "bytes": artifact.bytes,
         })).collect::<Vec<_>>(),
-        "next_command": manifest.next_command,
+        "next_command": next_action.map(|action| &action.command),
         "after": after,
+        "currentness": {
+            "state": selected.currentness,
+            "head_current": selected.view.head_current,
+            "evidence_head": selected.view.evidence_head,
+            "basis": "shared read-time HEAD applicability; awaiting attempts use after-phase lineage admission and terminal evidence requires its exact after HEAD",
+        },
         "terminal_receipt": terminal_receipt,
         "command_routes": command_routes,
         "limitations": limitations,
@@ -447,6 +480,8 @@ fn durable_receipt_document(
 ) -> Value {
     let state_label = repair_attempt_state_label(&manifest.state);
     let attempt_id = manifest.repair_attempt_id.as_str().to_string();
+    let current_head = crate::agent::artifact::current_git_head(root).ok();
+    let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
     let (status, receipt) = match &manifest.state {
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit => {
             let receipt = json!({
@@ -520,6 +555,30 @@ fn durable_receipt_document(
             }
         },
     };
+    // Retained movement remains in the receipt; a historical or unknown HEAD
+    // cannot make an actionable/current result out of recorded admission.
+    // Invalid, stale and limited producer states retain their own refusal.
+    let status = match (status, head_reading.head_current) {
+        (
+            "awaiting_edit"
+            | "verification_pending"
+            | "improved"
+            | "closed"
+            | "unchanged"
+            | "regressed",
+            Some(false),
+        ) => "stale",
+        (
+            "awaiting_edit"
+            | "verification_pending"
+            | "improved"
+            | "closed"
+            | "unchanged"
+            | "regressed",
+            None,
+        ) => "limited",
+        _ => status,
+    };
     json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
@@ -533,9 +592,12 @@ fn durable_receipt_document(
         },
         "receipt": receipt,
         "currentness": {
+            "state": head_reading.currentness(),
+            "head_current": head_reading.head_current,
+            "evidence_head": head_reading.evidence_head,
             "attempt_state": state_label,
             "after_current": manifest.after.as_ref().map(|after| after.current),
-            "basis": "durable manifest and digest-bound terminal artifacts, re-validated by the shared repair-attempt authority on every read",
+            "basis": "shared read-time HEAD applicability; after_current records finish-time admission only and is not live freshness",
         },
         "limitations": [
             "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only",
@@ -571,16 +633,16 @@ impl WorkspaceSession {
     /// field and never a misleading transaction.
     pub(crate) fn prepare_repair(
         &mut self,
-        gap_id: &str,
+        canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(gap_id) else {
+        let Some(item) = snapshot.item(canonical_id) else {
             return Err(AttemptFailure::new(
                 CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {gap_id} exists in the current snapshot"),
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
@@ -878,6 +940,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             partial_scope: None,
         })
@@ -956,6 +1019,11 @@ mod tests {
 
     #[test]
     fn missing_producer_facts_never_create_a_misleading_attempt() -> Result<(), String> {
+        // #5268: no canonical gap and no producer-named missing discriminator
+        // is the unpopulated-language-producer state, so the negative
+        // document must name that condition (the same evaluation the gap
+        // document's readiness block serves), never claim the producer failed
+        // to establish a discriminator its own availability block contradicts.
         let mut no_discriminator = super::super::gaps::test_finding()?;
         no_discriminator.canonical_gap = None;
         let mut session = session_with(&[no_discriminator], "root:sha256:a")?;
@@ -977,12 +1045,78 @@ mod tests {
         if document
             .pointer("/ineligibility/reason")
             .and_then(Value::as_str)
-            != Some("missing_discriminator")
+            != Some("discriminator_not_populated_for_language")
         {
             return Err(format!("ineligibility lost its typed reason: {document}"));
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+        // The unpopulated state must not swallow the honest actionable
+        // refusal: a producer that names the missing discriminator still
+        // answers `missing_discriminator`.
+        let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.canonical_gap = None;
+        named_missing.activation.missing_discriminators.push(
+            crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            },
+        );
+        let mut session = session_with(&[named_missing], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("missing_discriminator")
+        {
+            return Err(format!(
+                "a producer-named missing discriminator must stay the typed refusal: {document}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn static_limited_finding_refuses_as_static_limitation() -> Result<(), String> {
+        // A finding whose canonical gap the producer withheld behind its own
+        // typed static limitation refuses as `static_limitation` — the
+        // per-finding limitation, not language-wide non-population — in the
+        // negative repair document as well as the gap readiness block.
+        let mut limited = super::super::gaps::test_finding()?;
+        limited.canonical_gap = None;
+        limited.missing = Vec::new();
+        limited.language = Some(crate::domain::LanguageId::Python);
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let mut session = session_with(&[limited], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if document
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Err(format!(
+                "a static-limited finding must stay fail-closed: {document}"
+            ));
+        }
+        if document
+            .pointer("/ineligibility/reason")
+            .and_then(Value::as_str)
+            != Some("static_limitation")
+        {
+            return Err(format!(
+                "a static-limited finding must refuse as static_limitation: {document}"
+            ));
         }
         Ok(())
     }
