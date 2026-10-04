@@ -17,7 +17,10 @@ This directory commits the captured corpus (`corpus.json`), a clearly
 labeled synthetic mechanics corpus (`controls.json`), a provenance file
 recording capture time, base main SHA and per-row category rationale, and the
 raw GitHub snapshots (`snapshots/`, one issue/comments/timeline JSON triple
-per row). Every embedded lifecycle attempt row is an
+per row; one host-local worktree path inside the #5399 capture is redacted to
+`<redacted-local-worktree-path>` because durable files must not carry real
+machine paths — the corpus digests bind the committed bytes, so the recorded
+digests cover the redacted form). Every embedded lifecycle attempt row is an
 `issue_lifecycle_attempt.v1` row bound by its real `row_digest`, so the
 RIPR-SPEC-0218 counting law assesses each row unchanged; the intake pilot
 adds packet observations around that contract instead of a parallel report

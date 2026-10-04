@@ -381,7 +381,7 @@
     "comments_path": "snapshots/issue-5399-comments.json",
     "timeline_path": "snapshots/issue-5399-timeline.json",
     "captured_at": "2026-10-04T11:02:59Z",
-    "issue_snapshot_id": "gh-issue-snapshot:sha256:0051b29d2df40c7533fc8459ec2cffccc3df14ebb055acc594dbda711191d826",
+    "issue_snapshot_id": "gh-issue-snapshot:sha256:76704c40aab7eb448f2bb7be9ab07a0340a544af216eb5841e20cabcc1c52c9a",
     "comments_snapshot_id": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
    },
    "current_main": "a88034ea3c3d6baae360d6d374bf547f5f9b4d58",
@@ -470,7 +470,7 @@
      }
     ],
     "issue": {
-     "snapshot_id": "gh-issue-snapshot:sha256:0051b29d2df40c7533fc8459ec2cffccc3df14ebb055acc594dbda711191d826",
+     "snapshot_id": "gh-issue-snapshot:sha256:76704c40aab7eb448f2bb7be9ab07a0340a544af216eb5841e20cabcc1c52c9a",
      "issue_ref": "EffortlessMetrics/ripr-swarm#5399",
      "comments_ref": "gh-issue-comments:sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
      "labels_ref": "gh-issue-labels:sha256:2284a98f4922371628b0a66f48ee6f0a5f569503f8791ac5bac3a9f5fb723b6b",
@@ -496,7 +496,7 @@
     "intake": {
      "evidence": [
       {
-       "identity": "gh-issue-snapshot:sha256:0051b29d2df40c7533fc8459ec2cffccc3df14ebb055acc594dbda711191d826",
+       "identity": "gh-issue-snapshot:sha256:76704c40aab7eb448f2bb7be9ab07a0340a544af216eb5841e20cabcc1c52c9a",
        "bytes": 105843
       },
       {
@@ -571,7 +571,7 @@
      "claims no MCP protocol change beyond what PR #5408 itself claims",
      "claims no LSP receipt parity (explicitly out of the PR's own boundary)"
     ],
-    "row_digest": "b12302e3fa2a3608ded2decdec0001d4c169bf6f6bab075decdf9ec09a1c4820"
+    "row_digest": "24ea6b18a61091e3ac09c0f37b307b0b5d4c6492865367c12a1f00a24ac00e7b"
    }
   },
   {

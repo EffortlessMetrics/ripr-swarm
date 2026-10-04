@@ -97,7 +97,9 @@ Intake laws enforced by `assess_intake_row` and the fixture-contract gate:
   main `a88034ea3c3d6baae360d6d374bf547f5f9b4d58`), the synthetic mechanics
   control corpus (false-duplicate correction, overlapping-PR pickup block,
   explicit `not_measured` bytes), provenance, and the immutable
-  issue/comments/timeline snapshots.
+  issue/comments/timeline snapshots (one host-local worktree path in the
+  #5399 capture is redacted to `<redacted-local-worktree-path>`; the recorded
+  digests bind the committed redacted bytes).
 - `cargo test -p xtask issue_lifecycle_intake_pilot` coverage of the ten
   required controls.
 - `cargo xtask check-fixture-contracts` gate coverage: shape, provenance,
