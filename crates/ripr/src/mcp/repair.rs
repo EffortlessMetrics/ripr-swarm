@@ -27,6 +27,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+#[cfg(test)]
+#[path = "repair_freshness_tests.rs"]
+mod freshness_tests;
+
 pub(crate) const REPAIR_PACKET_SCHEMA_VERSION: &str = "ripr-mcp-repair-packet-v1";
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "ripr-mcp-repair-attempt-v1";
 pub(crate) const RECEIPT_STATUS_SCHEMA_VERSION: &str = "ripr-mcp-receipt-status-v1";
