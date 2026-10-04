@@ -885,8 +885,8 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         }));
     }
     // Rates pool every repository, and a repository run with extra
-    // cargo-mutants arguments is not a default run, so the board says how
-    // many were.
+    // cargo-mutants arguments is not a default run, so every row says how
+    // many were: ingest publishes a row's own evidence, not the top-level one.
     let with_args = repos
         .iter()
         .filter(|repo| {
@@ -895,16 +895,23 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
                 .is_some_and(|args| !args.is_empty())
         })
         .count();
-    let mut evidence = format!(
-        "ripr-mutation-spot-check-v1 receipt, {} repositories",
+    let caveat = if with_args > 0 {
+        format!(
+            " ({with_args} of {} repositories ran with cargo-mutants arguments; their rates reflect those arguments, not a default run)",
+            repos.len()
+        )
+    } else {
+        String::new()
+    };
+    for row in &mut rows {
+        if let Some(Value::String(evidence)) = row.get_mut("evidence") {
+            evidence.push_str(&caveat);
+        }
+    }
+    let evidence = format!(
+        "ripr-mutation-spot-check-v1 receipt, {} repositories{caveat}",
         repos.len()
     );
-    if with_args > 0 {
-        evidence.push_str(&format!(
-            " ({with_args} of {} ran with cargo-mutants arguments; their rates reflect those arguments, not a default run)",
-            repos.len()
-        ));
-    }
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "mutation-spot-check",

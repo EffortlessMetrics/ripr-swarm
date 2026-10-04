@@ -596,11 +596,21 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
     let mut sampled = receipt.clone();
     sampled["repos"][0]["cargo_mutants_args"] = json!(["--re=decode"]);
+    let caveat = "1 of 2 repositories ran with cargo-mutants arguments";
     let input = mutation_spot_check_to_input(&sampled)?;
+    assert!(evidence(&input).contains(caveat), "{}", evidence(&input));
+    // Ingest publishes each row's own evidence, so the caveat must reach
+    // every sample, not only the top-level evidence.
+    let samples = parse_ingest(&sampled, &config)?;
+    assert_eq!(samples.len(), 3);
+    for sample in &samples {
+        assert!(sample.detail.contains(caveat), "{}", sample.detail);
+    }
+    let unsampled = parse_ingest(&receipt, &config)?;
     assert!(
-        evidence(&input).contains("1 of 2 ran with cargo-mutants arguments"),
-        "{}",
-        evidence(&input)
+        unsampled
+            .iter()
+            .all(|sample| !sample.detail.contains("cargo-mutants arguments"))
     );
     Ok(())
 }
