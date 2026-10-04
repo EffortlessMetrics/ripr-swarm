@@ -17,7 +17,6 @@ are scoped or reviewed.
   emitted the catalog, so a consumer following human help or the catalog
   itself could not discover the machine-discovery route (#5266).
 
-
 - Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
   has a focused test but no `ripr agent repair` command, and closes with
   `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
