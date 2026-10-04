@@ -655,6 +655,62 @@ fn losing_completion_regresses_on_any_runner_class() -> Result<(), String> {
 }
 
 #[test]
+fn losing_completion_is_judged_per_repo() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    // Repo `a` was already incomplete in the baseline; `b` completed.
+    let base = vec![
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Incomplete(50.0),
+        ),
+        sample(
+            "speed.warm_check_ms",
+            Some("b"),
+            SampleOutcome::Value(1000.0),
+        ),
+    ];
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &base,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let current = vec![
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Incomplete(50.0),
+        ),
+        sample(
+            "speed.warm_check_ms",
+            Some("b"),
+            SampleOutcome::Incomplete(40.0),
+        ),
+    ];
+    for runner in ["runner-a", "runner-b"] {
+        let report = build_report(
+            &config,
+            &all_boards(),
+            &current,
+            &context(runner),
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(report["gate"]["status"].as_str(), Some("fail"), "{runner}");
+        let repos = report["gate"]["regressions"][0]["regressed_repos"]
+            .as_array()
+            .ok_or("regressed_repos missing")?;
+        assert_eq!(repos.len(), 1, "{runner}");
+        assert_eq!(repos[0]["repo"], json!("b"), "{runner}");
+        assert!(gate_failure_message(&report).contains("b: did not complete"));
+    }
+    Ok(())
+}
+
+#[test]
 fn gate_lists_baseline_metrics_it_could_not_compare() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
     let base = vec![

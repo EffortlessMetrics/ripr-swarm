@@ -1310,6 +1310,37 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
         .collect()
 }
 
+/// Repositories that completed in the baseline but not in this run. Checked
+/// per repository because another repository may already have been
+/// incomplete in the baseline.
+fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
+    let statuses = |r: &Value| -> Vec<(String, String)> {
+        r["samples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                Some((
+                    s["repo"].as_str()?.to_string(),
+                    s["status"].as_str()?.to_string(),
+                ))
+            })
+            .collect()
+    };
+    let completed = |status: &str| matches!(status, "meets_target" | "below_target");
+    let base = statuses(base_row);
+    statuses(row)
+        .into_iter()
+        .filter(|(repo, status)| {
+            status == "incomplete"
+                && base
+                    .iter()
+                    .any(|(id, before)| id == repo && completed(before))
+        })
+        .map(|(repo, _)| json!({"repo": repo, "reason": "did not complete where the baseline did"}))
+        .collect()
+}
+
 /// Compare one metric with the same metric in an earlier report, as the
 /// worst value and per repository.
 pub(crate) fn compare_with_baseline(
@@ -1334,8 +1365,10 @@ pub(crate) fn compare_with_baseline(
             .is_some_and(|samples| samples.iter().any(|s| s["status"] == "incomplete"))
     };
     // A run that stops completing is broken on every runner class, and its
-    // elapsed time can look faster than the baseline, so check it first.
-    if incomplete(row) && !incomplete(base_row) {
+    // elapsed time can look faster than the baseline, so check it first, per
+    // repository as well as for the metric.
+    let lost = repo_completion_losses(row, base_row);
+    if !lost.is_empty() || (incomplete(row) && !incomplete(base_row)) {
         return json!({
             "comparable": true,
             "value": base_row["value"],
@@ -1343,6 +1376,7 @@ pub(crate) fn compare_with_baseline(
             "allowed_worsening": 0.0,
             "regressed": true,
             "reason": "current run did not complete where the baseline did",
+            "regressed_repos": lost,
         });
     }
     if def.runner_dependent
@@ -1436,6 +1470,13 @@ fn gate_failure_message(report: &Value) -> String {
             .into_iter()
             .flatten()
         {
+            if let Some(reason) = repo["reason"].as_str() {
+                lines.push(format!(
+                    "    {}: {reason}",
+                    repo["repo"].as_str().unwrap_or("?")
+                ));
+                continue;
+            }
             lines.push(format!(
                 "    {}: baseline {} -> current {} (allowed worsening {})",
                 repo["repo"].as_str().unwrap_or("?"),
