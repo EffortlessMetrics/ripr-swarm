@@ -142,8 +142,12 @@ fn write_command(options: &AgentStubOptions) -> String {
     let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
     let selector = match &options.selector {
         TestStubSelector::SeamId(id) => format!("--seam-id {}", shell_arg(id)),
-        TestStubSelector::At { file, line } => {
-            format!("--at {}", shell_arg(&format!("{file}:{line}")))
+        TestStubSelector::At { file, line, kind } => {
+            let at = format!("--at {}", shell_arg(&format!("{file}:{line}")));
+            match kind {
+                Some(kind) => format!("{at} --kind {}", shell_arg(kind)),
+                None => at,
+            }
         }
     };
     format!("ripr agent stub --root {root} {selector} --write")

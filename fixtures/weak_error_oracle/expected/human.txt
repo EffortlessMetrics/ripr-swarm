@@ -26,7 +26,7 @@ Next: drill into the top finding:
   ripr explain --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
   ripr context --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 Write a test for it:
-  ripr agent stub --root fixtures/weak_error_oracle/input --at src/lib.rs:7
+  ripr agent stub --root fixtures/weak_error_oracle/input --at src/lib.rs:7 --kind error_path
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

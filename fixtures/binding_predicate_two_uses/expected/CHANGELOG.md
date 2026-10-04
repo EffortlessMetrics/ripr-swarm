@@ -159,3 +159,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_two_uses (10)
+
+Reason:
+RIPR-SPEC-0122: #5471 the stub route carries the finding probe family as --kind, and seams of that kind are tried first; refusals name that seam
+
+Command:
+`cargo xtask goldens bless binding_predicate_two_uses --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

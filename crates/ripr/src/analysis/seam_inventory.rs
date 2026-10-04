@@ -2315,6 +2315,15 @@ fn build_seam_from_shape(
     ))
 }
 
+/// The seam kind a `ripr check` finding's probe family names (#5471). Probe
+/// families and probe shapes share one vocabulary (`predicate`,
+/// `return_value`, `error_path`, `match_arm`, ...), so this is the shape
+/// mapping; every family a stub route prints maps to exactly one kind.
+/// `None` for `static_unknown` and unknown names.
+pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
+    seam_kind_from_probe_shape(family)
+}
+
 fn seam_kind_from_probe_shape(kind: &str) -> Option<SeamKind> {
     match kind {
         PROBE_SHAPE_PREDICATE => Some(SeamKind::PredicateBoundary),

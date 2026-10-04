@@ -12,6 +12,7 @@
 
 use crate::analysis;
 use crate::analysis::owner_fn_line_span;
+use crate::analysis::seams::SeamKind;
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub,
     rust_test_stub_for_classified_seam,
@@ -26,14 +27,35 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TestStubSelector {
     SeamId(String),
-    /// `file:line`, as `ripr check` prints a finding location.
+    /// `file:line`, as `ripr check` prints a finding location. `kind` is
+    /// the finding's probe family (`--kind`), when the caller has one.
     At {
         file: String,
         line: usize,
+        kind: Option<String>,
     },
 }
 
 impl TestStubSelector {
+    /// Attach `--kind FAMILY` to an `--at` selector. The family is the probe
+    /// family `ripr check` reports (`predicate`, `return_value`,
+    /// `error_path`, `match_arm`, ...); a name with no seam kind is refused.
+    pub(crate) fn with_kind(self, family: &str) -> Result<Self, String> {
+        let Self::At { file, line, .. } = self else {
+            return Err("agent stub --kind applies to --at only".to_string());
+        };
+        if analysis::seam_kind_for_probe_family(family).is_none() {
+            return Err(format!(
+                "--kind expects a probe family such as predicate, return_value, error_path, or match_arm, got {family:?}"
+            ));
+        }
+        Ok(Self::At {
+            file,
+            line,
+            kind: Some(family.to_string()),
+        })
+    }
+
     pub(crate) fn parse_at(value: &str) -> Result<Self, String> {
         let (file, line) = value
             .rsplit_once(':')
@@ -47,6 +69,7 @@ impl TestStubSelector {
         Ok(Self::At {
             file: file.to_string(),
             line,
+            kind: None,
         })
     }
 }
@@ -86,7 +109,9 @@ pub(crate) fn resolve_test_stub(
             let source = read_owner_source(root, &entry.seam)?;
             Ok(resolution_for(entry, source))
         }
-        TestStubSelector::At { file, line } => resolve_at_location(root, config, file, *line),
+        TestStubSelector::At { file, line, kind } => {
+            resolve_at_location(root, config, file, *line, kind.as_deref())
+        }
     }
 }
 
@@ -105,24 +130,31 @@ pub(crate) fn resolve_test_stub(
 /// A suffix that names no file under `root` (`src/lib.rs` for
 /// `crates/a/src/lib.rs`) keeps the repo-wide classified lookup so its
 /// more-than-one-file refusal still applies; `check` never prints that form.
+///
+/// `kind` is the finding's probe family (`--kind`). Seams of the matching
+/// seam kind are tried first, then the rest, each group in line-then-nearest
+/// order, so a line holding a boundary and an error variant stubs the one
+/// `check` reported. Without it the order is line-then-nearest alone.
 fn resolve_at_location(
     root: &Path,
     config: &RiprConfig,
     file: &str,
     line: usize,
+    kind: Option<&str>,
 ) -> Result<TestStubResolution, TestStubError> {
+    let kind = kind.and_then(analysis::seam_kind_for_probe_family);
     match scoped_file(root, file) {
         Some(relative) => {
             let seams =
                 analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
                     .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
-            resolve_at(root, candidates, file, line)
+            resolve_at(root, candidates, file, line, kind)
         }
         None => {
             let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
                 .map_err(TestStubError::Operational)?;
-            resolve_at(root, classified_candidates(&classified), file, line)
+            resolve_at(root, classified_candidates(&classified), file, line, kind)
         }
     }
 }
@@ -186,8 +218,12 @@ fn scoped_file(root: &Path, file: &str) -> Option<PathBuf> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum StubRouteDecision {
     /// The shared resolver produces a stub here: print
-    /// `ripr agent stub --at FILE:LINE`.
-    Stub { file: String, line: usize },
+    /// `ripr agent stub --at FILE:LINE --kind FAMILY`.
+    Stub {
+        file: String,
+        line: usize,
+        kind: &'static str,
+    },
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
     Refused { reason: &'static str },
@@ -200,10 +236,14 @@ pub(crate) struct StubRoute {
     pub(crate) decision: StubRouteDecision,
 }
 
-/// The `FILE:LINE` a stub route names for `finding`, relative to `root`
-/// because `--at` resolves against `--root`. `None` when the finding is not
-/// a non-exposed Rust gap in a family the stub producer handles.
-pub(crate) fn stub_route_location(finding: &Finding, root: &Path) -> Option<(String, usize)> {
+/// The `FILE:LINE` and probe family a stub route names for `finding`, the
+/// file relative to `root` because `--at` resolves against `--root`. `None`
+/// when the finding is not a non-exposed Rust gap in a family the stub
+/// producer handles.
+pub(crate) fn stub_route_location(
+    finding: &Finding,
+    root: &Path,
+) -> Option<(String, usize, &'static str)> {
     let location = &finding.probe.location.file;
     let eligible = finding.class != ExposureClass::Exposed
         && matches!(
@@ -222,6 +262,7 @@ pub(crate) fn stub_route_location(finding: &Finding, root: &Path) -> Option<(Str
     Some((
         file.trim_start_matches("./").to_string(),
         finding.probe.location.line,
+        finding.probe.family.as_str(),
     ))
 }
 
@@ -233,10 +274,10 @@ pub(crate) fn stub_route_for_finding(
     config: &RiprConfig,
     finding: &Finding,
 ) -> Option<StubRoute> {
-    let (file, line) = stub_route_location(finding, root)?;
-    let resolution = resolve_at_location(root, config, &file, line).ok()?;
+    let (file, line, kind) = stub_route_location(finding, root)?;
+    let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
     let decision = match resolution.outcome {
-        Ok(_) => StubRouteDecision::Stub { file, line },
+        Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
             reason: refusal.reason(),
         },
@@ -265,13 +306,15 @@ pub(crate) fn check_stub_route(
 
 /// A `ripr check` finding line is the changed line, which is not always a
 /// seam's own line. Candidates are the seams on that line, then the seams in
-/// the same function nearest first; the first one that yields a stub wins,
-/// and when none does, the nearest candidate's refusal names why.
+/// the same function nearest first, those of seam kind `kind` ahead of the
+/// rest; the first one that yields a stub wins, and when none does, the
+/// first candidate's refusal names why.
 fn resolve_at(
     root: &Path,
     candidates: Vec<AtCandidate<'_>>,
     file: &str,
     line: usize,
+    kind: Option<SeamKind>,
 ) -> Result<TestStubResolution, TestStubError> {
     let noun = match candidates.first() {
         Some(AtCandidate::Classified(_)) => "reported gap",
@@ -321,7 +364,13 @@ fn resolve_at(
                 || span.is_some_and(|(start, end)| start <= seam_line && seam_line <= end)
         })
         .collect::<Vec<_>>();
-    candidates.sort_by_key(|candidate| candidate.seam().display_line().abs_diff(line));
+    candidates.sort_by_key(|candidate| {
+        let seam = candidate.seam();
+        (
+            kind.is_some_and(|kind| seam.kind() != kind),
+            seam.display_line().abs_diff(line),
+        )
+    });
     let mut first_refusal = None;
     for candidate in candidates {
         let resolution = candidate.resolution(source.clone());
@@ -482,7 +531,8 @@ mod tests {
             TestStubSelector::parse_at("src/lib.rs:12"),
             Ok(TestStubSelector::At {
                 file: "src/lib.rs".to_string(),
-                line: 12
+                line: 12,
+                kind: None
             })
         );
         for junk in ["src/lib.rs", "src/lib.rs:x", ":3", "src/lib.rs:0"] {
@@ -553,6 +603,7 @@ mod tests {
             classified_candidates(&classified),
             "src/lib.rs",
             2,
+            None,
         );
         assert!(
             matches!(&result, Err(TestStubError::NotFound(message))
@@ -567,6 +618,7 @@ mod tests {
             classified_candidates(&classified),
             "crates/a/src/lib.rs",
             2,
+            None,
         );
         assert!(
             matches!(&one, Err(TestStubError::Operational(_))),
@@ -635,6 +687,80 @@ mod tests {
             run_command("crates/a/Cargo.toml", &integration),
             "cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn kind_selects_a_probe_family_and_applies_to_at_only() {
+        let at =
+            TestStubSelector::parse_at("src/lib.rs:2").and_then(|at| at.with_kind("error_path"));
+        assert_eq!(
+            at,
+            Ok(TestStubSelector::At {
+                file: "src/lib.rs".to_string(),
+                line: 2,
+                kind: Some("error_path".to_string()),
+            })
+        );
+        assert!(matches!(
+            TestStubSelector::parse_at("src/lib.rs:2")
+                .and_then(|at| at.with_kind("static_unknown")),
+            Err(message) if message.contains("--kind expects a probe family")
+        ));
+        assert!(matches!(
+            TestStubSelector::SeamId("abc".to_string()).with_kind("predicate"),
+            Err(message) if message.contains("--at only")
+        ));
+    }
+
+    /// #5471: a finding line can hold seams of several kinds. The finding's
+    /// probe family picks the one `check` reported; without it the seam on
+    /// the line wins.
+    #[test]
+    fn kind_ranks_the_matching_seam_ahead_of_a_nearer_one() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-kind-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"kind\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn check(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Long);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E {\n    Long,\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let config = RiprConfig::default();
+        let kind_of = |kind: Option<&str>| -> Result<(String, bool), String> {
+            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind)
+                .map_err(|error| format!("{error:?}"))?;
+            let seams = analysis::file_seams_without_evidence_at_with_config(
+                &root,
+                &config,
+                Path::new("src/lib.rs"),
+            )?;
+            let seam = seams
+                .iter()
+                .find(|seam| seam.id().as_str() == resolution.seam_id)
+                .ok_or("resolved seam is in the file")?;
+            Ok((seam.kind().as_str().to_string(), resolution.outcome.is_ok()))
+        };
+        let plain = kind_of(None);
+        let error_path = kind_of(Some("error_path"));
+        let predicate = kind_of(Some("predicate"));
+        let _ = std::fs::remove_dir_all(&root);
+        let boundary = SeamKind::PredicateBoundary.as_str().to_string();
+        let variant = SeamKind::ErrorVariant.as_str().to_string();
+        assert_eq!(plain?, (boundary.clone(), true));
+        assert_eq!(error_path?, (variant, true));
+        assert_eq!(predicate?, (boundary, true));
         Ok(())
     }
 

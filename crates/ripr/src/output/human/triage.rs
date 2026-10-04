@@ -246,8 +246,8 @@ pub(crate) fn render_human_triage(
             // resolver for this finding and it produced a stub; a refusal
             // prints its reason, and no decision prints nothing.
             match navigation.stub_route_for(&finding.id) {
-                Some(StubRouteDecision::Stub { file, line }) => {
-                    let command = navigation.stub_command(file, *line);
+                Some(StubRouteDecision::Stub { file, line, kind }) => {
+                    let command = navigation.stub_command(file, *line, kind);
                     out.push_str("Write a test for it:\n");
                     out.push_str(&format!("  {command}\n"));
                     super::push_powershell_variant(out, "  ", &command);

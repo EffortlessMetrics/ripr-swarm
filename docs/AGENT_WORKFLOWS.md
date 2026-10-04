@@ -287,8 +287,11 @@ packet` remains the full-detail compatibility route. See
 [Output Schema](OUTPUT_SCHEMA.md) § "Repair card".
 
 To go from one `ripr check` finding to a test in one step, run
-`ripr agent stub --root . --at FILE:LINE` with the location the finding
-prints (or `--seam-id ID`). It prints a compiling `#[test]` placed in the
+`ripr agent stub --root . --at FILE:LINE --kind FAMILY` as the finding prints
+it (or `--seam-id ID`). `--kind` is the finding's probe family; it picks the
+seam the finding reported when its line holds several. With `--at` the stub
+is read from that one file's seams, without re-classifying them, and placed
+inline. It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
 and arguments and a boundary input when the changed comparison names one. The

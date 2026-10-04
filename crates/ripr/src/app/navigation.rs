@@ -51,11 +51,14 @@ impl FindingNavigation {
 
     /// The one-step `ripr agent stub` route from a finding location to a
     /// runnable test (#5355). It reads the working tree at the same root.
-    pub(crate) fn stub_command(&self, file: &str, line: usize) -> String {
+    /// `kind` is the finding's probe family, so the stub targets the seam
+    /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
-            "{} --at {}",
+            "{} --at {} --kind {}",
             self.stub_prefix,
-            shell_arg(&format!("{file}:{line}"))
+            shell_arg(&format!("{file}:{line}")),
+            shell_arg(kind)
         )
     }
 

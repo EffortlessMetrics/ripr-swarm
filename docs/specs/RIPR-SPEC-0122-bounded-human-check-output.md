@@ -206,7 +206,8 @@ line; longer guidance wraps onto four-space continuation lines.
 After the drill-in commands, a selected Rust finding that is not `exposed` and
 whose probe family is `predicate`, `return_value`, `error_path`, or
 `match_arm` gets one more block, `Write a test for it:`, naming
-`ripr agent stub --root <root> --at <file>:<line>` (#5355). That command
+`ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
+#5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
 compiling test stub, or a named refusal. Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
@@ -218,7 +219,10 @@ the same root. For a file under the root, that resolver reads the seams of
 that one file from a parse of the file alone, with no workspace index, test
 evidence, or seam classification: `check` already judged the location a gap,
 so the stub is not re-judged by a second classifier. Candidates are the seams
-on the finding line, then the seams in the same function nearest first, and
+on the finding line, then the seams in the same function nearest first, with
+seams whose kind matches `--kind` (the one seam kind each of the four
+families names: `predicate` boundary, `return_value`, `error_path` error
+variant, `match_arm`) ahead of the rest, and
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,

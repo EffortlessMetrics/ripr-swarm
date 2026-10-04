@@ -25,7 +25,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
   ripr context --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
+No test stub here: the owner is a trait default method, nested function, generic impl member, or takes a typed `self` receiver
 
 Hidden:
   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.

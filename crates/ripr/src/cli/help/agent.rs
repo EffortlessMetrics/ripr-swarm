@@ -132,12 +132,16 @@ prose only, like the sibling verify and repair commands.
 
 pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
 
-Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE) [--write] [--json]
+Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
+  --kind FAMILY    With --at: the finding's probe family (`predicate`,
+                   `return_value`, `error_path`, `match_arm`). Seams of that
+                   kind are tried first, so a line holding several changes
+                   stubs the one the finding reported. `ripr check` prints it.
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
