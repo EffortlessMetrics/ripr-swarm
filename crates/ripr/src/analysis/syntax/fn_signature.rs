@@ -129,6 +129,20 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
         );
     }
     for item in tree.syntax().descendants().filter_map(ast::Impl::cast) {
+        // A `cfg`-gated impl (or one in a gated module) may be compiled
+        // out, so its trait is not counted.
+        let gated = item.syntax().ancestors().any(|node| {
+            ast::AnyHasAttrs::cast(node).is_some_and(|owner| {
+                ast::HasAttrs::attrs(&owner).any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    let text = text.trim_start_matches("#[").trim_start();
+                    text.starts_with("cfg(") || text.starts_with("cfg_attr(")
+                })
+            })
+        });
+        if gated {
+            continue;
+        }
         let self_is_name = item
             .self_ty()
             .is_some_and(|ty| ty.syntax().text().to_string().trim() == name);
@@ -152,10 +166,14 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
     Some(traits)
 }
 
-/// Whether `source` defines a struct, enum, union or type alias named
-/// `name` outside test-only modules, which shadows any std type of that
-/// name. An unparsed file counts as defining it, so callers fail closed.
-pub(crate) fn defines_local_type(source: &str, name: &str) -> bool {
+/// Whether `source` binds the type name `name` outside test-only modules,
+/// which shadows any std type of that name: a struct, enum, union or type
+/// alias, a non-std `use` that ends in `name`, any `use` that renames to
+/// `name`, or a non-std glob import that may bring it in. Globs through
+/// `self::` or `super::` reach items of this file, which the other checks
+/// already see. An unparsed file counts as binding it, so callers fail
+/// closed.
+pub(crate) fn shadows_type_name(source: &str, name: &str) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return true;
     };
@@ -163,13 +181,52 @@ pub(crate) fn defines_local_type(source: &str, name: &str) -> bool {
         let named = ast::Adt::cast(node.clone())
             .and_then(|adt| adt.name())
             .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|alias| alias.name()))
-            .is_some_and(|ident| ident.text() == name);
+            .is_some_and(|ident| ident.text() == name)
+            || ast::UseTree::cast(node.clone()).is_some_and(|tree| use_tree_binds(&tree, name));
         named
             && !node
                 .ancestors()
                 .filter_map(ast::Module::cast)
                 .any(|module| module_attributes_require_test(&module))
     })
+}
+
+/// Whether one leaf of a `use` binds `name` from outside std.
+fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
+    if tree.use_tree_list().is_some() {
+        return false;
+    }
+    // The full path: this leaf's segments behind every enclosing prefix.
+    let mut segments = Vec::new();
+    let mut current = Some(tree.clone());
+    while let Some(tree) = current {
+        if let Some(path) = tree.path() {
+            let text = path.syntax().text().to_string();
+            segments.splice(0..0, text.split("::").map(|s| s.trim().to_string()));
+        }
+        current = tree
+            .syntax()
+            .parent()
+            .and_then(ast::UseTreeList::cast)
+            .and_then(|list| list.syntax().parent())
+            .and_then(ast::UseTree::cast);
+    }
+    let root = segments
+        .iter()
+        .find(|segment| !segment.is_empty())
+        .map(|segment| segment.trim_start_matches("::"));
+    let from_std = matches!(root, Some("std" | "core" | "alloc"));
+    if tree.star_token().is_some() {
+        return !from_std && !matches!(root, Some("self" | "super"));
+    }
+    match tree.rename() {
+        // `use std::sync::Mutex as Vec` shadows `Vec` as surely as a local
+        // import does.
+        Some(rename) => rename.name().is_some_and(|ident| ident.text() == name),
+        // A std path keeps its own name; the same-named std types ripr
+        // assumes (`Result` aside, which needs both arguments) compare.
+        None => !from_std && segments.last().is_some_and(|last| last == name),
+    }
 }
 
 /// Whether `source` parses without errors under the analyzer's own parse.
@@ -454,5 +511,35 @@ impl std::cmp::PartialEq<Self> for Own {
         let own = local_type_traits(source, "Own").unwrap_or_default();
         assert!(own.iter().any(|t| t == "PartialEq"), "{own:?}");
         assert_eq!(local_type_traits(source, "Missing"), None);
+        let gated = "#[derive(Debug)]
+pub struct Out(u8);
+#[cfg(feature = \"cmp\")]
+impl PartialEq for Out {
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+";
+        let out = local_type_traits(gated, "Out").unwrap_or_default();
+        assert!(!out.iter().any(|t| t == "PartialEq"), "{out:?}");
+    }
+
+    #[test]
+    fn imports_with_std_names_shadow_them() {
+        let shadows = |source: &str, name: &str| shadows_type_name(source, name);
+        assert!(shadows("use crate::time::Duration;", "Duration"));
+        assert!(shadows("use crate::time::{Instant, Duration};", "Duration"));
+        assert!(shadows("use crate::Opaque as String;", "String"));
+        assert!(shadows("use crate::prelude::*;", "String"));
+        assert!(shadows("pub struct Duration(u64);", "Duration"));
+        assert!(shadows("use std::sync::Mutex as Vec;", "Vec"));
+        assert!(!shadows("use std::time::Duration;", "Duration"));
+        assert!(!shadows("use std::collections::*;", "HashMap"));
+        assert!(!shadows("use core::{cmp::Ordering, fmt};", "Ordering"));
+        assert!(!shadows("use super::*;", "String"));
+        assert!(!shadows("use crate::Opaque as _;", "Opaque"));
+        assert!(!shadows("use crate::time::Instant;", "Duration"));
+        assert!(!shadows(
+            "#[cfg(test)]\nmod tests {\n    use crate::time::Duration;\n}",
+            "Duration"
+        ));
     }
 }

@@ -84,6 +84,12 @@ pub fn wait(n: u64) -> Duration {
     if n > 9 { Duration(n) } else { Duration(0) }
 }
 
+use std::sync::Mutex as Vec;
+
+pub fn lock(n: u8) -> Vec<u8> {
+    if n > 6 { Vec::new(n) } else { Vec::new(0) }
+}
+
 pub mod shapes {
     pub struct S {
         pub v: u8,
@@ -92,6 +98,24 @@ pub mod shapes {
     impl self::S {
         pub fn get(&self, n: u8) -> u8 {
             if n > 2 { n } else { self.v }
+        }
+
+        pub fn merge(&self, other: Self, n: u8) -> u8 {
+            if n > 1 { other.v } else { self.v }
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub enum E {
+        Bad,
+    }
+
+    impl self::E {
+        pub fn check(n: u8) -> Result<u8, Self> {
+            if n == 8 {
+                return Err(Self::Bad);
+            }
+            Ok(n)
         }
     }
 
@@ -143,6 +167,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("n > 9", Expect::StopsAtRiprTodo),
         // `impl self::S` is respelled for the child test module.
         ("n > 2 { n }", Expect::StopsAtRiprTodo),
+        // `Self` in a parameter or error pattern is respelled once, not twice.
+        ("n > 1 { other.v }", Expect::StopsAtRiprTodo),
+        ("n == 8", Expect::StopsAtRiprTodo),
+        // A type imported under a std name is not assumed comparable.
+        ("n > 6", Expect::StopsAtRiprTodo),
         ("n > 7", Expect::Refused("owner_unsupported")),
         ("self.max > 3", Expect::Refused("owner_trait_method")),
     ];

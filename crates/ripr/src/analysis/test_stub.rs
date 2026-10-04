@@ -369,17 +369,23 @@ fn stub_body(
     source: &str,
     path_scope: PathScope<'_>,
 ) -> Result<StubBody, TestStubRefusal> {
-    let self_type = match &signature.container {
+    // `Self` is substituted with the impl type as the owner spells it, and
+    // each completed type is respelled for the test once; respelling the
+    // impl type first would rebase it twice (`self::S` -> `super::super::S`).
+    let owner_self = match &signature.container {
         OwnerContainer::Inherent { self_type } | OwnerContainer::TraitImpl { self_type } => {
-            Some(rebase_paths(self_type, path_scope).ok_or(TestStubRefusal::ParameterUnsupported)?)
+            Some(self_type.as_str())
         }
         OwnerContainer::Free | OwnerContainer::Unsupported(_) => None,
     };
+    let self_type = owner_self
+        .map(|ty| rebase_paths(ty, path_scope).ok_or(TestStubRefusal::ParameterUnsupported))
+        .transpose()?;
     let self_type = self_type.as_deref();
     let return_type = signature
         .return_type
         .as_deref()
-        .map(|ty| concrete_type(ty, self_type))
+        .map(|ty| concrete_type(ty, owner_self))
         .ok_or(TestStubRefusal::NoReturnValue)?;
     if return_type.contains("impl ") {
         return Err(TestStubRefusal::OpaqueReturn);
@@ -438,7 +444,7 @@ fn stub_body(
             .name
             .clone()
             .unwrap_or_else(|| format!("arg{}", index + 1));
-        let ty = rebase_paths(&concrete_type(&param.ty, self_type), path_scope)
+        let ty = rebase_paths(&concrete_type(&param.ty, owner_self), path_scope)
             .ok_or(TestStubRefusal::ParameterUnsupported)?;
         let (binding_ty, argument, mutable) = match strip_mut_reference(&ty) {
             Some(inner) => (inner.trim().to_string(), format!("&mut {binding}"), true),
@@ -475,7 +481,8 @@ fn stub_body(
         RequiredDiscriminator::ErrorVariant { variant }
             if seam.kind() == SeamKind::ErrorVariant =>
         {
-            variant_pattern(variant, self_type, path_scope).filter(|_| is_result_type(&return_type))
+            variant_pattern(variant, owner_self, path_scope)
+                .filter(|_| is_result_type(&return_type))
         }
         _ => None,
     };
@@ -686,10 +693,10 @@ fn value_traits(ty: &str, source: &str) -> ValueTraits {
             continue;
         }
         if STD.contains(&word) {
-            // A local item with a std name (`type Result<T> = ..`, `struct
-            // Duration`) shadows it; an alias can hide a non-comparable
-            // error type. `Result` must also show both type arguments.
-            if super::syntax::fn_signature::defines_local_type(source, word)
+            // A local item or import with a std name (`type Result<T> = ..`,
+            // `struct Duration`, `use crate::time::Duration`) shadows it; an
+            // alias can hide a non-comparable error type. `Result` must also show both type arguments.
+            if super::syntax::fn_signature::shadows_type_name(source, word)
                 || (word == "Result" && top_level_type_arguments(&ty[end..]) != Some(2))
             {
                 return ValueTraits::Unknown;
