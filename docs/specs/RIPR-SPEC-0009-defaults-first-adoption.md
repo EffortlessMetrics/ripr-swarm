@@ -529,6 +529,11 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
 - `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_takes_one_seam_per_owner_before_a_second`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_spreads_owners_without_crossing_class_order`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_counts_an_owners_unlisted_seams_once`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_counts_owner_rounds_across_classes`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_json_contains_config_state_artifacts_and_next_commands`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_spells_out_first_screen_recommendation`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_terminal_prints_top_test_and_follow_up_commands`
