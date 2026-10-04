@@ -344,6 +344,24 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     .as_str()
                     .ok_or_else(|| format!("{needle}: test_name"))?
                     .to_string();
+                if needle == "x > 40" {
+                    // The stub lands in `tests`, the nearest plain module
+                    // after `early`, not the gated one or `more_tests`.
+                    let written = std::fs::read_to_string(root.join("src/lib.rs"))
+                        .map_err(|error| error.to_string())?;
+                    let module = |name: &str| {
+                        written
+                            .find(&format!("mod {name} {{"))
+                            .ok_or_else(|| format!("{needle}: `mod {name}` is kept"))
+                    };
+                    let stub = written
+                        .find(&format!("fn {test_name}("))
+                        .ok_or_else(|| format!("{needle}: the stub is written"))?;
+                    assert!(
+                        module("tests")? < stub && stub < module("more_tests")?,
+                        "{needle}: the stub goes in `tests`:\n{written}"
+                    );
+                }
                 let binary = root.join(format!("stub_oracle{}", std::env::consts::EXE_SUFFIX));
                 let mut rustc = Command::new("rustc");
                 rustc
