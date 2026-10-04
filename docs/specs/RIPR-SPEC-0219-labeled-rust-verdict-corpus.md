@@ -217,9 +217,17 @@ the distinct codes seen in that case's run.
   passes while dropping the subtotal fails. The truth is
   `partially_discriminated`, and ripr's `exposed` scores `false_exposed`, in
   the authored rates only.
-- semver `op()` at 1.0.23 `src/parse.rs:272`: ripr says a related test
-  reaches `op` while `related_tests_total` is 0, recorded as
-  `reach_yes_without_related_tests`.
+- authored `checkout-tax-self-computed-expected` (`subtotal * 8 / 100`
+  rewritten as `subtotal * 2 * 4 / 100`): the only test's expected value is
+  `sub + tax(sub)`, computed through the changed function, so every mutant
+  passes and the truth is `not_discriminated`. ripr's `exposed` scores
+  `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
+  RIPR-SPEC-0035 say must not count as a strong oracle.
+- bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
+  `no_static_path` while naming related tests, recorded as
+  `no_static_path_with_related_tests`. semver `op()` at 1.0.23
+  (`src/parse.rs:272`) carried `reach_yes_without_related_tests` until #5424
+  named every examined test; its row now records no contradiction.
 
 ## Test Mapping
 
