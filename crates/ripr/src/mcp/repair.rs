@@ -1147,6 +1147,82 @@ mod tests {
     }
 
     #[test]
+    fn terminal_receipts_preserve_stale_and_mismatch_before_completeness() {
+        // Adapter controls: lifecycle specificity is independent of producer
+        // completeness, while producer-invalid remains the first refusal.
+        let cases = [
+            ("advisory", "receipt_stale", "stale"),
+            ("incomplete", "receipt_stale", "stale"),
+            ("unknown", "receipt_stale", "stale"),
+            ("invalid", "receipt_stale", "invalid"),
+            ("advisory", "receipt_gap_mismatch", "invalid"),
+            ("incomplete", "receipt_gap_mismatch", "invalid"),
+            ("unknown", "receipt_gap_mismatch", "invalid"),
+            ("invalid", "receipt_gap_mismatch", "invalid"),
+        ];
+        for (status, state, expected) in cases {
+            let receipt = json!({
+                "status": status,
+                "provenance": { "movement": "improved" },
+                "summary": { "receipt_state": state },
+            });
+            assert_eq!(terminal_receipt_status(&receipt), expected, "{receipt}");
+        }
+    }
+
+    #[test]
+    fn terminal_legacy_regression_preserves_completeness_and_field_precedence() {
+        // Literal compatibility inputs challenge the adapter, not receipt
+        // authentication. The retained producer/retention fixtures below
+        // separately cover the current emitted receipt form.
+        let cases = [
+            (
+                json!({"status": "advisory", "static_movement": {"state": " \tReGrEsSeD\n"}, "summary": {"receipt_state": "receipt_found"}}),
+                "regressed",
+            ),
+            (
+                json!({"status": "advisory", "provenance": {"movement": " \tReGrEsSeD\n"}, "summary": {"receipt_state": "receipt_found"}}),
+                "regressed",
+            ),
+            (
+                json!({"status": "advisory", "static_movement": {"state": "regressed"}, "seam": {"change": "unchanged"}, "summary": {"receipt_state": "receipt_found"}}),
+                "regressed",
+            ),
+            (
+                json!({"status": "advisory", "provenance": {"movement": "unchanged"}, "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_movement_unchanged"}}),
+                "unchanged",
+            ),
+            (
+                json!({"status": "incomplete", "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_found"}}),
+                "limited",
+            ),
+            (
+                json!({"status": "invalid", "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_found"}}),
+                "invalid",
+            ),
+            (
+                json!({"static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_found"}}),
+                "limited",
+            ),
+            (
+                json!({"status": "advisory", "static_movement": {"state": "improved"}, "summary": {"receipt_state": "receipt_found"}}),
+                "limited",
+            ),
+            (
+                json!({"status": "advisory", "static_movement": {"state": "regressed_extra"}, "summary": {"receipt_state": "receipt_found"}}),
+                "limited",
+            ),
+            (
+                json!({"status": "advisory", "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_stale"}}),
+                "stale",
+            ),
+        ];
+        for (receipt, expected) in cases {
+            assert_eq!(terminal_receipt_status(&receipt), expected, "{receipt}");
+        }
+    }
+
+    #[test]
     fn regressed_movement_survives_the_presence_lifecycle() -> Result<(), String> {
         // The real producer's regressed movement collapses to receipt_missing,
         // but the complete receipt still reports regression (#5155 / #5199).
