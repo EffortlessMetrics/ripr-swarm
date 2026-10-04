@@ -1906,10 +1906,21 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
     bytes.push(b'\n');
-    // A refusal moves no state, so the commit carries no state check: the
-    // byte comparison still refuses when a concurrent finish landed first,
-    // and that terminal verdict supersedes the refusal observation.
-    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |_| Ok(()))?;
+    // A refusal moves no state, but it must not land beside a committed
+    // after verdict: the check runs under the commit lock against the
+    // current manifest, so it refuses both an attempt that finished before
+    // this write opened and one that finished while it ran. The byte
+    // comparison alone cannot see the first case (base already carries the
+    // verdict), and that terminal verdict supersedes the refusal observation.
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.after.is_some() {
+            return Err(format!(
+                "repair attempt {} already has an after verdict; a refusal is recorded only while the attempt is resumable",
+                attempt_id.as_str()
+            ));
+        }
+        Ok(())
+    })?;
     read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
 }
 
@@ -4382,6 +4393,40 @@ mod tests {
         let (_, _, finished) = open_attempt(&root, None, &attempt_id)?;
         if finished.last_after_refusal.is_some() {
             return Err("finish must clear the earlier refusal".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// A refusal recorded for an already-finished attempt is refused and
+    /// leaves the terminal manifest byte-identical: the after verdict
+    /// supersedes the refusal observation.
+    #[test]
+    fn after_refusal_on_a_finished_attempt_is_refused_without_touching_the_manifest()
+    -> Result<(), String> {
+        let root = test_repo_root("refusal-finished")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "refusal-finished")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+        finish_repair_attempt(
+            &root,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        let (_, manifest_path, _) = open_attempt(&root, None, &attempt_id)?;
+        let finished_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        match record_repair_attempt_after_refusal(&root, &attempt_id, "late refusal") {
+            Err(error) if error.contains("already has an after verdict") => {}
+            Err(error) => return Err(format!("unexpected refusal error: {error:?}")),
+            Ok(()) => return Err("a refusal landed on a finished attempt".to_string()),
+        }
+        let kept_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        if kept_bytes != finished_bytes {
+            return Err("the refused write still touched the terminal manifest".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
