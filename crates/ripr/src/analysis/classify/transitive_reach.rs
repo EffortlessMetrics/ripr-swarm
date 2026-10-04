@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 /// Maximum call-hop depth for the transitive walk.
-const MAX_TRANSITIVE_DEPTH: usize = 5;
+pub(in crate::analysis) const MAX_TRANSITIVE_DEPTH: usize = 5;
 
 /// A concrete pointer to the test that witnessed a transitive-reach candidate
 /// path, captured so the limitation message can name something the user can

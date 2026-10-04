@@ -47,7 +47,7 @@ use crate::analysis::extract::{
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
-    owner_pin_assertions, trusted_macro_binding_ambiguities,
+    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
 use std::cell::RefCell;
@@ -71,9 +71,54 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    withheld: WithheldMacroBindings,
+}
+
+/// The macro bindings of files a narrowed diff index withheld (#5320).
+/// The ambiguity unions below run over every indexed file, so the withheld
+/// files' share is folded in to keep the decision the full selection made.
+/// Name-specific empty-macro bindings need no entry here: the diff scope
+/// admits every file that spells a test file's local empty-macro name.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct WithheldMacroBindings {
+    /// Some withheld file may shadow any macro name.
+    any_name: bool,
+    /// Trusted macro names withheld files may shadow.
+    trusted: BTreeSet<String>,
+}
+
+impl WithheldMacroBindings {
+    /// Fold one withheld file in. Returns `true` once nothing further can
+    /// change the result, so the caller can stop reading.
+    pub(in crate::analysis) fn absorb(
+        &mut self,
+        source: &str,
+        packages: &BTreeSet<String>,
+    ) -> bool {
+        if self.any_name {
+            return true;
+        }
+        match macro_binding_scan(source, packages, NON_RETURNING_MACROS, &BTreeSet::new()) {
+            Some(names) => self.trusted.extend(names),
+            None => {
+                self.any_name = true;
+                self.trusted = NON_RETURNING_MACROS
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect();
+            }
+        }
+        self.any_name
+    }
 }
 
 impl OwnerPinSyntax {
+    /// Fold in the macro bindings of files the diff index withheld.
+    pub(in crate::analysis) fn with_withheld(mut self, withheld: WithheldMacroBindings) -> Self {
+        self.withheld = withheld;
+        self
+    }
+
     /// Shared equality-oracle admission for the bounded supported families.
     /// Execution provenance is independent of the error/boundary/value matcher.
     /// Applicability is the invocation
@@ -106,6 +151,7 @@ impl OwnerPinSyntax {
                         NON_RETURNING_MACROS,
                     )
                 })
+                .chain(self.withheld.trusted.iter().cloned())
                 .collect()
         });
         let Some(facts) = index
@@ -135,6 +181,13 @@ impl OwnerPinSyntax {
                         path == &test.file,
                     )
                 })
+                .chain(
+                    self.withheld
+                        .any_name
+                        .then(|| names.clone())
+                        .into_iter()
+                        .flatten(),
+                )
                 .collect()
         });
         let ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
@@ -925,6 +978,62 @@ fn fn_definition_offsets(masked: &str, name: &str) -> Vec<usize> {
             })
         })
         .collect()
+}
+
+/// The name-keyed workspace scans [`OwnerReturnPin::establish`] runs for an
+/// owner that files outside the index could still change (#5320). Each scan
+/// is monotone in the files it sees, so once the index decides it, more
+/// files cannot change it; an undecided scan names what a file must spell.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::analysis) struct PinScopeNeeds {
+    /// No other indexed `fn <name>` competes yet; another file's could.
+    pub(in crate::analysis) competing_definitions: bool,
+    /// The receiver type is not declared in the index yet; another file's
+    /// `struct`/`enum`/`union` of this name would declare it.
+    pub(in crate::analysis) receiver_type: Option<String>,
+    /// A trait method's receivers come from every `impl <trait> for` block.
+    pub(in crate::analysis) trait_impls: Option<String>,
+    /// A test binding `let x = T::ctor()` pins this receiver type only when
+    /// exactly one inherent `impl T { fn ctor }` exists; another file's
+    /// `impl` block for a same-named type changes that count.
+    pub(in crate::analysis) constructor_type: Option<String>,
+}
+
+/// What [`PinScopeNeeds`] says for `owner` over `index`.
+pub(in crate::analysis) fn pin_scope_needs(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> PinScopeNeeds {
+    let mut needs = PinScopeNeeds::default();
+    if !owner.item.has_body {
+        return needs;
+    }
+    let method = match (&owner.item.container, owner.item.has_self_param) {
+        (FunctionContainer::Free, false) => false,
+        (FunctionContainer::Inherent { self_ty }, true)
+        | (FunctionContainer::TraitImpl { self_ty, .. }, true) => {
+            needs.constructor_type = path_base_name(self_ty).map(str::to_string);
+            if declared_receiver(self_ty, index).is_none() {
+                // A shape `declared_receiver` never accepts stays refused
+                // whatever else is indexed.
+                if self_ty.starts_with(['&', '[', '(', '*']) || self_ty.starts_with("dyn ") {
+                    return needs;
+                }
+                let Some(base) = path_base_name(self_ty) else {
+                    return needs;
+                };
+                needs.receiver_type = Some(base.to_string());
+            }
+            true
+        }
+        (FunctionContainer::Trait { trait_name }, true) => {
+            needs.trait_impls = Some(trait_name.clone());
+            true
+        }
+        _ => return needs,
+    };
+    needs.competing_definitions = !other_definition_competes(owner, index, method);
+    needs
 }
 
 /// The receiver type an `impl` block's self type names, when it is one this
