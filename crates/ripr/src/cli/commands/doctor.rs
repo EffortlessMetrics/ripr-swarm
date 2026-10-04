@@ -128,6 +128,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     report_detected_test_surfaces(&root);
     report_perl_preview(&root);
     report_known_limitations();
+    if profile == output::doctor::DoctorProfile::SourceBuild {
+        report_linker_temp_redirect_status(&root);
+    }
 
     for tool in output::doctor::DOCTOR_TOOLS {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
@@ -161,6 +164,11 @@ fn doctor_json(root: &Path, profile: output::doctor::DoctorProfile) -> Result<()
         add_language_runtime_probes(root, &enabled_languages, &mut report, false, probe_runtime);
     if let Some(advisory) = generated_workflow_advisory(root) {
         report.add_advisory_check("generated_workflow", advisory);
+    }
+    if profile == output::doctor::DoctorProfile::SourceBuild
+        && let Some(advisory) = linker_temp_redirect_advisory(root)
+    {
+        report.add_advisory_check("linker_temp_redirect", advisory);
     }
     println!("{}", report.render_json()?);
     output::doctor::doctor_report_result(&report)
@@ -1625,6 +1633,141 @@ fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<Stri
     }
 }
 
+/// Workspace-relative Cargo config paths Cargo reads `[env]` from. When both
+/// exist, `config.toml` is the one Cargo resolves first, so the first
+/// existing regular file here is the config a build against this root uses.
+const CARGO_CONFIG_PATHS: [&str; 2] = [".cargo/config.toml", ".cargo/config"];
+
+/// The variables MSVC `link.exe` and other native linkers take their temp
+/// directory from.
+const LINKER_TEMP_VARS: [&str; 3] = ["TEMP", "TMP", "TMPDIR"];
+
+/// Largest Cargo config doctor reads. A real config is a few hundred bytes;
+/// a bigger file is not a config this preflight can vouch for.
+const CARGO_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// The `[env]` linker-temp redirect a workspace's Cargo config declares: the
+/// variables it touches, the distinct workspace-relative directories it
+/// targets, and whether every entry is `force = true`.
+#[derive(Debug, Eq, PartialEq)]
+struct LinkerTempRedirect {
+    vars: Vec<&'static str>,
+    dirs: Vec<String>,
+    all_forced: bool,
+}
+
+/// Parse the `[env]` linker-temp redirect out of a Cargo config's text. Only
+/// table entries with `relative = true` redirect into a workspace directory;
+/// plain string values, absolute entries and other variables do not, so they
+/// are not reported. An over-broad match would warn on workspaces the
+/// failure cannot hit, and a missing directory is only a defect while it is
+/// the linker's temp directory.
+fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
+    let config = toml::from_str::<toml::Value>(config_text).ok()?;
+    let env = config.get("env")?.as_table()?;
+    let mut redirect = LinkerTempRedirect {
+        vars: Vec::new(),
+        dirs: Vec::new(),
+        all_forced: true,
+    };
+    for var in LINKER_TEMP_VARS {
+        let Some(entry) = env.get(var) else {
+            continue;
+        };
+        if !entry
+            .get("relative")
+            .and_then(|relative| relative.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some(dir) = entry.get("value").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if !redirect.vars.contains(&var) {
+            redirect.vars.push(var);
+        }
+        if !redirect.dirs.iter().any(|known| known == dir) {
+            redirect.dirs.push(dir.to_string());
+        }
+        if !entry
+            .get("force")
+            .and_then(|force| force.as_bool())
+            .unwrap_or(false)
+        {
+            redirect.all_forced = false;
+        }
+    }
+    (!redirect.vars.is_empty()).then_some(redirect)
+}
+
+/// Read the workspace's own Cargo config (`.cargo/config.toml`, else the
+/// legacy `.cargo/config`). Returns the relative path for evidence and the
+/// text. A repository can commit these paths as a symlink (to `/dev/zero`,
+/// say); read nothing but a regular file, and an unreadable or oversized
+/// config stays silent — the preflight never fires on evidence it could not
+/// read.
+fn read_workspace_cargo_config(root: &Path) -> Option<(&'static str, String)> {
+    for relative in CARGO_CONFIG_PATHS {
+        let path = root.join(relative);
+        if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+            continue;
+        }
+        return crate::bounded_input::read_to_string_with_limit(&path, CARGO_CONFIG_MAX_BYTES)
+            .ok()
+            .map(|text| (relative, text));
+    }
+    None
+}
+
+/// Preflight for the workspace-relative linker-temp redirect (#5280).
+///
+/// ripr's own `.cargo/config.toml` force-sets `TEMP`/`TMP`/`TMPDIR` to
+/// workspace-relative `target/` so MSVC `link.exe` never writes its temp
+/// files to a full system temp drive (PR #397). The redirect is deliberate
+/// and stays; the cost is that a checkout where the workspace-local
+/// directory does not exist — a fresh `git worktree add` building with an
+/// isolated `CARGO_TARGET_DIR` — fails linking with an opaque
+/// `LNK1104 ... <workspace>\target\lnk{GUID}.tmp` even though objects and
+/// `/OUT` land in the isolated target. This surfaces the constraint and the
+/// one-line repair before the build hits it. Advisory only: a normal
+/// workspace build creates `target/` itself, and a present directory means
+/// the failure cannot occur.
+fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
+    let (relative_path, config_text) = read_workspace_cargo_config(root)?;
+    let redirect = linker_temp_redirect(&config_text)?;
+    let absent: Vec<&str> = redirect
+        .dirs
+        .iter()
+        .map(|dir| dir.as_str())
+        .filter(|dir| !root.join(dir).is_dir())
+        .collect();
+    if absent.is_empty() {
+        return None;
+    }
+    let dirs = absent.join(", ");
+    let override_note = if redirect.all_forced {
+        "exported TEMP/TMP cannot override it (force = true)"
+    } else {
+        "an exported TEMP/TMP overrides entries without force = true"
+    };
+    Some(format!(
+        "{relative_path} redirects linker temp variables ({}) into workspace-relative \
+         {dirs}/, which does not exist; building with an isolated CARGO_TARGET_DIR fails \
+         MSVC linking (LNK1104 naming {}/lnk*.tmp) until it exists. Create the missing \
+         directory before building from source (for example `mkdir {}`); {override_note}",
+        redirect.vars.join(", "),
+        output::path::human_path(&root.join(absent[0])),
+        absent[0],
+    ))
+}
+
+fn report_linker_temp_redirect_status(root: &Path) {
+    if let Some(advisory) = linker_temp_redirect_advisory(root) {
+        println!("~ {advisory}");
+    }
+}
+
 /// Recursively sum file sizes under `dir`. Returns 0 when the directory
 /// does not exist or cannot be read — cache absence is not a problem.
 fn dir_size_bytes(dir: &Path) -> u64 {
@@ -1785,6 +1928,106 @@ mod tests {
         assert_eq!(too_big, None);
         #[cfg(unix)]
         assert_eq!(through_link, None);
+        Ok(())
+    }
+
+    /// The exact `[env]` shape ripr's own `.cargo/config.toml` ships.
+    const REPO_SHAPED_CARGO_CONFIG: &str = "[env]\n\
+        TEMP = { value = \"target\", relative = true, force = true }\n\
+        TMP = { value = \"target\", relative = true, force = true }\n\
+        TMPDIR = { value = \"target\", relative = true, force = true }\n";
+
+    #[test]
+    fn linker_temp_redirect_parses_only_relative_table_entries() {
+        // The repo shape: three variables, one distinct directory, all forced.
+        let redirect = linker_temp_redirect(REPO_SHAPED_CARGO_CONFIG);
+        assert!(
+            redirect.as_ref().is_some_and(|redirect| {
+                redirect.vars == ["TEMP", "TMP", "TMPDIR"]
+                    && redirect.dirs == ["target"]
+                    && redirect.all_forced
+            }),
+            "ripr's own [env] shape must parse as a redirect: {redirect:?}"
+        );
+
+        // Plain-string entries (never tables, so never `relative`) do not
+        // redirect into the workspace; unrelated variables are ignored; a
+        // non-forced entry keeps all_forced honest for the override note.
+        let mixed = "[env]\n\
+            TEMP = \"elsewhere\"\n\
+            TMPDIR = { value = \"target\", relative = true }\n";
+        let redirect = linker_temp_redirect(mixed);
+        assert!(
+            redirect.as_ref().is_some_and(|redirect| {
+                redirect.vars == ["TMPDIR"] && redirect.dirs == ["target"] && !redirect.all_forced
+            }),
+            "the relative TMPDIR entry must redirect: {redirect:?}"
+        );
+
+        assert_eq!(linker_temp_redirect("[env]\nTEMP = \"target\"\n"), None);
+        assert_eq!(linker_temp_redirect("[env]\nRUST_LOG = \"debug\"\n"), None);
+        assert_eq!(linker_temp_redirect("[profile.dev]\nopt-level = 0\n"), None);
+        assert_eq!(linker_temp_redirect("not toml ["), None);
+    }
+
+    #[test]
+    fn linker_temp_redirect_advisory_names_the_missing_dir_and_repair() -> Result<(), String> {
+        let root = unique_command_test_dir("linker-temp-redirect");
+        std::fs::create_dir_all(root.join(".cargo"))
+            .map_err(|err| format!("create .cargo: {err}"))?;
+        let config = root.join(".cargo/config.toml");
+        std::fs::write(&config, REPO_SHAPED_CARGO_CONFIG)
+            .map_err(|err| format!("write config: {err}"))?;
+        // The issue's setup (#5280): redirect present, workspace-local
+        // target/ absent — a fresh worktree about to build with an isolated
+        // CARGO_TARGET_DIR.
+        let absent = linker_temp_redirect_advisory(&root);
+        // Once the directory exists (a normal workspace build creates it
+        // itself) the failure cannot occur and the preflight is silent.
+        std::fs::create_dir_all(root.join("target"))
+            .map_err(|err| format!("create target: {err}"))?;
+        let present = linker_temp_redirect_advisory(&root);
+        // No redirect, no warning: the config's presence alone is not the
+        // defect, the redirect into a missing directory is.
+        std::fs::write(&config, "[alias]\nxtask = \"run -p xtask --\"\n")
+            .map_err(|err| format!("write plain config: {err}"))?;
+        std::fs::remove_dir_all(root.join("target"))
+            .map_err(|err| format!("remove target: {err}"))?;
+        let no_redirect = linker_temp_redirect_advisory(&root);
+        // The legacy extensionless name is the config Cargo reads when
+        // config.toml does not exist.
+        std::fs::remove_file(&config).map_err(|err| format!("remove config: {err}"))?;
+        std::fs::write(root.join(".cargo/config"), REPO_SHAPED_CARGO_CONFIG)
+            .map_err(|err| format!("write legacy config: {err}"))?;
+        let legacy = linker_temp_redirect_advisory(&root);
+        // An unreadable (here: oversized) config stays silent.
+        let mut oversized = REPO_SHAPED_CARGO_CONFIG.to_string();
+        oversized.push_str(&"#".repeat(CARGO_CONFIG_MAX_BYTES as usize));
+        std::fs::write(&config, oversized).map_err(|err| format!("write oversized: {err}"))?;
+        let too_big = linker_temp_redirect_advisory(&root);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let absent = absent.unwrap_or_default();
+        assert!(
+            absent.starts_with(".cargo/config.toml redirects linker temp variables"),
+            "absent workspace target must warn, got: {absent:?}"
+        );
+        assert!(absent.contains("(TEMP, TMP, TMPDIR)"), "{absent}");
+        assert!(absent.contains("workspace-relative target/"), "{absent}");
+        assert!(absent.contains("LNK1104"), "{absent}");
+        assert!(absent.contains("mkdir target"), "{absent}");
+        assert!(
+            absent.contains("exported TEMP/TMP cannot override it (force = true)"),
+            "{absent}"
+        );
+        assert_eq!(present, None);
+        assert_eq!(no_redirect, None);
+        let legacy = legacy.unwrap_or_default();
+        assert!(
+            legacy.starts_with(".cargo/config redirects linker temp variables"),
+            "legacy extensionless config must be read, got: {legacy:?}"
+        );
+        assert_eq!(too_big, None);
         Ok(())
     }
 
