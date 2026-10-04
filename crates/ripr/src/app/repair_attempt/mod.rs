@@ -1009,6 +1009,8 @@ pub(crate) fn retain_terminal_evidence_from(
         return Err("terminal retention requires at least one after-phase artifact".to_string());
     }
     let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let base_bytes = std::fs::read(&manifest_path)
+        .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish {
         return Err(format!(
@@ -1115,7 +1117,21 @@ pub(crate) fn retain_terminal_evidence_from(
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt terminal retention failed: {error}"))?;
     bytes.push(b'\n');
-    replace_manifest_bytes(&manifest_path, &bytes)?;
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.state != RepairAttemptState::ReadyToFinish {
+            return Err(format!(
+                "repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish",
+                attempt_id.as_str()
+            ));
+        }
+        if !current.terminal_artifacts.is_empty() && current.terminal_artifacts != retained {
+            return Err(format!(
+                "repair attempt {} already retained different terminal evidence; committed results are not replaced",
+                attempt_id.as_str()
+            ));
+        }
+        Ok(())
+    })?;
     read_repair_attempt_manifest_at(&store, &manifest_path)?;
     Ok(retained)
 }
@@ -1653,6 +1669,8 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
     attempt_id: &RepairAttemptId,
 ) -> Result<(), String> {
     let (_store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let base_bytes = std::fs::read(&manifest_path)
+        .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     if manifest.state == RepairAttemptState::AwaitingEdit {
         return Err(format!(
             "repair attempt {} is already awaiting_edit; no restore is needed",
@@ -1677,7 +1695,21 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
     bytes.push(b'\n');
-    replace_manifest_bytes(&manifest_path, &bytes)?;
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.state == RepairAttemptState::AwaitingEdit {
+            return Err(format!(
+                "repair attempt {} is already awaiting_edit; no restore is needed",
+                attempt_id.as_str()
+            ));
+        }
+        if current.after.is_none() {
+            return Err(format!(
+                "repair attempt {} carries no after verdict; only a finished attempt can be restored for a retry",
+                attempt_id.as_str()
+            ));
+        }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -1711,6 +1743,8 @@ pub(crate) fn finish_repair_attempt_from(
 ) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let base_bytes = std::fs::read(&manifest_path)
+        .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::AwaitingEdit {
         return Err(after_phase_not_awaiting_error(
@@ -1801,7 +1835,13 @@ pub(crate) fn finish_repair_attempt_from(
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize completed repair attempt failed: {error}"))?;
     bytes.push(b'\n');
-    replace_manifest_bytes(&manifest_path, &bytes)?;
+    let root_display = bound_root(&root_argument.to_string_lossy());
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.state != RepairAttemptState::AwaitingEdit {
+            return Err(after_phase_not_awaiting_error(&root_display, current));
+        }
+        Ok(())
+    })?;
     Ok(after)
 }
 
@@ -1833,6 +1873,8 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     reason: &str,
 ) -> Result<(), String> {
     let (store, manifest_path, mut manifest) = open_attempt(root, store, attempt_id)?;
+    let base_bytes = std::fs::read(&manifest_path)
+        .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     let root = store.canonical_root().to_path_buf();
     let reason = bounded_refusal_reason(reason);
     if reason.is_empty() {
@@ -1847,7 +1889,10 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
     bytes.push(b'\n');
-    replace_manifest_bytes(&manifest_path, &bytes)?;
+    // A refusal moves no state, so the commit carries no state check: the
+    // byte comparison still refuses when a concurrent finish landed first,
+    // and that terminal verdict supersedes the refusal observation.
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |_| Ok(()))?;
     read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
 }
 
@@ -2232,6 +2277,88 @@ fn find_manifest_artifact<'a>(
 
 fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     replace_file_atomically(path, bytes)
+}
+
+/// Name of the attempt-directory file whose OS advisory lock serializes
+/// after-phase manifest commits (#5287). The file carries no data; its lock
+/// is the mutual exclusion. The OS releases the lock on process exit or
+/// crash, so a dead holder never wedges the attempt.
+const REPAIR_ATTEMPT_COMMIT_LOCK: &str = "after.lock";
+
+/// Win32 `ERROR_LOCK_VIOLATION`, returned by `LockFileEx` with
+/// `LOCKFILE_FAIL_IMMEDIATE` when another handle holds the range. fs2
+/// surfaces it unmapped, so contention detection matches it alongside
+/// `ErrorKind::WouldBlock` (the Unix `EWOULDBLOCK` path).
+const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
+
+/// Short-held exclusive OS lock over one manifest commit. Released on drop.
+struct ManifestCommitLock {
+    file: std::fs::File,
+}
+
+impl Drop for ManifestCommitLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+fn lock_manifest_for_commit(
+    attempt_dir: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<ManifestCommitLock, String> {
+    let lock_path = attempt_dir.join(REPAIR_ATTEMPT_COMMIT_LOCK);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| format!("open {} failed: {error}", lock_path.display()))?;
+    if let Err(error) = fs2::FileExt::try_lock_exclusive(&file) {
+        if error.kind() == std::io::ErrorKind::WouldBlock
+            || error.raw_os_error() == Some(WINDOWS_ERROR_LOCK_VIOLATION)
+        {
+            return Err(format!(
+                "repair attempt {} is being finished by another process; retry after it completes",
+                attempt_id.as_str()
+            ));
+        }
+        return Err(format!("lock {} failed: {error}", lock_path.display()));
+    }
+    Ok(ManifestCommitLock { file })
+}
+
+/// Commits replacement manifest bytes only when the attempt is unchanged
+/// since the caller loaded `base_bytes`: the commit lock is held across a
+/// re-read, the caller's state check against the fresh manifest, and the
+/// replace, so two concurrent after phases cannot both derive from one base
+/// and lose a verdict (#5287). The state check runs before the byte
+/// comparison so a loser behind a finished winner gets the informative
+/// already-ended refusal rather than the changed-underfoot one.
+fn commit_manifest_locked(
+    manifest_path: &Path,
+    attempt_id: &RepairAttemptId,
+    base_bytes: &[u8],
+    bytes: &[u8],
+    check: impl FnOnce(&RepairAttemptManifest) -> Result<(), String>,
+) -> Result<(), String> {
+    let attempt_dir = manifest_path
+        .parent()
+        .ok_or_else(|| "repair attempt manifest path has no parent".to_string())?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    let current_bytes = std::fs::read(manifest_path)
+        .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+    let current: RepairAttemptManifest = serde_json::from_slice(&current_bytes)
+        .map_err(|error| format!("decode {} failed: {error}", manifest_path.display()))?;
+    check(&current)?;
+    if current_bytes != base_bytes {
+        return Err(format!(
+            "repair attempt {} changed while the after phase ran; retry the after phase",
+            attempt_id.as_str()
+        ));
+    }
+    replace_manifest_bytes(manifest_path, bytes)?;
+    Ok(())
 }
 
 /// Replaces a shared compatibility file through the staged atomic-rename
@@ -3853,6 +3980,207 @@ mod tests {
                     "restoring an awaiting attempt was not refused: {other:?}"
                 ));
             }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// Two after phases racing the same attempt must not both report success
+    /// with a silent lost update: exactly one commits, the loser gets a typed
+    /// refusal (contention or already-ended), and the manifest matches the
+    /// winner's verdict (#5287).
+    ///
+    /// A race that ends in an infrastructure error (a transient file or
+    /// process failure under parallel load, never a typed refusal) retries
+    /// with a fresh attempt: only a clean double-success fails fast, so the
+    /// lost-update signal stays loud while Windows rename flakes stay quiet.
+    #[test]
+    fn concurrent_finish_attempts_leave_exactly_one_winner() -> Result<(), String> {
+        let mut last_infrastructure_error = String::new();
+        for round in 0..3 {
+            let label = format!("concurrent-finish-{round}");
+            // Setup/teardown IO failures (fixture git, temp dirs) are
+            // infrastructure too: a real product bug still fails, either as a
+            // lost update, a wrong refusal, or three exhausted rounds.
+            let outcome = match race_two_finishes(&label) {
+                Ok(outcome) => outcome,
+                Err(error) => RaceOutcome::Infrastructure(error),
+            };
+            match outcome {
+                RaceOutcome::Clean => return Ok(()),
+                RaceOutcome::LostUpdate => {
+                    return Err(
+                        "both concurrent after phases reported success; one verdict was silently lost"
+                            .to_string(),
+                    );
+                }
+                RaceOutcome::Infrastructure(error) => {
+                    last_infrastructure_error = error;
+                }
+                RaceOutcome::WrongRefusal(error) => return Err(error),
+            }
+        }
+        Err(format!(
+            "the race kept hitting infrastructure errors: {last_infrastructure_error}"
+        ))
+    }
+
+    enum RaceOutcome {
+        Clean,
+        LostUpdate,
+        Infrastructure(String),
+        WrongRefusal(String),
+    }
+
+    fn race_two_finishes(label: &str) -> Result<RaceOutcome, String> {
+        let root = test_repo_root(label)?;
+        let outcome = race_two_finishes_at(&root, label)?;
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(outcome)
+    }
+
+    fn race_two_finishes_at(root: &Path, label: &str) -> Result<RaceOutcome, String> {
+        let prepared = prepare_sample_attempt(root, "seam:sample", label)?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let packet = root.join(&find_manifest_artifact(&prepared.manifest, "agent_packet")?.path);
+        let test_path = root.join("tests/target.rs");
+        std::fs::create_dir_all(
+            test_path
+                .parent()
+                .ok_or_else(|| "test path has no parent".to_string())?,
+        )
+        .map_err(|error| format!("create tests dir failed: {error}"))?;
+        std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
+            .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let run_finish = |barrier: std::sync::Arc<std::sync::Barrier>| {
+            let root = root.to_path_buf();
+            let attempt_id = attempt_id.clone();
+            let packet = packet.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                finish_repair_attempt(
+                    &root,
+                    &attempt_id,
+                    &packet,
+                    HeadMovement::AdmitDescendantCommits,
+                )
+            })
+        };
+        let first = run_finish(std::sync::Arc::clone(&barrier));
+        let second = run_finish(barrier);
+        let first = first
+            .join()
+            .map_err(|payload| format!("first finish thread panicked: {payload:?}"))?;
+        let second = second
+            .join()
+            .map_err(|payload| format!("second finish thread panicked: {payload:?}"))?;
+
+        let (winner, loser) = match (first, second) {
+            (Ok(after), Err(error)) | (Err(error), Ok(after)) => (after, error),
+            (Ok(_), Ok(_)) => return Ok(RaceOutcome::LostUpdate),
+            (Err(first), Err(second)) => {
+                return Ok(RaceOutcome::Infrastructure(format!(
+                    "both concurrent after phases failed: {first:?} / {second:?}"
+                )));
+            }
+        };
+        if loser.contains("failed:") {
+            return Ok(RaceOutcome::Infrastructure(format!(
+                "the losing after phase hit an infrastructure error: {loser:?}"
+            )));
+        }
+        if !loser.contains("another process") && !loser.contains("already ") {
+            return Ok(RaceOutcome::WrongRefusal(format!(
+                "the losing after phase was not refused as contention or already-ended: {loser:?}"
+            )));
+        }
+        let finished = load_repair_attempt_manifest(root, &attempt_id)?;
+        if finished.after.as_ref() != Some(&winner) {
+            return Ok(RaceOutcome::WrongRefusal(format!(
+                "the manifest verdict does not match the winning after phase: {:?}",
+                finished.after
+            )));
+        }
+        Ok(RaceOutcome::Clean)
+    }
+
+    /// A commit attempted while another holder owns the attempt lock is
+    /// refused as contention without touching the manifest (#5287).
+    #[test]
+    fn manifest_commit_under_a_held_lock_is_refused_as_contention() -> Result<(), String> {
+        let root = test_repo_root("commit-contention")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "commit-contention")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (_store, manifest_path, _manifest) = open_attempt(&root, None, &attempt_id)?;
+        let attempt_dir = manifest_path
+            .parent()
+            .ok_or_else(|| "manifest path has no parent".to_string())?;
+        let base_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+
+        let _held = lock_manifest_for_commit(attempt_dir, &attempt_id)?;
+        let refused = commit_manifest_locked(
+            &manifest_path,
+            &attempt_id,
+            &base_bytes,
+            &base_bytes,
+            |_| Ok(()),
+        );
+        match refused {
+            Err(error) if error.contains("being finished by another process") => {}
+            other => {
+                return Err(format!(
+                    "a commit under a held lock was not refused as contention: {other:?}"
+                ));
+            }
+        }
+        let untouched = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+        if untouched != base_bytes {
+            return Err("a refused commit changed the manifest bytes".to_string());
+        }
+        drop(_held);
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// A commit whose base predates a concurrent manifest change is refused
+    /// without overwriting the newer bytes (#5287).
+    #[test]
+    fn manifest_commit_on_a_stale_base_is_refused_without_overwriting() -> Result<(), String> {
+        let root = test_repo_root("commit-stale-base")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "commit-stale-base")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let (_store, manifest_path, _manifest) = open_attempt(&root, None, &attempt_id)?;
+        let base_bytes = std::fs::read(&manifest_path)
+            .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
+
+        // A concurrent writer moves the manifest (a refusal keeps the state,
+        // so only the byte comparison can catch it).
+        record_repair_attempt_after_refusal(&root, &attempt_id, "concurrent refusal")?;
+        let committed = commit_manifest_locked(
+            &manifest_path,
+            &attempt_id,
+            &base_bytes,
+            &base_bytes,
+            |_| Ok(()),
+        );
+        match committed {
+            Err(error) if error.contains("changed while the after phase ran") => {}
+            other => {
+                return Err(format!(
+                    "a commit on a stale base was not refused: {other:?}"
+                ));
+            }
+        }
+        let (_, _, current) = open_attempt(&root, None, &attempt_id)?;
+        if current.last_after_refusal.is_none() {
+            return Err("a refused stale commit clobbered the concurrent refusal".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;

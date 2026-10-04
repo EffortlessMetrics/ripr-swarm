@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Repair attempts: concurrent `ripr agent repair --phase after` invocations
+  against one attempt no longer lose a verdict to a last-writer-wins
+  manifest replace. Manifest commits serialize on a short-held exclusive
+  OS lock with base revalidation, so exactly one after phase commits and
+  the loser gets a typed retry refusal instead of a silent overwrite
+  (#5287).
+
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails
