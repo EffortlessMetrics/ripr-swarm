@@ -17,6 +17,17 @@ are scoped or reviewed.
   publication behind the shared transition guard, and a refresh cancelled
   by shutdown no longer rolls back previous diagnostics afterward, so no
   stale diagnostics survive shutdown (#5202).
+- `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
+  `--root` is not a directory or the gap-ledger input cannot be read, instead
+  of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
+  names the path and the next step. A root that exists but is not a workspace
+  still gets the `first-pr` recovery packet.
+- Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
+  has a focused test but no `ripr agent repair` command, and closes with
+  `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
+  provider, and `ripr agent repair --phase before` without `--seam-id` points
+  to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
+  not seam IDs.
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -673,6 +684,14 @@ are scoped or reviewed.
   directory ripr creates and writes outside the checkout. The cache directory
   now resolves under the analyzed root rather than the working directory, so
   `--root <checkout>` cannot place it elsewhere either (#4745).
+- A Python or TypeScript `ripr agent packet` built from a check-output gap
+  ledger (the `first-pr` preview route) printed refresh commands for the
+  Rust-only repo-exposure route. Running them overwrote `check.json` and
+  rebuilt the ledger without any Python or TypeScript records, so the same
+  packet command then failed with "gap_id ... was not found". The refresh now
+  reruns `ripr check --json` with the base the check output recorded and
+  rebuilds the ledger with `--check-output`. The blocked reason says the
+  record's repair route stays usable as advisory guidance.
 - Security: `ripr doctor` probes every language runtime (`node`, `bun`,
   `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
   `yarn`. Run inside it, pnpm fetched and ran the release a project's
