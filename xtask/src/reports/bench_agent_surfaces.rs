@@ -401,7 +401,10 @@ fn os_dev_null() -> &'static str {
 /// have written the before-state files; the after-state commit is applied
 /// afterwards.
 fn commit_corpus_base(corpus_root: &Path) -> Result<(), String> {
-    let root_text = corpus_root.display().to_string();
+    // Absolute -C: a relative corpus path would resolve against whatever
+    // cwd the process carries, and a git invocation that misses the corpus
+    // directory would silently operate on the enclosing checkout instead.
+    let root_text = canonical(corpus_root)?.display().to_string();
     let envs = pinned_git_env();
     let config = [
         "-c",
@@ -435,7 +438,7 @@ fn commit_corpus_base(corpus_root: &Path) -> Result<(), String> {
 /// the LSP baseRef `HEAD~1` sees the same change, so M2/M3 measure the same
 /// behavior M1 measures through `--diff`.
 fn commit_corpus_after_state(corpus_root: &Path) -> Result<(), String> {
-    let root_text = corpus_root.display().to_string();
+    let root_text = canonical(corpus_root)?.display().to_string();
     let envs = pinned_git_env();
     let config = [
         "-c",
@@ -624,10 +627,33 @@ fn prepare_repo_corpus() -> Result<Corpus, String> {
 }
 
 fn reset_dir(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        fs::remove_dir_all(path).map_err(|err| format!("reset {}: {err}", path.display()))?;
+    // Windows can hold delete-pending handles briefly (Defender, search,
+    // stragglers); a bounded retry keeps that transient state from failing
+    // the whole benchmark.
+    let mut last_err = None;
+    for _ in 0..3 {
+        if path.exists() {
+            if let Err(err) = fs::remove_dir_all(path) {
+                last_err = Some(err);
+                std::thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+        }
+        match fs::create_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = Some(err);
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
     }
-    fs::create_dir_all(path).map_err(|err| format!("create {}: {err}", path.display()))
+    Err(format!(
+        "reset {} after retries: {}",
+        path.display(),
+        last_err
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
 }
 
 fn write_corpus_file(root: &Path, relative: &str, contents: &str) -> Result<(), String> {
