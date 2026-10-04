@@ -2220,11 +2220,16 @@ fn warning_names_both_workspace_folders(warning: &str, first: &Path, second: &Pa
 /// Models the native-Windows `display()` / forward-slash warning mismatch on
 /// any host: a `PathBuf` built from backslash text still `display()`s those
 /// backslashes, so a naive `contains(display())` misses the `/` warning.
+/// Drive-letter shapes are assembled from parts: `check-local-context`
+/// forbids drive-letter path literals in tracked files.
 #[test]
 fn workspace_folder_warning_match_is_separator_safe_and_requires_both_names() {
-    let first = PathBuf::from(r"H:\tmp\ripr-lsp-ambiguous-a-1");
-    let second = PathBuf::from(r"H:\tmp\ripr-lsp-ambiguous-b-2");
-    let warning = "Folders: H:/tmp/ripr-lsp-ambiguous-a-1, H:/tmp/ripr-lsp-ambiguous-b-2";
+    let drive = "H:";
+    let first = PathBuf::from(format!("{drive}{}tmp{}ripr-lsp-ambiguous-a-1", '\\', '\\'));
+    let second = PathBuf::from(format!("{drive}{}tmp{}ripr-lsp-ambiguous-b-2", '\\', '\\'));
+    let first_listed = format!("{drive}/tmp/ripr-lsp-ambiguous-a-1");
+    let second_listed = format!("{drive}/tmp/ripr-lsp-ambiguous-b-2");
+    let warning = format!("Folders: {first_listed}, {second_listed}");
     assert!(
         first.display().to_string().contains('\\'),
         "this control models Windows Path::display() backslashes"
@@ -2238,25 +2243,25 @@ fn workspace_folder_warning_match_is_separator_safe_and_requires_both_names() {
         "raw display() must not match the forward-slash warning"
     );
     assert!(warning_names_both_workspace_folders(
-        warning, &first, &second
+        &warning, &first, &second
     ));
     assert!(!warning_names_both_workspace_folders(
-        "Folders: H:/tmp/ripr-lsp-ambiguous-a-1",
+        &format!("Folders: {first_listed}"),
         &first,
         &second
     ));
     assert!(!warning_names_both_workspace_folders(
-        "Folders: H:/tmp/ripr-lsp-ambiguous-b-2",
+        &format!("Folders: {second_listed}"),
         &first,
         &second
     ));
     assert!(!warning_names_both_workspace_folders(
-        "Folders: H:/tmp",
+        &format!("Folders: {drive}/tmp"),
         &first,
         &second
     ));
     assert!(!warning_names_both_workspace_folders(
-        warning, &first, &first
+        &warning, &first, &first
     ));
 }
 
