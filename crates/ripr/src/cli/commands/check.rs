@@ -825,7 +825,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else {
-        app::check_with_progress(input, &config, progress_scope, progress_sink)
+        app::check_with_progress(input, &config, progress_scope, None)
     };
     let mut output = match output_result {
         Ok(output) => output,
