@@ -369,8 +369,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
-        output::outcome::display_path(&options.before),
-        output::outcome::display_path(&options.after),
+        agent_verify_input_path(&options.before),
+        agent_verify_input_path(&options.after),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
@@ -384,6 +384,13 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         Some(artifact_currentness),
         &binding,
     )
+}
+
+// These inputs are re-opened by receipt admission. Preserve native filename
+// characters while keeping the report's existing omission of leading `./`.
+fn agent_verify_input_path(path: &Path) -> String {
+    let rendered = crate::agent::loop_commands::root_path_display(path);
+    rendered.strip_prefix("./").unwrap_or(&rendered).to_string()
 }
 
 /// Exact `render_agent_verify` error for drifted analysis inputs.
@@ -1728,11 +1735,12 @@ fn repair_after_input_drift_lines(
 /// test-only edit. Names the seam and the reason in plain words, says that
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
-/// and points at the surfaces that only offer a repair start for seams that
-/// pass this check.
+/// points at the surfaces that only offer a repair start for seams that
+/// pass this check, and points at the repair help carrying the scope
+/// boundary (#5210).
 fn before_phase_refusal(seam_id: &str, error: &str) -> String {
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` (no repair target exists). Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
@@ -1908,6 +1916,10 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
         root.join(out_dir)
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "agent_root_tests.rs"]
+mod root_tests;
 
 #[cfg(test)]
 mod tests {
