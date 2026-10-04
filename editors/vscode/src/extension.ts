@@ -87,8 +87,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand('ripr.showOutput', () => controller?.showOutput()),
     vscode.commands.registerCommand('ripr.showStatus', () => controller?.showStatus()),
-    vscode.commands.registerCommand('ripr.showAttemptStatus', async () =>
-      controller?.showAttemptStatus()
+    vscode.commands.registerCommand('ripr.showAttemptStatus', async (attemptId?: string) =>
+      controller?.showAttemptStatus(attemptId)
     ),
     vscode.commands.registerCommand('ripr.diagnoseSetup', () => controller?.diagnoseSetup()),
     vscode.commands.registerCommand('ripr.startCurrentRepair', async () =>

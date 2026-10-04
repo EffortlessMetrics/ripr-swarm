@@ -1778,7 +1778,14 @@ export class RiprClientController {
   // the presentation can never strengthen the typed status_class.
   // ---------------------------------------------------------------------------
 
-  async showAttemptStatus(): Promise<void> {
+  /**
+   * Read and present the shared repair-attempt status for the workspace.
+   * An optional explicit attempt id (forwarded from the command
+   * registration) wins over any remembered or single-row resolution; an id
+   * absent from the inventory stays an exact query so the CLI reports the
+   * typed `corrupt_or_unavailable` document for it, never a substitution.
+   */
+  async showAttemptStatus(explicitAttemptId?: string): Promise<void> {
     if (!this.runtime.isWorkspaceTrusted()) {
       // #4643: untrusted workspaces never read repair authority.
       this.runtime.showInformationMessage(
@@ -1798,13 +1805,21 @@ export class RiprClientController {
     if (!server) {
       return;
     }
+    // A stop() during either CLI read invalidates the render: the status bar
+    // item is session-scoped and must not be repainted from a dead session.
+    const generation = this.startGeneration;
     const rows = await this.readAttemptInventory(server.command, root);
+    if (generation !== this.startGeneration) {
+      this.output.appendLine('ripr attempt status read abandoned: the server session stopped during the inventory read.');
+      return;
+    }
     if (rows === undefined) {
       this.failAttemptStatus(
         'ripr repair-attempt status is unavailable: the CLI schema is unrecognized or older than RIPR-SPEC-0217.'
       );
       return;
     }
+    const explicit = explicitAttemptId && explicitAttemptId.trim() !== '' ? explicitAttemptId : undefined;
     const remembered = this.readRememberedAttempt(root);
     const rememberedStillValid = remembered !== undefined
       && rows.some((row) => row.attemptId === remembered);
@@ -1814,10 +1829,11 @@ export class RiprClientController {
       this.rememberAttempt(root, undefined);
     }
     let resolution: ActiveAttemptResolution = resolveActiveAttempt(rows, {
+      explicitAttemptId: explicit,
       rememberedAttemptId: rememberedStillValid ? remembered : undefined
     });
     if (resolution.kind === 'no_attempts') {
-      this.attemptStatusBar?.hide();
+      this.clearAttemptStatusBar();
       this.runtime.showInformationMessage(
         'No shared repair attempts exist for this workspace yet.'
       );
@@ -1840,7 +1856,9 @@ export class RiprClientController {
         }
       );
       if (!pick) {
-        // Never guess: several current attempts require an explicit pick.
+        // Never guess: several current attempts require an explicit pick, and
+        // a dismissed pick must not leave the previous attempt presented.
+        this.clearAttemptStatusBar();
         return;
       }
       resolution = resolveActiveAttempt(rows, { explicitAttemptId: pick.attemptId });
@@ -1850,9 +1868,24 @@ export class RiprClientController {
       return;
     }
     const status = await this.readSelectedAttemptStatus(server.command, root, resolution.attemptId);
+    if (generation !== this.startGeneration) {
+      this.output.appendLine('ripr attempt status read abandoned: the server session stopped during the selected read.');
+      return;
+    }
     if (!status) {
       this.failAttemptStatus(`ripr could not read the selected repair attempt ${resolution.attemptId}.`);
       return;
+    }
+    if (status.attemptId !== resolution.attemptId) {
+      // Bind the presentation to the requested identity: a document for any
+      // other attempt is refused, never re-labelled. (#4643)
+      this.failAttemptStatus(
+        `ripr attempt status for ${resolution.attemptId} returned a document for ${status.attemptId}; refusing mismatched attempt state.`
+      );
+      return;
+    }
+    if (resolution.kind === 'selected' && resolution.via === 'explicit') {
+      this.rememberAttempt(root, resolution.attemptId);
     }
     const presentation = presentAttemptStatus(status);
     this.renderAttemptStatusBar(presentation);

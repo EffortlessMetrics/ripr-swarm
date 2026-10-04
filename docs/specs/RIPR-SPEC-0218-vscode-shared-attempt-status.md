@@ -75,14 +75,20 @@ The VS Code extension consumes the shared DTO; it invents no state.
   the deterministic active-attempt resolution law, then reads the selected
   attempt with `ripr agent status --root <root> --attempt <id> --json` and
   presents the result.
-- The resolution law: an explicit selection always wins (an id absent from
-  the inventory stays an exact query — the CLI reports the typed
-  `corrupt_or_unavailable` document for it, never a substituted attempt); a
-  remembered selection is honored only while it is still one of the
-  inventory rows; exactly one row selects that row; several rows with no
-  valid selection require an explicit quick pick, and dismissing the pick
-  presents nothing. Newest, first folder, first row, most-recently-modified,
+- The resolution law: an explicit selection always wins — including an
+  optional explicit attempt id argument forwarded from the command
+  registration; an id absent from the inventory stays an exact query — the
+  CLI reports the typed `corrupt_or_unavailable` document for it, never a
+  substituted attempt; a remembered selection is honored only while it is
+  still one of the inventory rows; exactly one row selects that row; several
+  rows with no valid selection require an explicit quick pick, and
+  dismissing the pick presents nothing and hides any previous attempt
+  presentation. Newest, first folder, first row, most-recently-modified,
   and same-seam heuristics do not exist in the editor layer.
+- A returned status document binds to the requested attempt identity: a
+  response naming any other attempt id is refused as mismatched, never
+  re-labelled. A server stop during either CLI read abandons the render so
+  a dead session cannot repaint the status bar.
 - The per-root explicit selection persists in `workspaceState`
   (`ripr.activeAttemptSelection.v1`) across extension restart and
   deactivation. In-memory presentation is discarded when the server session

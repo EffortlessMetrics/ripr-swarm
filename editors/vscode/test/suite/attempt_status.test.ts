@@ -213,6 +213,7 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     selected: unknown;
     remembered?: Record<string, unknown>;
     pickIndex?: number;
+    onRunRipr?: () => Promise<void>;
   }): RuntimeHarness {
     const runRiprCalls: string[][] = [];
     const infoMessages: string[] = [];
@@ -248,6 +249,9 @@ suite('Show Repair Attempt Status command (#4643)', () => {
       readFile: async () => undefined,
       runRipr: async (_command: string, args: string[]) => {
         runRiprCalls.push(args);
+        if (options.onRunRipr) {
+          await options.onRunRipr();
+        }
         const payload = args.includes('--attempt') ? options.selected : options.inventory;
         if (typeof payload === 'string') {
           return payload;
@@ -341,7 +345,7 @@ suite('Show Repair Attempt Status command (#4643)', () => {
 
   test('one current attempt resolves directly and renders the typed class without strengthening', async () => {
     const selected = await loadFixture('status-awaiting_edit.json');
-    const singleId = 'repair-attempt-0aaa1111aaaa1111aaaa1111aaaa1111aaaa1111';
+    const singleId = 'repair-attempt-0123456789abcdef01234567';
     const inventory = {
       schema_version: '0.1',
       repair_attempts: [
@@ -393,6 +397,64 @@ suite('Show Repair Attempt Status command (#4643)', () => {
 
     assert.strictEqual(h.runRiprCalls.length, 1, 'only the inventory read; no selected read without a pick');
     assert.strictEqual(h.bar.shown, 0, 'no attempt state may be presented after a dismissed pick');
+    assert.ok(h.bar.hidden >= 1, 'the previous attempt presentation must be hidden on dismissal');
+  });
+
+  test('an explicit attempt id argument wins over the inventory and is remembered', async () => {
+    const inventory = await loadFixture('inventory.json');
+    const selected = await loadFixture('status-awaiting_edit.json');
+    const explicitId = 'repair-attempt-0123456789abcdef01234567';
+    const h = harness({ inventory, selected });
+    const controller = controllerFor(h);
+
+    await controller.showAttemptStatus(explicitId);
+
+    assert.strictEqual(h.quickPickCalls, 0, 'an explicit id never opens the picker');
+    assert.deepStrictEqual(h.runRiprCalls[1], ['agent', 'status', '--root', '/workspace', '--attempt', explicitId, '--json']);
+    const stored = h.memento.get('ripr.activeAttemptSelection.v1') as Record<string, string>;
+    assert.strictEqual(stored['/workspace'], explicitId, 'the explicit id must be remembered for the root');
+  });
+
+  test('a status document for a different attempt id is refused, never re-labelled', async () => {
+    const selected = await loadFixture('status-awaiting_edit.json');
+    const requestedId = 'repair-attempt-0aaa1111aaaa1111aaaa1111aaaa1111aaaa1111';
+    const inventory = {
+      schema_version: '0.1',
+      repair_attempts: [
+        { attempt_id: requestedId, seam_id: '67fc764ba37d77bd', state: 'awaiting_edit', disposition: 'resumable', command: null, receipt: null, last_after_refusal: null }
+      ]
+    };
+    const h = harness({ inventory, selected });
+    const controller = controllerFor(h);
+
+    await controller.showAttemptStatus();
+
+    assert.strictEqual(h.bar.text, '$(warning) ripr: attempt status unavailable');
+    assert.ok(h.bar.tooltip.includes('mismatched'), 'the refusal must name the id mismatch');
+  });
+
+  test('a stop during the read abandons the render instead of repainting a dead session', async () => {
+    const selected = await loadFixture('status-awaiting_edit.json');
+    const inventory = {
+      schema_version: '0.1',
+      repair_attempts: [
+        { attempt_id: 'repair-attempt-0123456789abcdef01234567', seam_id: '67fc764ba37d77bd', state: 'awaiting_edit', disposition: 'resumable', command: null, receipt: null, last_after_refusal: null }
+      ]
+    };
+    let controllerRef: RiprClientController | undefined;
+    const h = harness({
+      inventory,
+      selected,
+      onRunRipr: async () => {
+        await controllerRef?.stop();
+      }
+    });
+    const controller = controllerFor(h);
+    controllerRef = controller;
+
+    await controller.showAttemptStatus();
+
+    assert.strictEqual(h.bar.shown, 0, 'no presentation may be rendered after a mid-read stop');
   });
 
   test('garbage from the CLI renders unavailable, never a friendly state', async () => {
