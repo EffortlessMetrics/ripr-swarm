@@ -35,7 +35,9 @@ use crate::analysis::repair_route::{
     NewTestKind, RepairTargetSelection, cross_language_test_target_unresolved,
     is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
 };
-use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
+use crate::analysis::seams::{
+    ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
+};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
@@ -2447,6 +2449,7 @@ fn push_packet_json(
             suggested_assertions_for(
                 seam.kind(),
                 seam.owner(),
+                seam.owner_call(),
                 Some(seam.required_discriminator()),
                 evidence,
             )
@@ -3011,6 +3014,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
         assertion_guidance_for(
             entry.seam.kind(),
             entry.seam.owner(),
+            entry.seam.owner_call(),
             Some(entry.seam.required_discriminator()),
             &entry.evidence,
         )
@@ -3025,6 +3029,7 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> AssertionGuidance {
@@ -3034,7 +3039,7 @@ fn assertion_guidance_for(
         SeamKind::CallPresence => Some(ObserverKind::CallSite),
         _ => None,
     };
-    let derived_example = suggested_assertions_for(kind, owner, required, evidence)
+    let derived_example = suggested_assertions_for(kind, owner, owner_call, required, evidence)
         .into_iter()
         .find(|suggestion| {
             let trimmed = suggestion.trim_start();
@@ -3262,35 +3267,46 @@ fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
 fn suggested_assertions_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> Vec<String> {
     let owner_short = owner.rsplit("::").next().unwrap_or(owner);
+    // #5357: the owner's parser facts decide the call syntax, so a method
+    // reads `<receiver>.name(..)` and an unestablished shape names the owner
+    // in a comment instead of presenting a free-function call.
+    let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
-                "assert_eq!({owner_short}(/* {hint} */), /* expected */)"
+                "assert_eq!({}, /* expected */)",
+                call(&format!("/* {hint} */"))
             )]
         }
         SeamKind::ErrorVariant => {
             let (trigger_hint, expected_label, pattern_hint) =
                 error_variant_assertion_hint(required);
             vec![format!(
-                "let err = {owner_short}(/* trigger {trigger_hint} */).expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));"
+                "let err = {}.expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));",
+                call(&format!("/* trigger {trigger_hint} */"))
             )]
         }
         SeamKind::ReturnValue => vec![format!(
-            "assert_eq!({owner_short}(/* input */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input */")
         )],
         SeamKind::FieldConstruction => vec![format!(
-            "let result = {owner_short}(/* input */); assert_eq!(result.field, /* expected */);"
+            "let result = {}; assert_eq!(result.field, /* expected */);",
+            call("/* input */")
         )],
         SeamKind::SideEffect => vec![format!(
-            "// arrange a mock/observer; assert {owner_short}(...) produced the expected effect"
+            "// arrange a mock/observer; assert {} produced the expected effect",
+            call("...")
         )],
         SeamKind::MatchArm => vec![format!(
-            "assert_eq!({owner_short}(/* input selecting this arm */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input selecting this arm */")
         )],
         SeamKind::CallPresence => vec![format!(
             "// assert that {owner_short} called the expected target"
@@ -3468,6 +3484,8 @@ mod tests {
             },
             ExpectedSink::ReturnValue,
         )
+        // `discounted_total` models a module-level function (#5357).
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn seam_with(
@@ -3486,6 +3504,7 @@ mod tests {
             required,
             sink,
         )
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn related_test_with(
@@ -6867,6 +6886,69 @@ mod tests {
             ),
             "expected templated assert_eq! suggestion: {json}"
         );
+    }
+
+    /// The boundary fixture re-shaped as the bytesize repro from #5357.
+    fn weakly_gripped_with_owner_call(owner_call: OwnerCallShape) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_classified();
+        entry.seam = entry.seam.with_owner_call(owner_call);
+        entry
+    }
+
+    /// #5357: every renderer reads the one call shape, so the JSON packet,
+    /// the editor/pilot suggested assertion and the brief outline agree.
+    /// Before the fix all three printed `discounted_total(..)` for a method.
+    #[test]
+    fn suggested_assertion_uses_method_syntax_for_self_receiver_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Method {
+            self_type: "Pricing".to_string(),
+        });
+        let expected = "assert_eq!(/* Pricing value */.discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)";
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            targeted_test_brief_outline_for_classified_seam(&entry).assertion_shape,
+            expected
+        );
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        assert!(
+            json.contains(&json_escape(expected)),
+            "packet must carry the method call: {json}"
+        );
+        assert!(
+            !json.contains("assert_eq!(discounted_total("),
+            "packet must not present a free call for a method: {json}"
+        );
+    }
+
+    #[test]
+    fn suggested_assertion_uses_type_path_for_associated_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Associated {
+            self_type: "Pricing".to_string(),
+        });
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(
+                "assert_eq!(Pricing::discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)"
+            )
+        );
+    }
+
+    /// An unestablished call shape keeps the concrete boundary guidance (the
+    /// actionability flip is unchanged) but names the owner in a comment
+    /// instead of presenting a call that may not compile.
+    #[test]
+    fn suggested_assertion_names_owner_without_call_when_shape_unknown() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Unknown);
+        assert!(assertion_shape_for_entry(&entry).is_concrete());
+        let suggestion = suggested_assertion_for_classified_seam(&entry).unwrap_or_default();
+        assert_eq!(
+            suggestion,
+            "assert_eq!(/* call discounted_total (receiver or path not established) with boundary input where amount >= discount_threshold */, /* expected */)"
+        );
+        assert!(!suggestion.contains("discounted_total("), "{suggestion}");
     }
 
     // -- Pilot seam budget disclosure tests ----------------------------------

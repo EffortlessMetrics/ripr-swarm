@@ -13430,7 +13430,8 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
             description: "amount >= discount_threshold".to_string(),
         },
         ExpectedSink::ReturnValue,
-    );
+    )
+    .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
     let seam_id = seam.id().clone();
     crate::analysis::ClassifiedSeam {
         seam,

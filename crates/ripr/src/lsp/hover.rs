@@ -1277,7 +1277,8 @@ mod seam_hover_tests {
                 description: "amount >= discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![RelatedTestGrip {

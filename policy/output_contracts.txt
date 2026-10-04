@@ -127,6 +127,7 @@ stop_reason|static_probe_unknown|Static analysis stop reason value.
 stop_reason|transitive_reach_unresolved|Static analysis stop reason value.
 value_context|assertion_argument|Activation value context.
 value_context|builder_method|Activation value context.
+value_context|constant|Activation value context.
 value_context|enum_variant|Activation value context.
 value_context|function_argument|Activation value context.
 value_context|return_value|Activation value context.

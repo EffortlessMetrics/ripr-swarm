@@ -1751,7 +1751,8 @@ mod tests {
                 description: "amount == discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let seam_id = seam.id().clone();
         ClassifiedSeam {
             seam,
