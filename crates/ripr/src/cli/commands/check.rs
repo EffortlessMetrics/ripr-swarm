@@ -953,17 +953,6 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The stderr hedge for an explicit `--diff` run that produced zero findings
-/// (#2425, #2491). The first stderr line a user reads must be the true cause
-/// of the empty result (#4376(a), #4395(c)):
-///
-/// - when the producer outcome records a language adapter that was disabled
-///   by config or unavailable in this binary, name that typed cause;
-/// - when the diff parsed to at least one changed file, the diff was valid
-///   and the analysis outcome on stdout already explains the empty result,
-///   so no diff-validity guess is printed;
-/// - only when nothing parsed (or no outcome exists) print the generic
-///   "may not be a valid unified diff" hint.
 /// The stderr warning for an empty default-base range whose base is HEAD's own
 /// commit: nothing can differ, so the result is not evidence about the change.
 /// `None` unless both commits resolved and are equal.
@@ -980,6 +969,17 @@ fn default_base_is_head_hedge(
     }
 }
 
+/// The stderr hedge for an explicit `--diff` run that produced zero findings
+/// (#2425, #2491). The first stderr line a user reads must be the true cause
+/// of the empty result (#4376(a), #4395(c)):
+///
+/// - when the producer outcome records a language adapter that was disabled
+///   by config or unavailable in this binary, name that typed cause;
+/// - when the diff parsed to at least one changed file, the diff was valid
+///   and the analysis outcome on stdout already explains the empty result,
+///   so no diff-validity guess is printed;
+/// - only when nothing parsed (or no outcome exists) print the generic
+///   "may not be a valid unified diff" hint.
 fn zero_findings_diff_hedge(
     outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
 ) -> Option<String> {
