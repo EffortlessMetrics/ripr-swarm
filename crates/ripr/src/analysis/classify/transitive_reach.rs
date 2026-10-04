@@ -206,33 +206,32 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
-    /// Whether `test_body` gives a name-only reason to believe its call to
+    /// Whether `test` gives a name-only reason to believe its call to
     /// `entry` lands on a function that reaches the owner, rather than on an
     /// unrelated function that shares the name (#5481: a unit test calling
     /// `Cache::build` while the path runs through `Site::build`).
     ///
     /// The entry is corroborated when some production function named `entry`
     /// that calls the owner or a reaching name is a free function, or is an
-    /// associated function whose `impl` self type the test body names. When
-    /// no such function is found (an index without impl segments, or a depth
-    /// edge), the entry counts as corroborated, which keeps the plain
-    /// file-order selection. This only ranks witnesses; it never removes one
-    /// or changes the classification.
+    /// associated function the test calls on a receiver resolved to its
+    /// `impl` self type (constructor, annotation, UFCS or struct literal; see
+    /// `method_call_resolves_to_impl_type`, which fails closed on an
+    /// unresolved receiver). When no such function is found (an index without
+    /// impl segments, or a depth edge), the entry counts as corroborated,
+    /// which keeps the plain file-order selection. This only ranks witnesses;
+    /// it never removes one or changes the classification.
     fn entry_is_corroborated(
         &self,
         entry: &str,
-        test_body: &str,
+        test: &TestFact,
         reaching: &HashSet<&str>,
         owner_name: &str,
     ) -> bool {
         let mut saw_reaching_function = false;
         for function in self.by_name.get(entry).into_iter().flatten() {
-            // A call fact naming the function itself (its own signature or
-            // recursion) is no evidence that it leads anywhere: without this,
-            // `Cache::build` would "reach" through the name `build` (#5481).
             let reaches = calls_of(function).iter().any(|call| {
                 !is_macro_call(&call.name)
-                    && call.name != function.name
+                    && !is_own_declaration(call, function)
                     && (call.name == owner_name || reaching.contains(call.name.as_str()))
             });
             if !reaches {
@@ -241,7 +240,13 @@ impl<'a> ReachGraph<'a> {
             saw_reaching_function = true;
             match super::related_tests::impl_self_type_name(&function.id.0) {
                 None => return true,
-                Some(self_type) if contains_identifier(test_body, &self_type) => return true,
+                Some(self_type)
+                    if super::related_tests::method_call_resolves_to_impl_type(
+                        test, entry, &self_type,
+                    ) =>
+                {
+                    return true;
+                }
                 Some(_) => {}
             }
         }
@@ -299,7 +304,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 if reaching.contains(callee.name.as_str()) {
                     let uncorroborated = !graph.entry_is_corroborated(
                         callee.name.as_str(),
-                        &test.body,
+                        test,
                         &reaching,
                         owner_name,
                     );
@@ -1040,6 +1045,17 @@ fn calls_of(f: &FunctionSummary) -> &[CallFact] {
     &f.calls
 }
 
+/// Whether `call` is the function's own declaration line (`fn build(&self)`),
+/// which call facts record under the function's own name. It is no evidence
+/// that the function leads anywhere: without this, `Cache::build` would
+/// "reach" through the name `build` (#5481). A real call to a same-named
+/// function on another type (`self.queue.build()`) still counts.
+fn is_own_declaration(call: &CallFact, function: &FunctionSummary) -> bool {
+    call.name == function.name
+        && contains_identifier(&call.text, "fn")
+        && call.text.contains(&format!("fn {}", function.name))
+}
+
 /// Returns true when the callee name looks like a macro invocation - i.e. it
 /// contains `!`. Lexical call extraction in ripr may or may not retain the
 /// bang; we check containment to fail closed.
@@ -1292,6 +1308,29 @@ mod tests {
         function
     }
 
+    /// Adds the declaration-line call fact the parser records under the
+    /// function's own name (`fn build(&mut self) {`).
+    fn with_declaration(mut function: FunctionSummary) -> FunctionSummary {
+        function.calls.insert(
+            0,
+            CallFact {
+                line: 1,
+                name: function.name.clone(),
+                text: format!("fn {}(&mut self) {{", function.name),
+            },
+        );
+        function
+    }
+
+    fn with_call_text(mut function: FunctionSummary, name: &str, text: &str) -> FunctionSummary {
+        for call in &mut function.calls {
+            if call.name == name {
+                call.text = text.to_string();
+            }
+        }
+        function
+    }
+
     fn with_body(mut test: TestFact, body: &str) -> TestFact {
         test.body = body.to_string();
         test
@@ -1306,7 +1345,7 @@ mod tests {
         let site_build = make_method("Site", "build", vec!["full_build"]);
         // Call facts include the function's own name; that must not count
         // as a path onward.
-        let cache_build = make_method("Cache", "build", vec!["build"]);
+        let cache_build = with_declaration(make_method("Cache", "build", vec![]));
         let index = index_with(
             vec![site_build, cache_build],
             vec![
@@ -1350,6 +1389,81 @@ mod tests {
                 .map(|w| w.test_name.as_str()),
             Some("cache_builds")
         );
+    }
+
+    // (#5481 review) A test that names the reaching type away from the call
+    // is not corroborated: `cache.build()` does not resolve to `Site`. With
+    // neither test corroborated, file order decides.
+    #[test]
+    fn given_type_named_away_from_the_call_then_the_test_is_not_corroborated() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at(
+                        "site_from_fixture",
+                        "src/a.rs",
+                        3,
+                        vec!["make_site", "build"],
+                    ),
+                    "let site = make_site(); assert!(site.build().is_empty());",
+                ),
+                with_body(
+                    make_test_at(
+                        "cache_with_unused_site",
+                        "src/b.rs",
+                        3,
+                        vec!["new", "build"],
+                    ),
+                    "let _unused = Site { langs: Vec::new() }; let mut cache = Cache::new(); cache.build();",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_from_fixture")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
+    // (#5481 review) `Site::build` calling `self.queue.build()` is a real call
+    // onward, not the declaration of `build`, so a test on `Site` stays
+    // corroborated when `Queue::build` is what reaches the owner.
+    #[test]
+    fn given_cross_type_same_named_call_then_the_caller_still_reaches() {
+        let index = index_with(
+            vec![
+                with_call_text(
+                    with_declaration(make_method("Site", "build", vec!["build"])),
+                    "build",
+                    "self.queue.build()",
+                ),
+                make_method("Queue", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/0_cache.rs", 3, vec!["new", "build"]),
+                    "let _q = Queue::new(); let mut cache = Cache::new(); cache.build();",
+                ),
+                with_body(
+                    make_test_at("site_builds", "src/site.rs", 3, vec!["new", "build"]),
+                    "let site = Site::new(); assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_builds")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
     }
 
     // The witness pointer names the test/entry symbol with candidate language

@@ -84,13 +84,15 @@ witnesses exist, the rendered message notes the count ("and N other tests") with
 them.
 
 A candidate is **corroborated** when its entry symbol names a production function that calls toward
-the owner and that function is either a free function or an associated function whose `impl` self
-type the test body names. Name-only facts cannot tell `Site::build` from `Cache::build`, so without
-this rank a unit test calling an unrelated type's same-named method could win on file order alone
-(#5481). Corroboration is name presence only: it checks that the test body names the self type as an
-identifier, not that the call's receiver has that type. A function's own name in its call facts does
-not count as a call onward. Corroboration only ranks candidates: it never removes one, never changes the count, and
-never changes classification. Within one test, a corroborated entry symbol is preferred over a bare
+the owner and that function is either a free function, or an associated function the test calls on
+a receiver resolved to its `impl` self type (a constructor, type annotation, UFCS `Type::method` or
+struct literal; an unresolved receiver is not corroborated). Name-only facts cannot tell
+`Site::build` from `Cache::build`, so without this rank a unit test calling an unrelated type's
+same-named method could win on file order alone (#5481). A function's declaration line, which call
+facts record under the function's own name, does not count as a call onward; a real call to a
+same-named function on another type (`self.queue.build()`) does.
+Corroboration only ranks candidates: it never removes one, never changes the count, and never
+changes classification. Within one test, a corroborated entry symbol is preferred over a bare
 name match before the lexicographic tiebreak.
 
 ### When found
@@ -230,7 +232,11 @@ requirements in this spec remain unchanged.
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_two_witnesses_then_first_by_file_line_is_selected`
   — deterministic witness ordering
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named`
-  — a test whose body names the reaching type outranks an unrelated same-named method call
+  — a test calling the reaching type's method outranks an unrelated same-named method call
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_named_away_from_the_call_then_the_test_is_not_corroborated`
+  — naming the type away from the call does not corroborate
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_cross_type_same_named_call_then_the_caller_still_reaches`
+  — a real same-named call on another type still counts as a path onward
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim`
   — message honesty (contains "may lead here"; excludes reaches/covers/tests/exercises)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
