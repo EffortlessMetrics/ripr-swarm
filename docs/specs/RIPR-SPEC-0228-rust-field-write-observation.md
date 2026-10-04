@@ -103,9 +103,13 @@ In this section `f` is the full projection path (`r.child.count`, never
 `r.count`, for a write to `self.child.count`).
 
 1. calls the owner method on a local binding `r` (the receiver), and the
-   owner body has no later write to the same path after the changed
-   statement on any path to its return (`self.count += 1; self.count = 0`
-   gives no credit), and
+   changed statement is not inside a loop, and after it, on any path to the
+   owner's return, nothing can write `f`: no assignment to `f` or to any
+   prefix of it (`self.child = ..`, `*self = ..`), no `&mut` borrow of
+   `self` or of such a prefix (`&mut self.count`, `mem::take(&mut
+   self.child)`), no method call taking `&mut self`, and no macro call.
+   Any of these refuses credit (`self.count += 1; self.count = 0` and
+   `self.count += 2; self.reset()` both give none), and
 2. after that call, holds an admitted exact oracle that reads `r.f`
    (`assert_eq!(r.f, v)`, or a whole-value comparison of `r` that names `f`
    under RIPR-SPEC-0225); and
@@ -204,6 +208,9 @@ changes `self.count += 2` to `self.count += 1`.
 10. `bump` writes `self.count += 1; self.count = 0;` (first statement
     changed from `+= 2`), test `c.bump(); assert_eq!(c.count, 0)`: not
     `exposed`.
+11. `bump` writes `self.count += 2; self.reset();` (first statement
+    changed from `+= 3`), with `reset` setting `count = 0`, test
+    `c.bump(); assert_eq!(c.count, 0)`: not `exposed`.
 
 ## Test Mapping
 
