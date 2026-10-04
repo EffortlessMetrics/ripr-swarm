@@ -24,12 +24,16 @@ pub(crate) fn top_actionable_seams(
     actionable
 }
 
-/// Within each actionable class, take one seam per owning function before a
-/// second from any of them (#5770). Adjacent seams of one owner share its
+/// Within each actionable class, rank every function's first seam ahead of
+/// any function's second (#5770). Adjacent seams of one owner share its
 /// tests, so when those tests are good every one of them is wrong together;
 /// ranked by location alone they filled the top ten (8 of semver's 10 sat in
 /// two `Identifier` methods). The class still leads, so a weak seam is never
 /// pushed below an unknown one, and `RankKey` order holds inside each round.
+///
+/// Rounds count across classes on purpose: a function already listed for a
+/// weak seam does not get a fresh first pick among the unknown ones, so one
+/// function cannot claim a slot per class.
 fn spread_across_owners(ranked: &mut Vec<&ClassifiedSeam>) {
     let mut taken: BTreeMap<(&Path, &str), usize> = BTreeMap::new();
     let mut keyed = ranked

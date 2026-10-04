@@ -336,6 +336,52 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
 }
 
 #[test]
+fn pilot_ranking_counts_owner_rounds_across_classes() {
+    // A function already listed for a weak seam does not get a fresh first
+    // pick among the opaque ones: the other function's two opaque seams lead.
+    let entries = [
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/z.rs", "z::fmt", 9),
+        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 2),
+    ];
+
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&entries, 4)),
+        [
+            ("z::fmt".to_string(), 1),
+            ("b::parse".to_string(), 1),
+            ("b::parse".to_string(), 2),
+            ("z::fmt".to_string(), 9),
+        ]
+    );
+}
+
+#[test]
+fn pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only() {
+    // a::clone is listed twice (rounds 0 and 1) with two seams left over.
+    let entries = [
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 10),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 11),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 12),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 13),
+        classified_in_owner(SeamGripClass::WeaklyGripped, "src/b.rs", "b::parse", 5),
+    ];
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.max_seams = 3;
+    let md = render_pilot_summary_md(&entries, context);
+
+    let note = "   - Also in this function: 2 more actionable seams not listed here\n";
+    assert_eq!(md.matches(note).count(), 1, "{md}");
+    // The note follows the owner's first pick (line 10), not its second.
+    let first = md.find("src/a.rs:10").unwrap_or(usize::MAX);
+    let second = md.find("src/a.rs:11").unwrap_or(usize::MAX);
+    let at = md.find(note).unwrap_or(usize::MAX);
+    assert!(first < at && at < second, "{md}");
+}
+
+#[test]
 fn pilot_summary_md_counts_an_owners_unlisted_seams_once() {
     let entries = [
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 10),
