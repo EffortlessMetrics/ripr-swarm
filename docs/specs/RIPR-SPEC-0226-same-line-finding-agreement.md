@@ -93,11 +93,11 @@ to the family, which may differ.
    confirmation carries to the deletion only when deleting the call provably
    changes what the oracle sees:
    - for an exact oracle on the written state (sink `state_write`), the
-     receiver is provably fresh or empty before the call in that test (bound
-     from a literal, `new()` or `default()` with no earlier write) and the
-     assertion expects it to hold the written value; an idempotent write
-     (`insert` of a present key, `clear` of an empty collection) or an
-     unknown pre-call state does not carry;
+     receiver's pre-call state is provably known in that test (bound from a
+     literal, `new()` or `default()` with no earlier write) and the asserted
+     post-call state differs from it, so deleting the call fails the
+     assertion; an idempotent write (`insert` of a present key, `clear` of an
+     empty collection) or an unknown pre-call state does not carry;
    - for a mock expectation, it carries an exact call count (`times(n)` with
      `n` at least 1); an expectation that allows zero calls does not carry.
 

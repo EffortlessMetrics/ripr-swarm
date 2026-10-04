@@ -153,7 +153,8 @@ An exact-variant oracle (`assert_eq!(call, Err(E::X))`,
 `assert!(matches!(call, Err(E::X)))`, an `unwrap_err()` binding compared to
 `E::X` under RIPR-SPEC-0106, or a guarded `Result` match that pins `E::X`
 under RIPR-SPEC-0175) confirms an `error_path` or `return_value` probe that
-returns `Err(E::X)` only when:
+returns `Err(E::X)` only when both of these hold. They are necessary
+conditions, not sufficient ones; every other stage still applies:
 
 - its call is to the changed owner, admitted by RIPR-SPEC-0197 call
   identity; and
@@ -162,10 +163,12 @@ returns `Err(E::X)` only when:
 A test of another function in the same file that pins the same variant, or a
 test of the owner that pins a sibling variant, does not confirm, whatever
 other related-test evidence exists. This combines RIPR-SPEC-0107 (variant
-token) with RIPR-SPEC-0197 (owner identity); the verdict corpus shows three
-`exposed` readings on main that break it, each credited from another
-function's `matches!(refund(..), Err(PayError::Limit))` or a sibling-variant
-`assert_eq!`.
+token) with RIPR-SPEC-0197 (owner identity). The "Fill spec-defined corpus
+cases" authored ledger and checkout crates (truth from real mutant runs,
+not yet committed) show three `exposed` readings on main e177461 that break
+it, each credited from another function's
+`matches!(refund(..), Err(PayError::Limit))` or a sibling-variant
+`assert_eq!`; examples 10 and 11 below restate them.
 
 ### Decisions for the owner
 
@@ -217,7 +220,7 @@ Source: `check` as in Problem.
    in different tests: at most `weakly_exposed`.
 5. `Err(E::TooLong)` changed to `Err(E::Bad)`, test
    `assert!(check(300).is_err())`: `error_path` and `return_value`
-   `weakly_exposed`, gap kept under RIPR-SPEC-0221.
+   `weakly_exposed`, gap kept under the #5416 unknown-not-a-gap rules.
 6. Same change, `#[should_panic] fn t() { check(300).unwrap(); }`:
    `weakly_exposed`.
 7. Same change, `let _e = check(300).unwrap_err();`: `weakly_exposed`.

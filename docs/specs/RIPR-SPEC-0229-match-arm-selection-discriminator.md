@@ -143,8 +143,8 @@ This holds for a change to the arm's body. For a change to the arm's
 pattern, selecting the changed arm is not enough, because an input inside
 both the original and the changed pattern runs the same arm either way.
 Credit then needs a resolved call whose selected arm differs between the
-original and the changed `match`, with a same-test exact oracle on its
-result.
+original and the changed `match`, two arms whose result expressions differ
+in text, and a same-test exact oracle on that call's result.
 
 ### Selection outranks tokens
 
@@ -223,7 +223,10 @@ the diff changes `None => 1` to `None => 0`.
    `weakly_exposed`; missing discriminator `value` `1..=9`.
 8. Same `match`, the diff changes the pattern `1..=8` to `1..=9`. Test
    `assert_eq!(f(5), "digit")`: not `exposed` (5 selects the arm under both
-   patterns) and no missing discriminator is named for selection alone.
+   patterns) and no missing discriminator is named, so with a strong oracle
+   the #5416 unknown-not-a-gap rule 3 reads it `static_unknown`. Naming the
+   boundary input (`9`) as missing, as RIPR-SPEC-0186 does for predicates,
+   is a follow-up.
    Test `assert_eq!(f(9), "digit")`: `exposed` (9 moved from `_` to the
    changed arm).
 

@@ -101,8 +101,10 @@ The probe is confirmed by a related test that:
    (`assert_eq!(r.f, v)`, or a whole-value comparison of `r` that names `f`
    under RIPR-SPEC-0225); and
 3. between the owner call and that read, nothing else can write `r.f`: no
-   method call on `r` taking `&mut self`, no assignment to `r` or `r.f`, and
-   no `&mut r` passed to a call. Otherwise the read does not confirm
+   method call on `r` taking `&mut self`, no assignment to `r` or `r.f`, no
+   `&mut r` passed to a call, and no method call on `r` at all when `f` is a
+   `Cell`, `RefCell`, `Mutex`, `RwLock` or atomic (interior mutability).
+    Otherwise the read does not confirm
    (`c.bump(); c.reset(); assert_eq!(c.count, 0)` hides the mutant).
 
 A read of a sibling field keeps a `FieldValue` missing discriminator for `f`,
