@@ -1709,16 +1709,18 @@ fn extract_parser_oracles(
 /// over — a leaf ident like `snapshot_helper` must not classify, while
 /// `assert_snapshot` / `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
+    // `matches!` computes a bool. Only an asserting wrapper observes it;
+    // admitting the computation itself credits discarded values (#5713).
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     matches!(
         macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }

@@ -96,6 +96,15 @@ promote a finding to `exposed` (#5397). Exact patterns and wildcard patterns
 with an explicit guard retain their existing classification. This bounded
 rule does not solve general pattern exhaustiveness or compound conditions.
 
+A standalone `matches!` invocation computes a boolean without failing the
+test. Discarded expression statements and unconsumed bindings therefore
+provide no assertion oracle, whether the pattern is wildcard, exact or
+guarded (#5713). Parser, lexical and registered-harness admission share this
+boundary. Actual asserting wrappers retain their existing classification;
+the dedicated terminal Result-guard scanner still recognizes matchers that
+participate in its failure decision. This rule does not infer boolean
+dataflow across bindings.
+
 ## Non-Goals
 
 This spec does not require:
@@ -247,6 +256,13 @@ Fixture coverage:
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
+- `discarded_matches_are_not_lexical_oracles`
+- `discarded_matches_in_a_parsed_owner_test_are_not_oracles`
+- `registered_trials_do_not_credit_discarded_matcher_computations`
+- `asserting_wrappers_keep_consumed_pattern_oracles`
+- `consumed_matcher_failure_guards_keep_their_result_oracle`
+- `asserted_bound_matcher_keeps_the_actual_assertion`
+- `matcher_computation_and_asserted_result_have_different_runtime_grip`
 - `fixtures/infection_expected_value_literal`
 - `predicate_infection_ignores_boundary_literal_used_only_as_expected_value`
 - `predicate_infection_credits_the_same_literal_when_it_is_an_owner_input`

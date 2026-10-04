@@ -285,3 +285,6 @@ mod relational_tests;
 
 #[cfg(test)]
 mod wildcard_tests;
+
+#[cfg(test)]
+mod discarded_matches_tests;

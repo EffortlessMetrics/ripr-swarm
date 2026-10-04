@@ -551,7 +551,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.20`: unguarded wildcard pattern assertions are weak, not exact strong
 /// oracles (#5397). Predecessor strong wildcard facts must not replay. The
 /// concurrent assertion-admission candidate #5359 uses generation `1.19`.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.20";
+/// `1.21`: discarded matcher computations are not assertion facts (#5713).
+/// Favorable parser/lexical facts from `1.20` must not replay.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.21";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3643,7 +3645,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.20");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.21");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -7659,7 +7661,7 @@ mod generation_transition_tests {
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
         let previous_key = RepoFileFactCacheKey {
-            schema_version: "0.2".to_string(),
+            schema_version: "1.20".to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file.to_path_buf(),
             content_hash: content_hash_for(&content),

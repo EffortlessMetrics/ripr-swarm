@@ -19,6 +19,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Discarded Rust `matches!` computations no longer count as assertion oracles
+  in parser, lexical or registered-harness facts. Actual asserting wrappers
+  retain pattern credit, including the weak whole-wildcard boundary from
+  #5410. File-fact generation 1.21 invalidates favorable predecessor facts
+  (RIPR-SPEC-0001, #5713).
+
 - `ripr pilot`, repo exposure and the editor no longer report a seam as
   `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
   failed to trace the path to it. A seam with no related test now reads

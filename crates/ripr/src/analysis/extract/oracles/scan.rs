@@ -2092,7 +2092,9 @@ fn is_assertion_line(line: &str) -> bool {
         || line.contains("assert_eq!")
         || line.contains("assert_ne!")
         || line.contains("assert_matches!")
-        || line.contains("matches!")
+        // `matches!` alone is a bool computation, not a failure observer.
+        // Asserting wrappers above and terminal Result guards retain their
+        // own admission paths (#5713).
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)

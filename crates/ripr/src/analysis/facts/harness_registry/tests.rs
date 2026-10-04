@@ -12,6 +12,82 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn registered_trials_do_not_credit_discarded_matcher_computations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("discarded-matcher")?;
+    let source = with_harness_main(
+        r#"fn score(value: i32) -> i32 { value + 2 }
+fn trials() -> Vec<libtest_mimic::Trial> {
+    vec![
+        libtest_mimic::Trial::test("discarded", || {
+            let value = score(1);
+            matches!(value, _);
+            matches!(value, 2);
+            let matched = matches!(value, 2);
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("asserted", || {
+            let value = score(1);
+            assert!(matches!(value, 2));
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("wildcard", || {
+            let value = score(1);
+            assert!(matches!(value, _));
+            Ok(())
+        }),
+    ]
+}
+"#,
+        "trials()",
+    );
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index.harness_subjects.len(),
+        3,
+        "real trial setup must succeed"
+    );
+    let tests = index.tests();
+    let discarded = tests
+        .iter()
+        .find(|test| test.name == "discarded")
+        .ok_or("missing discarded trial")?;
+    assert!(
+        discarded.assertions.is_empty(),
+        "{:?}",
+        discarded.assertions
+    );
+    for (name, kind, strength) in [
+        ("asserted", OracleKind::ExactValue, OracleStrength::Strong),
+        (
+            "wildcard",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        ),
+    ] {
+        let test = tests
+            .iter()
+            .find(|test| test.name == name)
+            .ok_or("missing retained trial")?;
+        let [oracle] = test.assertions.as_slice() else {
+            return Err(format!(
+                "expected one consumed oracle in {name}: {:?}",
+                test.assertions
+            )
+            .into());
+        };
+        assert_eq!(oracle.kind, kind);
+        assert_eq!(oracle.strength, strength);
+        assert!(oracle.text.contains("matches!(value"));
+    }
+    Ok(())
+}
+
 struct TempDir(PathBuf);
 
 impl Drop for TempDir {
