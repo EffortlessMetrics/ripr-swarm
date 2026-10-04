@@ -1752,6 +1752,18 @@ impl Backend {
         self.disclose_blocked_root(&root).await;
     }
 
+    /// Emit one bounded `window/logMessage` per recognized initialization
+    /// option that was present but ignored (#5092). The session stays up;
+    /// `session_value_sources` already attributes the effective fallback.
+    async fn disclose_ignored_initialization_options(&self) {
+        let Some(config) = self.analysis_config() else {
+            return;
+        };
+        for warning in config.ignored_initialization_option_warnings() {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
+    }
+
     /// The warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
     /// is the only other place the blocked state appears and generic editors
@@ -2402,7 +2414,16 @@ impl Backend {
         if next == current {
             return;
         }
+        let previous_warnings = current.ignored_initialization_option_warnings();
+        let new_warnings: Vec<String> = next
+            .ignored_initialization_option_warnings()
+            .into_iter()
+            .filter(|warning| !previous_warnings.contains(warning))
+            .collect();
         self.set_analysis_config(next);
+        for warning in new_warnings {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is
@@ -4501,6 +4522,7 @@ impl LanguageServer for Backend {
         // editor opened on two folders or on no folder sees nothing at all.
         self.publish_analysis_status().await;
         self.disclose_blocked_startup_root().await;
+        self.disclose_ignored_initialization_options().await;
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
