@@ -158,7 +158,7 @@ impl CompactTest<'_> {
 
 /// Lock a memo. Every memo holds keyed, deterministic results, so a panic
 /// on another worker cannot leave a wrong entry behind; recover the map.
-fn memo<T>(memo: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(in crate::analysis::test_grip_evidence) fn memo<T>(memo: &Mutex<T>) -> MutexGuard<'_, T> {
     memo.lock().unwrap_or_else(PoisonError::into_inner)
 }
 

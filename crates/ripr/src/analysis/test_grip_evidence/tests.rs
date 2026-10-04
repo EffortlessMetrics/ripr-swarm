@@ -395,7 +395,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
             return Err(format!("current target `{}` was rejected", test.name));
         }
     }
-    let cache = context.source_digest_cache.borrow();
+    let cache = memo(&context.source_digest_cache);
     if cache.len() != 1 || cache.get(file.as_path()) != Some(&authority_digest) {
         return Err(format!(
             "expected one memoized digest equal to the authority digest, got {cache:?}"
@@ -404,10 +404,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
     drop(cache);
     // Reuse, not just presence: a poisoned memo entry must decide the next
     // validation, so a lookup that recomputes the digest would be caught.
-    context
-        .source_digest_cache
-        .borrow_mut()
-        .insert(file.as_path(), "sha256:poisoned".to_string());
+    memo(&context.source_digest_cache).insert(file.as_path(), "sha256:poisoned".to_string());
     if test_target_evidence(&context, &seam, related[0], RelationReason::DirectOwnerCall).is_some()
     {
         return Err("validation recomputed the digest instead of reusing the memo".to_string());
@@ -2599,7 +2596,7 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
-fn parallel_evidence_fixture() -> Result<(RustIndex, Vec<RepoSeam>), String> {
+fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
 pub struct Quote { pub amount: i32, pub tier: u8 }
