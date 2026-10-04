@@ -598,7 +598,7 @@ fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
             ran.code, ran.stderr
         ));
     }
-    if !ran.stderr.contains("same commit as HEAD") || !ran.stderr.contains("--base") {
+    if !ran.stderr.contains("each resolved to the same commit") || !ran.stderr.contains("--base") {
         return Err(format!(
             "expected the base-equals-HEAD warning\n{}",
             ran.stderr

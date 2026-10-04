@@ -190,11 +190,14 @@ as its next command.
 
 ### Default base equal to HEAD
 
-When no scope is given, the default base resolves, and it names the same
-commit as `HEAD`, the range is empty by construction (typically a clone of a
-feature branch, where `origin/HEAD` tracks the checked-out branch). An empty
-result in that state is not a clean pass. `ripr check` writes one line to
-stderr naming the resolved base and `--base`; stdout and JSON are unchanged.
+When no scope is given and the result is empty, `ripr check` resolves the
+default base and `HEAD` again after analysis. If each resolves to the same
+commit (typically a clone of a feature branch, where `origin/HEAD` tracks the
+checked-out branch), it writes one line to stderr stating that observation,
+that the empty result alone is not a clean pass, and naming `--base`. The two
+resolutions are later observations, not the analyzed snapshot, so the line
+does not attribute the cause of the analyzed range; stdout and JSON are
+unchanged.
 The warning is silent when either commit fails to resolve, when the commits
 differ, and whenever the scope is explicit (`--base`, `--diff`,
 `--candidate-tree`, `--worktree`).
