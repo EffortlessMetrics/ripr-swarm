@@ -210,8 +210,10 @@ fn apply_patch_refuses_drifted_context() -> Result<(), String> {
 #[test]
 fn parse_patch_refuses_renames_and_empty_input() {
     let rename = "--- a/src/a.rs\n+++ b/src/b.rs\n@@ -1 +1 @@\n-a\n+b\n";
-    assert!(parse_patch(rename).is_err());
-    assert!(parse_patch("").is_err());
+    let rename_error = parse_patch(rename).err().unwrap_or_default();
+    assert!(rename_error.contains("rename"), "{rename_error}");
+    let empty_error = parse_patch("").err().unwrap_or_default();
+    assert!(empty_error.contains("no file patches"), "{empty_error}");
 }
 
 #[test]
@@ -387,7 +389,10 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
         report.ideal_rate.numerator,
         corpus.cases.len() - discriminated
     );
-    assert!(build_report(&corpus, &checks[1..]).is_err());
+    let missing = build_report(&corpus, &checks[1..])
+        .err()
+        .unwrap_or_default();
+    assert!(missing.contains("no ripr result for case"), "{missing}");
     Ok(())
 }
 
