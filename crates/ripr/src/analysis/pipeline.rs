@@ -932,11 +932,19 @@ fn run_pipeline_for_diff_text(
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
     {
-        eprintln!(
-            "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
-             If this is unexpected, verify the --diff path points to a valid unified diff. \
-             The empty result may not reflect sufficient tests — it reflects an empty analysis scope."
-        );
+        if has_only_non_text_changes(diff_text) {
+            eprintln!(
+                "ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. \
+                 This empty result reflects an empty analysis scope, not sufficient tests. \
+                 Run ripr on a diff that includes the source changes."
+            );
+        } else {
+            eprintln!(
+                "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
+                 If this is unexpected, verify the --diff path points to a valid unified diff. \
+                 The empty result may not reflect sufficient tests — it reflects an empty analysis scope."
+            );
+        }
     }
 
     // Disclose a truncated diff stream (#4375): at least one file section
@@ -961,18 +969,28 @@ fn run_pipeline_for_diff_text(
         && renamed_file_count == 0
         && limitations.is_empty()
     {
+        // The schema token stays `malformed_diff` (a new limitation kind is a
+        // schema change); a well-formed diff with only binary or mode changes
+        // gets its own wording so the recovery does not tell the reader to
+        // fix a valid diff.
+        let (recovery, detail) = if has_only_non_text_changes(diff_text) {
+            (
+                "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
+                "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+            )
+        } else {
+            (
+                "Provide a valid unified diff and re-run the analysis.",
+                "The non-empty diff input contained no parseable file changes or hunks.",
+            )
+        };
         limitations.push(
             AnalysisLimitation::new(
                 AnalysisLimitationKind::MalformedDiff,
                 AnalysisStage::DiffParse,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Provide a valid unified diff and re-run the analysis.",
-                )?,
+                AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
             )
-            .with_detail(
-                "The non-empty diff input contained no parseable file changes or hunks.",
-            )?,
+            .with_detail(detail)?,
         );
     }
 
@@ -1761,6 +1779,24 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
             scope.selected_changed_lines
         )
     })
+}
+
+/// True when the diff has git file headers and binary or file-mode markers
+/// but no `@@` hunk at all: a valid diff that carries nothing ripr analyzes.
+fn has_only_non_text_changes(diff_text: &str) -> bool {
+    let mut has_header = false;
+    let mut has_marker = false;
+    for line in diff_text.lines() {
+        if line.starts_with("@@") {
+            return false;
+        }
+        has_header |= line.starts_with("diff --git ");
+        has_marker |= line.starts_with("Binary files ")
+            || line.starts_with("GIT binary patch")
+            || line.starts_with("old mode ")
+            || line.starts_with("new mode ");
+    }
+    has_header && has_marker
 }
 
 #[cfg(test)]
@@ -2830,6 +2866,46 @@ mod tests {
         assert!(outcome.limitations.is_empty());
         let _ = fs::remove_dir_all(root);
         Ok(())
+    }
+
+    #[test]
+    fn binary_or_mode_only_diff_is_named_not_called_malformed_advice() -> Result<(), String> {
+        for diff in [
+            "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
+        ] {
+            let root = temp_root("analysis-outcome-non-text-diff")?;
+            let result = run_pipeline_for_diff_text(
+                &draft_diff_options(root.clone()),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &crate::config::RustLanguageConfig::default(),
+                diff,
+            )?;
+            let outcome = result
+                .analysis_outcome
+                .ok_or_else(|| "non-text diff must carry an analysis outcome".to_string())?;
+            // Still incomplete: nothing was analyzed, so this is never a clean result.
+            assert_eq!(outcome.kind, AnalysisOutcomeKind::UnsupportedInput);
+            let detail = outcome
+                .limitations
+                .iter()
+                .find(|l| l.kind == AnalysisLimitationKind::MalformedDiff)
+                .and_then(|l| l.bounded_detail.as_deref())
+                .unwrap_or_default();
+            assert!(detail.contains("well formed"), "got: {detail}");
+            let _ = fs::remove_dir_all(root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_text_detector_rejects_garbage_and_hunked_diffs() {
+        assert!(!has_only_non_text_changes("this is not a unified diff\n"));
+        assert!(!has_only_non_text_changes(
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-a\n+b\n"
+        ));
+        assert!(!has_only_non_text_changes("Binary files a and b differ\n"));
     }
 
     #[test]
