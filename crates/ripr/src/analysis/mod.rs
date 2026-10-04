@@ -33,6 +33,7 @@ mod source_role_corpus;
 mod summary;
 mod syntax;
 pub(crate) mod test_grip_evidence;
+pub(crate) mod test_stub;
 mod value_resolution;
 mod witness;
 mod workspace;
@@ -88,6 +89,7 @@ pub(crate) use seam_inventory::{
     pilot_seam_budget, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
@@ -759,6 +761,11 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
+    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
+    /// so the note can name the real repair (staging) instead of offering
+    /// `--worktree`. Empty when no untracked routed file exists.
+    pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
