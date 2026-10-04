@@ -1855,6 +1855,10 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "agent_root_tests.rs"]
+mod root_tests;
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::{

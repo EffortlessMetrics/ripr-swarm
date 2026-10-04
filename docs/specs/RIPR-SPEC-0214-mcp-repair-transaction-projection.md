@@ -26,6 +26,8 @@ Linked issues:
   exposes lets that work proceed)
 - #5399 (durable read-time HEAD applicability and continuation parity;
   producer completeness remains separately owned by #5199)
+- #5608 / #5744 (selected restart root and producer manifest root preserve
+  literal Unix filename characters; canonical root admission stays intact)
 - ADR 0022 (bounded read-only MCP adapter; this slice adds no execution
   authority)
 

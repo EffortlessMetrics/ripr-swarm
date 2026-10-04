@@ -12,6 +12,10 @@ use std::path::PathBuf;
 #[path = "repair_root_tests.rs"]
 mod root_tests;
 
+#[cfg(unix)]
+#[path = "repair_manifest_root_tests.rs"]
+mod manifest_root_tests;
+
 /// Own only an exclusively created test directory, including setup failures
 /// and assertion unwinds. Durable proof receipts live outside this fixture.
 struct FixtureRoot(PathBuf);
