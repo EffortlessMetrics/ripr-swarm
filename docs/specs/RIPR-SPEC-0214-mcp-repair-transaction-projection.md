@@ -125,6 +125,11 @@ read-only and without execution authority (ADR 0022):
   restart authority. A restart display string is not parsed into typed
   command authority. Historical or unknown HEAD still offers no command or
   routes. Receipt classification, identity and retained bytes are unchanged.
+  The restart display's executable `--root` argument preserves the selected
+  filesystem path: a Unix backslash is a filename character, while Windows
+  separators retain their existing normalization. Generic report/artifact
+  display text must not define executable root identity. These advisory
+  strings remain separate from typed `CommandSpec` execution authority.
 - `ripr_get_receipt_status` and the `ripr://receipt/{receipt_id}` resource
   project the current receipt state for one attempt identity (receipt ids
   are attempt-bound). The status vocabulary is `awaiting_edit`,
