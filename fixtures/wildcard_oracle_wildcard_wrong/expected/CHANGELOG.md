@@ -17,3 +17,23 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - canonical fixture argv and landed Rust guidance
+
+Reason:
+The fixture runner passes forward-slash root/diff arguments on every platform.
+The original frozen Windows calls used backslash arguments; quoting preceded
+path normalization and left unnecessary quotes in the human goldens. Only
+those known safe command arguments are reprojected here; hostile argument
+quoting and the existing normalization/comparison policy remain unchanged.
+The two wildcard short reports also retain the landed #5355/#5423
+"Write a test for it" route at src/lib.rs:2; exposed and full reports do not
+gain that route. Finding IDs, weak/strong oracles, evidence and recommendation
+prose are unchanged. Required run 37215568518 observed the 12 human drifts
+after policy, Clippy and 12016 tests passed; its first-difference report and
+exact combined source justify this narrow expectation, pending successor CI.
+No blanket bless, class promotion or representative accuracy claim is made.
+
+Updated:
+- expected/human.txt
+- expected/human-full.txt

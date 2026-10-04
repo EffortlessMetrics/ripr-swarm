@@ -2710,6 +2710,26 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
+/// diff has no dependent packages to narrow.
+#[test]
+fn check_rejects_an_invalid_dependent_scope_without_dependents() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr_with_env(
+        &["check", "--root", &root, "--diff", &diff, "--json"],
+        &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
+    );
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+        ),
+        "stderr should name the invalid override: {stderr}"
+    );
+}
+
 #[test]
 fn diff_json_reports_changed_surface_before_full_repo_context() -> Result<(), String> {
     let workspace = unique_temp_workspace("diff-first");
@@ -11389,14 +11409,11 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("target/ripr/workflow"));
     assert!(stdout.contains("target/ripr/review"));
     assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/comments.json"));
-    assert!(stdout.contains("ripr agent start"));
+    assert!(stdout.contains("target/ripr/review/existing-comments.json"));
+    // #4696: the analysis steps run inside one packet command.
+    assert!(stdout.contains("run: ripr reports ci-packet --root ."));
     // #3906: CI writes only the before side of the repair loop.
     assert!(!stdout.contains("ripr agent receipt"));
-    assert!(stdout.contains("ripr agent status"));
-    assert!(stdout.contains("ripr agent review-summary"));
-    assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
-    assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
     assert!(stdout.contains("ripr reports ci-summary --root ."));
     assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
     assert!(!workspace.join("ripr.toml").exists());
@@ -11464,43 +11481,48 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The prebuilt install needs no third-party toolchain or cache action.
     assert!(!workflow.contains("dtolnay/rust-toolchain"));
     assert!(!workflow.contains("Swatinem/rust-cache"));
-    assert!(workflow.contains("ripr pilot"));
-    assert!(workflow.contains("--format sarif"));
-    assert!(workflow.contains("--format repo-sarif"));
-    assert!(workflow.contains("--format repo-badge-json"));
-    assert!(workflow.contains("ripr agent start"));
-    assert!(workflow.contains("ripr agent packet"));
+    assert!(workflow.contains("run: ripr reports ci-packet --root ."));
     // #3906 (F60-1): CI has no test edit between snapshots, so it runs no
     // verify, receipt, or outcome; the repair's after phase writes those.
     assert!(!workflow.contains("ripr agent receipt"));
     assert!(!workflow.contains("ripr outcome"));
-    assert!(!workflow.contains("> target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("ripr review-comments"));
     assert!(workflow.contains("RIPR_COMMENT_MODE"));
-    assert!(workflow.contains("pr-comments plan"));
     assert!(workflow.contains("target/ripr/review/comment-publish-plan.json"));
     assert!(workflow.contains("Capture existing RIPR inline comments"));
-    assert!(workflow.contains("Plan RIPR inline comments"));
     assert!(workflow.contains("Publish RIPR inline comments"));
-    assert!(workflow.contains("ripr agent status"));
-    assert!(workflow.contains("ripr agent review-summary"));
-    assert!(workflow.contains("target/ripr/workflow/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-brief.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("target/ripr/reports/agent-receipt.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.md"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-verify.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-receipt.json"));
-    assert!(!workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
     assert!(workflow.contains("target/ripr/review"));
-    assert!(workflow.contains("target/ripr/review/comments.json"));
-    assert!(workflow.contains("Run RIPR PR guidance report"));
-    assert!(workflow.contains("Emit RIPR PR guidance annotations"));
+    // The packet the workflow runs declares the steps it replaced (#4696);
+    // an unknown --step runs nothing and names them all.
+    let packet = run_ripr(&[
+        "reports",
+        "ci-packet",
+        "--root",
+        &root,
+        "--step",
+        "no-such-step",
+    ]);
+    assert_eq!(packet.status.code(), Some(2));
+    let steps = String::from_utf8_lossy(&packet.stderr);
+    for step in [
+        "Generate RIPR pilot packet",
+        "Generate RIPR agent loop artifacts",
+        "Run RIPR PR guidance report",
+        "Plan RIPR inline comments",
+        "Render RIPR diff SARIF",
+        "Render RIPR repo seam SARIF",
+        "Render RIPR repo badge artifacts",
+        "Render RIPR LLM work-loop summaries",
+        "Emit RIPR PR guidance annotations",
+    ] {
+        assert!(
+            steps.contains(step),
+            "ci-packet does not name `{step}`:\n{steps}"
+        );
+    }
+    assert!(
+        !workspace.join("target/ripr").exists(),
+        "an unknown --step ran a step"
+    );
     assert!(workflow.contains("Add RIPR advisory summary"));
     assert!(workflow.contains("ripr reports ci-summary --root ."));
     assert!(!workflow.contains("cargo xtask"));
@@ -17155,10 +17177,12 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
         ));
     }
     // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change".
-    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+    // uncommitted edits, not only "make a change". "tracked" per #5258: the
+    // runtime wording must match `check --help` and cannot promise that
+    // `--worktree` covers untracked files.
+    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
         return Err(format!(
-            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
