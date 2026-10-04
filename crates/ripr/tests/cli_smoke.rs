@@ -11246,11 +11246,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("ripr agent review-summary"));
     assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
     assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(stdout.contains("#### First-run status"));
-    assert!(stdout.contains("Start-here artifact:"));
-    assert!(stdout.contains("missing_start_here"));
-    assert!(stdout.contains("cat target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("### Language preview grouping"));
+    assert!(stdout.contains("ripr reports ci-summary --root ."));
     assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
     assert!(!workspace.join("ripr.toml").exists());
     assert!(!workspace.join(".github/workflows/ripr.yml").exists());
@@ -11301,7 +11297,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The steps use the generating version's CLI, so the install is pinned
     // to it rather than taking the newest crates.io release.
     assert!(workflow.contains(&format!(
-        "run: cargo install ripr --version {} --locked\n",
+        "          version={}\n",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(workflow.contains(&format!(
+        "            cargo install ripr --version {} --locked\n",
         env!("CARGO_PKG_VERSION")
     )));
     assert!(!workflow.contains("cargo install ripr --locked"));
@@ -11310,9 +11310,9 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains(
         "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
     ));
-    // Every third-party action is pinned to a commit SHA (#4452).
-    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
-    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
+    // The prebuilt install needs no third-party toolchain or cache action.
+    assert!(!workflow.contains("dtolnay/rust-toolchain"));
+    assert!(!workflow.contains("Swatinem/rust-cache"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
@@ -11351,16 +11351,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("Run RIPR PR guidance report"));
     assert!(workflow.contains("Emit RIPR PR guidance annotations"));
     assert!(workflow.contains("Add RIPR advisory summary"));
-    assert!(workflow.contains("## RIPR advisory summary"));
-    assert!(workflow.contains("### Start here"));
-    assert!(workflow.contains("#### First-run status"));
-    assert!(workflow.contains("Start-here artifact:"));
-    assert!(workflow.contains("missing_start_here"));
-    assert!(workflow.contains("cat target/ripr/reports/start-here.md"));
-    assert!(workflow.contains("### Language preview grouping"));
-    assert!(workflow.contains("### SARIF and badge status"));
-    assert!(workflow.contains("### PR guidance annotations"));
-    assert!(workflow.contains("### Known limits"));
+    assert!(workflow.contains("ripr reports ci-summary --root ."));
     assert!(!workflow.contains("cargo xtask"));
     assert!(workflow.contains("continue-on-error: true"));
     assert!(workflow.contains("actions/upload-artifact@v7"));
@@ -19624,6 +19615,37 @@ fn impacted_evidence_unknown_arg_fails_clearly() {
     );
 }
 
+#[test]
+fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<(), String> {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
+    let dir = unique_temp_workspace("impacted-missing");
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let _cleanup = Scratch(dir.clone());
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing evidence must be an operational failure:\n{stderr}"
+    );
+    assert!(stderr.contains("missing.json"), "{stderr}");
+    assert!(
+        !dir.join("target").exists(),
+        "nothing may be written into the cwd"
+    );
+    Ok(())
+}
+
 // ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
 
 #[test]
@@ -20666,6 +20688,94 @@ fn no_origin_master_repo(label: &str, initial_branch: &str) -> Result<PathBuf, S
     .map_err(|err| format!("write work lib.rs: {err}"))?;
     run_git(&root, &["commit", "-am", "work"])?;
     Ok(root)
+}
+
+/// `pr-evidence` reads Git history and writes from the invocation directory.
+/// A `--root` naming another repository, a missing directory, or a file used
+/// to pair the invocation repository's diff with the selected root's source
+/// and stamp a clean packet with the selected root. Each must refuse before
+/// any packet is written in either tree.
+#[test]
+fn pr_evidence_refuses_root_outside_invocation_repository() -> Result<(), String> {
+    let selected = no_origin_master_repo("pr-evidence-foreign-selected", "master")?;
+    let invocation = no_origin_master_repo("pr-evidence-foreign-invocation", "master")?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let missing = selected.join("missing-member");
+    let file_root = selected.join("Cargo.toml");
+    let mut failures = Vec::new();
+    for (label, root, expected) in [
+        (
+            "foreign repository",
+            &selected,
+            "is not inside the Git work tree",
+        ),
+        ("missing directory", &missing, "is not a directory"),
+        ("file", &file_root, "is not a directory"),
+    ] {
+        let root_arg = root.to_string_lossy().into_owned();
+        let output = run_command(
+            bin,
+            Some(&invocation),
+            &[
+                "pr-evidence",
+                "--root",
+                &root_arg,
+                "--base",
+                "master",
+                "--head",
+                "HEAD",
+            ],
+        )
+        .map_err(|err| format!("spawn ripr pr-evidence: {err}"))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let written =
+            invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+        if output.status.code() != Some(2) || !stderr.contains(expected) || written {
+            failures.push(format!(
+                "{label} root must refuse with `{expected}` and write nothing; status {:?}, written {written}, stderr:\n{stderr}",
+                output.status.code()
+            ));
+        }
+    }
+    // An inherited repository selector (as a Git hook exports) must not make
+    // both top-level probes answer for the invocation repository.
+    let selected_arg = selected.to_string_lossy().into_owned();
+    let git_dir = invocation.join(".git").to_string_lossy().into_owned();
+    let work_tree = invocation.to_string_lossy().into_owned();
+    let output = run_command_with_env(
+        bin,
+        &invocation,
+        &[
+            "pr-evidence",
+            "--root",
+            &selected_arg,
+            "--base",
+            "master",
+            "--head",
+            "HEAD",
+        ],
+        &[("GIT_DIR", &git_dir), ("GIT_WORK_TREE", &work_tree)],
+    )
+    .map_err(|err| format!("spawn ripr pr-evidence with GIT_DIR: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let written =
+        invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+    if output.status.code() != Some(2)
+        || !stderr.contains("is not inside the Git work tree")
+        || written
+    {
+        failures.push(format!(
+            "foreign root under inherited GIT_DIR/GIT_WORK_TREE must still refuse; status {:?}, written {written}, stderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    ignore_remove_dir_all(&selected);
+    ignore_remove_dir_all(&invocation);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }
 
 fn json_string_at(path: &Path, pointer: &str) -> Result<serde_json::Value, String> {
