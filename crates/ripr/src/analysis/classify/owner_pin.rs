@@ -74,9 +74,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
+    /// Crate-local sites keyed by the recognized target root that holds
+    /// them: they make a name ambiguous only for tests in that crate.
+    crate_macro_bindings: RefCell<Option<CrateMacroBindings>>,
     /// Disclosure memo: the first workspace-wide site per refused name, so
     /// naming a refusal does not rescan every file once per finding.
-    workspace_macro_sites: RefCell<BTreeMap<String, Option<(PathBuf, MacroBindingSite)>>>,
+    workspace_macro_sites: RefCell<WorkspaceMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
@@ -175,12 +178,13 @@ impl OwnerPinSyntax {
                         declaration.to_string(),
                     ))
                 };
+                let test_root = target_root(&test.file, index);
                 let workspace = self
                     .workspace_macro_sites
                     .borrow_mut()
-                    .entry(name.clone())
+                    .entry((name.clone(), test_root.clone()))
                     .or_insert_with(|| {
-                        workspace_macro_binding_site(&name, index, &resolved)
+                        workspace_macro_binding_site(&name, test_root.as_deref(), index, &resolved)
                             .or_else(|| self.withheld.sites.get(&name).cloned())
                     })
                     .clone();
@@ -231,8 +235,11 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped) = trusted_macro_sites_in(index, &module_resolved);
+            let (mut global, scoped, by_root) = trusted_macro_sites_in(index, &module_resolved);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+            *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+            // Withheld files are not indexed, so their crate root is unknown;
+            // their crate-local sites stay global (fails closed).
             global.extend(self.withheld.trusted.iter().cloned());
             global
         });
@@ -275,6 +282,7 @@ impl OwnerPinSyntax {
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
         ambiguous.extend(self.scoped_names_for(test));
+        ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
@@ -318,10 +326,62 @@ impl OwnerPinSyntax {
 }
 
 type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
+type CrateMacroBindings = BTreeMap<PathBuf, BTreeSet<String>>;
+/// Keyed by trusted name and the test's recognized root.
+type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, MacroBindingSite)>>;
+
+/// The crate root whose module tree holds `file`, when that root is one of
+/// Cargo's autodiscovered targets (`src/lib.rs`, `src/main.rs`,
+/// `src/bin/*.rs`, `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
+/// `build.rs`) and every module edge to it resolved. `None` keeps a
+/// binding workspace-wide: an unlinked file may belong to any crate.
+fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
+    let facts = index.files().get(file)?;
+    if facts.role_provenance.earliest_unresolved_reason.is_some() {
+        return None;
+    }
+    let root = facts
+        .role_provenance
+        .edges
+        .first()
+        .map_or_else(|| file.to_path_buf(), |edge| edge.parent.clone());
+    let names: Vec<&str> = root
+        .iter()
+        .map(|part| part.to_str().unwrap_or_default())
+        .collect();
+    let package_has_src = |package: &[&str]| {
+        let prefix: PathBuf = package.iter().chain(&["src"]).collect();
+        index
+            .files()
+            .iter()
+            .any(|(path, _)| path.starts_with(&prefix))
+    };
+    let recognized = match names.as_slice() {
+        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _] => true,
+        [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
+        [package @ .., "build.rs"] => package_has_src(package),
+        _ => false,
+    };
+    (recognized && root.extension().is_some_and(|extension| extension == "rs")).then_some(root)
+}
 
 impl OwnerPinSyntax {
     /// Trusted names that a scoped definition or import makes ambiguous for
     /// `test`. Filled by the workspace scan in `refusal`.
+    /// Trusted names a crate-local site makes ambiguous for `test`: those in
+    /// the test's own recognized root, or every one when that root is not
+    /// established.
+    fn crate_names_for(&self, test: &TestSummary, index: &RustIndex) -> Vec<String> {
+        let by_root = self.crate_macro_bindings.borrow();
+        let Some(by_root) = by_root.as_ref() else {
+            return Vec::new();
+        };
+        match target_root(&test.file, index) {
+            Some(root) => by_root.get(&root).into_iter().flatten().cloned().collect(),
+            None => by_root.values().flatten().cloned().collect(),
+        }
+    }
+
     fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
         self.scoped_macro_bindings
             .borrow()
@@ -479,6 +539,7 @@ impl AssertionRefusal {
 /// ambiguous everywhere. Disclosure only: the admission decision uses the set.
 fn workspace_macro_binding_site(
     name: &str,
+    test_root: Option<&Path>,
     index: &RustIndex,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
@@ -486,9 +547,18 @@ fn workspace_macro_binding_site(
         return None;
     }
     index.files().iter().find_map(|(path, facts)| {
+        // The same rule as the decision: a crate-local site in another
+        // recognized root does not reach this test.
+        let site_root = target_root(path, index);
+        let reaches = |site: &MacroBindingSite| {
+            !site.crate_local
+                || site_root.is_none()
+                || test_root.is_none()
+                || site_root.as_deref() == test_root
+        };
         macro_binding_sites(name, path, &facts.source, index, module_resolved)
             .into_iter()
-            .find(|(_, site)| site.scope.is_none())
+            .find(|(_, site)| site.scope.is_none() && reaches(site))
             .map(|(_, site)| (path.clone(), site))
     })
 }
@@ -535,7 +605,7 @@ fn macro_binding_sites(
 fn trusted_macro_sites_in(
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> (BTreeSet<String>, ScopedMacroBindings) {
+) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
     let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
         files
             .par_iter()
@@ -553,11 +623,20 @@ fn trusted_macro_sites_in(
     };
     let mut global = BTreeSet::new();
     let mut scoped = ScopedMacroBindings::new();
+    // A crate-local site in a recognized target root other than the test's
+    // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
+    let mut by_root = CrateMacroBindings::new();
     let mut absorb = |sites: Vec<(PathBuf, String, MacroBindingSite)>,
                       global: &mut BTreeSet<String>| {
         for (path, name, site) in sites {
             if site.scope.is_some() {
                 scoped.entry(path).or_default().push((name, site));
+            } else if let Some(root) = site
+                .crate_local
+                .then(|| target_root(&path, index))
+                .flatten()
+            {
+                by_root.entry(root).or_default().insert(name);
             } else {
                 global.insert(name);
             }
@@ -577,7 +656,7 @@ fn trusted_macro_sites_in(
     if global.len() < NON_RETURNING_MACROS.len() {
         absorb(scan(&rest), &mut global);
     }
-    (global, scoped)
+    (global, scoped, by_root)
 }
 
 /// Scan-order hint for the trusted-macro ambiguity scan, never its answer:

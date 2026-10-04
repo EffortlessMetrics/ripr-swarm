@@ -854,9 +854,17 @@ fn owner_pin_macro_ambiguity_in_other_files_and_run_memo() {
             &syntax
         ));
     }
+    // The private `use std::fs::write;` binds only in the test's own crate.
     assert_eq!(
         syntax.ambiguous_macro_bindings.borrow().as_ref(),
-        Some(&BTreeSet::from(["write".to_string()]))
+        Some(&BTreeSet::new())
+    );
+    assert_eq!(
+        syntax.crate_macro_bindings.borrow().as_ref(),
+        Some(&BTreeMap::from([(
+            PathBuf::from(TESTS),
+            BTreeSet::from(["write".to_string()])
+        )]))
     );
     assert_eq!(syntax.by_file.borrow().len(), 1);
 }
@@ -941,6 +949,53 @@ fn weight_refusal(tests: &str, others: &[(&str, &str)]) -> Option<AssertionRefus
         "the test's assertions must parse"
     );
     OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+}
+
+#[test]
+fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // humantime's `benches/datetime_format.rs`: a bench is its own crate.
+    for other in [
+        ("benches/b.rs", "#[macro_use]\nextern crate bencher;"),
+        ("benches/b.rs", "use other::assert_eq;"),
+        ("benches/b.rs", "use other::*;"),
+        (
+            "examples/e.rs",
+            "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        ),
+        ("build.rs", "#![no_implicit_prelude]"),
+    ] {
+        assert_eq!(weight_refusal(tests, &[other]), None, "{other:?}");
+    }
+    // Exported or re-exported bindings, and files ripr cannot place in a
+    // recognized target root, still reach every test.
+    for other in [
+        (
+            "benches/b.rs",
+            "#[macro_export] macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        ),
+        ("benches/b.rs", "pub use other::assert_eq;"),
+        ("src/tests/b.rs", "#[macro_use]\nextern crate bencher;"),
+        ("src/other.rs", "#[macro_use]\nextern crate bencher;"),
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(tests, &[other]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other:?}"
+        );
+    }
+    // The test's own crate keeps the binding.
+    let own = format!("#[macro_use]\nextern crate bencher;\n{tests}");
+    assert!(matches!(
+        weight_refusal(&own, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
 }
 
 #[test]
@@ -1303,7 +1358,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         ),
     ] {
         let index = index(&files);
-        let (ambiguous, _) = trusted_macro_sites_in(&index, &unresolved);
+        let (ambiguous, _, _) = trusted_macro_sites_in(&index, &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
             ambiguous.len() == NON_RETURNING_MACROS.len(),
