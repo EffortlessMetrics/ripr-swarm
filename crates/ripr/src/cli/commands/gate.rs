@@ -14,6 +14,19 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use super::{non_empty_path_arg, non_empty_string_arg, write_text_file};
+use crate::cli::GATE_EVALUATE_CONFIG_ERROR_STATUS;
+
+/// Map a failing gate-evaluate status onto the process exit contract.
+/// `config_error` is could-not-complete; `blocked` is a completed blocking
+/// decision. Callers only pass statuses `gate_decision_should_fail` already
+/// accepted.
+pub(crate) fn gate_evaluate_exit_error(status: &str, message: String) -> CommandError {
+    if status == GATE_EVALUATE_CONFIG_ERROR_STATUS {
+        CommandError::Failure(message)
+    } else {
+        CommandError::Decision(message)
+    }
+}
 
 pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -66,13 +79,10 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         // A config_error means the evaluation could not complete (exit 2);
         // only a completed evaluation reaching its blocking decision is a
         // Decision (exit 3).
-        return Err(
-            if output::gate::gate_decision_status(&report) == "config_error" {
-                CommandError::Failure(message)
-            } else {
-                CommandError::Decision(message)
-            },
-        );
+        return Err(gate_evaluate_exit_error(
+            output::gate::gate_decision_status(&report),
+            message,
+        ));
     }
     Ok(())
 }
@@ -233,6 +243,29 @@ fn default_visible_only_warning(
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+    use crate::cli::{GATE_EVALUATE_BLOCKED_STATUS, GATE_EVALUATE_CONFIG_ERROR_STATUS};
+
+    #[test]
+    fn gate_evaluate_exit_mapping_matches_the_typed_contract() {
+        assert_eq!(
+            gate_evaluate_exit_error(GATE_EVALUATE_CONFIG_ERROR_STATUS, "config".to_string())
+                .exit_code(),
+            crate::cli::EXIT_COULD_NOT_COMPLETE
+        );
+        assert_eq!(
+            gate_evaluate_exit_error(GATE_EVALUATE_BLOCKED_STATUS, "blocked".to_string())
+                .exit_code(),
+            crate::cli::EXIT_DECISION_OR_REFUSAL
+        );
+        assert_eq!(
+            gate_evaluate_exit_error(GATE_EVALUATE_CONFIG_ERROR_STATUS, "config".to_string()),
+            CommandError::Failure("config".to_string())
+        );
+        assert_eq!(
+            gate_evaluate_exit_error(GATE_EVALUATE_BLOCKED_STATUS, "blocked".to_string()),
+            CommandError::Decision("blocked".to_string())
+        );
+    }
 
     #[test]
     fn gate_parses_full_option_surface() {
