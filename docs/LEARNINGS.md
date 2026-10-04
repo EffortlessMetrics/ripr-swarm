@@ -39,6 +39,28 @@ whose follow fails with a non-`NotFound` error (symlink into an unreadable
 directory) is unreadable, not a non-directory. Do not give MissingRoot's
 Directory re-classify arm the missing-path sentence.
 
+## 2026-10-03: typed timeouts must survive the current consumer path (#4859)
+
+Git timeout classification belongs to the crate-internal `CoreError` variant;
+`Message` never acquires that meaning from its Display text. Structured context
+preserves the family until the public String boundary. The current worktree
+check returns output, Rust diagnostic origins, and consumed source commitments
+and observes producer progress. Carry the typed error through that tuple route
+and its open-path variant; replacing it with an older check adapter discards
+landed behavior. Committed-source reads retain the typed family through context.
+
+Control placement matters: wrapped timeout and lookalike Message tests invoke
+the production LSP error decision before the renderer. The framed server control
+uses numeric `gitTimeoutMs = 0` with explicit base `HEAD`, then restores the normal
+deadline and requires a nonempty recovery. Preserve spawned-timeout repair
+guidance: `--git-timeout SECS` or `RIPR_GIT_TIMEOUT=<seconds>` for CLI runs
+(`0 disables it`), and the editor session `gitTimeoutMs` initialization option.
+Editor zero remains the explicit fail-fast stimulus in the framed control.
+Fixed root-probe guidance has its own escape hatch; bounded cat-file session
+deadlines, cancellation Display, and terminate/reap behavior remain independent
+compatibility obligations. Source inspection and a patch
+application receipt establish bytes, not compilation or behavioral execution.
+
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
 The #4835 overlay indexed token-tree functions as tests and accepted
@@ -2546,3 +2568,36 @@ Treat the retired commands in those entries as historical record only — do not
 copy them into new playbooks, and replay the premise check with
 `git fetch origin`, `git status --short`, `gh issue list --state open`,
 and `gh pr list --state open` instead.
+
+## 2026-10-04: A shallow glob manufactures a false capability claim (Windows PowerShell)
+
+While implementing #5213 I searched the vendored `winsafe-0.0.29` crate with
+`Select-String -Path "$w/src/**/*.rs"` and concluded that Windows had no safe
+per-process CPU or memory counter, publishing that claim in a module doc, an
+unavailable-state enum, and `docs/OUTPUT_SCHEMA.md`. It was false.
+`winsafe-0.0.29/src/kernel/handles/hprocess.rs:115` has
+`HPROCESS::GetProcessTimes() -> SysResult<(FILETIME, FILETIME, FILETIME, FILETIME)>`
+and `src/psapi/handles/hprocess.rs:126` has
+`HPROCESS::GetProcessMemoryInfo() -> SysResult<PROCESS_MEMORY_COUNTERS_EX>`.
+Both are safe `fn`; the `unsafe` lives inside `winsafe`.
+
+The cause was the search, not the crate. On Windows PowerShell, `**` in a
+`-Path` argument is not recursive, so `src/**/*.rs` expanded to one directory
+level and read only `src/kernel/ffi.rs` and `src/psapi/ffi.rs` - the raw
+extern declarations - while skipping every `handles/` wrapper. The evidence
+looked like a thorough sweep and supported the opposite of the truth.
+
+Durable rules:
+
+- A capability-absence claim needs a search that provably covered the tree.
+  `Get-ChildItem -Recurse -File | Select-String` does; a `**` glob passed to
+  `-Path` does not. On PowerShell, use `-Path (Get-ChildItem -Recurse -Filter
+  '*.rs').FullName` or `git grep` rather than a shell glob.
+- "The grep found no implementation" and "the API does not exist" are
+  different claims. Only the second may reach published documentation.
+- When a review or a later read contradicts a published absence claim, fix the
+  claim before optimizing the explanation of it. An unreachable enum variant
+  plus docs describing it is the same defect one layer down.
+- Prefer proving a negative twice on two independent paths - e.g. the safe
+  wrapper listing and a compile attempt that uses it - before writing that a
+  capability is unavailable.
