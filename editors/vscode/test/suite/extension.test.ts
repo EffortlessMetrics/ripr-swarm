@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -11,7 +12,12 @@ import {
   readFirstPrPacketStatus,
   validatedAgentLoopCommand
 } from '../../src/client';
+import { explicitSetting } from '../../src/config';
 import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
+import {
+  NO_RUNNING_SERVER_MESSAGE,
+  messageClaimsHungServer
+} from '../../src/cockpitRequest';
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
@@ -343,6 +349,44 @@ suite('Extension Smoke', () => {
     });
   });
 
+  test('leaves unset seam diagnostic settings to ripr.toml', async () => {
+    await withControllerTestContext({}, async (context) => {
+      await context.controller.start();
+
+      // A key the user never set must stay absent so the server applies
+      // ripr.toml [lsp] values; forwarding the manifest default overrode
+      // `seam_diagnostics = false` for every 0.10 user who upgraded.
+      const initializationOptions = context.client.receivedInitializationOptions ?? {};
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).seamDiagnostics, undefined);
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).diagnosticProfile, undefined);
+    });
+  });
+
+  test('explicitSetting ignores manifest defaults and returns user layers', () => {
+    const fakeConfig = (inspected: Record<string, unknown>) =>
+      ({ inspect: () => ({ key: 'ripr.seamDiagnostics', ...inspected }) }) as unknown as vscode.WorkspaceConfiguration;
+
+    assert.strictEqual(explicitSetting<boolean>(fakeConfig({ defaultValue: true }), 'seamDiagnostics'), undefined);
+    assert.strictEqual(
+      explicitSetting<boolean>(fakeConfig({ defaultValue: true, globalValue: false }), 'seamDiagnostics'),
+      false
+    );
+    assert.strictEqual(
+      explicitSetting<boolean>(
+        fakeConfig({ defaultValue: true, globalValue: true, workspaceValue: false }),
+        'seamDiagnostics'
+      ),
+      false
+    );
+    assert.strictEqual(
+      explicitSetting<boolean>(
+        fakeConfig({ defaultValue: true, workspaceValue: false, workspaceFolderValue: true }),
+        'seamDiagnostics'
+      ),
+      true
+    );
+  });
+
   test('preserves mixed LSP configuration request ordering', async () => {
     await withControllerTestContext({}, async (context) => {
       await context.controller.start();
@@ -500,13 +544,13 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(contextCommand.command, ...(contextCommand.arguments ?? []));
     const contextPacket = await waitForClipboardText((text) =>
-      text.includes('"schema_version": "0.4"') && text.includes('"seam_id": "67fc764ba37d77bd"')
+      text.includes('"schema_version": "0.5"') && text.includes('"seam_id": "67fc764ba37d77bd"')
     );
     const parsedContextPacket = JSON.parse(contextPacket) as {
       schema_version?: string;
       packets?: Array<{ seam_id?: string }>;
     };
-    assert.strictEqual(parsedContextPacket.schema_version, '0.4');
+    assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
 
     await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
@@ -730,6 +774,9 @@ suite('Extension Smoke', () => {
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
       await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      // The server withholds a ledger whose source_subject does not match the
+      // files on disk (#4544), so stamp it after the save changed pricing.ts.
+      await writeEditorGapSmokeLedger();
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -1014,6 +1061,35 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(context.client.requests, []);
       assert.strictEqual(context.clipboardWrites[0], packet);
       assert.ok(context.infoMessages.at(-1)?.includes('gap repair packet'));
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
+  test('copyContext copies repair cards without LSP fallback for active workspace file', async () => {
+    const relativePath = 'src/repair-card.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    const packet = JSON.stringify({
+      schema_version: 'ripr-repair-card-v1',
+      repair_card_id: 'card-digest',
+      subject: { seam_id: 'seam:rust:pricing' }
+    });
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn repair_card_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({
+        label: 'repair_card',
+        packet
+      });
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.strictEqual(context.clipboardWrites[0], packet);
+      assert.ok(context.infoMessages.at(-1)?.includes('repair card'));
     } finally {
       await context.dispose();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
@@ -1593,7 +1669,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff'
+        'Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
@@ -1602,6 +1678,216 @@ suite('Extension Smoke', () => {
         'The run input was incomplete',
         'Next safe action: Run ripr: Refresh Diagnostics'
       ]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited status prefers the degraded component recovery route over the canned refresh step (#5004)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-gap-ledger',
+        snapshot_id: 'snapshot:run-gap-ledger',
+        components: [
+          {
+            component: 'diff',
+            state: 'complete',
+            kind: null,
+            message: null,
+            findings_trustworthy: true,
+            recovery: null,
+            snapshot_identity: 'snapshot:run-gap-ledger'
+          },
+          {
+            component: 'gap_ledger',
+            state: 'failed',
+            kind: 'gap_ledger_parse_failed',
+            message: 'gap diagnostics skipped: ledger parse failed',
+            findings_trustworthy: true,
+            recovery: 'run ripr check to regenerate the gap decision ledger',
+            snapshot_identity: 'snapshot:run-gap-ledger'
+          }
+        ]
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      // The artifact-derived failure can only be repaired outside the editor,
+      // so the nextStep must name the server-published recovery route, not
+      // the editor refresh that would re-read the same corrupt artifact.
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr check to regenerate the gap decision ledger'),
+        tooltip
+      );
+      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited status surfaces findings_trustworthy false as untrustworthy snapshot evidence (#5004)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-git-timeout',
+        snapshot_id: 'snapshot:run-git-timeout',
+        components: [
+          {
+            component: 'diff',
+            state: 'failed',
+            kind: 'git_invocation_timeout',
+            message: 'git diff timed out',
+            findings_trustworthy: false,
+            recovery: 'retry ripr.refreshDiagnostics',
+            snapshot_identity: 'snapshot:run-git-timeout'
+          }
+        ]
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      // The degraded diff published zero findings; "no diagnostics" must not
+      // read as "no exposure" for this snapshot.
+      assert.ok(
+        tooltip.includes(
+          'Published findings are not trustworthy evidence for this snapshot (diff failed (git_invocation_timeout)).'
+        ),
+        tooltip
+      );
+      assert.ok(tooltip.includes('Next safe action: Retry ripr.refreshDiagnostics'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited status keeps the canned refresh step when no degraded component names a recovery (#5004)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-no-recovery',
+        snapshot_id: 'snapshot:run-no-recovery',
+        components: [
+          {
+            component: 'seam_inventory',
+            state: 'deferred',
+            kind: 'interactive_refresh_deferral',
+            message: null,
+            findings_trustworthy: true,
+            recovery: 'run ripr.refreshDiagnostics for the full seam inventory',
+            snapshot_identity: 'snapshot:run-no-recovery'
+          },
+          {
+            component: 'diff',
+            state: 'limited',
+            kind: 'budget_exhausted',
+            message: 'static limit reached',
+            findings_trustworthy: true,
+            recovery: null,
+            snapshot_identity: 'snapshot:run-no-recovery'
+          }
+        ]
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      // No degraded component carries a recovery, and the deferred component's
+      // recovery must not be promoted: the canned refresh step is the fallback.
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip
+      );
+      assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited partial scope keeps the budget remedy alongside the component recovery (#5004)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited_partial_scope',
+        attempt_id: 'run-partial-plus-ledger',
+        snapshot_id: 'snapshot:run-partial-plus-ledger',
+        components: [
+          {
+            component: 'gap_ledger',
+            state: 'failed',
+            kind: 'gap_ledger_parse_failed',
+            message: 'gap diagnostics skipped: ledger parse failed',
+            findings_trustworthy: true,
+            recovery: 'run ripr check to regenerate the gap decision ledger',
+            snapshot_identity: 'snapshot:run-partial-plus-ledger'
+          }
+        ]
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      // The artifact recovery does not widen the diff partition, so the canned
+      // budget remedy must survive composition with the component recovery.
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited status fails closed to the canned step for a malformed components payload (#5004)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-malformed',
+        snapshot_id: 'snapshot:run-malformed',
+        // A version-mismatched or corrupted server may send a non-array; the
+        // presentation must take the canned fallback instead of throwing.
+        components: 'not-an-array'
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip
+      );
+      assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -4213,20 +4499,6 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('showReceiptStatus shows info message when no LSP client is running', async () => {
-    const context = createControllerTestContext({});
-    try {
-      // Do NOT start the controller — no client attached.
-      await context.controller.showReceiptStatus();
-
-      assert.ok(context.infoMessages.length > 0, 'expected an info message');
-      assert.ok(context.infoMessages.at(-1)?.includes('not responding'), context.infoMessages.at(-1));
-      assert.deepStrictEqual(context.clipboardWrites, [], 'must not write to clipboard');
-    } finally {
-      await context.dispose();
-    }
-  });
-
   test('copyReceiptCommand writes real command to clipboard when LSP returns a real value', async () => {
     const context = createControllerTestContext({
       lspResult: {
@@ -4286,20 +4558,6 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('copyReceiptCommand shows info message and does NOT write to clipboard when no LSP client is running', async () => {
-    const context = createControllerTestContext({});
-    try {
-      // Do NOT start the controller — no client attached.
-      await context.controller.copyReceiptCommand();
-
-      assert.deepStrictEqual(context.clipboardWrites, [], 'must not write to clipboard without LSP client');
-      assert.ok(context.infoMessages.length > 0, 'expected an info message');
-      assert.ok(context.infoMessages.at(-1)?.includes('not responding'), context.infoMessages.at(-1));
-    } finally {
-      await context.dispose();
-    }
-  });
-
   test('openAttemptLedger shows info message when LSP returns not_available', async () => {
     const context = createControllerTestContext({
       lspResult: {
@@ -4314,20 +4572,6 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(context.clipboardWrites, [], 'openAttemptLedger must not write to clipboard');
       assert.ok(context.infoMessages.length > 0, 'expected an info message');
       assert.ok(context.infoMessages.at(-1)?.includes('No attempt ledger is available'), context.infoMessages.at(-1));
-    } finally {
-      await context.dispose();
-    }
-  });
-
-  test('openAttemptLedger shows info message when no LSP client is running', async () => {
-    const context = createControllerTestContext({});
-    try {
-      // Do NOT start the controller — no client attached.
-      await context.controller.openAttemptLedger();
-
-      assert.deepStrictEqual(context.clipboardWrites, [], 'must not write to clipboard without LSP client');
-      assert.ok(context.infoMessages.length > 0, 'expected an info message');
-      assert.ok(context.infoMessages.at(-1)?.includes('not responding'), context.infoMessages.at(-1));
     } finally {
       await context.dispose();
     }
@@ -4406,26 +4650,149 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('showRouteQuality shows info message when no LSP client is running', async () => {
-    const context = createControllerTestContext({});
-    try {
-      // Do NOT start the controller — no client attached.
-      await context.controller.showRouteQuality();
-
-      assert.ok(context.infoMessages.length > 0, 'expected an info message');
-      assert.ok(context.infoMessages.at(-1)?.includes('not responding'), context.infoMessages.at(-1));
-      assert.deepStrictEqual(context.clipboardWrites, [], 'must not write to clipboard without LSP client');
-    } finally {
-      await context.dispose();
-    }
-  });
-
   test('receipt inspection commands are registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('ripr.showReceiptStatus'));
     assert.ok(commands.includes('ripr.copyReceiptCommand'));
     assert.ok(commands.includes('ripr.openAttemptLedger'));
     assert.ok(commands.includes('ripr.showRouteQuality'));
+  });
+
+  // Replaces the four no-client tests that previously asserted hung-server
+  // wording (`not responding`) for showReceiptStatus, copyReceiptCommand,
+  // openAttemptLedger, and showRouteQuality. Those assertions encoded #5099.
+  const cockpitAbsenceCommands: Array<{
+    name: string;
+    run: (controller: RiprClientController) => Promise<void>;
+    unavailableIncludes: string;
+  }> = [
+    {
+      name: 'copyTopRepairPacket',
+      run: (controller) => controller.copyTopRepairPacket(),
+      unavailableIncludes: 'did not respond'
+    },
+    {
+      name: 'copyTopVerifyCommand',
+      run: (controller) => controller.copyTopVerifyCommand(),
+      unavailableIncludes: 'No verify command available'
+    },
+    {
+      name: 'copyTopReceiptCommand',
+      run: (controller) => controller.copyTopReceiptCommand(),
+      unavailableIncludes: 'No receipt command available'
+    },
+    {
+      name: 'showReceiptStatus',
+      run: (controller) => controller.showReceiptStatus(),
+      unavailableIncludes: 'not responding'
+    },
+    {
+      name: 'copyReceiptCommand',
+      run: (controller) => controller.copyReceiptCommand(),
+      unavailableIncludes: 'not responding'
+    },
+    {
+      name: 'openAttemptLedger',
+      run: (controller) => controller.openAttemptLedger(),
+      unavailableIncludes: 'not responding'
+    },
+    {
+      name: 'showRouteQuality',
+      run: (controller) => controller.showRouteQuality(),
+      unavailableIncludes: 'not responding'
+    }
+  ];
+
+  for (const command of cockpitAbsenceCommands) {
+    test(`${command.name} does not claim a hung server when no client was started`, async () => {
+      const context = createControllerTestContext({});
+      try {
+        await command.run(context.controller);
+
+        assert.strictEqual(context.infoMessages.at(-1), NO_RUNNING_SERVER_MESSAGE);
+        assert.strictEqual(messageClaimsHungServer(context.infoMessages.at(-1) ?? ''), false);
+        assert.ok(
+          !context.infoMessages.at(-1)?.includes(command.unavailableIncludes),
+          context.infoMessages.at(-1)
+        );
+        assert.deepStrictEqual(context.client.requests, []);
+        assert.deepStrictEqual(context.clipboardWrites, []);
+      } finally {
+        await context.dispose();
+      }
+    });
+
+    test(`${command.name} keeps the request-failed wording when a live client returns null`, async () => {
+      const context = createControllerTestContext({ lspResult: null });
+      try {
+        await context.controller.start();
+        await command.run(context.controller);
+
+        const message = context.infoMessages.at(-1) ?? '';
+        assert.ok(message.includes(command.unavailableIncludes), message);
+        assert.notStrictEqual(message, NO_RUNNING_SERVER_MESSAGE);
+        assert.strictEqual(context.client.requests.length, 1);
+        assert.deepStrictEqual(context.clipboardWrites, []);
+      } finally {
+        await context.dispose();
+      }
+    });
+
+    test(`${command.name} keeps the request-failed wording when a live client throws`, async () => {
+      const context = createControllerTestContext({
+        lspError: new Error(`${command.name} request failed`)
+      });
+      try {
+        await context.controller.start();
+        await command.run(context.controller);
+
+        const message = context.infoMessages.at(-1) ?? '';
+        assert.ok(message.includes(command.unavailableIncludes), message);
+        assert.notStrictEqual(message, NO_RUNNING_SERVER_MESSAGE);
+        assert.strictEqual(context.client.requests.length, 1);
+        assert.ok(
+          context.outputLines.some((line) => line.includes('failed')),
+          context.outputLines.join('\n')
+        );
+        assert.deepStrictEqual(context.clipboardWrites, []);
+      } finally {
+        await context.dispose();
+      }
+    });
+  }
+
+  test('an array LSP response still shows a user-visible toast and does not crash', async () => {
+    const cases: Array<{
+      name: string;
+      run: (controller: RiprClientController) => Promise<void>;
+      includes: string;
+    }> = [
+      {
+        name: 'copyTopRepairPacket',
+        run: (controller) => controller.copyTopRepairPacket(),
+        includes: 'No complete repair packet available'
+      },
+      {
+        name: 'showReceiptStatus',
+        run: (controller) => controller.showReceiptStatus(),
+        includes: 'not_available'
+      }
+    ];
+    for (const command of cases) {
+      const context = createControllerTestContext({ lspResult: ['not', 'a', 'packet'] });
+      try {
+        await context.controller.start();
+        await command.run(context.controller);
+
+        const message = context.infoMessages.at(-1) ?? '';
+        assert.ok(message.includes(command.includes), `${command.name}: ${message}`);
+        assert.notStrictEqual(message, NO_RUNNING_SERVER_MESSAGE, command.name);
+        assert.strictEqual(messageClaimsHungServer(message), false, command.name);
+        assert.deepStrictEqual(context.clipboardWrites, [], command.name);
+      } finally {
+        await context.dispose();
+      }
+    }
   });
 });
 
@@ -4849,8 +5216,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
         checkMode: 'draft',
         baseRef: 'origin/main',
         includeUnchangedTests: options.includeUnchangedTests ?? true,
-        seamDiagnostics: options.seamDiagnostics ?? true,
-        diagnosticProfile: options.diagnosticProfile ?? 'actionable',
+        seamDiagnostics: options.seamDiagnostics,
+        diagnosticProfile: options.diagnosticProfile,
         traceServer: 'off'
       };
     },
@@ -5181,13 +5548,41 @@ async function writeEditorGapSmokeFiles(): Promise<void> {
       ''
     ].join('\n')
   );
+}
+
+// Stamp every file the ledger records name (anchor, repair target, related
+// test) with its current digest, the way a real producer stamps the files its
+// analysis read. Deriving the set from the records keeps the stamp complete
+// when the fixture ledger changes.
+async function writeEditorGapSmokeLedger(): Promise<void> {
+  const ledger = editorGapSmokeLedger();
+  const files = await Promise.all(
+    gapLedgerSubjectPaths(ledger).map(async (relativePath) => ({
+      path: relativePath,
+      digest: `sha256:${createHash('sha256').update(await fs.readFile(workspaceFilePath(relativePath))).digest('hex')}`
+    }))
+  );
   await writeWorkspaceFile(
     'target/ripr/reports/gap-decision-ledger.json',
-    JSON.stringify(editorGapSmokeLedger(), null, 2)
+    JSON.stringify({ ...ledger, source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
   );
 }
 
-function editorGapSmokeLedger(): unknown {
+function gapLedgerSubjectPaths(ledger: Record<string, unknown>): string[] {
+  type SubjectRecord = {
+    anchor?: { file?: string };
+    repair_route?: { target_file?: string; related_test?: string };
+  };
+  const records = (ledger.records ?? []) as SubjectRecord[];
+  const paths = records.flatMap((record) => [
+    record.anchor?.file,
+    record.repair_route?.target_file,
+    record.repair_route?.related_test?.split('::')[0]
+  ]);
+  return [...new Set(paths.filter((path): path is string => Boolean(path)))].sort();
+}
+
+function editorGapSmokeLedger(): Record<string, unknown> {
   return {
     schema_version: '0.1',
     tool: 'ripr',

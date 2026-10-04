@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::classify::{impl_self_type_name, method_call_resolves_to_impl_type};
 
 pub(super) mod context;
 
@@ -52,6 +53,8 @@ pub(super) struct OwnerContext {
     module_path: Option<String>,
     prefix: Option<String>,
     fixture_names: BTreeSet<String>,
+    impl_type: Option<String>,
+    same_name_count: usize,
 }
 
 impl OwnerContext {
@@ -67,6 +70,17 @@ impl OwnerContext {
             .and_then(|file| context.index.files.get(file))
             .map(fixture_names_for_owner_file)
             .unwrap_or_default();
+        let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
+        let same_name_count = if name.is_empty() {
+            0
+        } else {
+            context
+                .index
+                .functions
+                .iter()
+                .filter(|function| function.name == name)
+                .count()
+        };
         Self {
             name,
             name_lower,
@@ -74,6 +88,8 @@ impl OwnerContext {
             module_path,
             prefix,
             fixture_names,
+            impl_type,
+            same_name_count,
         }
     }
 }
@@ -199,7 +215,19 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
+    let require_impl_identity = owner.same_name_count > 1 && owner.impl_type.is_some();
     for test_index in indices {
+        if require_impl_identity {
+            let Some(indexed) = context.tests.get(*test_index) else {
+                continue;
+            };
+            let Some(impl_type) = owner.impl_type.as_deref() else {
+                continue;
+            };
+            if !method_call_resolves_to_impl_type(indexed.test, &owner.name, impl_type) {
+                continue;
+            }
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -743,6 +771,8 @@ pub(super) fn test_imports_owner_compact(test: &CompactTest<'_>, owner_name: &st
         return false;
     }
     let qualified = format!("::{owner_name}");
+    // Both branches below imply `is_import_relevant_line`, which is the
+    // retention filter for `code_lines`; keep them inside that predicate.
     for code in &test.code_lines {
         if code.contains(&qualified) {
             return true;
@@ -758,11 +788,20 @@ pub(super) fn test_imports_owner_compact(test: &CompactTest<'_>, owner_name: &st
     false
 }
 
+/// The one eligibility rule shared by the import readers below and by
+/// `CompactTest::code_lines` retention. A stripped line that fails it can
+/// affect neither `import_affinity_tokens` nor `test_imports_owner_compact`
+/// (whose `::owner` branch implies `::` and whose `use` branch is this
+/// prefix), so the compact context keeps only lines that pass it. Widening
+/// either reader requires widening this predicate, never a private copy.
+pub(super) fn is_import_relevant_line(code: &str) -> bool {
+    code.contains("::") || code.trim_start().starts_with("use ")
+}
+
 pub(super) fn import_affinity_tokens(code_lines: &[String]) -> BTreeSet<String> {
     let mut tokens = BTreeSet::new();
     for code in code_lines {
-        let trimmed = code.trim_start();
-        if code.contains("::") || trimmed.starts_with("use ") {
+        if is_import_relevant_line(code) {
             tokens.extend(extract_identifier_tokens(code));
         }
     }

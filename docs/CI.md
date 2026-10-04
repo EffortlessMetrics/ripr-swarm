@@ -318,6 +318,80 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
+- **Always-on subset (#4938).** Every subscribed `pull_request` action
+  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
+  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+  (`lsp::gap_artifacts` lib tests, the #4918 cache-warning smoke, and
+  `cargo clippy -p ripr --all-targets`) under the same advisory contract as
+  the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
+  only by a native-Windows audit, so native-Windows verification of new
+  product behavior remains an author and audit responsibility.
+
+- **Subject identity (#5043).** Observations and failure reasons are keyed by
+  Cargo target kind, source path, exact executable basename (including its
+  Cargo hash), and test name. Both samples execute the same compiled workspace;
+  a changed hash cannot borrow a pass or manufacture a repeated failure. Cargo
+  text does not expose integration-target package IDs, so the report does not
+  invent them. Artifact directories, validated Windows separators and the
+  `.exe` suffix are presentation; raw Cargo headers remain visible beside the
+  normalized target identity. Doctests use their explicit `Doc-tests` name as
+  a distinct target kind, without inferred package ownership.
+- **Owning-target evidence.** Each release-seam control declares its Cargo
+  target kind, source and executable stem as well as its exact test name. The
+  selector must identify one exact artifact across both logs. Zero or multiple
+  candidate artifacts, including hash drift across samples, cannot satisfy a
+  required control. A control failure stays advisory; an absent or ambiguous
+  owner is refused. Name-only legacy logs, malformed target headers, duplicate
+  target transitions (including doctests), duplicate observations and orphan
+  test rows are `incomplete_evidence` with actionable provenance reasons.
+  Recollect both complete logs from one build rather than mixing histories.
+  The summary still counts observed subjects rather than failure-section echoes.
+- **Completion evidence (#5107).** Every owning harness needs an announcement
+  and a well-formed completion. The completion's verdict and passed, failed,
+  ignored and measured counts must agree with the observed rows and announced
+  subjects. Filtered-out counts do not represent executed subjects. Malformed,
+  contradictory or orphan completions are `incomplete_evidence`; a captured
+  zero exit status cannot override observed test failures. Measured benchmark
+  rows are outside this lane's supported Cargo-test text and remain incomplete
+  evidence. Valid empty harnesses, ignored rows, filtered runs and multiple
+  doctest batches retain their existing semantics.
+- **Unavailable samples.** Cross-run verdicts require two usable runs. A
+  missing log/status or incomplete evidence is never translated into ordinary
+  test absence to produce `masked_unknown`. Observed counts, target provenance
+  and bounded failure reasons remain available even when no verdict can be
+  derived. Genuine subject absence in a usable run still produces
+  `masked_unknown`, and the existing compile/harness-failure distinction and
+  advisory failing-test policy remain unchanged.
+- **Diagnostic presentation.** Provenance errors, reached targets and raw
+  headers each show at most 20 entries per run. Each verdict category shows at
+  most 20 subjects; the failure-reason section shows at most 20 distinct
+  subjects, each with its reasons from up to two runs. Omitted entries and
+  complete totals are stated exactly. Every displayed log-derived identity,
+  provenance error, header and reason retains at most 240 Unicode scalar
+  values, followed by an explicit `… [truncated]` marker when shortened. These
+  are section-entry and scalar limits, not a whole-report byte budget. Parsing
+  retains all identities, errors and raw headers; display excerpts never become
+  identity keys or merge subjects. These limits do not change evidence refusal,
+  observed totals or verdicts. Full original text remains in the logs.
+
+- **Console provenance limit.** This is a bounded parser for the lane's Cargo
+  text, not universal authentication of test origin. Target completion expires
+  ownership; a later headerless harness cannot inherit it. Announced counts
+  must agree with observed rows. The retained native log's well-formed empty
+  child harness supplies no subjects and does not end its parent. Nonempty
+  nested harnesses have unproven attribution and are refused. Ordinary captured
+  failure stdout remains reason text; complete header/result-shaped content in
+  an unterminated captured block is ambiguous and refused. Doctests may have
+  multiple announced batches beneath their explicit header. Reliable origin
+  for arbitrary interleaved or deliberately forged console output would need
+  structured producer evidence, which this change neither adds nor claims.
+
+The production-command corpus in `xtask/tests/windows_advisory_identity.rs`
+checks completion/exit consistency, unavailable samples, colliding names,
+cross-target pass/failure substitution, independent
+failure reasons, same-source executables, hash/path boundaries, owning-control
+absence/ambiguity, ANSI logs and doctest transitions. These synthetic text
+controls qualify the parser; they do not claim native Windows test execution.
 
 Promotion to required is gated on #2430 and on stability across repeated runs on
 hardware that reproduces the failures — the hosted runner does not reproduce the
@@ -446,6 +520,33 @@ trusted same-repo PR or push:
 fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
+
+Label events are not an implicit full-gate refresh:
+
+```text
+opened / reopened / synchronize / push to main / workflow_dispatch:
+  launch the required Rust or docs gate (unchanged)
+
+labeled full-ci:
+  launch the required gate with advisory reports and success artifacts
+
+labeled windows-ci, coverage, release-check, or any other non-full-ci label:
+  do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
+  leave the previous exact-head Ripr Rust Small Result in place
+
+unlabeled (including windows-ci or full-ci removal):
+  do not start Routed Rust Small; the previous exact-head result remains
+```
+
+`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+Removing that label does not imply Windows proof and must not spend a required
+Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
+the next opened/synchronize/reopened proof observes the current labels.
+`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
+distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
+replace a pending synchronize proof. An ignored labeled run is cheap, does not
+post the protected result context, and cannot manufacture a green required
+check for untested or previously failed code.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -647,6 +748,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -745,6 +847,33 @@ It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
 the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
+
+### PR Staleness Watchdog
+
+GitHub sometimes silently drops the `pull_request` event delivery that creates
+the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with
+no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
+#4923 ~35 minutes).
+`.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
+same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
+head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
+remedy used during the incidents — capped at 5 dispatches per sweep. The
+required check, not run existence, is the discriminator: an unrelated `labeled`
+event produces a same-workflow run whose result job renames itself to the
+non-required `Ripr Rust Small Ignored Label Event` (`routed-rust.yml:228`; two
+of the three runs on #4923's opened head). The next sweep's required-check
+check dedupes; its racy window after a dispatch is bounded by the cap plus the
+30-minute cadence. No PR comments are posted: the
+dispatched run itself delivers the required `Ripr Rust Small Result` check,
+and each sweep's summary table is the audit trail. The alert-only alternative
+(report the dark head instead of dispatching; zero duplicate-gate risk by
+construction) was deferred, not rejected:
+
+```text
+# To flip to alert-only (issue #4937 option ii): replace the dispatch step in
+# .github/workflows/pr-staleness-watchdog.yml with a summary-only report and
+# drop the `actions: write` permission.
+```
 
 ### Self-Hosted Runner Placement
 
@@ -878,7 +1007,11 @@ does not have yet, so its install step fails and no ripr step runs. Generate the
 committed workflow with a released `ripr`. To upgrade, install
 the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
 output with the committed file (`--force` lets the dry run plan over the
-existing file; nothing is written). On pull requests the workflow checks out the PR head
+existing file; nothing is written). With `--ci`, `--force` replaces only the
+workflow: an existing `ripr.toml` is left unchanged, so refreshing CI keeps the
+repository's settings (`ripr init --force` without `--ci` resets the config).
+`ripr doctor` flags a workflow that installs ripr unpinned or at another
+version. On pull requests the workflow checks out the PR head
 commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
 comment lines match the lines in the PR diff after the base branch moves. A
 newer push cancels the older run of the same PR. Dependabot runs get a
@@ -1400,10 +1533,13 @@ Recommended acknowledgement workflow:
 3. When the gate reports a policy-eligible gap, review the job summary,
    `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
 4. If the finding is acceptable for this PR, add `ripr-waive`.
-5. Let the labeled PR workflow rerun. The next gate decision should say
+5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
+   events, so adding the label reruns it. The next gate decision should say
    `Decision: acknowledged`, list `ripr-waive`, and keep the candidate visible.
-6. If a focused test is added instead, remove `ripr-waive` and rerun the gate so
-   the receipt records the current evidence without an acknowledgement label.
+6. If a focused test is added instead, remove `ripr-waive`; the `unlabeled`
+   event reruns the gate so the receipt records the current evidence without an
+   acknowledgement label. Any label change reruns the job, and the workflow's
+   concurrency group cancels the superseded run.
 
 The expected acknowledged summary looks like:
 
@@ -1568,8 +1704,11 @@ ledger shape. For compatibility with existing fixtures and reviewed hand-built
 baselines, it also accepts identities from `decisions`, `comments`,
 `summary_only`, and `suppressed` arrays when those fields are present in the
 baseline file. For each entry, it indexes `seam_id`, `id`, and `dedupe_key`
-when present. Keep the baseline small and reviewable; do not check in an
-uninspected copy of every PR guidance artifact.
+when present. A baseline file with none of those arrays, a JSON array, or a
+`kind` other than `gate_baseline` (or a `gate_baseline` without `entries`) is
+rejected as a `config_error` instead of acting as an empty baseline. Keep the
+baseline small and reviewable; do not check in an uninspected copy of every PR
+guidance artifact.
 
 Baseline review checklist:
 

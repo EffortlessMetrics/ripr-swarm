@@ -15,6 +15,7 @@ mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
+mod progress;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -24,7 +25,26 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
+pub(crate) mod repair_card;
+/// Production handoff producer that assembles a `RepairCardV1` for one seam
+/// entry (#4667: card-first bounded agent handoff; canonical packet stays
+/// behind the explicit `ripr agent packet` route).
+pub(crate) mod repair_card_handoff;
+/// Measurement and ratification producer for the RepairCard default budget
+/// (#4669; RIPR-SPEC-0196): synthetic wire-size measurement and governed
+/// real-opportunity accounting that back the versioned decision receipt.
+pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+
+/// Shared final qualification boundary for legacy RIPR+ receipt composition.
+/// Exposure summaries and gap ledgers preserve useful observed counts, but
+/// cannot establish complete test-quality evidence bound to the current candidate.
+/// The compatibility xtask uses this same boundary before writing a receipt.
+pub fn qualify_legacy_ripr_plus_receipt(
+    receipt: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    ripr_plus::qualify_legacy_receipt(receipt)
+}
 mod selector;
 pub(crate) mod temp_diff;
 pub(crate) mod verification_execution;
@@ -41,9 +61,23 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 
 /// The versioned envelope consumed by the producer-owned agent verification
 /// route and emitted by the agent seam packet renderer.
-pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.4";
+///
+/// `0.5` adds the seam packet's edit-cage fields (`allowed_edit_surface`,
+/// `forbidden_files`, `must_not_change`, #4330): the packet now states the
+/// cage its repair will enforce, derived from the same recommended target the
+/// cage authority consumes, so the disclosure cannot drift from enforcement.
+/// `0.5` also adds the optional envelope-level `repair_attempt` continuation
+/// block carried by the `ripr agent repair --phase before --json` success
+/// stdout (#4329); every other projection keeps the `0.4` shape and only the
+/// version string moves.
+pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.5";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
-pub(crate) use check::check_workspace_worktree_core;
+pub(crate) use check::check_with_progress;
+#[cfg(test)]
+pub(crate) use check::check_workspace_repo_with_origins;
+#[cfg(test)]
+pub(crate) use check::check_workspace_worktree_with_origins;
+pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
@@ -60,7 +94,11 @@ pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub(crate) use navigation::{FindingNavigation, finding_navigation};
+pub(crate) use navigation::{FindingDrillIn, FindingNavigation, finding_navigation};
+pub(crate) use progress::{
+    AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
+    repo_inventory_with_progress,
+};
 
 use crate::analysis::{AnalysisMode, PreviewLanguageAdvisory};
 use crate::config::RiprConfig;
@@ -275,13 +313,18 @@ pub(crate) fn render_check_with_config(
     output::render::render_check_with_config(output, format, config)
 }
 
-pub(crate) fn render_check_with_config_and_navigation(
+/// Renders with navigation while reporting repo-scope progress boundaries to
+/// `progress` for the full-repo audit-path formats (#4945).
+pub(crate) fn render_check_with_config_and_navigation_and_progress(
     output: &CheckOutput,
     format: &OutputFormat,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
+    progress: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
-    output::render::render_check_with_config_and_navigation(output, format, config, navigation)
+    output::render::render_check_with_config_and_navigation_and_progress(
+        output, format, config, drill_in, progress,
+    )
 }
 
 #[cfg(test)]

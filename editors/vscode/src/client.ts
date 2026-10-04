@@ -9,7 +9,7 @@ import {
   ServerOptions,
   Trace
 } from 'vscode-languageclient/node';
-import { getConfig, RiprConfig } from './config';
+import { explicitSetting, getConfig, RiprConfig } from './config';
 import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
@@ -38,6 +38,12 @@ import {
   RiprClientLifecycleTimeoutError,
   waitForLifecyclePromise
 } from './lifecycleCoordinator';
+import {
+  cockpitUnavailableMessage,
+  interpretCockpitObjectResponse,
+  type CockpitRequestAbsence,
+  type CockpitRequestResult
+} from './cockpitRequest';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -77,8 +83,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     baseRef: config.get<string>('baseRef'),
     checkMode: config.get<string>('check.mode'),
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
-    seamDiagnostics: config.get<boolean>('seamDiagnostics'),
-    diagnosticProfile: config.get<string>('diagnosticProfile'),
+    seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
+    diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
     gitTimeoutMs: config.get<number>('gitTimeoutMs'),
     refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
   };
@@ -904,7 +910,9 @@ export class RiprClientController {
       ? 'first repair packet'
       : target?.label === 'gap_repair_packet'
         ? 'gap repair packet'
-        : undefined;
+        : target?.label === 'repair_card'
+          ? 'repair card'
+          : undefined;
     if (directPacketLabel && target && typeof target.packet === 'string') {
       const packet = target.packet.trim();
       if (!packet) {
@@ -1595,7 +1603,8 @@ export class RiprClientController {
         this.updateStatus(statusForRunStatus(status.run_status, {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
-          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments)
+          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
+          components: status.components
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
@@ -1714,45 +1723,54 @@ export class RiprClientController {
   // Cockpit commands (ripr.collectRepairPacket / collectTopLimitation)
   // ---------------------------------------------------------------------------
 
-  /** Shared helper: calls ripr.collectRepairPacket (top packet, no args) once. */
-  private async fetchTopRepairPacket(): Promise<Record<string, unknown> | null> {
+  private async fetchWorkspaceCommand(
+    command: string,
+    failedLogLabel: string
+  ): Promise<CockpitRequestResult<Record<string, unknown>>> {
     const client = this.client;
     if (!client) {
-      return null;
+      return { kind: 'no_client' };
     }
     try {
       const response = await client.sendRequest('workspace/executeCommand', {
-        command: 'ripr.collectRepairPacket',
+        command,
         arguments: []
       });
-      if (response === null || response === undefined) {
-        return null;
-      }
-      if (typeof response === 'object') {
-        return response as Record<string, unknown>;
-      }
-      return null;
+      return interpretCockpitObjectResponse(response);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.output.appendLine(`ripr collectRepairPacket failed: ${message}`);
-      return null;
+      this.output.appendLine(`ripr ${failedLogLabel} failed: ${message}`);
+      return { kind: 'unavailable' };
     }
+  }
+
+  private showCockpitUnavailable(
+    result: CockpitRequestAbsence,
+    unavailableMessage: string
+  ): void {
+    this.runtime.showInformationMessage(cockpitUnavailableMessage(result, unavailableMessage));
+  }
+
+  /** Shared helper: calls ripr.collectRepairPacket (top packet, no args) once. */
+  private async fetchTopRepairPacket(): Promise<CockpitRequestResult<Record<string, unknown>>> {
+    return this.fetchWorkspaceCommand('ripr.collectRepairPacket', 'collectRepairPacket');
   }
 
   async copyTopRepairPacket(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response === null) {
-      this.runtime.showInformationMessage('ripr server did not respond — no repair packet available.');
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'ripr server did not respond — no repair packet available.');
       return;
     }
-    const status = typeof response['status'] === 'string' ? response['status'] : undefined;
-    if (status === 'not_actionable_or_incomplete' || response['kind'] !== 'repair_packet') {
-      const reason = typeof response['reason'] === 'string' ? response['reason'] : undefined;
+    const packet = response.value;
+    const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
+    if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
+      const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
       this.runtime.showInformationMessage(reason ?? 'No complete repair packet available.');
       return;
     }
     try {
-      await this.runtime.writeClipboard(JSON.stringify(response, null, 2));
+      await this.runtime.writeClipboard(JSON.stringify(packet, null, 2));
       this.runtime.showInformationMessage('Copied top repair packet to clipboard.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1763,17 +1781,18 @@ export class RiprClientController {
 
   async copyTopVerifyCommand(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response === null) {
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No verify command available.');
+      return;
+    }
+    const packet = response.value;
+    const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
+    if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       this.runtime.showInformationMessage('No verify command available.');
       return;
     }
-    const status = typeof response['status'] === 'string' ? response['status'] : undefined;
-    if (status === 'not_actionable_or_incomplete' || response['kind'] !== 'repair_packet') {
-      this.runtime.showInformationMessage('No verify command available.');
-      return;
-    }
-    const verifyCommand = typeof response['verify_command'] === 'string'
-      ? response['verify_command'].trim()
+    const verifyCommand = typeof packet['verify_command'] === 'string'
+      ? packet['verify_command'].trim()
       : '';
     if (!verifyCommand) {
       this.runtime.showInformationMessage('No verify command available.');
@@ -1791,17 +1810,18 @@ export class RiprClientController {
 
   async copyTopReceiptCommand(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response === null) {
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No receipt command available.');
+      return;
+    }
+    const packet = response.value;
+    const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
+    if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       this.runtime.showInformationMessage('No receipt command available.');
       return;
     }
-    const status = typeof response['status'] === 'string' ? response['status'] : undefined;
-    if (status === 'not_actionable_or_incomplete' || response['kind'] !== 'repair_packet') {
-      this.runtime.showInformationMessage('No receipt command available.');
-      return;
-    }
-    const receiptCommand = typeof response['receipt_command'] === 'string'
-      ? response['receipt_command'].trim()
+    const receiptCommand = typeof packet['receipt_command'] === 'string'
+      ? packet['receipt_command'].trim()
       : '';
     if (!receiptCommand) {
       this.runtime.showInformationMessage('No receipt command available.');
@@ -1907,44 +1927,25 @@ export class RiprClientController {
   // ---------------------------------------------------------------------------
 
   /** Shared helper: calls ripr.collectReceiptStatus once and returns the response. */
-  private async fetchReceiptStatus(): Promise<Record<string, unknown> | null> {
-    const client = this.client;
-    if (!client) {
-      return null;
-    }
-    try {
-      const response = await client.sendRequest('workspace/executeCommand', {
-        command: 'ripr.collectReceiptStatus',
-        arguments: []
-      });
-      if (response === null || response === undefined) {
-        return null;
-      }
-      if (typeof response === 'object') {
-        return response as Record<string, unknown>;
-      }
-      return null;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.output.appendLine(`ripr collectReceiptStatus failed: ${message}`);
-      return null;
-    }
+  private async fetchReceiptStatus(): Promise<CockpitRequestResult<Record<string, unknown>>> {
+    return this.fetchWorkspaceCommand('ripr.collectReceiptStatus', 'collectReceiptStatus');
   }
 
   async showReceiptStatus(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response === null) {
-      this.runtime.showInformationMessage('No receipt status available — server not responding.');
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No receipt status available — server not responding.');
       return;
     }
-    const receiptStatus = typeof response['receipt_status'] === 'string'
-      ? response['receipt_status']
+    const packet = response.value;
+    const receiptStatus = typeof packet['receipt_status'] === 'string'
+      ? packet['receipt_status']
       : 'not_available';
-    const latestOutcome = typeof response['latest_attempt_outcome'] === 'string'
-      ? response['latest_attempt_outcome']
+    const latestOutcome = typeof packet['latest_attempt_outcome'] === 'string'
+      ? packet['latest_attempt_outcome']
       : 'not_available';
-    const missingReason = typeof response['missing_receipt_reason'] === 'string'
-      ? response['missing_receipt_reason']
+    const missingReason = typeof packet['missing_receipt_reason'] === 'string'
+      ? packet['missing_receipt_reason']
       : 'not_available';
 
     this.output.appendLine('ripr receipt status:');
@@ -1965,12 +1966,12 @@ export class RiprClientController {
 
   async copyReceiptCommand(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response === null) {
-      this.runtime.showInformationMessage('No receipt command is available — server not responding.');
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No receipt command is available — server not responding.');
       return;
     }
-    const copyReceiptCommand = typeof response['copy_receipt_command'] === 'string'
-      ? response['copy_receipt_command'].trim()
+    const copyReceiptCommand = typeof response.value['copy_receipt_command'] === 'string'
+      ? response.value['copy_receipt_command'].trim()
       : '';
     if (!copyReceiptCommand || copyReceiptCommand === 'not_available') {
       this.runtime.showInformationMessage('No receipt command is available for the current state.');
@@ -1988,12 +1989,12 @@ export class RiprClientController {
 
   async openAttemptLedger(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response === null) {
-      this.runtime.showInformationMessage('No attempt ledger available — server not responding.');
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No attempt ledger available — server not responding.');
       return;
     }
-    const openAttemptLedger = typeof response['open_attempt_ledger'] === 'string'
-      ? response['open_attempt_ledger'].trim()
+    const openAttemptLedger = typeof response.value['open_attempt_ledger'] === 'string'
+      ? response.value['open_attempt_ledger'].trim()
       : '';
     if (!openAttemptLedger || openAttemptLedger === 'not_available') {
       this.runtime.showInformationMessage('No attempt ledger is available — run an agent loop first.');
@@ -2013,11 +2014,11 @@ export class RiprClientController {
 
   async showRouteQuality(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response === null) {
-      this.runtime.showInformationMessage('No route quality available — server not responding.');
+    if (response.kind !== 'ok') {
+      this.showCockpitUnavailable(response, 'No route quality available — server not responding.');
       return;
     }
-    const routeQualitySummary = formatRouteQualitySummary(response['route_quality_summary']) ?? 'not_available';
+    const routeQualitySummary = formatRouteQualitySummary(response.value['route_quality_summary']) ?? 'not_available';
 
     this.output.appendLine(`ripr route quality: ${routeQualitySummary}`);
     this.output.show();
@@ -3291,6 +3292,22 @@ function isUnresolvableBaseRefFailure(message: string): boolean {
   return /the base `[^`]+` does not resolve to a commit/.test(message);
 }
 
+/**
+ * One typed per-component outcome record from the server's
+ * `ripr/analysisStatus` payload (#5004). The shape is the server's authority
+ * (`crates/ripr/src/lsp/component_outcome.rs::status_payload`); the client
+ * surfaces it without inventing new semantics.
+ */
+interface AnalysisStatusComponent {
+  component: string;
+  state: string;
+  kind?: string | null;
+  message?: string | null;
+  findings_trustworthy?: boolean;
+  recovery?: string | null;
+  snapshot_identity?: string | null;
+}
+
 interface RiprAnalysisStatusPayload {
   schema_version: string;
   kind: string;
@@ -3307,6 +3324,7 @@ interface RiprAnalysisStatusPayload {
   root_input_identity?: string | null;
   root_detail?: string | null;
   root_recovery_route?: string;
+  components?: AnalysisStatusComponent[];
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -3363,7 +3381,7 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
   limited_partial_scope: {
     summary: 'ripr analysis completed on a bounded partition of the diff.',
     detail: 'The diff exceeded the analysis scope budget, so this run covered only part of it and the remainder was not evaluated.',
-    nextStep: `Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
+    nextStep: `Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
   },
   limited_incomplete_input: {
     summary: 'ripr analysis completed with incomplete input.',
@@ -3371,6 +3389,52 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
     nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to retry the analysis and restore the missing evidence.`
   }
 };
+
+/**
+ * The components whose outcome degraded this run (`limited` or `failed`),
+ * mirroring the server's `ComponentOutcome::is_degraded` so the client
+ * prefers the same records the server logged on its degradation channel.
+ * Malformed entries (missing string `component`/`state`) are dropped: the
+ * payload crosses a process boundary and the presentation must fail closed
+ * to the canned text instead of rendering garbage.
+ */
+function degradedAnalysisComponents(
+  components: readonly AnalysisStatusComponent[] | undefined
+): AnalysisStatusComponent[] {
+  // The payload crosses a process boundary and is only shallowly validated,
+  // so a truthy non-array must take the same fail-closed path as a missing
+  // field before `.filter` runs.
+  if (!Array.isArray(components)) {
+    return [];
+  }
+  return components.filter(
+    (component) =>
+      typeof component?.component === 'string' &&
+      typeof component?.state === 'string' &&
+      (component.state === 'limited' || component.state === 'failed')
+  );
+}
+
+/** One parenthetical description of an untrustworthy component for the detail line. */
+function describeUntrustworthyComponent(component: AnalysisStatusComponent): string {
+  const kind = typeof component.kind === 'string' && component.kind ? ` (${component.kind})` : '';
+  return `${component.component} ${component.state}${kind}`;
+}
+
+/** Distinct, non-empty strings in first-seen order. */
+function uniqueStrings(values: readonly (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0 && !seen.has(value)) {
+      seen.add(value);
+    }
+  }
+  return [...seen];
+}
+
+function capitalizeFirst(value: string): string {
+  return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
 
 /**
  * One mapping from a server run_status to the client status presentation for a
@@ -3388,6 +3452,16 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
  *   icon, never the healthy `$(check)`, but without the `stale` kind's
  *   action-gating coupling, since the published snapshot itself is not stale;
  *   each summary names the limitation and the refresh recovery step;
+ * - for the limited family, the typed per-component outcomes
+ *   (`AnalysisStatusComponent`, #5004) take precedence over the canned text
+ *   when the server provides them: a degraded component's `recovery` string
+ *   is the safe recovery action the client may name to the user (for example
+ *   `run ripr check to regenerate the gap decision ledger` for an
+ *   artifact-derived gap-ledger failure, which an editor refresh cannot
+ *   fix), and any component with `findings_trustworthy: false` adds an
+ *   explicit line that the published findings are not trustworthy evidence
+ *   for this snapshot. Run statuses without component detail keep the canned
+ *   presentations unchanged;
  * - `'seams_deferred'` additionally gets its own disclosure: interactive saves
  *   defer the seam inventory, so the summary says seam/gap evidence is deferred
  *   and the recovery is the full refresh;
@@ -3400,6 +3474,7 @@ export function statusForRunStatus(
     detail?: string;
     retryCommand?: string;
     dirtyRoutedDocuments?: readonly string[];
+    components?: readonly AnalysisStatusComponent[];
   } = {}
 ): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
@@ -3436,12 +3511,41 @@ export function statusForRunStatus(
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
+    // #5004: the typed per-component outcomes are the authority. A degraded
+    // component's `recovery` names the safe recovery action (some recoveries
+    // cannot run inside the editor, so the canned refresh step would send the
+    // user to an action that cannot fix the degradation), and a component with
+    // `findings_trustworthy: false` must not let "no diagnostics" read as
+    // "no exposure" for this snapshot.
+    const degraded = degradedAnalysisComponents(input.components);
+    const untrustworthy = degraded.filter(
+      (component) => component.findings_trustworthy === false
+    );
+    const recoveries = uniqueStrings(
+      degraded.map((component) => component.recovery)
+    );
+    const recoveryStep = recoveries.map(capitalizeFirst).join('; ');
+    const detail = [
+      input.detail,
+      limited.detail,
+      untrustworthy.length > 0
+        ? `Published findings are not trustworthy evidence for this snapshot (${untrustworthy.map(describeUntrustworthyComponent).join('; ')}).`
+        : undefined
+    ].filter((line): line is string => Boolean(line)).join('\n');
     return {
       kind: 'analysisLimited',
       summary: limited.summary,
-      detail: [input.detail, limited.detail]
-        .filter((line): line is string => Boolean(line)).join('\n'),
-      nextStep: limited.nextStep
+      detail,
+      // The generic `limited` presentations only name a refresh, so a server
+      // recovery replaces them outright. `limited_partial_scope`'s canned step
+      // names the budget remedy, which no component recovery addresses (the
+      // scope budget is snapshot-level, not a component outcome), so the
+      // recovery is composed after it instead of dropping the budget action.
+      nextStep: recoveries.length === 0
+        ? limited.nextStep
+        : runStatus === 'limited_partial_scope'
+          ? `${limited.nextStep} ${recoveryStep}`
+          : recoveryStep
     };
   }
   return {

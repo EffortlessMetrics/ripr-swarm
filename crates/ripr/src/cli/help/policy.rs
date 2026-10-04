@@ -36,6 +36,25 @@ Options:
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
+Environment variables:
+  RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES
+                                 Maximum unique input files: analyzable workspace
+                                 plus present changed owner-attribution inputs.
+                                 Refuses as review_guidance_oversized before
+                                 owner indexing or loading the workspace corpus.
+                                 Receipt status is failed with the named
+                                 limitation; no guidance artifacts are published.
+                                 Default: 1200. Must be a positive integer.
+  RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
+                                 Byte budget for those inputs plus changed diff
+                                 text. Same named refusal; default: 268435456
+                                 (256 MiB). Must be a positive integer.
+
+These are input-admission limits, not an RSS or completion guarantee. Raise
+only on a measured, sufficiently resourced runner, or reduce the workspace
+inputs. Narrowing only the diff does not reduce the workspace file count.
+Help remains available when either environment override is malformed.
+
 The review-comments command writes a bounded advisory PR guidance report as
 JSON plus a sibling Markdown file. It joins existing static seam evidence with
 the changed-line diff by default and only places line guidance on changed
@@ -178,7 +197,7 @@ pub(super) const POLICY_HELP: &str = r#"Summarize which RIPR policy posture is s
 
 Usage: ripr policy readiness [--root PATH] [--gate-decision PATH] [--baseline-delta PATH] [--recommendation-calibration PATH] [--mutation-calibration PATH] [--waiver-aging PATH] [--suppression-health PATH] [--repo-config PATH] [--previous-readiness PATH] [--out PATH] [--out-md PATH]
        ripr policy operations [--root PATH] --policy-readiness PATH [--waiver-aging PATH] [--suppression-health PATH] [--baseline-delta PATH] [--gate-decision PATH] [--recommendation-calibration PATH] [--mutation-calibration PATH] [--preview-boundary PATH] [--out PATH] [--out-md PATH]
-       ripr policy history [--root PATH] --current PATH [--history PATH] [--commit REV] [--pr-number NUMBER] [--out PATH] [--out-md PATH]
+       ripr policy history [--root PATH] --current PATH [--history PATH] [--commit REV] [--pr-number NUMBER] [--out PATH] [--out-md PATH] [--out-jsonl PATH]
        ripr policy promote [--root PATH] --to MODE --operations PATH [--history PATH] [--out PATH] [--out-md PATH]
        ripr policy preview-promote [--root PATH] --language LANGUAGE --class CLASS [--evidence PATH] [--out PATH] [--out-md PATH]
        ripr policy waiver-aging [--root PATH] [--ledger PATH] [--history PATH] [--out PATH] [--out-md PATH]
@@ -218,6 +237,7 @@ History options:
   --pr-number NUMBER                    Optional current snapshot PR number.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-history.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-history.md.
+  --out-jsonl PATH                      Optional append-only JSONL producer. Writes one compact snapshot line per run (`example_append_record`). Generated CI does not pass this flag.
 
 Promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
@@ -256,10 +276,11 @@ report composes existing policy artifacts into current ceiling, next safe
 action, safe/not-safe promotion modes, blockers, and input health without
 promoting anything. The policy history report shows whether readiness, waivers,
 suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history. The policy promotion packet reads policy
-operations plus optional policy history and writes manual-review promotion
-evidence without changing config. The preview promotion packet writes default
-blocked evidence accounting for TypeScript and Python preview classes while
+or decaying without appending history unless `--out-jsonl` is supplied. The
+policy promotion packet reads policy operations plus optional policy history
+and writes manual-review promotion evidence without changing config. The preview
+promotion packet writes default blocked evidence accounting for TypeScript and
+Python preview classes while
 keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
 outside calibrated confidence until a later explicit policy is reviewed. The
 waiver-aging report keeps repeated waivers visible as repair or policy-review

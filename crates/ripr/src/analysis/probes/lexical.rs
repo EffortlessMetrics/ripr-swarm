@@ -29,7 +29,7 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_field_shape(text) {
         out.push(ProbeFamily::FieldConstruction);
     }
-    if text.starts_with("match ") || text.contains("=>") {
+    if text.starts_with("match ") || has_match_arm_arrow(&masked) {
         out.push(ProbeFamily::MatchArm);
     }
     if out.is_empty() {
@@ -67,7 +67,7 @@ fn classify_constant_declaration(text: &str) -> Vec<ProbeFamily> {
     if has_effect_shape(scan) {
         out.push(ProbeFamily::SideEffect);
     }
-    if scan.starts_with("match ") || scan.contains("=>") {
+    if scan.starts_with("match ") || has_match_arm_arrow(scan) {
         out.push(ProbeFamily::MatchArm);
     }
     out.push(ProbeFamily::StaticUnknown);
@@ -100,6 +100,58 @@ fn initializer_span(masked: &str) -> &str {
         index += 1;
     }
     masked
+}
+
+/// Whether a masked line carries a match-arm `=>`. An arrow counts when no
+/// delimiter encloses it on this line (`Some(v) => v + 1,`, `}) => break,`)
+/// or when its innermost enclosing delimiter is an arm block: the brace
+/// after a `match` scrutinee (`.map(|x| match x { A => 1 })`) or the rule
+/// brace of a `macro_rules!` definition. An arrow inside any other group is
+/// macro input (`buf_try_get_impl!(be => self, ..)`, `hash_map!{k => v}`,
+/// `route!(key => match value)`), not an arm. Strings and comments are
+/// already masked.
+fn has_match_arm_arrow(masked: &str) -> bool {
+    if !masked.contains("=>") {
+        return false;
+    }
+    // One entry per open delimiter: whether arrows directly inside it are arms.
+    let mut groups: Vec<bool> = Vec::new();
+    let mut arms_follow = false;
+    let chars: Vec<char> = masked.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        let current = chars[index];
+        if current.is_alphanumeric() || current == '_' {
+            let start = index;
+            while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
+                index += 1;
+            }
+            let word: String = chars[start..index].iter().collect();
+            if word == "match" || (word == "macro_rules" && chars.get(index) == Some(&'!')) {
+                arms_follow = true;
+            }
+            continue;
+        }
+        match current {
+            '{' => {
+                groups.push(arms_follow);
+                arms_follow = false;
+            }
+            '(' | '[' => groups.push(false),
+            ')' | ']' | '}' => {
+                groups.pop();
+            }
+            '=' if chars.get(index + 1) == Some(&'>') => {
+                if groups.last().copied().unwrap_or(true) {
+                    return true;
+                }
+                index += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
 }
 
 fn has_predicate_shape(text: &str) -> bool {
@@ -224,6 +276,7 @@ fn is_assertion_macro(text: &str) -> bool {
 fn has_call_shape(text: &str) -> bool {
     !is_constant_declaration(text)
         && !is_tuple_type_declaration(text)
+        && !parens_are_only_visibility(text)
         && text.contains('(')
         && text.contains(')')
         && !is_function_signature(text)
@@ -232,6 +285,13 @@ fn has_call_shape(text: &str) -> bool {
         && !starts_with_binding_or_control(text)
         && !text.trim_end().ends_with(',')
         && call_prefix_is_named(text)
+}
+
+/// Whether the only parentheses on the line are a restricted visibility
+/// (`pub(crate) struct Holder<'a> {`, `pub(super) use a::b;`). The
+/// visibility is declaration syntax, so `pub` must not read as a callee.
+fn parens_are_only_visibility(text: &str) -> bool {
+    strip_pub_visibility(skip_outer_attributes(text.trim())).is_some_and(|rest| !rest.contains('('))
 }
 
 /// Tuple enum variants and tuple structs are declarations, not executable
@@ -595,6 +655,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restricted_visibility_parens_are_not_a_call() {
+        for line in [
+            "pub(crate) struct IgnoreRef<'a> {",
+            "pub(super) enum Mode {",
+            "#[derive(Clone)] pub(in crate::walk) struct Walk {",
+            "pub(crate) use self::walk::Walk;",
+            "pub(crate) mod dir;",
+        ] {
+            assert!(
+                !classify_changed_line(line).contains(&ProbeFamily::CallDeletion),
+                "`{line}` is a declaration, not a call"
+            );
+        }
+        for line in ["send_invoice(invoice)", "self.inner.parent.clone()"] {
+            let families = classify_changed_line(line);
+            assert!(
+                families.contains(&ProbeFamily::CallDeletion),
+                "`{line}` must stay a call: {families:?}"
+            );
+        }
+    }
+
+    #[test]
     fn classify_changed_line_detects_core_probe_shapes() {
         let cases = [
             ("if x > 5 { }", ProbeFamily::Predicate),
@@ -836,6 +919,45 @@ mod tests {
             assert!(
                 families.contains(&ProbeFamily::SideEffect),
                 "{text} did not classify as side_effect"
+            );
+        }
+    }
+
+    /// R3 (OSS replay, tokio-rs/bytes 7930d93): an arrow inside a macro
+    /// call's arguments is macro syntax, not a match arm.
+    #[test]
+    fn macro_argument_arrows_are_not_match_arms() {
+        for text in [
+            "buf_try_get_impl!(be => self, i64, 8);",
+            "let map = hash_map!{ \"a\" => 1 };",
+            "vec![a => b]",
+            "log(\"a => b\");",
+            "route!(key => match value);",
+            "const X: u32 = choose!(a => 1);",
+            "static MAP: Map = phf_map! { \"a\" => 1 };",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                !families.contains(&ProbeFamily::MatchArm),
+                "{text} must not classify as match_arm, got {families:?}"
+            );
+        }
+        for text in [
+            "Some(value) => value + 1,",
+            "(Ok(a), Ok(b)) => a == b,",
+            "Point { x, y } => x + y,",
+            "}) => break,",
+            ".map(|x| match x { A => 1, B => 2 })",
+            "let n = match state { State::On => 1, _ => 0 };",
+            "Some(v) => match v { A => 1, _ => 0 },",
+            "macro_rules! choose { ($v:expr) => { $v } }",
+            "($x:expr) => { $x };",
+            "const X: u32 = match MODE { Mode::A => 1, _ => 2 };",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::MatchArm),
+                "{text} must classify as match_arm, got {families:?}"
             );
         }
     }

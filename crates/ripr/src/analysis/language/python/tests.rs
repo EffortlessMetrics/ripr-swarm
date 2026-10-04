@@ -259,6 +259,182 @@ class Policy:
     assert_eq!(owners[4].owner_kind, Some(OwnerKind::ClassMethod));
 }
 
+/// #4562, the dateutil `test_tz.py` shape: a `TestCase` subclass reached
+/// through a same-file base, and a mixin whose test methods run through a
+/// `TestCase` subclass, are collected; an uninherited mixin is not. Mixin
+/// members are recorded under each subclass that runs them, the node id the
+/// runner accepts, not under the uncollected mixin.
+#[test]
+fn extract_tests_follows_same_file_unittest_bases_and_mixins() {
+    let tests = extract_tests(
+        Path::new("tests/test_tz.py"),
+        r#"
+import unittest
+
+class TzFoldMixin(object):
+    def testFoldPositiveUTCOffset(self):
+        self.assertEqual(self.gettz("A"), 1)
+
+class GettzTest(unittest.TestCase, TzFoldMixin):
+    def testGettz(self):
+        self.assertEqual(gettz("A"), 1)
+
+class ZoneInfoGettzTest(GettzTest):
+    def testZoneInfoNewInstance(self):
+        self.assertIsNot(get_zonefile_instance(), get_zonefile_instance(new_instance=True))
+
+class UnusedMixin(object):
+    def test_never_runs(self):
+        helper()
+
+class Helper:
+    def test_not_a_test_class(self):
+        helper()
+
+class CheckMixin:
+    def test_shared(self):
+        helper()
+    def test_overridden(self):
+        helper()
+
+class TestFirst(CheckMixin):
+    def test_overridden(self):
+        pass
+
+class TestWithInit(CheckMixin):
+    def __init__(self):
+        pass
+    def test_never_collected(self):
+        helper()
+
+class TestInheritsInit(TestWithInit):
+    def test_not_collected_either(self):
+        helper()
+
+@dataclass
+class TestData:
+    def test_dataclass_not_collected(self):
+        helper()
+
+class UnitMixin:
+    def test_unit_overridden(self):
+        helper()
+    def test_unit_assigned_away(self):
+        helper()
+
+class UnitCase(unittest.TestCase, UnitMixin):
+    def test_unit_overridden(self):
+        pass
+    test_unit_assigned_away = None
+
+class FirstMixin:
+    def test_shadow(self):
+        helper()
+
+class SecondMixin:
+    def test_shadow(self):
+        helper()
+    def test_second_only(self):
+        helper()
+
+class TestShadowed(FirstMixin, SecondMixin):
+    pass
+
+class SharedMixin:
+    def test_kept_by_one(self):
+        helper()
+
+class TestOverrides(SharedMixin):
+    def test_kept_by_one(self):
+        pass
+
+class TestInherits(SharedMixin):
+    pass
+"#,
+    );
+    let collected: Vec<(&str, &str)> = tests
+        .iter()
+        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .collect();
+    assert_eq!(
+        collected,
+        vec![
+            ("GettzTest.testGettz", "unittest"),
+            ("GettzTest.testFoldPositiveUTCOffset", "unittest"),
+            ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
+            ("ZoneInfoGettzTest.testFoldPositiveUTCOffset", "unittest"),
+            ("TestFirst.test_overridden", "pytest"),
+            ("TestFirst.test_shared", "pytest"),
+            ("UnitCase.test_unit_overridden", "unittest"),
+            ("TestShadowed.test_shadow", "pytest"),
+            ("TestShadowed.test_second_only", "pytest"),
+            ("TestOverrides.test_kept_by_one", "pytest"),
+            ("TestInherits.test_kept_by_one", "pytest"),
+        ]
+    );
+}
+
+/// Mixin members resolve along Python's C3 order, and only the last
+/// definition of a class name counts; a base defined later or twice is
+/// unknown, so its members are not collected.
+#[test]
+fn extract_tests_resolves_mixins_by_c3_order_and_last_definition() {
+    let tests = extract_tests(
+        Path::new("tests/test_mro.py"),
+        r#"
+class Base:
+    def test_limit(self):
+        helper()
+
+class Left(Base):
+    pass
+
+class Right(Base):
+    def test_limit(self):
+        pass
+
+class TestDiamond(Left, Right):
+    pass
+
+class Mixin:
+    def test_first(self):
+        pass
+
+class TestUsesFirstMixin(Mixin):
+    pass
+
+class Mixin:
+    def test_redefined(self):
+        helper()
+
+class TestForward(LaterBase):
+    pass
+
+class LaterBase:
+    def test_later(self):
+        helper()
+
+class TestTwice:
+    def __init__(self):
+        pass
+    def test_hidden_by_init(self):
+        helper()
+
+class TestTwice:
+    def test_last(self):
+        helper()
+"#,
+    );
+    let collected: Vec<&str> = tests
+        .iter()
+        .map(|test| test.qualified_name.as_str())
+        .collect();
+    assert_eq!(
+        collected,
+        vec!["TestDiamond.test_limit", "TestTwice.test_last"]
+    );
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -468,6 +644,56 @@ fn classify_probe_shape_recognizes_python_predicate_shapes() {
         classify_probe_shape("    label = \"high\" if amount >= threshold else \"normal\"");
     assert_eq!(family, ProbeFamily::Predicate);
     assert_eq!(delta, DeltaKind::Control);
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_comparison_as_its_boundary() -> Result<(), String> {
+    // `is_large(500) == True` holds before and after `>=` -> `>`; only the
+    // boundary input separates them, so the line is a predicate.
+    for line in [
+        "    return total > 100",
+        "    return attempt_number >= self.max_attempt_number",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::Predicate, DeltaKind::Control),
+            "{line}"
+        );
+    }
+    // Equality, computed operands and chained comparisons stay return values.
+    for line in [
+        "    return total == 100",
+        "    return len(items) > 0",
+        "    return total + 1 > limit",
+        "    return low < total < high",
+        "    return total > 100 and ready",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
+    // The one-side exact oracle does not credit it: the finding names the
+    // boundary input.
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    return total > 100",
+        &extract_owners(
+            Path::new("src/pricing.py"),
+            "def is_large(total):\n    return total > 100\n",
+        ),
+        &extract_tests(
+            Path::new("tests/test_pricing.py"),
+            "from src.pricing import is_large\n\n\
+                 def test_large():\n    assert is_large(500) == True\n",
+        ),
+    )
+    .ok_or_else(|| "returned comparison should classify".to_string())?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(missing_discriminator_values(&finding), vec!["total == 100"]);
+    Ok(())
 }
 
 #[test]
@@ -3111,10 +3337,12 @@ fn classify_change_emits_first_python_repair_class_discriminators() -> Result<()
     let return_finding = classify_change(
         Path::new("src/priority.py"),
         2,
-        "    return amount >= 100",
+        // A returned comparison is a predicate boundary; a computed return
+        // keeps this case on the return-value repair class.
+        "    return amount + 100",
         &extract_owners(
             Path::new("src/priority.py"),
-            "def is_priority(amount):\n    return amount >= 100\n",
+            "def is_priority(amount):\n    return amount + 100\n",
         ),
         &extract_tests(
             Path::new("tests/test_priority.py"),
@@ -4248,9 +4476,17 @@ fn classify_change_ignores_unrelated_text_mentions() -> Result<(), String> {
 
 #[test]
 fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), String> {
+    let root = unique_test_root("accepted-changed-files");
+    for path in ["scripts/run.py", "src/util.py"] {
+        let file = root.join(path);
+        let parent = file.parent().ok_or("fixture file must have a parent")?;
+        std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        std::fs::write(&file, "# Readable non-behavioral source\n")
+            .map_err(|err| format!("write source: {err}"))?;
+    }
     let adapter = PythonAdapter;
     let options = AnalysisOptions {
-        root: PathBuf::from("."),
+        root: root.clone(),
         base: None,
         diff_file: None,
         mode: crate::analysis::AnalysisMode::Draft,
@@ -4262,6 +4498,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4274,6 +4511,8 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
     let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
     assert!(result.findings.is_empty());
     assert_eq!(result.changed_files, 2);
+    assert!(result.limitations.is_empty());
+    std::fs::remove_dir_all(root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
 
@@ -4366,6 +4605,107 @@ fn analyze_diff_discloses_per_file_read_cap() -> Result<(), String> {
     // The under-limit file is analyzed normally: no skipped files.
     assert_eq!(result.skipped_files, 0);
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// #5022: when the read caps refuse more files than the disclosure sample
+/// cap, the limitation count stays bounded (a stable-sorted sample plus one
+/// summary entry) while the summary preserves the true refused count —
+/// not one limitation per refused file.
+#[test]
+fn analyze_diff_bounds_read_limit_disclosure_and_preserves_refused_total() -> Result<(), String> {
+    let root = unique_test_root("diff-bounded-read-sample");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let total = sample_cap + 4;
+    for index in 0..total {
+        write_repo_file(
+            &root.join(format!("pkg_{index:02}.py")),
+            &format!("VALUE = {}\n", "1".repeat(200)),
+        )?;
+    }
+    let options = repo_options(&root);
+    let limits = PythonDiffWalkLimits {
+        max_file_read_bytes: 100,
+        ..generous_walk_limits()
+    };
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], limits)?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let sample = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.path.is_some()
+                && matches!(
+                    &limitation.recovery.kind,
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit
+                )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sample.len(),
+        sample_cap,
+        "per-file disclosure is bounded to the sample, got {:?}",
+        result
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        sample.windows(2).all(|pair| pair[0].path <= pair[1].path),
+        "sample paths must be sorted so repeated runs are byte-stable"
+    );
+    assert!(
+        sample.iter().all(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("file_read_capped"))
+        }),
+        "sample entries keep the distinguishable refusal reason"
+    );
+    let summary = result
+        .limitations
+        .iter()
+        .find(|limitation| {
+            limitation.path.is_none()
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("python_read_limit_sampled:"))
+        })
+        .ok_or_else(|| {
+            format!(
+                "expected one folded summary limitation, got {:?}",
+                result
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.bounded_detail.clone())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    let refused_total =
+        u64::try_from(total).map_err(|err| format!("refused count overflows u64: {err}"))?;
+    assert_eq!(
+        summary.affected_items,
+        Some(refused_total),
+        "summary must carry the true refused count"
+    );
+    let detail = summary.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("not materialized in output"),
+        "summary must state why the full per-file list is absent: {detail}"
+    );
+    assert!(
+        summary
+            .recovery
+            .detail
+            .contains("RIPR_PYTHON_MAX_FILE_READ_BYTES"),
+        "the recovery must name the env knob, got {}",
+        summary.recovery.detail
+    );
     Ok(())
 }
 
@@ -4485,6 +4825,7 @@ fn repo_options(root: &Path) -> AnalysisOptions {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     }
 }
 
@@ -5379,6 +5720,313 @@ fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), Str
     assert_eq!(
         candidate_relations(module, &tests),
         vec![("test_base_discount".to_string(), "same_stem")]
+    );
+    Ok(())
+}
+
+#[test]
+fn header_param_line_defaults_reads_defaults_on_one_header_line() {
+    let names = super::no_behavior::header_param_line_defaults;
+    assert_eq!(
+        names("        alias_is_default=None,"),
+        Some(vec!["alias_is_default".to_string()])
+    );
+    assert_eq!(
+        names("    key: str = \"k\", *, strict=False,"),
+        Some(vec!["key".to_string(), "strict".to_string()])
+    );
+    assert_eq!(
+        names("    limit=10) -> int:"),
+        Some(vec!["limit".to_string()])
+    );
+    assert_eq!(names("def f(a, b=1,"), Some(vec!["b".to_string()]));
+    assert_eq!(
+        names("    options=dict(a=1),"),
+        Some(vec!["options".to_string()])
+    );
+    // No default, a comment, or text that is not a parameter list.
+    assert_eq!(names("        self,"), None);
+    assert_eq!(names("    x=1,  # was 2"), None);
+    assert_eq!(names("    return f(x=1)"), None);
+    assert_eq!(names("    ):"), None);
+}
+
+/// Classifies `line` of a multi-line header with the diff producer's flag.
+fn classify_multi_line_header_line(
+    file: &Path,
+    source: &str,
+    def_line: usize,
+    line: usize,
+    tests: &[PythonTest],
+) -> Result<Finding, String> {
+    let owners = extract_owners(file, source);
+    let text = source
+        .lines()
+        .nth(line - 1)
+        .ok_or_else(|| format!("fixture has no line {line}"))?;
+    let span = super::no_behavior::multi_line_def_header_span(source, def_line);
+    if !span.is_some_and(|(start, end)| (start..=end).contains(&line)) {
+        return Err(format!(
+            "line {line} must sit inside the header span {span:?}"
+        ));
+    }
+    let context = PythonNoBehaviorContext {
+        multi_line_def_header_line: true,
+        ..PythonNoBehaviorContext::default()
+    };
+    classify_change_with_context(file, line, text, None, &owners, tests, context)
+        .ok_or_else(|| format!("line {line} should classify"))
+}
+
+#[test]
+fn multi_line_header_default_bound_by_every_call_is_not_exposed() -> Result<(), String> {
+    // attrs 862696a shape: a new `name=default,` line inside a multi-line
+    // header. The one-line guard never read it, so a strong test that always
+    // passes the parameter credited `exposed` for a default it never reaches.
+    let file = Path::new("src/render.py");
+    let source = "def render(\n    name,\n    verbose=True,\n):\n    return f\"[debug] {name}\" if verbose else name\n";
+    let tests = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", verbose=False) == \"Sam\"\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `render` without `verbose`"),
+        "the downgrade names the parameter to omit: {:?}",
+        finding.activation.missing_discriminators
+    );
+
+    // A positional argument at the declared position binds it too.
+    let positional = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", False) == \"Sam\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &positional)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    let omitting = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_default():\n    assert render(\"Sam\") == \"[debug] Sam\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &omitting)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a call that omits `verbose` reaches the default"
+    );
+    Ok(())
+}
+
+#[test]
+fn constructor_default_fails_open_because_constructions_hide_behind_subclasses()
+-> Result<(), String> {
+    // Every visible `Widget(...)` passes `label`, but `Small(size=3)` builds
+    // a subclass through the same `__init__` and reaches the default. The
+    // scanner cannot see such constructions (subclasses, `cls(...)`
+    // factories), so a constructor never downgrades on binding evidence.
+    let file = Path::new("src/widget.py");
+    let source = "class Widget:\n    def __init__(\n        self,\n        size,\n        label=None,\n    ):\n        self.label = label or str(size)\n";
+    let tests = extract_tests(
+        Path::new("tests/test_widget.py"),
+        "from src.widget import Widget\n\n\nclass Small(Widget):\n    pass\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n    assert Small(size=3).label == \"3\"\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 2, 5, &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn multi_line_header_default_reads_only_declared_parameters() -> Result<(), String> {
+    // `total=3,` sits inside the default call of `retry`; it is not a
+    // parameter of `request`, so a call binding `total=` (into `**kwargs`)
+    // says nothing about `retry`'s default.
+    let file = Path::new("src/client.py");
+    let source = "def request(\n    url,\n    retry=dict(\n        total=3,\n    ),\n    **kwargs,\n):\n    return (url, retry, kwargs)\n";
+    let tests = extract_tests(
+        Path::new("tests/test_client.py"),
+        "from src.client import request\n\n\ndef test_request():\n    assert request(\"u\", total=1) == (\"u\", {\"total\": 3}, {\"total\": 1})\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 4, &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn positional_only_default_is_not_bound_by_a_keyword() -> Result<(), String> {
+    // `f(a=5)` against `def f(a=1, /, **kw)` puts `a` in `kw`; the default
+    // of the positional-only `a` still runs.
+    let file = Path::new("src/pos.py");
+    let source = "def f(\n    a=1, /,\n    **kw,\n):\n    return (a, kw)\n";
+    let tests = extract_tests(
+        Path::new("tests/test_pos.py"),
+        "from src.pos import f\n\n\ndef test_f():\n    assert f(a=5) == (1, {\"a\": 5})\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 2, &tests)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // The one-line guard follows the same rule.
+    let owners = extract_owners(file, "def f(a=2, /, **kw):\n    return (a, kw)\n");
+    let finding = classify_change_with_old(
+        file,
+        1,
+        "def f(a=2, /, **kw):",
+        Some("def f(a=1, /, **kw):"),
+        &owners,
+        &tests,
+    )
+    .ok_or("a default-value change should classify")?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn diff_mode_reads_a_default_added_inside_a_multi_line_header() -> Result<(), String> {
+    let root = unique_test_root("diff-multi-line-default");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("render.py"),
+        "def render(\n    name,\n    verbose=True,\n):\n    return f\"[debug] {name}\" if verbose else name\n",
+    )?;
+    write_repo_file(
+        &root.join("test_render.py"),
+        "from render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", verbose=False) == \"Sam\"\n",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("render.py"),
+        added_lines: vec![ChangedLine {
+            line: 3,
+            text: "    verbose=True,".to_string(),
+            new_side_line: 3,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        generous_walk_limits(),
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [finding] = result.findings.as_slice() else {
+        return Err(format!(
+            "expected one finding, got {}",
+            result.findings.len()
+        ));
+    };
+    assert_eq!(finding.probe.location.line, 3);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        missing_discriminator_values(finding).contains(&"call `render` without `verbose`"),
+        "{:?}",
+        missing_discriminator_values(finding)
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_class_dunder_relates_through_its_outer_class() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/pkg/shapes.py"),
+        "class Outer:\n    class Inner:\n        def __init__(self, size):\n            self.size = size\n\n\nclass Inner:\n    def __init__(self, size):\n        self.size = -size\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.name == "__init__" && owner.start_line == 3)
+        .ok_or("nested __init__ owner")?;
+    assert_eq!(
+        nested.qualified_name, "Inner.__init__",
+        "qualified name is unchanged"
+    );
+    assert_eq!(nested.class_path, "Outer.Inner");
+    let tests = extract_tests(
+        Path::new("tests/test_shapes.py"),
+        "from pkg.shapes import Outer\nfrom pkg import shapes\n\n\ndef test_outer_member():\n    assert Outer.Inner(3).size == 3\n\n\ndef test_module_member():\n    assert shapes.Outer.Inner(4).size == 4\n\n\ndef test_top_level_inner():\n    from pkg.shapes import Inner\n    assert Inner(5).size == -5\n",
+    );
+    assert_eq!(tests.len(), 3);
+    assert_eq!(
+        candidate_relations(nested, &tests),
+        vec![
+            ("test_module_member".to_string(), "constructor_call"),
+            ("test_outer_member".to_string(), "constructor_call"),
+        ],
+        "only constructions through `Outer` reach the nested class"
+    );
+    Ok(())
+}
+
+#[test]
+fn private_descriptor_dunder_reached_through_its_package_is_a_limit() -> Result<(), String> {
+    // cachetools 57d2e48: `_DescriptorBase.__get__` runs whenever a test
+    // reads a `@cachedmethod` attribute. No test names the private base, but
+    // the suite imports `cachedmethod` from the package, and it detected the
+    // mutant of the changed line while ripr said `no_static_path`.
+    let owner_file = Path::new("src/cachetools/_cachedmethod.py");
+    let owner_source = "class _DescriptorBase:\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return self.bind(obj)\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let get = flat_owner(&owners, "_DescriptorBase.__get__")?;
+    let classify = |tests: &[PythonTest]| {
+        classify_change(owner_file, 3, "        if obj is None:", &owners, tests)
+            .ok_or("the changed line must produce a finding")
+    };
+    let package_tests = extract_tests(
+        Path::new("tests/test_cachedmethod.py"),
+        "from cachetools import cachedmethod\n\n\nclass Cached:\n    @cachedmethod(lambda self: {})\n    def get(self, value):\n        return value\n\n\ndef test_get():\n    assert Cached().get(1) == 1\n",
+    );
+    assert_eq!(package_tests.len(), 1);
+    assert!(candidate_relations(get, &package_tests).is_empty());
+    let finding = classify(&package_tests)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("dynamic_dispatch") && line.contains("its package")),
+        "{:?}",
+        finding.missing
+    );
+
+    // A sibling package that only shares a trailing name is not the owner's.
+    let other_package = extract_tests(
+        Path::new("tests/test_other.py"),
+        "from othertools.cachetools import cachedmethod\n\n\ndef test_get():\n    assert cachedmethod is not None\n",
+    );
+    assert_eq!(other_package.len(), 1);
+    assert_eq!(classify(&other_package)?.class, ExposureClass::NoStaticPath);
+    Ok(())
+}
+
+#[test]
+fn a_root_lib_directory_is_an_import_root() -> Result<(), String> {
+    let paths = |file: &str| super::related_tests::owner_module_paths(Path::new(file));
+    assert_eq!(
+        paths("lib/pkg/cache.py"),
+        vec!["lib.pkg.cache", "pkg.cache"]
+    );
+    // A nested `lib` is a package of its own, not a layout root.
+    assert_eq!(paths("pkg/lib/util.py"), vec!["pkg.lib.util"]);
+    // `lib.py` at the root is a module named `lib`.
+    assert_eq!(paths("lib.py"), vec!["lib"]);
+
+    let owners = extract_owners(
+        Path::new("lib/pkg/cache.py"),
+        "class Cache:\n    def __init__(self, size):\n        self.size = size\n",
+    );
+    let init = flat_owner(&owners, "Cache.__init__")?;
+    let tests = extract_tests(
+        Path::new("tests/test_cache.py"),
+        "from pkg.cache import Cache\n\n\ndef test_size():\n    assert Cache(2).size == 2\n",
+    );
+    assert_eq!(
+        candidate_relations(init, &tests),
+        vec![("test_size".to_string(), "constructor_call")]
     );
     Ok(())
 }

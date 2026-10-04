@@ -887,8 +887,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
@@ -942,6 +945,7 @@ mod tests {
                 probe_shapes: Vec::new(),
                 used_lexical_fallback: false,
                 module_declarations: Vec::new(),
+                unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
                 source,
             },

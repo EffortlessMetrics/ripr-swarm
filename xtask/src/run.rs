@@ -479,6 +479,36 @@ pub(crate) fn capture_output_with_timeout(
     timeout: Duration,
     error_context: &str,
 ) -> Result<TimedOutput, String> {
+    capture_output_with_deadline(program, args, envs, Some(timeout), error_context)
+}
+
+/// `capture_output_with_timeout` with no per-step wall-clock cap.
+///
+/// For callers whose child may legitimately run longer than any fixed
+/// host-dependent cutoff, such as a cold Cargo/Clippy build in precommit
+/// (#4150).  The child is still spawned through the shared owned-subprocess
+/// authority and the post-exit pipe drain remains bounded by
+/// `POST_KILL_DRAIN_GRACE`, so a direct child that exits while a
+/// pipe-inheriting descendant survives cannot block the caller for the
+/// descendant's lifetime: the output is truncated with a named diagnostic
+/// instead.  A genuinely hung child still waits until an operator cancels
+/// the run; the hosted job bounds are the only automated stop.
+pub(crate) fn capture_output_without_timeout(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+    error_context: &str,
+) -> Result<TimedOutput, String> {
+    capture_output_with_deadline(program, args, envs, None, error_context)
+}
+
+fn capture_output_with_deadline(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+    deadline: Option<Duration>,
+    error_context: &str,
+) -> Result<TimedOutput, String> {
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
@@ -515,14 +545,16 @@ pub(crate) fn capture_output_with_timeout(
         spawn_stream_reader_channel(stderr)
     };
 
-    let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
+    let wait_outcome = wait_for_child_with_deadline(&mut child, started, deadline, error_context)?;
 
     // Always use the bounded drain.  On a normal process exit the pipe
     // write-ends are already closed, so the reader threads finish promptly and
     // the grace timeout is never reached — behavior is identical to an
     // unbounded join.  On a timed-out kill the grace timeout caps the drain if
     // a descendant escaped the process-group kill and still holds the pipe open,
-    // guaranteeing the function returns in bounded time regardless.
+    // guaranteeing the function returns in bounded time regardless.  The same
+    // grace bounds the no-deadline path when the direct child exits but a
+    // pipe-inheriting descendant survives it.
     let stdout = drain_stream_reader_bounded(
         stdout_rx,
         stdout_handle,
@@ -556,6 +588,79 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
     timeout: Duration,
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        (cwd, None),
+        envs,
+        env_remove,
+        (timeout, None),
+        error_context,
+    )
+}
+
+/// Bounded binary input/output for Git's batch protocol. The existing process
+/// owner retains child/descendant custody while stdin is written concurrently.
+#[cfg(all(test, unix))]
+pub(crate) fn capture_bytes_in_dir_with_input_timeout(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    input: &[u8],
+    env_remove: &[&str],
+    timeout: Duration,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        (cwd, Some(input)),
+        &[],
+        env_remove,
+        (timeout, None),
+        error_context,
+    )
+}
+
+/// Explicit resource limits for selected-source Git capture. Other callers
+/// retain their existing behavior; the owned process lifecycle is shared.
+#[derive(Clone, Copy)]
+pub(crate) struct ByteCaptureBudget {
+    pub(crate) timeout: Duration,
+    pub(crate) stdout_bytes: usize,
+    pub(crate) stderr_bytes: usize,
+}
+
+pub(crate) fn capture_bytes_in_dir_with_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    env_remove: &[&str],
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
+        &[],
+        env_remove,
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
+fn capture_bytes_with_input(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: &[(&str, &str)],
+    env_remove: &[&str],
+    deadline: (Duration, Option<ByteCaptureBudget>),
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (cwd, input) = source;
+    let (timeout, budget) = deadline;
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);
@@ -568,6 +673,9 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
     }
     // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if input.is_some() {
+        command.stdin(Stdio::piped());
+    }
     let mut child = OwnedProcess::spawn(command)
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
     let stdout = child
@@ -578,15 +686,40 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
         .stderr_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
-    let (stdout_handle, stdout_rx) = spawn_byte_reader_channel(stdout);
-    let (stderr_handle, stderr_rx) = spawn_byte_reader_channel(stderr);
-    let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
+    let (stdout_handle, stdout_rx) =
+        spawn_byte_reader_channel(stdout, budget.map(|v| ("stdout", v.stdout_bytes)));
+    let (stderr_handle, stderr_rx) =
+        spawn_byte_reader_channel(stderr, budget.map(|v| ("stderr", v.stderr_bytes)));
+    let input_completion = if let Some(bytes) = input {
+        let mut stdin = child
+            .stdin_pipe()
+            .take()
+            .ok_or_else(|| format!("failed to capture stdin for {error_context}"))?;
+        let bytes = bytes.to_vec();
+        let (sender, receiver) = mpsc::channel();
+        // Closing stdin after the write supplies batch EOF. No join can hold the
+        // caller past the owned process deadline/drain grace.
+        let _input_writer = thread::Builder::new()
+            .name("bounded-process-stdin".to_string())
+            .spawn(move || {
+                let result = stdin.write_all(&bytes);
+                drop(stdin);
+                let _ = sender.send(result);
+            })
+            .map_err(|error| format!("start stdin writer for {error_context}: {error}"))?;
+        Some(receiver)
+    } else {
+        None
+    };
+    let wait_outcome =
+        wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context)?;
     let stdout = drain_byte_reader_bounded(
         stdout_rx,
         stdout_handle,
         POST_KILL_DRAIN_GRACE,
         "stdout",
         error_context,
+        budget.is_some(),
     )?;
     let stderr = drain_byte_reader_bounded(
         stderr_rx,
@@ -594,7 +727,22 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
         POST_KILL_DRAIN_GRACE,
         "stderr",
         error_context,
+        budget.is_some(),
     )?;
+    if let Some(receiver) = input_completion {
+        let result = receiver
+            .recv_timeout(POST_KILL_DRAIN_GRACE)
+            .map_err(|error| format!("stdin completion for {error_context}: {error}"))?;
+        if let Err(error) = result {
+            // A deadline kill closes the reader while a large stdin write may
+            // still be blocked. Preserve that observed timeout, rather than
+            // replacing it with its expected BrokenPipe consequence. Early
+            // exit and every other writer/drain failure still refuse.
+            if !wait_outcome.timed_out || error.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(format!("write stdin for {error_context}: {error}"));
+            }
+        }
+    }
     Ok(TimedBytesOutput {
         status: Some(wait_outcome.status),
         stdout,
@@ -654,7 +802,8 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         spawn_stream_reader_channel(stderr)
     };
 
-    let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
+    let wait_outcome =
+        wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context)?;
 
     // Use bounded drains for the same reason as in `capture_output_with_timeout`:
     // after a group-kill an escaped descendant may keep the pipe open.
@@ -727,10 +876,10 @@ fn publish_stdout_capture(
     })
 }
 
-fn wait_for_child_with_timeout(
+fn wait_for_child_with_deadline(
     child: &mut OwnedProcess,
     started: Instant,
-    timeout: Duration,
+    deadline: Option<Duration>,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
     loop {
@@ -745,7 +894,9 @@ fn wait_for_child_with_timeout(
             });
         }
 
-        if started.elapsed() >= timeout {
+        if let Some(timeout) = deadline
+            && started.elapsed() >= timeout
+        {
             let termination_requested = terminate_after_timeout(child, error_context)?;
             let status = child
                 .wait()
@@ -862,6 +1013,22 @@ fn read_stream_bytes<T: Read>(mut stream: T) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn read_stream_bytes_limited(
+    stream: impl Read,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    stream
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read bounded {name}: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!("{name} exceeds its {limit}-byte output budget"));
+    }
+    Ok(bytes)
+}
+
 fn stream_to_file<T: Read>(mut stream: T, mut file: fs::File) -> Result<usize, String> {
     let mut total = 0usize;
     let mut buf = [0u8; 64 * 1024];
@@ -923,13 +1090,17 @@ fn spawn_stream_reader_channel<T: Read + Send + 'static>(
 
 fn spawn_byte_reader_channel<T: Read + Send + 'static>(
     stream: T,
+    limit: Option<(&'static str, usize)>,
 ) -> (
     thread::JoinHandle<()>,
     mpsc::Receiver<Result<Vec<u8>, String>>,
 ) {
     let (tx, rx) = mpsc::channel();
     let handle = thread::spawn(move || {
-        let result = read_stream_bytes(stream);
+        let result = match limit {
+            Some((name, bytes)) => read_stream_bytes_limited(stream, name, bytes),
+            None => read_stream_bytes(stream),
+        };
         let _ = tx.send(result);
     });
     (handle, rx)
@@ -994,14 +1165,19 @@ fn drain_byte_reader_bounded(
     grace: Duration,
     stream_name: &str,
     error_context: &str,
+    require_complete: bool,
 ) -> Result<Vec<u8>, String> {
     match rx.recv_timeout(grace) {
         Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) if require_complete => Err(format!(
+            "{stream_name} drain exceeded post-kill grace ({}s) for {error_context}; byte output is not established",
+            grace.as_secs()
+        )),
+        // Preserve established uncapped callers' timeout/reporting contract.
         Err(mpsc::RecvTimeoutError::Timeout) => Ok(format!(
             "[ripr-xtask: {stream_name} drain exceeded post-kill grace ({}s) for {error_context}; output truncated]",
             grace.as_secs()
-        )
-        .into_bytes()),
+        ).into_bytes()),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
             "{stream_name} reader thread disconnected while running {error_context}"
         )),
@@ -1046,11 +1222,11 @@ fn spawn_stream_file_writer_channel<T: Read + Send + 'static>(
 mod tests {
     use super::{
         CapturedOutput, POST_KILL_DRAIN_GRACE, capture_output, capture_output_with_timeout,
-        capture_stdout_to_file_with_timeout, command_success_owned, drain_stream_reader_bounded,
-        parse_env_timeout_secs, read_stream_with_latency_progress, run, run_in_dir, run_output,
-        run_output_optional, run_output_owned, run_output_owned_with_envs,
-        run_output_owned_with_timeout, run_owned, spawn_stream_reader_channel,
-        terminate_after_timeout, timeout_was_enforced,
+        capture_output_without_timeout, capture_stdout_to_file_with_timeout, command_success_owned,
+        drain_stream_reader_bounded, parse_env_timeout_secs, read_stream_with_latency_progress,
+        run, run_in_dir, run_output, run_output_optional, run_output_owned,
+        run_output_owned_with_envs, run_output_owned_with_timeout, run_owned,
+        spawn_stream_reader_channel, terminate_after_timeout, timeout_was_enforced,
     };
     use crate::acquire_test_cwd_read_guard;
     use ripr::process_owner::OwnedProcess;
@@ -1462,6 +1638,86 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn capture_output_without_timeout_returns_after_direct_child_exit_with_lingering_pipe_descendant()
+    -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        // The direct `sh` child exits 0 immediately; the backgrounded `sleep`
+        // inherits the captured stdout/stderr pipes and outlives it.  The
+        // no-deadline runner must still return bounded by the post-exit drain
+        // grace instead of waiting for the descendant (#4150 review control),
+        // and it must not report a step timeout.
+        let args = vec!["-c".to_string(), "sleep 60 & exit 0".to_string()];
+        let output =
+            capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain")?;
+
+        assert!(
+            output.status.is_some_and(|status| status.success()),
+            "direct child that exited 0 must not be reported as failed: {:?}",
+            output.status
+        );
+        assert!(
+            !output.timed_out,
+            "the no-deadline path must never report a step timeout"
+        );
+        assert!(
+            output.duration < Duration::from_secs(30),
+            "returned after {}s; the runner waited for the 60s pipe-holding descendant instead of honoring the drain grace",
+            output.duration.as_secs()
+        );
+        assert!(
+            output.stdout.contains("output truncated"),
+            "truncated-capture diagnostic missing from stdout: {:?}",
+            output.stdout
+        );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_output_without_timeout_returns_after_direct_child_exit_with_lingering_pipe_descendant()
+    -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        // Same control as the Unix variant: the direct `cmd` child exits 0
+        // immediately after `start /b`-ing a longer-lived ping descendant that
+        // inherits the captured stdout/stderr pipes.  The owned-subprocess Job
+        // Object does not fire (no step timeout), so only the bounded
+        // post-exit drain keeps the call from waiting out the descendant.
+        // `cmd`/`ping` are used instead of PowerShell so the control does not
+        // depend on a heavyweight shell under a loaded host.
+        let script = "start /b ping -n 60 127.0.0.1 >NUL & exit /b 0";
+        let args = vec![
+            "/d".to_string(),
+            "/s".to_string(),
+            "/c".to_string(),
+            script.to_string(),
+        ];
+        let output =
+            capture_output_without_timeout("cmd", &args, &[], "post-exit descendant drain")?;
+
+        assert!(
+            output.status.is_some_and(|status| status.success()),
+            "direct child that exited 0 must not be reported as failed: {:?}",
+            output.status
+        );
+        assert!(
+            !output.timed_out,
+            "the no-deadline path must never report a step timeout"
+        );
+        assert!(
+            output.duration < Duration::from_secs(30),
+            "returned after {}s; the runner waited for the 60s pipe-holding descendant instead of honoring the drain grace",
+            output.duration.as_secs()
+        );
+        assert!(
+            output.stderr.contains("output truncated"),
+            "truncated-capture diagnostic missing from stderr: {:?}",
+            output.stderr
+        );
+        Ok(())
+    }
+
     #[test]
     fn capture_stdout_to_file_with_timeout_streams_stdout_to_file() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
@@ -1678,3 +1934,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "run/input_tests.rs"]
+mod input_tests;

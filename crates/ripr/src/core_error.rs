@@ -17,6 +17,10 @@ use std::fmt;
 /// Public/LSP projection token for git invocation timeout (#2303 / #2811).
 pub(crate) const GIT_INVOCATION_TIMEOUT_KIND: &str = "git_invocation_timeout";
 
+pub(crate) const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
+     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
+     gitTimeoutMs initialization option for editor sessions — then re-run.";
+
 /// Crate-internal error used for semantic control flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CoreError {
@@ -93,7 +97,8 @@ impl fmt::Display for CoreError {
                 spawned: true,
             } => write!(
                 formatter,
-                "{GIT_INVOCATION_TIMEOUT_KIND}: {operation} exceeded the {timeout_ms}ms deadline (process terminated)"
+                "{GIT_INVOCATION_TIMEOUT_KIND}: {operation} exceeded the {timeout_ms}ms deadline (process terminated).{}",
+                GIT_TIMEOUT_REPAIR_GUIDANCE
             ),
             Self::Message(message) => formatter.write_str(message),
             Self::Context { context, source } => write!(formatter, "{context}: {source}"),
@@ -142,7 +147,12 @@ mod tests {
         let spawned = timeout();
         assert_eq!(
             spawned.to_string(),
-            "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated)"
+            concat!(
+                "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated).",
+                " Repair route: raise or disable the git deadline (0 disables it) — ",
+                "--git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the ",
+                "gitTimeoutMs initialization option for editor sessions — then re-run."
+            )
         );
         let zero = CoreError::git_invocation_timeout("git -C /x [\"status\"]", 0, false);
         assert_eq!(
@@ -218,8 +228,8 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_git_failure_stays_a_message_even_with_timeout_words_in_stderr() {
-        // Control 2: a non-timeout git failure remains a non-timeout even
+    fn ordinary_message_with_timeout_words_is_not_typed() {
+        // A Message remains ordinary even
         // when stderr mentions similar words.
         let failure = CoreError::message(
             "git -C /workspace [\"diff\"] failed\nstdout: \nstderr: git_invocation_timeout is not a git command",

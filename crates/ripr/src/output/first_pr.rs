@@ -1,7 +1,5 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{
-    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
-};
+use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::app::agent_status::pilot_select_command;
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
@@ -13,12 +11,12 @@ use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
 #[cfg(test)]
-use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd};
+use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "0.1";
 const DEFAULT_ROOT: &str = ".";
@@ -129,20 +127,32 @@ impl ProofPathLabels {
     }
 }
 
+mod freshness;
 mod options;
 mod preflight;
 mod rendering;
 mod validation;
 
+use freshness::{producing_ripr_version, start_here_packet_version_freshness};
+pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
 pub(crate) use options::FIRST_PR_HELP;
 use options::{FirstPrOptions, parse_options, print_help};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
 use rendering::{render_start_here_markdown, start_here_cli_summary};
+/// Test-only path to first-pr's own start-here renderer, so another
+/// surface's tests can pin pairing parity against the real producer
+/// (#4950) instead of restating its expected lines.
+#[cfg(test)]
+pub(crate) fn first_pr_start_here_markdown(packet: &Value) -> String {
+    render_start_here_markdown(packet)
+}
+#[cfg(test)]
+use crate::agent::loop_commands::anchored_redirect_target;
 #[cfg(test)]
 use validation::validate_selected_state;
-use validation::validate_start_here_packet;
+use validation::{validate_selected_command_root, validate_start_here_packet};
 
 pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -294,7 +304,27 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         check_packet_paths(repo, &root, root_recovery.is_some(), None, options)?;
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    let out_dir = json_path.parent().ok_or_else(|| {
+        format!(
+            "first-pr start-here packet {} is missing a parent directory",
+            json_path.display()
+        )
+    })?;
+    if let Some(detail) =
+        start_here_version_stale_detail(&start_here_packet_version_freshness(&packet))
+    {
+        return Err(format!(
+            "first-pr start-here packet is {detail}; rerun `{}` before relying on it",
+            first_pr_write_command(options, out_dir, false)
+        ));
+    }
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
+    validate_selected_command_root(&packet, &root).map_err(|detail| {
+        format!(
+            "first-pr start-here packet command context is stale or unavailable for the selected repository root: {detail}; rerun `{}` before relying on it",
+            first_pr_write_command(options, out_dir, false)
+        )
+    })?;
     print!(
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
@@ -541,6 +571,7 @@ fn render_start_here_packet_with_selection(
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
         "kind": "first_pr_start_here",
+        "ripr_version": producing_ripr_version(),
         "status": selection.status(),
         "posture": "advisory",
         "root": options.root,
@@ -582,7 +613,7 @@ fn materialize_check_output_gap_ledger(
             check_output_path.display()
         )
     })?;
-    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+    let mut report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
         crate::output::gap_decision_ledger::GapDecisionLedgerInput {
             root: options.root.clone(),
             generated_at: "first-pr-check-output".to_string(),
@@ -592,6 +623,10 @@ fn materialize_check_output_gap_ledger(
             records_json: Ok(contents),
         },
     );
+    crate::output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        root,
+    )?;
     let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     let gap_ledger_path = resolve_path(root, &options.gap_ledger);
@@ -645,13 +680,32 @@ impl CommandOutput {
     }
 }
 
+/// Cooperative deadline for the first-pr git probes (#4363): revision,
+/// worktree and ref questions that must not pin the command on a hung git.
+const FIRST_PR_GIT_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Deadline for the diff-range probes, which walk the whole range and can
+/// take far longer than a revision probe on a large pull request.
+const FIRST_PR_GIT_DIFF_DEADLINE: Duration = Duration::from_mins(5);
+
 fn run_git(root: &Path, args: &[String]) -> Result<CommandOutput, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .map_err(|err| err.to_string())?;
+    let deadline = if args.first().map(String::as_str) == Some("diff") {
+        FIRST_PR_GIT_DIFF_DEADLINE
+    } else {
+        FIRST_PR_GIT_DEADLINE
+    };
+    run_git_within(root, args, deadline)
+}
+
+/// [`run_git`] with the deadline as a parameter, so a test can prove the
+/// deadline reaches the shared git runner.
+fn run_git_within(
+    root: &Path,
+    args: &[String],
+    deadline: Duration,
+) -> Result<CommandOutput, String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = crate::git::run_git_output_with_deadline(root, &args, Some(deadline))?;
     Ok(CommandOutput {
         code: output.status.code(),
         stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -687,6 +741,28 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
     if !root.join("Cargo.toml").is_file() {
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
+        }
+        // A Go or Java repository is the right root; sending it to `--root`
+        // and doctor loops. Name the languages ripr cannot analyze instead.
+        // Rust or preview source below the root (a nested crate) means the
+        // root really is wrong, so that case keeps `wrong_root`.
+        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+            || !crate::analysis::workspace_preview_language_files(root).is_empty();
+        let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+        if !analyzable_below && !unanalyzed.is_empty() {
+            let found = unanalyzed
+                .iter()
+                .map(|(language, count)| format!("{language} ({count} file(s))"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(Selection::no_action(
+                "no_action",
+                format!(
+                    "The first-pr root `{}` has {found} source and no Rust, Python or TypeScript project. ripr does not analyze these languages, so there is no gap to assign; review their changes with their own tests.",
+                    options.root
+                ),
+                0,
+            ));
         }
         return Some(Selection::blocked(
             "wrong_root",
@@ -1013,6 +1089,8 @@ struct TopGapSelection {
     analysis_outcome_command: Option<String>,
     verify_command: String,
     receipt_command: String,
+    /// Human-only shell forms; never execution or receipt identity authority.
+    command_context: Option<Value>,
     /// `None` for a review-card selection: its carried receipt command names
     /// its own output, and first-pr does not parse commands for paths.
     receipt_path: Option<String>,
@@ -1072,6 +1150,9 @@ impl TopGapSelection {
             "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
             "agent_packet_command": self.agent_packet_command
         });
+        if let Some(context) = &self.command_context {
+            value["command_context"] = context.clone();
+        }
         // Present only when carried, like the card field it projects; ledger
         // selections keep their existing shape.
         if let Some(command) = &self.repair_command {
@@ -1447,6 +1528,7 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         analysis_outcome_command: string_path(card, &["llm_guidance", "analysis_outcome_command"]),
         verify_command,
         receipt_command,
+        command_context: None,
         receipt_path: None,
         receipt_command_source: "review_comments.receipt_command".to_string(),
         receipt_state: None,
@@ -1825,6 +1907,8 @@ fn top_gap_from_record(
             "first_pr.default_receipt_write_command".to_string(),
         ),
     };
+    let command_context =
+        crate::output::markdown::selected_command_context(root, &verify_command, &receipt_command);
     let static_recheck_command = if is_receipt_write_command(&receipt_command) {
         static_recheck_command(gap_ledger, root, options)
     } else {
@@ -1872,6 +1956,7 @@ fn top_gap_from_record(
         analysis_outcome_command: None,
         verify_command,
         receipt_command,
+        command_context: Some(command_context),
         receipt_path: Some(receipt_path),
         receipt_command_source,
         receipt_state: string_path(record, &["receipt", "state"])
@@ -1890,10 +1975,7 @@ fn top_gap_from_record(
             // other funnel redirect, so the pasted packet command reproduces
             // the validated write location from any working directory (and
             // the derived PowerShell WriteAllText form inherits the anchor).
-            shell_arg(&anchored_redirect_target(
-                &options.command_root(),
-                &options.agent_packet
-            ))
+            options.anchored_arg(&options.agent_packet)
         )),
     }
 }
@@ -2489,15 +2571,12 @@ fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), Strin
     // still passes `-z` so the grammar is unambiguous and no C-quoted
     // rendering is ever produced on this route.
     let range = format!("{base}...{head}");
-    let output = Command::new("git")
-        .arg("diff")
-        .arg("--name-only")
-        .arg("-z")
-        .arg("--no-ext-diff")
-        .arg(&range)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("failed to run git diff: {err}"))?;
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["diff", "--name-only", "-z", "--no-ext-diff", &range],
+        Some(FIRST_PR_GIT_DIFF_DEADLINE),
+    )
+    .map_err(|err| format!("failed to run git diff: {err}"))?;
     if output.status.success() {
         return Ok(());
     }
@@ -2518,14 +2597,17 @@ fn git_success_with_ceiling(
     args: &[&str],
     ceiling: Option<&Path>,
 ) -> Result<bool, String> {
-    let mut cmd = Command::new("git");
-    cmd.args(args).current_dir(root);
-    if let Some(c) = ceiling {
-        cmd.env("GIT_CEILING_DIRECTORIES", c);
-    }
-    let output = cmd
-        .output()
-        .map_err(|err| format!("failed to run git: {err}"))?;
+    let envs: Vec<(&str, &std::ffi::OsStr)> = ceiling
+        .map(|c| ("GIT_CEILING_DIRECTORIES", c.as_os_str()))
+        .into_iter()
+        .collect();
+    let output = crate::git::run_git_output_with_deadline_and_env(
+        root,
+        args,
+        &envs,
+        Some(FIRST_PR_GIT_DEADLINE),
+    )
+    .map_err(|err| format!("failed to run git: {err}"))?;
     Ok(output.status.success())
 }
 
@@ -3595,6 +3677,52 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_language_root_is_no_action_not_wrong_root() -> Result<(), String> {
+        // A Go repository is the right root: sending it to `--root` and
+        // doctor was a loop with no exit.
+        let repo = temp_repo("first-pr-go-root")?;
+        let go_root = repo.join("go-service");
+        fs::create_dir_all(go_root.join("pkg"))
+            .map_err(|err| format!("mkdir {}: {err}", go_root.display()))?;
+        fs::write(go_root.join("go.mod"), "module example.com/svc\n")
+            .map_err(|err| format!("write go.mod: {err}"))?;
+        fs::write(go_root.join("pkg/calc.go"), "package pkg\n")
+            .map_err(|err| format!("write calc.go: {err}"))?;
+        let options = FirstPrOptions {
+            root: "go-service".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{packet}"
+        );
+        let text = packet.to_string();
+        assert!(text.contains("Go (1 file(s))"), "{text}");
+        assert!(!text.contains("Pass the repository root"), "{text}");
+
+        // A nested Cargo crate below the Go root means `--root` should point
+        // at that crate, so the recovery stays `wrong_root`.
+        let nested = go_root.join("rust-core");
+        fs::create_dir_all(nested.join("src"))
+            .map_err(|err| format!("mkdir {}: {err}", nested.display()))?;
+        fs::write(
+            nested.join("Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write nested Cargo.toml: {err}"))?;
+        fs::write(nested.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|err| format!("write nested lib.rs: {err}"))?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    #[test]
     fn non_cargo_root_writes_workspace_recovery_packet_to_invocation_root() -> Result<(), String> {
         let repo = temp_repo("first-pr-not-cargo-root")?;
         let non_workspace = repo.join("not-workspace");
@@ -3689,6 +3817,435 @@ mod tests {
         assert!(
             err.contains("stale for current root/git preflight"),
             "unexpected check error: {err}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn write_first_pr_records_producing_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-records-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["ripr_version"], producing_ripr_version());
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn first_pr_check_refuses_relocated_context_with_old_root_decoy() -> Result<(), String> {
+        let parent = write_temp_root(&env::temp_dir(), "first-pr-relocation")?;
+        let original = write_temp_cargo_root(&parent, "original café's root")?;
+        init_git_repo(&original)?;
+        let moved = parent.join("moved café's root");
+        let mut ledger = ledger_with_repairable_gap();
+        ledger["records"][0]["verification_commands"] = json!(["git rev-parse --show-toplevel"]);
+        ledger["records"][0]["receipt_command"] = json!("git status --porcelain");
+        write_json(&original.join(DEFAULT_GAP_LEDGER), ledger)?;
+        let mut args = first_pr_args(&crate::output::path::human_path(&original), "proof packet");
+        // The public consumer runs from the test runner's foreign CWD, without
+        // changing process-global CWD or rewriting carried commands in a helper.
+        first_pr(&args)?;
+        args.push("--check".to_string());
+        first_pr(&args)?;
+        let json = original.join("proof packet").join(START_HERE_JSON);
+        let markdown = original.join("proof packet").join(START_HERE_MD);
+        let before_json = fs::read(&json).map_err(|error| error.to_string())?;
+        let before_markdown = fs::read(&markdown).map_err(|error| error.to_string())?;
+        let before_packet = read_packet(&json)?;
+        assert_eq!(before_packet["selected"]["state"], "top_gap");
+        assert!(before_packet["selected"]["command_context"]["verify"]["bash"].is_string());
+
+        fs::rename(&original, &moved).map_err(|error| format!("move selected root: {error}"))?;
+        fs::create_dir_all(&original).map_err(|error| error.to_string())?;
+        fs::write(
+            original.join("Cargo.toml"),
+            "[package]\nname = \"decoy\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        init_git_repo(&original)?;
+        assert_ne!(
+            original.canonicalize().map_err(|error| error.to_string())?,
+            moved.canonicalize().map_err(|error| error.to_string())?
+        );
+        args[1] = crate::output::path::human_path(&moved);
+        let error = first_pr(&args)
+            .err()
+            .ok_or("check accepted relocated context")?;
+        assert!(
+            error.contains("command context is stale or unavailable"),
+            "{error}"
+        );
+        assert!(error.contains("different repository directory"), "{error}");
+        assert!(
+            error.contains(&format!("--root {}", shell_arg(&args[1]))),
+            "{error}"
+        );
+        assert!(
+            error.contains(&shell_arg(&crate::output::path::human_path(
+                &moved.join("proof packet")
+            ))),
+            "{error}"
+        );
+        let moved_json = moved.join("proof packet").join(START_HERE_JSON);
+        assert_eq!(
+            fs::read(&moved_json).map_err(|error| error.to_string())?,
+            before_json
+        );
+        assert_eq!(
+            fs::read(moved.join("proof packet").join(START_HERE_MD))
+                .map_err(|error| error.to_string())?,
+            before_markdown
+        );
+        assert!(
+            !original.join("proof packet").exists(),
+            "check wrote into old-root decoy"
+        );
+
+        args.pop();
+        first_pr(&args)?;
+        args.push("--check".to_string());
+        first_pr(&args)?;
+        let refreshed = read_packet(&moved_json)?;
+        assert_eq!(
+            refreshed["selected"]["verify_command"],
+            before_packet["selected"]["verify_command"]
+        );
+        assert_eq!(
+            refreshed["selected"]["receipt_command"],
+            before_packet["selected"]["receipt_command"]
+        );
+        assert_eq!(
+            refreshed["selected"]["gap_id"],
+            before_packet["selected"]["gap_id"]
+        );
+        assert_ne!(
+            refreshed["selected"]["command_context"]["cwd"],
+            before_packet["selected"]["command_context"]["cwd"]
+        );
+        cleanup(&parent)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn first_pr_refresh_preserves_symlink_parent_selected_root() -> Result<(), String> {
+        let parent = write_temp_root(&env::temp_dir(), "first-pr-refresh-alias")?;
+        let selected = write_temp_cargo_root(&parent, "selected")?;
+        let decoy = write_temp_cargo_root(&parent, "decoy")?;
+        init_git_repo(&selected)?;
+        init_git_repo(&decoy)?;
+        fs::create_dir(selected.join("child")).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(selected.join("child"), decoy.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let alias = decoy.join("alias/..");
+        let physical = selected.canonicalize().map_err(|error| error.to_string())?;
+        assert_eq!(
+            alias.canonicalize().map_err(|error| error.to_string())?,
+            physical
+        );
+        assert_ne!(
+            decoy.canonicalize().map_err(|error| error.to_string())?,
+            physical
+        );
+        write_json(
+            &selected.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        fs::write(decoy.join("sentinel"), b"decoy must remain unchanged")
+            .map_err(|error| error.to_string())?;
+        let mut args = first_pr_args(&crate::output::path::human_path(&alias), "proof packet");
+        first_pr(&args)?;
+        let path = selected.join("proof packet").join(START_HERE_JSON);
+        let markdown = selected.join("proof packet").join(START_HERE_MD);
+        let mut stale = read_packet(&path)?;
+        stale["selected"]["command_context"]["cwd"] =
+            json!(crate::output::path::human_path(&decoy));
+        write_json(&path, stale)?;
+        let before = fs::read(&path).map_err(|error| error.to_string())?;
+        let before_md = fs::read(&markdown).map_err(|error| error.to_string())?;
+        args.push("--check".into());
+        let error = first_pr(&args)
+            .err()
+            .ok_or("accepted stale decoy context")?;
+        assert!(error.contains("different repository directory"), "{error}");
+        let expected_root = crate::output::path::human_path(&physical);
+        let alias_options = FirstPrOptions {
+            root: crate::output::path::human_path(&alias),
+            ..FirstPrOptions::default()
+        };
+        assert_eq!(
+            alias_options.anchored_arg("artifact.json"),
+            shell_arg(&crate::output::path::human_path(
+                &physical.join("artifact.json")
+            ))
+        );
+        let generated = check_output_gap_ledger_command(&alias_options, true, true);
+        assert!(
+            generated.contains(&format!("--root {}", shell_arg(&expected_root))),
+            "{generated}"
+        );
+        for artifact in [DEFAULT_CHECK_OUTPUT, DEFAULT_GAP_LEDGER] {
+            assert!(
+                generated.contains(&shell_arg(&crate::output::path::human_path(
+                    &physical.join(artifact)
+                ))),
+                "{generated}"
+            );
+        }
+        assert!(
+            !generated.contains(&crate::output::path::human_path(&decoy)),
+            "{generated}"
+        );
+        assert_eq!(
+            alias_options.anchored_arg(&expected_root),
+            shell_arg(&expected_root)
+        );
+        let refresh = first_pr_write_command(
+            &FirstPrOptions {
+                root: expected_root.clone(),
+                base: "HEAD".into(),
+                base_explicit: true,
+                ..FirstPrOptions::default()
+            },
+            &alias.join("proof packet"),
+            false,
+        );
+        assert!(error.contains(&format!("rerun `{refresh}`")), "{error}");
+        assert_eq!(fs::read(&path).map_err(|error| error.to_string())?, before);
+        assert_eq!(
+            fs::read(&markdown).map_err(|error| error.to_string())?,
+            before_md
+        );
+        // Exercise the public write/check consumer with the exact emitted root
+        // and output arguments; this is not a shell replay of the recovery text.
+        args = first_pr_args(
+            &expected_root,
+            &crate::output::path::human_path(&alias.join("proof packet")),
+        );
+        first_pr(&args)?;
+        args.push("--check".into());
+        first_pr(&args)?;
+        assert_eq!(
+            read_packet(&path)?["selected"]["command_context"]["cwd"],
+            json!(expected_root)
+        );
+        assert_eq!(
+            fs::read(decoy.join("sentinel")).map_err(|error| error.to_string())?,
+            b"decoy must remain unchanged"
+        );
+        assert!(!decoy.join("proof packet").exists());
+        cleanup(&parent)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn first_pr_check_accepts_existing_newline_root_with_withheld_forms() -> Result<(), String> {
+        let parent = write_temp_root(&env::temp_dir(), "first-pr-newline")?;
+        let repo = write_temp_cargo_root(&parent, "selected\nroot")?;
+        init_git_repo(&repo)?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let mut args = first_pr_args(&crate::output::path::human_path(&repo), "proof packet");
+        first_pr(&args)?;
+        let path = repo.join("proof packet").join(START_HERE_JSON);
+        let packet = read_packet(&path)?;
+        let context = &packet["selected"]["command_context"];
+        assert!(context["cwd"].as_str().ok_or("missing cwd")?.contains('\n'));
+        for step in ["verify", "receipt"] {
+            assert!(context[step]["bash"].is_null());
+            assert!(context[step]["powershell"].is_null());
+            assert!(
+                context[step]["recovery"]
+                    .as_str()
+                    .ok_or("missing recovery")?
+                    .contains("multiline")
+            );
+        }
+        args.push("--check".into());
+        first_pr(&args)?;
+        assert_eq!(read_packet(&path)?, packet);
+        let mut invalid = packet.clone();
+        invalid["selected"]["command_context"]["verify"]["bash"] = json!("git status");
+        write_json(&path, invalid.clone())?;
+        let error = first_pr(&args)
+            .err()
+            .ok_or("accepted multiline root with shell form")?;
+        assert!(error.contains("requires withheld shell forms"), "{error}");
+        assert_eq!(read_packet(&path)?, invalid);
+        cleanup(&parent)
+    }
+
+    #[test]
+    fn first_pr_check_refuses_invalid_context_and_preserves_legacy() -> Result<(), String> {
+        let repo = temp_repo("first-pr-context-legacy")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let mut args = first_pr_args(&crate::output::path::human_path(&repo), "proof packet");
+        first_pr(&args)?;
+        args.push("--check".to_string());
+        let path = repo.join("proof packet").join(START_HERE_JSON);
+        let packet = read_packet(&path)?;
+        for (field, invalid, reason) in [
+            ("cwd", Value::Null, "no available repository directory"),
+            ("cwd", json!("."), "not a bounded absolute path"),
+            (
+                "cwd",
+                json!(format!("{}\n", crate::output::path::human_path(&repo))),
+                "multiline directory requires withheld shell forms",
+            ),
+            (
+                "cwd",
+                json!(crate::output::path::human_path(&repo.join("missing-root"))),
+                "context directory is unavailable",
+            ),
+            (
+                "authority",
+                json!("execution_allowed"),
+                "missing or invalid display authority",
+            ),
+        ] {
+            // Change only the named predicate. Valid producer form objects
+            // must not let shape refusal mask a missing cwd/authority guard.
+            let mut altered = packet.clone();
+            altered["selected"]["command_context"][field] = invalid;
+            write_json(&path, altered)?;
+            let before = fs::read(&path).map_err(|error| error.to_string())?;
+            let error = first_pr(&args)
+                .err()
+                .ok_or("check accepted invalid context")?;
+            assert!(error.contains(reason), "{field}: {error}");
+            assert_eq!(
+                fs::read(&path).map_err(|error| error.to_string())?,
+                before,
+                "check rewrote refused context"
+            );
+        }
+        for step in ["verify", "receipt"] {
+            for invalid in [
+                None,
+                Some(Value::Null),
+                Some(json!("not an object")),
+                Some(json!({})),
+                Some(json!({"bash": 7, "powershell": null, "recovery": null})),
+            ] {
+                let mut altered = packet.clone();
+                let context = altered["selected"]["command_context"]
+                    .as_object_mut()
+                    .ok_or("context missing")?;
+                if let Some(invalid) = invalid {
+                    context.insert(step.to_string(), invalid);
+                } else {
+                    context.remove(step);
+                }
+                write_json(&path, altered)?;
+                let error = first_pr(&args)
+                    .err()
+                    .ok_or("check accepted malformed command forms")?;
+                assert!(error.contains(&format!("context {step}")), "{error}");
+            }
+        }
+        let mut unavailable = packet.clone();
+        for step in ["verify", "receipt"] {
+            unavailable["selected"]["command_context"][step] =
+                json!({"bash": null, "powershell": null, "recovery": "form unavailable"});
+        }
+        write_json(&path, unavailable.clone())?;
+        first_pr(&args)?;
+        assert_eq!(read_packet(&path)?, unavailable, "check rewrote null forms");
+        let mut legacy = packet;
+        legacy["selected"]
+            .as_object_mut()
+            .ok_or("selected object missing")?
+            .remove("command_context");
+        write_json(&path, legacy.clone())?;
+        first_pr(&args)?;
+        assert_eq!(read_packet(&path)?, legacy, "check rewrote legacy packet");
+        cleanup(&repo)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn first_pr_check_accepts_context_for_same_physical_root_alias() -> Result<(), String> {
+        let parent = write_temp_root(&env::temp_dir(), "first-pr-context-alias")?;
+        let repo = write_temp_cargo_root(&parent, "physical")?;
+        init_git_repo(&repo)?;
+        let alias = parent.join("alias");
+        std::os::unix::fs::symlink(&repo, &alias).map_err(|error| error.to_string())?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let mut args = first_pr_args(&crate::output::path::human_path(&repo), "proof packet");
+        first_pr(&args)?;
+        args[1] = crate::output::path::human_path(&alias);
+        args.push("--check".to_string());
+        first_pr(&args)?;
+        let path = repo.join("proof packet").join(START_HERE_JSON);
+        let mut packet = read_packet(&path)?;
+        packet["selected"]["command_context"]["cwd"] =
+            json!(crate::output::path::human_path(&alias));
+        write_json(&path, packet.clone())?;
+        first_pr(&args)?;
+        assert_eq!(read_packet(&path)?, packet);
+        cleanup(&parent)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_missing_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-missing-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let json_path = repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON);
+        let mut packet = read_packet(&json_path)?;
+        packet
+            .as_object_mut()
+            .ok_or_else(|| "packet is not an object".to_string())?
+            .remove("ripr_version");
+        write_json(&json_path, packet)?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("check mode accepted a packet with no ripr_version".to_string());
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale_evidence") && err.contains("missing ripr_version"),
+            "unexpected check error: {err}"
+        );
+        assert!(
+            err.contains("ripr first-pr") && err.contains("before relying on it"),
+            "refresh command missing: {err}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_other_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-other-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let json_path = repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON);
+        let mut packet = read_packet(&json_path)?;
+        let recorded = if producing_ripr_version() == "0.10.0" {
+            "0.9.0"
+        } else {
+            "0.10.0"
+        };
+        packet["ripr_version"] = json!(recorded);
+        write_json(&json_path, packet)?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("check mode accepted a packet from another ripr".to_string());
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale_evidence")
+                && err.contains(recorded)
+                && err.contains(producing_ripr_version()),
+            "unexpected check error: {err}"
+        );
+        assert!(
+            err.contains("ripr first-pr") && err.contains("before relying on it"),
+            "refresh command missing: {err}"
         );
         cleanup(&repo)
     }
@@ -4660,6 +5217,301 @@ mod tests {
         Ok(())
     }
 
+    /// The emitted human command, rather than a test-only rooted rewrite,
+    /// must keep the selected repository when pasted beside a real decoy.
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_runs_from_foreign_cwd() -> Result<(), String> {
+        let repo = temp_python_repo("selected café's project")?;
+        let foreign = temp_python_repo("foreign decoy")?;
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["verification_commands"] = json!(["git rev-parse --show-toplevel"]);
+        let selected = top_gap_from_record(
+            &ledger["records"][0],
+            &ledger,
+            &repo,
+            &FirstPrOptions::default(),
+        );
+        let packet = json!({"status": "actionable", "selected": selected.to_json()});
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("start-here.json"),
+            Path::new("start-here.md"),
+        );
+        let prefix = format!("{VERIFY_AFTER_EDIT_LABEL}: `");
+        let command = summary
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(&prefix)
+                    .and_then(|line| line.strip_suffix('`'))
+            })
+            .ok_or_else(|| format!("missing displayed verification command: {summary}"))?;
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", command])
+            .current_dir(&foreign)
+            .output()
+            .map_err(|error| format!("replay displayed command: {error}"))?;
+        let expected = repo.canonicalize().map_err(|error| error.to_string())?;
+        let observed = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        cleanup(&repo)?;
+        cleanup(&foreign)?;
+        if !output.status.success() || observed != expected.to_string_lossy() {
+            return Err(format!(
+                "displayed verification selected wrong CWD: expected {}, observed {observed}, status {}, command {command}",
+                expected.display(),
+                output.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_preserves_receipt_identity_status_and_caller() -> Result<(), String> {
+        let repo = temp_python_repo("receipt café's selected")?;
+        let foreign = temp_python_repo("receipt decoy")?;
+        let mut ledger = ledger_with_python_repairable_gap();
+        let verify = "git rev-parse --verify refs/heads/does-not-exist";
+        let receipt = "git config --local ripr.context selected";
+        ledger["records"][0]["verification_commands"] = json!([verify]);
+        ledger["records"][0]["receipt_command"] = json!(receipt);
+        let selected = top_gap_from_record(
+            &ledger["records"][0],
+            &ledger,
+            &repo,
+            &FirstPrOptions::default(),
+        )
+        .to_json();
+        assert_eq!(selected["verify_command"], verify);
+        assert_eq!(selected["receipt_command"], receipt);
+        assert_eq!(
+            selected["receipt_command_source"],
+            "gap_ledger.receipt_command"
+        );
+        assert_eq!(
+            selected["command_context"]["authority"],
+            "advisory_display_only"
+        );
+        let packet = json!({"status": "actionable", "selected": selected});
+        let summary =
+            start_here_cli_summary(&packet, Path::new("packet.json"), Path::new("packet.md"));
+        let markdown = render_start_here_markdown(&packet);
+        for (step, label) in [
+            ("verify", VERIFY_AFTER_EDIT_LABEL),
+            ("receipt", RECEIPT_AFTER_VERIFY_LABEL),
+        ] {
+            let prefix = format!("{label}: ");
+            let command = summary
+                .lines()
+                .find_map(|line| line.strip_prefix(&prefix))
+                .and_then(crate::output::markdown::code_span_content)
+                .ok_or_else(|| format!("missing displayed {step}: {summary}"))?;
+            assert!(markdown.contains(&crate::output::markdown::code_span(&command)));
+            // Print the native result and caller directory after the literal
+            // displayed command. Wrapping must preserve both, even on failure.
+            let replay = format!("{command}\nstatus=$?\nprintf '%s\\n' \"$status\"\npwd -P");
+            let output = std::process::Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", &replay])
+                .current_dir(&foreign)
+                .output()
+                .map_err(|error| error.to_string())?;
+            let text = String::from_utf8_lossy(&output.stdout);
+            let expected_status = if step == "verify" { "128" } else { "0" };
+            assert_eq!(text.lines().next(), Some(expected_status), "{text}");
+            assert_eq!(
+                text.lines().nth(1),
+                foreign.to_str(),
+                "caller CWD changed: {text}"
+            );
+        }
+        let value = std::process::Command::new("git")
+            .args(["config", "--local", "--get", "ripr.context"])
+            .current_dir(&repo)
+            .output()
+            .map_err(|error| error.to_string())?;
+        assert!(value.status.success());
+        assert_eq!(String::from_utf8_lossy(&value.stdout).trim(), "selected");
+        let decoy = std::process::Command::new("git")
+            .args(["config", "--local", "--get", "ripr.context"])
+            .current_dir(&foreign)
+            .output()
+            .map_err(|error| error.to_string())?;
+        assert_eq!(decoy.status.code(), Some(1), "receipt wrote in the decoy");
+        cleanup(&repo)?;
+        cleanup(&foreign)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_follows_physical_root_and_refuses_missing_root() -> Result<(), String>
+    {
+        let physical = temp_python_repo("physical")?;
+        let decoy = temp_python_repo("lexical decoy")?;
+        fs::create_dir(physical.join("child")).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(physical.join("child"), decoy.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let selected_root = decoy.join("alias/..");
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["verification_commands"] = json!(["git rev-parse --show-toplevel"]);
+        let make = |root: &Path| {
+            top_gap_from_record(
+                &ledger["records"][0],
+                &ledger,
+                root,
+                &FirstPrOptions::default(),
+            )
+            .to_json()
+        };
+        let selected = make(&selected_root);
+        assert_eq!(
+            selected["command_context"]["cwd"].as_str(),
+            physical.to_str()
+        );
+        let command = selected["command_context"]["verify"]["bash"]
+            .as_str()
+            .ok_or("missing Bash")?;
+        let run = |command: &str| {
+            std::process::Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", command])
+                .current_dir(&decoy)
+                .output()
+                .map_err(|error| error.to_string())
+        };
+        let output = run(command)?;
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            physical.to_string_lossy()
+        );
+        // A directory disappearing after generation also fails closed: the
+        // printed command cannot fall through and run in the decoy.
+        cleanup(&physical)?;
+        let output = run(command)?;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let unavailable = make(&selected_root);
+        assert!(unavailable["command_context"]["cwd"].is_null());
+        assert!(unavailable["command_context"]["verify"]["bash"].is_null());
+        assert!(unavailable["command_context"]["receipt"]["bash"].is_null());
+        let packet = json!({"status": "actionable", "selected": unavailable});
+        let summary =
+            start_here_cli_summary(&packet, Path::new("packet.json"), Path::new("packet.md"));
+        assert!(summary.contains("Verify after the test edit unavailable:"));
+        assert!(!summary.contains("`git rev-parse --show-toplevel`"));
+        cleanup(&decoy)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_preserves_non_utf8_alias_parent_traversal() -> Result<(), String> {
+        use std::os::unix::ffi::OsStringExt;
+        let original = temp_python_repo("non-utf8 physical")?;
+        let mut bytes = original.as_os_str().as_encoded_bytes().to_vec();
+        bytes.push(0xff);
+        let physical = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        fs::rename(&original, &physical).map_err(|error| error.to_string())?;
+        let decoy = temp_python_repo("non-utf8 alias decoy")?;
+        run_git_setup(
+            &physical,
+            &["config", "--local", "ripr.context", "physical"],
+        )?;
+        run_git_setup(&decoy, &["config", "--local", "ripr.context", "decoy"])?;
+        fs::create_dir(physical.join("child")).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(physical.join("child"), decoy.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let root = decoy.join("alias/..");
+        assert_eq!(
+            root.canonicalize().map_err(|error| error.to_string())?,
+            physical
+        );
+        let alias_options = FirstPrOptions {
+            root: root.to_str().ok_or("alias is not UTF-8")?.to_string(),
+            ..FirstPrOptions::default()
+        };
+        assert_eq!(
+            alias_options.command_root(),
+            crate::output::path::human_path(&root)
+        );
+        assert_eq!(
+            alias_options.anchored_arg("artifact.json"),
+            shell_arg(&crate::output::path::human_path(
+                &root.join("artifact.json")
+            ))
+        );
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["verification_commands"] =
+            json!(["git config --local --get ripr.context"]);
+        let selected = top_gap_from_record(
+            &ledger["records"][0],
+            &ledger,
+            &root,
+            &FirstPrOptions::default(),
+        )
+        .to_json();
+        assert_eq!(
+            selected["command_context"]["cwd"].as_str(),
+            root.to_str(),
+            "the lossless alias fallback must be reached"
+        );
+        let packet = json!({"status": "actionable", "selected": selected});
+        let summary =
+            start_here_cli_summary(&packet, Path::new("packet.json"), Path::new("packet.md"));
+        let prefix = format!("{VERIFY_AFTER_EDIT_LABEL}: ");
+        let command = summary
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(crate::output::markdown::code_span_content)
+            .ok_or("missing displayed verification")?;
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", &command])
+            .current_dir(&decoy)
+            .output()
+            .map_err(|error| error.to_string())?;
+        cleanup(&physical)?;
+        cleanup(&decoy)?;
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "physical",
+            "logical cd selected the alias parent instead of its physical target"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ledger_command_context_underemits_unsupported_forms_without_rewriting_raw_commands()
+    -> Result<(), String> {
+        let root = temp_python_repo("unsupported context")?;
+        for command in [
+            "cargo test && cargo test nearby",
+            "cargo test > log",
+            "cargo test $FILTER",
+            "cargo test '*.rs'\ncargo test",
+            "cargo test --filter $(whoami)",
+            "cargo test \\",
+        ] {
+            let mut ledger = ledger_with_python_repairable_gap();
+            ledger["records"][0]["verification_commands"] = json!([command]);
+            let selected = top_gap_from_record(
+                &ledger["records"][0],
+                &ledger,
+                &root,
+                &FirstPrOptions::default(),
+            )
+            .to_json();
+            assert_eq!(selected["verify_command"], command);
+            assert!(
+                selected["command_context"]["verify"]["bash"].is_null(),
+                "{command}"
+            );
+            assert!(
+                selected["command_context"]["verify"]["powershell"].is_null(),
+                "{command}"
+            );
+            assert!(selected["command_context"]["verify"]["recovery"].is_string());
+        }
+        cleanup(&root)
+    }
     #[test]
     fn python_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-preview")?;
@@ -4715,9 +5567,14 @@ mod tests {
             Path::new("target/ripr/reports/start-here.md"),
         );
         assert!(summary.contains("Safe next action: repair one named gap `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"));
-        assert!(summary.contains(
-            "Verify after the test edit: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
-        ));
+        let bash = packet["selected"]["command_context"]["verify"]["bash"]
+            .as_str()
+            .ok_or("missing Python context")?;
+        assert!(summary.contains(&format!(
+            "Verify after the test edit: {}",
+            crate::output::markdown::code_span(bash)
+        )));
+        assert!(bash.ends_with(" && pytest tests/test_pricing.py::test_calculate_discount_smoke)"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -5283,7 +6140,14 @@ mod tests {
         assert!(summary.contains(
             "Safe next action: repair one named gap `gap:typescript:typescript_preview:2396aec1`"
         ));
-        assert!(summary.contains("Verify after the test edit: `jest tests/discount.test.ts`"));
+        let bash = packet["selected"]["command_context"]["verify"]["bash"]
+            .as_str()
+            .ok_or("missing TypeScript context")?;
+        assert!(summary.contains(&format!(
+            "Verify after the test edit: {}",
+            crate::output::markdown::code_span(bash)
+        )));
+        assert!(bash.ends_with(" && jest tests/discount.test.ts)"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -5690,13 +6554,32 @@ mod tests {
             .open(&ledger)
             .and_then(|file| file.set_modified(std::time::SystemTime::now()))
             .map_err(|err| format!("refresh ledger mtime {}: {err}", ledger.display()))?;
-        let actual_json = render_start_here_packet(&case, &options);
+        let mut actual_json = render_start_here_packet(&case, &options);
+        // The new context names the physical selected fixture root, which
+        // can differ from the renderer CWD used by historical output paths.
+        // Normalize only that advisory context before rendering; raw command
+        // identity and the existing projection remain unchanged.
+        if let Some(context) = actual_json.pointer_mut("/selected/command_context") {
+            let text = serde_json::to_string(context).map_err(|error| error.to_string())?;
+            *context = serde_json::from_str(&project_root_text(&text, &case))
+                .map_err(|error| error.to_string())?;
+        }
         let actual_md = render_start_here_markdown(&actual_json);
         // Issue #3872: funnel redirect targets anchor at the resolved --root,
         // so the machine prefix projects to `<cwd>/` before comparing against
         // the checked-in expectation (placeholder rule: loop_commands).
         let mut normalized_json = actual_json;
         project_renderer_cwd(&mut normalized_json);
+        let recorded = normalized_json
+            .get("ripr_version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{case_id} packet missing ripr_version"))?;
+        assert_eq!(
+            recorded,
+            producing_ripr_version(),
+            "start-here JSON ripr_version in {case_id}"
+        );
+        normalized_json["ripr_version"] = json!("<ripr_version>");
         let normalized_md = project_cwd_text(&actual_md);
         let expected_json = read_packet(&case.join("expected/start-here.json"))?;
         assert_eq!(
@@ -5778,6 +6661,20 @@ mod tests {
         init_git_repo_with_initial_files(path, &["Cargo.toml"])
     }
 
+    #[test]
+    fn run_git_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error; dropping the deadline would resolve the root.
+        let root = std::env::temp_dir();
+        let args = git_args(&["--version"]);
+        run_git_within(&root, &args, Duration::from_mins(1))
+            .map_err(|err| format!("control: {err}"))?;
+        match run_git_within(&root, &args, Duration::ZERO) {
+            Err(err) if err.starts_with("git_invocation_timeout:") => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
+        }
+    }
+
     fn init_git_repo_with_initial_files(path: &Path, files: &[&str]) -> Result<(), String> {
         run_git_setup(path, &["init"])?;
         run_git_setup(path, &["config", "user.email", "ripr@example.invalid"])?;
@@ -5790,7 +6687,7 @@ mod tests {
     }
 
     fn run_git_setup(path: &Path, args: &[&str]) -> Result<(), String> {
-        let output = Command::new("git")
+        let output = std::process::Command::new("git")
             .args(args)
             .current_dir(path)
             .output()

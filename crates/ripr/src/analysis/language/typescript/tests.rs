@@ -4487,6 +4487,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4539,6 +4540,7 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![changed("src/broken.ts")];
@@ -4571,6 +4573,7 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4642,6 +4645,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4744,6 +4748,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_cts_sources() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4821,6 +4826,7 @@ fn analyze_diff_does_not_credit_related_test_from_a_different_modern_module() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4885,6 +4891,7 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -4930,6 +4937,110 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
     Ok(())
 }
 
+/// #5022: a capped monorepo whose refused-file count exceeds the disclosure
+/// sample cap must emit a bounded limitation count — a stable-sorted sample
+/// of refused paths plus one summary entry carrying the true refused count —
+/// instead of one limitation per refused file (up to the 20,000-file
+/// discovery cap).
+#[test]
+fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> Result<(), String> {
+    let root = ts_unique_tempdir("bounded-read-sample")?;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let total = sample_cap + 4;
+    for index in 0..total {
+        ts_write_file(
+            &root.join(format!("src/pkg_{index:02}.ts")),
+            &format!("export const value{index} = {};\n", "x".repeat(200)),
+        )?;
+    }
+
+    let options = ts_analysis_options(root.clone());
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[],
+        64,
+        DEFAULT_TS_MAX_WORKSPACE_READ_BYTES,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let sample = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.path.is_some()
+                && matches!(
+                    &limitation.recovery.kind,
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit
+                )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sample.len(),
+        sample_cap,
+        "per-file disclosure is bounded to the sample, got {:?}",
+        result
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        sample.windows(2).all(|pair| pair[0].path <= pair[1].path),
+        "sample paths must be sorted so repeated runs are byte-stable"
+    );
+    assert!(
+        sample.iter().all(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("file_read_capped"))
+        }),
+        "sample entries keep the distinguishable refusal reason"
+    );
+    let summary = result
+        .limitations
+        .iter()
+        .find(|limitation| {
+            limitation.path.is_none()
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("typescript_read_limit_sampled:"))
+        })
+        .ok_or_else(|| {
+            format!(
+                "expected one folded summary limitation, got {:?}",
+                result
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.bounded_detail.clone())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    let refused_total =
+        u64::try_from(total).map_err(|err| format!("refused count overflows u64: {err}"))?;
+    assert_eq!(
+        summary.affected_items,
+        Some(refused_total),
+        "summary must carry the true refused count"
+    );
+    let detail = summary.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("not materialized in output"),
+        "summary must state why the full per-file list is absent: {detail}"
+    );
+    assert!(
+        summary
+            .recovery
+            .detail
+            .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        "the recovery must name the env knob, got {}",
+        summary.recovery.detail
+    );
+    Ok(())
+}
+
 #[test]
 fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Result<(), String> {
     let stamp = std::time::SystemTime::now()
@@ -4949,6 +5060,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -4972,6 +5084,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_line = crate::analysis::diff::ChangedLine {
         line: 2,
@@ -4986,6 +5099,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -5017,7 +5131,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
             .file
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(".generated."))
+            .is_some_and(|name| name.contains(".generated.") || name.ends_with(".min.js"))
     });
     if excluded_finding {
         return Err(format!(
@@ -5071,6 +5185,7 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -5147,6 +5262,7 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -5192,6 +5308,7 @@ fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), St
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let result = adapter.analyze_repo(&options, &policy)?;
@@ -5238,6 +5355,7 @@ fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -5323,6 +5441,7 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -5383,6 +5502,85 @@ fn classify_probe_shape_recognises_return_value() {
     let (family, delta) = classify_probe_shape("    return amount - 10;");
     assert_eq!(family, ProbeFamily::ReturnValue);
     assert_eq!(delta, DeltaKind::Value);
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
+    // A `>=` -> `>` change in the condition is witnessed only at
+    // `total == 100`; as `return_value`, any exact oracle such as
+    // `expect(discount(500)).toBe(450)` read it as exposed.
+    let line = "    return total > 100 ? total * 0.9 : total;";
+    assert_eq!(
+        classify_probe_shape(line),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        typescript_boundary_discriminator(line).as_deref(),
+        Some("total == 100")
+    );
+    // Only the condition is the boundary: a comparison in an arm does not
+    // select the branch.
+    let arm = "    return ready ? amount >= LIMIT : false;";
+    assert_eq!(classify_probe_shape(arm).0, ProbeFamily::Predicate);
+    assert_eq!(typescript_boundary_discriminator(arm), None);
+    // A quoted ` ? ` in the condition and a quoted ` : ` in an arm do not
+    // move the split.
+    let quoted = "    return kind === 'a ? b' ? 1 : 0;";
+    assert_eq!(classify_probe_shape(quoted).0, ProbeFamily::Predicate);
+    // The split must hand the same condition to the boundary reader as the
+    // `if` form does.
+    assert_eq!(
+        typescript_boundary_discriminator(quoted),
+        typescript_boundary_discriminator("    if (kind === 'a ? b') {")
+    );
+    let quoted_arm = "    return total > 100 ? 'x : y' : 'z';";
+    assert_eq!(
+        typescript_boundary_discriminator(quoted_arm).as_deref(),
+        Some("total == 100")
+    );
+    // `??`, `?.`, and a `?` inside a string are not conditionals.
+    for line in [
+        "    return total ?? 0;",
+        "    return order?.total;",
+        "    return \"a ? b : c\";",
+        "    return ok ? value",
+        "    return ok ? 'x : y'",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_comparison_as_its_boundary() {
+    // `expect(isLarge(500)).toBe(true)` holds before and after `>=` -> `>`.
+    let line = "    return total > 100;";
+    assert_eq!(
+        classify_probe_shape(line),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        typescript_boundary_discriminator(line).as_deref(),
+        Some("total == 100")
+    );
+    // Equality, computed operands, arrows and compound conditions stay
+    // return values.
+    for line in [
+        "    return total === 100;",
+        "    return items.length() > 0;",
+        "    return total + 1 > limit;",
+        "    return (x) => x > 1;",
+        "    return total > 100 && ready;",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
 }
 
 #[test]
@@ -7442,6 +7640,126 @@ fn package_local_filter_rejects_cross_package_test() {
     );
 }
 
+/// #4552: a test in a DIFFERENT package that imports the owner's own file
+/// relates through that import; the package boundary guards only name/path
+/// proximity, not file identity.
+#[test]
+fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-cross-import")?;
+    ts_write_file(
+        &root.join("packages/utils/package.json"),
+        r#"{"name":"utils"}"#,
+    )?;
+    ts_write_file(&root.join("test/unit/package.json"), r#"{"name":"unit"}"#)?;
+
+    let owner = test_owner("toArray", "packages/utils/src/helpers.ts");
+    let test = TypeScriptTest {
+        name: "probe".into(),
+        local_name: "probe".into(),
+        describe_names: Vec::new(),
+        file: "test/unit/test/utils.spec.ts".into(),
+        line: 4,
+        body_text: "expect(toArray(1)).toEqual([1])".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../../../packages/utils/src/helpers".into(),
+            imported: Some("toArray".into()),
+            local: "toArray".into(),
+            namespace: false,
+        }],
+    };
+
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&test),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::DirectOwnerCall
+    );
+
+    // The import must resolve to the owner's file: the same call through an
+    // import of a different module in the owner's package stays rejected.
+    let mut other_module = test;
+    other_module.imports_in_file[0].source = "../../../packages/utils/src/other".into();
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&other_module),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(candidates.is_empty(), "got {candidates:?}");
+    Ok(())
+}
+
+/// Review #4611: the constructor arm's bare class-name match stays inside the
+/// owner's package. A sibling-package test constructing its own same-named
+/// class is not related; one that imports the owner's class is.
+#[test]
+fn cross_package_constructor_requires_owner_class_import() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-cross-ctor")?;
+    ts_write_file(&root.join("packages/a/package.json"), r#"{"name":"a"}"#)?;
+    ts_write_file(&root.join("packages/b/package.json"), r#"{"name":"b"}"#)?;
+
+    let mut owner = test_owner("constructor", "packages/a/src/cart.ts");
+    owner.owner_kind = OwnerKind::Method;
+    owner.method_kind = TypeScriptMethodKind::Constructor;
+    owner.class_name = Some("Cart".into());
+    let rival = TypeScriptTest {
+        name: "total".into(),
+        local_name: "total".into(),
+        describe_names: Vec::new(),
+        file: "packages/b/tests/cart.test.ts".into(),
+        line: 4,
+        body_text: "expect(new Cart(1).total).toBe(1)".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/cart".into(),
+            imported: Some("Cart".into()),
+            local: "Cart".into(),
+            namespace: false,
+        }],
+    };
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&rival),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(
+        !candidates
+            .iter()
+            .any(|candidate| candidate.relation == TypeScriptRelationKind::ReceiverOwnerCall),
+        "got {candidates:?}"
+    );
+
+    let mut importer = rival;
+    importer.imports_in_file[0].source = "../../a/src/cart".into();
+    let candidates = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&importer),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(candidates.len(), 1, "got {candidates:?}");
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::ReceiverOwnerCall
+    );
+    Ok(())
+}
+
 /// CommonJS require() destructuring: `const { fn } = require('./path')` should
 /// be extracted as an import with `imported = Some("fn")`, `local = "fn"`,
 /// `namespace = false`.
@@ -7647,6 +7965,10 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
 
 /// Exercise the import branch after the package filter with the production
 /// workspace-relative file spelling and an absolute workspace root.
+///
+/// #4552: a sibling-package test whose import resolves to the owner's file is
+/// admitted by the relation layer, so the limitation stays silent for it; a
+/// sibling-package test with no anchoring import still produces it.
 #[test]
 fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String> {
     let root = ts_unique_tempdir("cross-package-import-identity")?;
@@ -7673,10 +7995,38 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         imports_in_file: vec![import],
     };
 
-    // The owner name is absent from the body: only the import identity and
-    // alias call can satisfy the reference branch after the package filter.
+    let admitted = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&test),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert_eq!(
+        admitted.len(),
+        1,
+        "import-anchored cross-package test must relate"
+    );
+    assert_eq!(
+        admitted[0].relation,
+        TypeScriptRelationKind::ImportAliasOwnerCall
+    );
+    assert!(
+        named_limitations_for_unresolved_ownership(
+            &owner,
+            std::slice::from_ref(&test),
+            &root,
+            &admitted
+        )
+        .is_empty(),
+        "an admitted cross-package test is resolved ownership"
+    );
+
+    // Without the relation layer's admission (the pre-#4552 view), the same
+    // reference is what the limitation reports: the producer still reads the
+    // import branch with workspace-relative spellings.
     let limitations =
-        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root);
+        named_limitations_for_unresolved_ownership(&owner, std::slice::from_ref(&test), &root, &[]);
     assert_eq!(limitations.len(), 1);
     assert_eq!(limitations[0].name, "typescript_target_unresolved");
     assert_eq!(
@@ -7684,16 +8034,43 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         "packages/b/tests/cart.test.ts:3"
     );
 
+    let mut bare_call = test.clone();
+    bare_call.imports_in_file.clear();
+    bare_call.body_text = "cart();".into();
+    let bare_admitted = related_test_candidates(
+        &owner,
+        std::slice::from_ref(&bare_call),
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    assert!(
+        bare_admitted.is_empty(),
+        "a bare cross-package name call has no anchor and must not relate"
+    );
+    let bare_limitations = named_limitations_for_unresolved_ownership(
+        &owner,
+        std::slice::from_ref(&bare_call),
+        &root,
+        &bare_admitted,
+    );
+    assert_eq!(bare_limitations.len(), 1);
+    assert_eq!(bare_limitations[0].name, "typescript_target_unresolved");
+
     let mut wrong_import = test.clone();
     wrong_import.imports_in_file[0].source = "../../a/src/other.js".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[wrong_import], &root).is_empty());
+    assert!(
+        named_limitations_for_unresolved_ownership(&owner, &[wrong_import], &root, &[]).is_empty()
+    );
     let mut no_call = test.clone();
     no_call.body_text = "const value = 1;".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[no_call], &root).is_empty());
+    assert!(named_limitations_for_unresolved_ownership(&owner, &[no_call], &root, &[]).is_empty());
     let mut same_package = test;
     same_package.file = "packages/a/tests/cart.test.ts".into();
     same_package.imports_in_file[0].source = "../src/cart.js".into();
-    assert!(named_limitations_for_unresolved_ownership(&owner, &[same_package], &root).is_empty());
+    assert!(
+        named_limitations_for_unresolved_ownership(&owner, &[same_package], &root, &[]).is_empty()
+    );
     Ok(())
 }
 
@@ -10218,7 +10595,7 @@ fn spec_0104_ts_oracle_kind_matches_seam_mapping_table() {
 
 // ── Helpers for cockpit-delta-5 / issue-#1245 tests ──────────────────────────
 
-fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
+pub(super) fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| format!("system time: {err}"))?
@@ -10232,7 +10609,7 @@ fn ts_unique_tempdir(label: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn ts_write_file(path: &Path, contents: &str) -> Result<(), String> {
+pub(super) fn ts_write_file(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create_dir_all({}): {err}", parent.display()))?;
@@ -10285,6 +10662,7 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -10381,6 +10759,7 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -10480,6 +10859,7 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -13273,6 +13653,7 @@ fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     }
 }
 
@@ -15096,3 +15477,78 @@ mod module_entry_tests;
 mod out_dir_specifier_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
+
+/// #4769: an unresolved import of a workspace package by name is a package
+/// manifest question. The limitation names that manifest instead of telling
+/// the user to enable tsconfig path aliases, which would not help.
+#[test]
+fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-self-import-advice")?;
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"bundle","main":"./dist/bundle.js"}"#,
+    )?;
+    ts_write_file(&root.join("src/index.ts"), "export function build() {}\n")?;
+    let packages = super::workspace_packages::WorkspacePackages::discover(
+        &root,
+        &[PathBuf::from("src/index.ts")],
+    );
+    let map = super::tsconfig::TsAliasMap::workspace_packages_only(&root, packages);
+    let owner = test_owner("build", "src/index.ts");
+    let test = TypeScriptTest {
+        name: "builds".into(),
+        local_name: "builds".into(),
+        describe_names: Vec::new(),
+        file: "tests/build.test.ts".into(),
+        line: 3,
+        body_text: "expect(build()).toBe(1)".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "bundle".into(),
+            imported: Some("build".into()),
+            local: "build".into(),
+            namespace: false,
+        }],
+    };
+    let Some(gap) = super::static_limit::alias_gap_for_unresolved_import(
+        &owner,
+        std::slice::from_ref(&test),
+        |_| false,
+        Some(&map),
+        None,
+    ) else {
+        return Err("expected a workspace package import gap".into());
+    };
+    let limitation = &gap.limitation;
+    assert!(
+        limitation.why_not_actionable.contains("package.json")
+            && !limitation
+                .why_not_actionable
+                .contains("resolve_tsconfig_paths"),
+        "{}",
+        limitation.why_not_actionable
+    );
+    // An unrelated bare specifier keeps the tsconfig advice.
+    let mut other = test;
+    other.imports_in_file[0].source = "@elsewhere/lib".into();
+    let Some(gap) = super::static_limit::alias_gap_for_unresolved_import(
+        &owner,
+        std::slice::from_ref(&other),
+        |_| false,
+        Some(&map),
+        None,
+    ) else {
+        return Err("expected an unrelated bare specifier gap".into());
+    };
+    let limitation = &gap.limitation;
+    assert!(
+        limitation
+            .why_not_actionable
+            .contains("resolve_tsconfig_paths"),
+        "{}",
+        limitation.why_not_actionable
+    );
+    Ok(())
+}
