@@ -20,6 +20,10 @@ pub(crate) struct CompactGripContext<'a> {
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
+    /// Indexed-function counts by exact name, built once per context (#5201).
+    /// Per-seam `OwnerContext` resolution reads this instead of scanning
+    /// `index.functions` per seam.
+    function_name_counts: BTreeMap<String, usize>,
     name_module_candidates: NameModuleCandidateIndex,
     owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
     same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
@@ -154,11 +158,30 @@ fn context_build_phase<T>(name: &str, work: impl FnOnce() -> T) -> T {
     result
 }
 
+fn count_functions_by_name(index: &RustIndex) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for function in &index.functions {
+        *counts.entry(function.name.clone()).or_default() += 1;
+    }
+    counts
+}
+
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn clear_window_memos(&self) {
         self.owner_named_cache.borrow_mut().clear();
         self.same_module_cache.borrow_mut().clear();
         self.parsed_sources.borrow_mut().clear();
+    }
+
+    /// Number of indexed functions with exactly `name`; 0 for unknown or
+    /// empty names. Precomputed once per context instead of scanning
+    /// `index.functions` per seam (#5201).
+    pub(super) fn function_name_count(&self, name: &str) -> usize {
+        if name.is_empty() {
+            0
+        } else {
+            self.function_name_counts.get(name).copied().unwrap_or(0)
+        }
     }
 
     pub(crate) fn new(index: &'a RustIndex) -> Self {
@@ -246,6 +269,9 @@ impl<'a> CompactGripContext<'a> {
             context_build_phase("test_scoped_function_names_by_file", || {
                 test_scoped_function_names_by_file(index)
             });
+        checkpoint()?;
+        let function_name_counts =
+            context_build_phase("function_name_counts", || count_functions_by_name(index));
         checkpoint()?;
         let helper_owner_lookup = HelperOwnerCallLookup {
             helpers: &helper_owner_calls_by_file,
@@ -413,6 +439,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
+            function_name_counts,
             name_module_candidates,
             owner_named_cache: RefCell::new(BTreeMap::new()),
             same_module_cache: RefCell::new(BTreeMap::new()),
@@ -634,6 +661,46 @@ fn value() -> i32 { 1 }
                 "context test loops completed instead of observing their first expired budget"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn function_name_counts_match_independent_full_scan() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let fact_a = RaRustSyntaxAdapter
+            .summarize_file(&PathBuf::from("src/a.rs"), "fn dup() -> i32 { 1 }\n")?;
+        let fact_b = RaRustSyntaxAdapter.summarize_file(
+            &PathBuf::from("src/b.rs"),
+            "fn dup() -> i32 { 2 }\nfn solo() -> i32 { 3 }\n",
+        )?;
+        let mut index = RustIndex {
+            tests: [fact_a.tests.clone(), fact_b.tests.clone()].concat(),
+            functions: [fact_a.functions.clone(), fact_b.functions.clone()].concat(),
+            ..RustIndex::default()
+        };
+        index.files.insert(PathBuf::from("src/a.rs"), fact_a);
+        index.files.insert(PathBuf::from("src/b.rs"), fact_b);
+        let context = CompactGripContext::new(&index);
+        for function in &index.functions {
+            let expected = index
+                .functions
+                .iter()
+                .filter(|candidate| candidate.name == function.name)
+                .count();
+            let actual = context.function_name_count(&function.name);
+            if actual != expected {
+                return Err(format!(
+                    "name count mismatch for {}: {actual} != {expected}",
+                    function.name
+                ));
+            }
+        }
+        if context.function_name_count("missing") != 0 {
+            return Err("unknown name must count 0".to_string());
+        }
+        if context.function_name_count("") != 0 {
+            return Err("empty name must count 0".to_string());
         }
         Ok(())
     }
