@@ -427,9 +427,8 @@ pub(crate) fn verify_intake_row_snapshot(
             ));
         }
     }
-    let retained_len = snapshot_body.len()
-        + comments_body.len()
-        + timeline_body.as_ref().map_or(0, Vec::len);
+    let retained_len =
+        snapshot_body.len() + comments_body.len() + timeline_body.as_ref().map_or(0, Vec::len);
     verify_selected_packet_bytes(row, retained_len)?;
     if let Some(timeline_body) = &timeline_body {
         verify_retrieval_step_bytes(row, "issue", snapshot_body.len())?;
@@ -1372,8 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_fabricated_selected_bytes_fail_closed()
-    -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_fabricated_selected_bytes_fail_closed() -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let mut row = corpus.rows[0].clone();
         row.packet_bytes.selected = IssueLifecycleIntakeBytesV1::Measured(1);
@@ -1387,8 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_intake_pilot_downgraded_root_disposition_rejected()
-    -> Result<(), String> {
+    fn issue_lifecycle_intake_pilot_downgraded_root_disposition_rejected() -> Result<(), String> {
         let (mut corpus, _controls, _provenance) = load_committed()?;
         let lifecycle_id = {
             let row = corpus
