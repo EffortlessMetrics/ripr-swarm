@@ -324,6 +324,13 @@ rejected alternative. Any can be reversed later without touching the rest.
     `relational_check` / weak (today `exact_error_variant` / strong).
     `assert!(matches!(lookup(1), Some(3) | Some(_)))`: `smoke_only` / smoke
     (weakest alternative).
+26. `assert!(r.is_ok() || r.is_err())`: `relational_check` / weak, because
+    it accepts every value (today `broad_error` / weak, because step 2
+    finds `is_err`). `assert!(!matches!(check(5), Ok(_)))`:
+    `relational_check` / weak under rule 1, not rule 3's smoke.
+    `assert!(matches!(items(), [..]))` and
+    `assert!(matches!(items(), [rest @ ..]))`: `relational_check` / weak
+    through the widened pre-check (today `exact_value` / strong at step 5).
 
 ## Test Mapping
 
