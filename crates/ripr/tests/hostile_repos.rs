@@ -592,6 +592,12 @@ fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
     )?;
     let ran = ripr(&clone, &["check"], &[])?;
     assert_sane(&ran, "default base equals HEAD")?;
+    if ran.code != Some(0) {
+        return Err(format!(
+            "expected an empty check to exit 0, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
     if !ran.stderr.contains("same commit as HEAD") || !ran.stderr.contains("--base") {
         return Err(format!(
             "expected the base-equals-HEAD warning\n{}",

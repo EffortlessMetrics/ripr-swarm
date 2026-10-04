@@ -188,6 +188,17 @@ as its next command.
   joins. Those controls alone do not independently witness fixture startup
   or OS-level reaping; explicit owning cleanup is separately source-reviewed.
 
+### Default base equal to HEAD
+
+When no scope is given, the default base resolves, and it names the same
+commit as `HEAD`, the range is empty by construction (typically a clone of a
+feature branch, where `origin/HEAD` tracks the checked-out branch). An empty
+result in that state is not a clean pass. `ripr check` writes one line to
+stderr naming the resolved base and `--base`; stdout and JSON are unchanged.
+The warning is silent when either commit fails to resolve, when the commits
+differ, and whenever the scope is explicit (`--base`, `--diff`,
+`--candidate-tree`, `--worktree`).
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -255,6 +266,8 @@ as its next command.
 - `crates/ripr/tests/cli_smoke.rs::history_commands_without_a_resolvable_default_base_fail_named`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
+- `crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent`
+- `crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
 - `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`
