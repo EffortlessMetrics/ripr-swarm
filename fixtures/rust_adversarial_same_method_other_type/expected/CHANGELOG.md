@@ -63,11 +63,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-
 ## Pending — rust_adversarial_same_method_other_type (6)
 
 Reason:
-RIPR-SPEC-0122: #5471 check prints the agent stub route only when the stub resolver produces a stub; this route was refused or found no gap, so it is replaced by the refusal reason or removed
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:
 `cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
@@ -80,7 +79,20 @@ Updated:
 ## Pending — rust_adversarial_same_method_other_type (7)
 
 Reason:
-RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
+RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (8)
+
+Reason:
+RIPR-SPEC-0122: #5471 trait-impl owner now resolves a stub called as <WhileSome as Iterator>::size_hint, so the route prints with --kind return_value instead of a refusal
 
 Command:
 `cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`

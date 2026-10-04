@@ -93,11 +93,10 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
 ## Pending — rust_field_construction_token_coincidence (9)
 
 Reason:
-RIPR-SPEC-0122: #5471 check prints the agent stub route only when the stub resolver produces a stub; this route was refused or found no gap, so it is replaced by the refusal reason or removed
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:
 `cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
@@ -109,19 +108,7 @@ Updated:
 ## Pending — rust_field_construction_token_coincidence (10)
 
 Reason:
-RIPR-SPEC-0122: #5471 agent stub --at resolves on the single-file seam shapes check already judged a gap, without re-classifying, so this route now yields a stub or a different refusal
-
-Command:
-`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — rust_field_construction_token_coincidence (11)
-
-Reason:
-RIPR-SPEC-0122: #5471 the stub route carries the finding probe family as --kind, and seams of that kind are tried first; refusals name that seam
+RIPR-SPEC-0224: exact-head review fixes; examined misses never displace oracle rows, error-variant and field gaps name the missing assertion (#5344)
 
 Command:
 `cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`

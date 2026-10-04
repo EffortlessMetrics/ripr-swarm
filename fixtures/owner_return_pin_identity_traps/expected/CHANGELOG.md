@@ -47,11 +47,10 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
 ## Pending — owner_return_pin_identity_traps (5)
 
 Reason:
-RIPR-SPEC-0122: #5471 check prints the agent stub route only when the stub resolver produces a stub; this route was refused or found no gap, so it is replaced by the refusal reason or removed
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:
 `cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
@@ -63,7 +62,7 @@ Updated:
 ## Pending — owner_return_pin_identity_traps (6)
 
 Reason:
-RIPR-SPEC-0122: #5471 the stub route carries the finding probe family as --kind, and seams of that kind are tried first; refusals name that seam
+RIPR-SPEC-0122: #5471 refusal names the current unsupported owner shapes (block-local or non-path impl, non-test cfg); verdicts unchanged
 
 Command:
 `cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`

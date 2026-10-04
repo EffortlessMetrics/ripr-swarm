@@ -142,11 +142,10 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
 ## Pending — error_variant_wrapper_callee_only_pin (13)
 
 Reason:
-RIPR-SPEC-0122: #5471 the stub route carries the finding probe family as --kind, and seams of that kind are tried first; refusals name that seam
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`

@@ -230,6 +230,17 @@ resolver produces a stub. When it refuses, the block is replaced by one line,
 has no seam in that function, nothing is printed. Only the default human
 format runs the resolver; JSON and `human-full` output are unchanged.
 
+The stub producer covers free functions and methods of inherent or trait
+impls at module level whose generics are lifetimes only; a trait-impl method
+is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
+struct literal the owner returns gets a stub asserting the whole return
+value. Among several inline test modules gated by plain `cfg(test)`, the stub
+goes into the one naming the owner, else the nearest after it, else the
+nearest before; modules gated by more than `cfg(test)` are never chosen. Impls
+with type or const generics, impls local to a block, owners behind a cfg in
+their own file that a plain `cargo test` build may not enable, and fields of a
+literal the owner does not return are refused by name.
+
 ### Triage states
 
 | State | Meaning |

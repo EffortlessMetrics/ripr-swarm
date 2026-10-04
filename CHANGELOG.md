@@ -9,8 +9,64 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- MCP wire names unified on `canonical_id` (same spelling the evidence
+  documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
+  `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
+  resource templates are `ripr://gap/{canonical_id}` and
+  `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
+  `resources/templates/list` adapt automatically; in-flight callers passing `gap_id`
+  get `invalid params` (#5209).
+### Added
+
+- `ripr check --help` now chooses one `--format` per task (eye review,
+  drill-in listing, machine JSON, Actions annotations, code scanning,
+  README badge, PR/CI badge, repo inventory, agent packets) above the
+  full group list, so a newcomer maps their job to a format without
+  re-reading the 22 values (#5211).
+- `ripr check --format json` caps the rendered `findings` array at
+  `RIPR_CHECK_FINDINGS_BYTES` emitted bytes (default 1,000,000; `0` removes
+  the cap). A bounded document renders the deterministic first-finding prefix
+  with full `summary` counts and a `run_limitations[]` entry
+  (`limited_findings_bound`, `downstream_consumable: false`) so it never
+  presents as complete; the gate refuses bounded inputs with a `config_error`
+  naming the budget repair (#5203). Gap ledgers generated from a bounded
+  check document propagate `run_limitations[]` so the gate refuses them like
+  the bounded check itself, and `pr-evidence` renders its internal check
+  input unbounded so routing counts the full finding set.
+- `ripr help --json` now projects a typed per-command `exit` object for the
+  0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
+  `check` findings still completing with 0, `gate evaluate` `config_error`=2
+  versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
+  scraping `stop_states` (#5066).
+
 ### Fixed
 
+- Repair attempts: concurrent `ripr agent repair --phase after` invocations
+  against one attempt no longer lose a verdict to a last-writer-wins
+  manifest replace. Manifest commits serialize on a short-held exclusive
+  OS lock with base revalidation, so exactly one after phase commits and
+  the loser gets a typed retry refusal instead of a silent overwrite
+  (#5287).
+- `ripr pilot`, repo exposure and the editor no longer report a seam as
+  `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
+  failed to trace the path to it. A seam with no related test now reads
+  `opaque`, with the limit and a witness named in its reach evidence, when a
+  test may reach it through an unresolved helper chain, macro, or trait
+  dispatch (`to_string()` running `Display::fmt`). At semver `280ebcb6edac`
+  `ungripped` falls from 505 seams to 1, and all 12 seams the mutation spot
+  check (#5295) found caught by real mutants now read `opaque`. A seam no
+  test path reaches stays `ungripped` (RIPR-SPEC-0230, #5411).
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
+- `ripr help --all` now names `ripr help --json` and excepts that route
+  from the global `-v` claim. The default `More:` line and `cmd:help`
+  `json_support: true` already landed with #5398; the exhaustive screen
+  was still a discovery dead end (#5266 residual).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
@@ -18,6 +74,12 @@ are scoped or reviewed.
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
   filled.
+- Mutation spot-check: `--mutants-arg <name>=<arg>` (#5475) passes selection
+  arguments such as `--workspace`, `--file` or `--re` to the cargo-mutants run
+  the harness starts, records them in the receipt, and marks scoreboard samples
+  from such runs. Arguments the harness owns or that cannot take effect are
+  refused, including bundled short flags such as `-vj8` and
+  `--minimum-test-timeout`; `-V` (`--unviable`) is accepted (#5565).
 - CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
   the default base and HEAD each resolve to the same commit after analysis (for
   example `origin/HEAD` tracking the checked-out branch in a clone of a feature
@@ -81,7 +143,21 @@ are scoped or reviewed.
   provider, and `ripr agent repair --phase before` without `--seam-id` points
   to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
   not seam IDs.
-
+- Tiny repositories are fast again: `ripr check` on a ~20-file crate no
+  longer pays ~0.3 s of fixed waiting. Every `git`/`cargo` subprocess wait
+  slept a fixed 50 ms after spawn although the probes exit in ~3 ms (8 probes
+  per `check`); the wait now backs off from 1 ms to the same 50 ms ceiling.
+  The progress heartbeat thread is woken on the terminal stage instead of
+  finishing its 50 ms tick, `pilot` renders each `repo-exposure.json` seam
+  once instead of once per pass (subject, hash, write) for the first 64 MiB
+  of rendered seams (only seams past that are rendered per pass), and pilot
+  ranking computes each seam's rank key once.
+  Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
+  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s,
+  `check --format json` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s, `explain`
+  0.38/0.26/0.38 s -> 0.04/0.03/0.05 s, `doctor` 0.21 s -> 0.07 s, `pilot`
+  0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
+  -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -130,6 +206,23 @@ are scoped or reviewed.
   actionable receipt status. Retained evidence and recorded finish admission
   remain unchanged. Durable reads run off the async executor; supported stdio
   request admission remains serialized through reply flush (#5399).
+
+- MCP durable attempts at a current HEAD use the selected CLI attempt's next
+  action: a finished result offers none, and failed or open-gap work starts a
+  new before phase. Retained typed packet routes remain available only for a
+  current after continuation; a restart display never supplies typed command
+  authority. Retained receipts and freshness refusals are unchanged (#5413).
+- Gap findings name every related test ripr examined and say why each one
+  misses the change: no call path, no assertion, an assertion that does not
+  observe the changed value, an assertion ripr could not credit, a weak
+  assertion, a missing boundary input, or an assertion that never names the
+  changed expression. A finding no longer says "Related tests were found", or
+  reports `reach: yes`, while listing none (#5344, #5329). JSON, the context
+  packet and MCP carry `related_tests[].miss` and `why`; LSP hover shows the
+  reason and diagnostics link the examined tests. `ripr explain` adds a "Why
+  this verdict" section: each examined test with the assertion it was judged
+  by, what a test would need to change the verdict, and what each stop reason
+  means (#5356). No verdict changes.
 
 ### Changed
 
@@ -305,6 +398,27 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: authored subjects. Three small crates written for the
+  corpus add 23 runtime-labeled cases covering the verdicts and probe
+  families the real crates left empty: field construction, call deletion,
+  side effect, error path, static unknown and non-arithmetic return values.
+  ripr now credits 6 authored lines, and 3 of those credits are false
+  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
+  cases are reported apart from upstream ones under `by_origin`, because
+  they were chosen to fill cells: the upstream rates stay 10 of 20 false
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
+- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
+  specs define and no corpus case exercised: assertions that never run
+  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
+  Result matches, `matches!` and `return Err` oracles, self-computed
+  expected values, named-constant and split-test boundaries, macro and
+  helper-chain reach, scanner and recursive helpers, cross-crate tests,
+  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
+  corpus's first silent verdict). Two changed-`let` cases exercise the
+  retarget projection. Authored rates now read 23 of 36 false actionable
+  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
