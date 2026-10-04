@@ -29,6 +29,9 @@ const DEFAULT_ROOT: &str = "target/ripr/corpus";
 const MANIFEST_KIND: &str = "ripr_rust_corpus_manifest";
 const MANIFEST_SCHEMA_VERSION: &str = "1";
 const INDEX_FILE: &str = "index.json";
+/// Written inside `.git` after a successful fetch, so the working tree stays
+/// clean and only checkouts this command created are ever replaced.
+const OWNER_MARKER: &str = "ripr-corpus-checkout";
 const INDEX_SCHEMA_VERSION: &str = "ripr-rust-corpus-index-v1";
 const TIER_FAST: &str = "fast";
 const TIER_FULL: &str = "full";
@@ -845,12 +848,11 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     // empty one, or a git checkout whose origin is this repo's URL. Anything
     // else under --root (a user's own clone, notes, another project) is left
     // alone and the fetch for this repo is refused.
-    if dir.exists() && !is_replaceable_checkout(repo, dir, timeout) {
+    if dir.exists() && !is_replaceable_checkout(dir) {
         return Err(format!(
-            "{} exists and is not an empty directory or a corpus checkout of {}; \
+            "{} exists and is neither empty nor a checkout created by rust-corpus fetch; \
              refusing to replace it. Move or delete it yourself, or pass a different --root",
-            dir.display(),
-            repo.url
+            dir.display()
         ));
     }
     if dir.exists() {
@@ -879,6 +881,9 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
         timeout,
     )?;
     verify_pins(repo, dir, timeout)?;
+    let marker = dir.join(".git").join(OWNER_MARKER);
+    fs::write(&marker, format!("{}\n", repo.url))
+        .map_err(|err| format!("write ownership marker {}: {err}", marker.display()))?;
     Ok(false)
 }
 
@@ -897,12 +902,12 @@ fn previous_index_entries(index_path: &Path, corpus_version: &str) -> Vec<Value>
     previous["repos"].as_array().cloned().unwrap_or_default()
 }
 
-fn is_replaceable_checkout(repo: &RepoEntry, dir: &Path, timeout: Duration) -> bool {
+/// An origin URL alone does not prove ownership (a user's own clone of the
+/// same repository matches it), so a non-empty directory is replaceable only
+/// when it carries the marker a previous fetch wrote.
+fn is_replaceable_checkout(dir: &Path) -> bool {
     let empty = fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none());
-    empty
-        || (dir.join(".git").exists()
-            && git(dir, &["config", "--get", "remote.origin.url"], timeout)
-                .is_ok_and(|origin| origin == repo.url))
+    empty || dir.join(".git").join(OWNER_MARKER).is_file()
 }
 
 /// Why a checkout is not usable as the pinned subject, or `None` when it is.
@@ -1286,10 +1291,10 @@ mod tests {
         let dir = root.join(&repo.id);
 
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-        assert!(is_replaceable_checkout(&repo, &dir, timeout));
+        assert!(is_replaceable_checkout(&dir));
 
         fs::write(dir.join("notes.txt"), "mine").map_err(|err| err.to_string())?;
-        assert!(!is_replaceable_checkout(&repo, &dir, timeout));
+        assert!(!is_replaceable_checkout(&dir));
         let refused = materialize(&repo, &dir, timeout);
         assert_eq!(
             refused
@@ -1299,15 +1304,12 @@ mod tests {
         );
         assert!(dir.join("notes.txt").exists(), "user file must survive");
 
+        // A user's own clone of the same repository is not ours to replace.
         git(&dir, &["init", "--quiet"], timeout)?;
-        git(
-            &dir,
-            &["remote", "add", "origin", "https://github.com/someone/else"],
-            timeout,
-        )?;
-        assert!(!is_replaceable_checkout(&repo, &dir, timeout));
-        git(&dir, &["remote", "set-url", "origin", &repo.url], timeout)?;
-        assert!(is_replaceable_checkout(&repo, &dir, timeout));
+        git(&dir, &["remote", "add", "origin", &repo.url], timeout)?;
+        assert!(!is_replaceable_checkout(&dir));
+        fs::write(dir.join(".git").join(OWNER_MARKER), &repo.url).map_err(|err| err.to_string())?;
+        assert!(is_replaceable_checkout(&dir));
         assert_eq!(
             checkout_problem(&repo, &root.join("absent"), timeout).as_deref(),
             Some("checkout missing")

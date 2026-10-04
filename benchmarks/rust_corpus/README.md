@@ -37,9 +37,12 @@ HEAD and its first parent against the manifest. It reuses an existing
 checkout only when the pins match and no tracked file is modified, so a
 lane that edited a checkout gets the pinned state back on the next fetch.
 Untracked build output does not force a refetch. `fetch` replaces only an
-empty directory or a git checkout whose `origin` is that repository's URL. It
-refuses to touch anything else under `--root`, such as your own clone, so
-pointing `--root` at an existing source tree is safe. `--repo <id>` selects
+empty directory or a checkout that an earlier `fetch` created; it marks those
+with `.git/ripr-corpus-checkout`. Any other directory under `--root` makes the
+fetch for that repository fail with the path, and nothing is deleted. That
+covers your own clone of the same repository. A checkout fetched before the
+marker existed is still reused while it matches the pins, but it has to be
+deleted by hand before a re-fetch. `--repo <id>` selects
 individual repositories, and a partial fetch keeps the index entries an earlier
 fetch of the same `corpus_version` recorded for other repositories. Fetching is opt-in
 network and never runs on the default CI path. `cargo xtask rust-corpus check`
