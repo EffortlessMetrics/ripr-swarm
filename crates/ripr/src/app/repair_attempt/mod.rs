@@ -2803,6 +2803,35 @@ fn validate_trusted_head_surface(
     observed_changes: &[String],
     before_head: &str,
 ) -> Result<(), String> {
+    match trusted_head_surface_violations(root, policy, observed_changes, before_head)?.as_slice() {
+        [] => Ok(()),
+        [path, ..] => Err(format!(
+            "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
+        )),
+    }
+}
+
+/// The stable tail of the receipt's trusted-surface admission refusal. The
+/// after phase matches it to narrate the commit-first recovery when the
+/// refusal still fires mid-loop, so the shared vocabulary cannot drift
+/// between the refusing validator and its narration (#5262).
+pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surface";
+
+/// The repository paths a receipt would refuse for this head: tracked paths
+/// that differ from `head` and untracked paths the attempt observably wrote,
+/// filtered to the paths outside the attempt's allowed edit surface. An empty
+/// list means the surface is trusted; the list is evidence for the caller's
+/// refusal, not a failure by itself. The receipt admits only when the list is
+/// empty, and the before phase runs the same inventory over the freshly read
+/// HEAD to refuse a dirty production premise before any attempt exists
+/// (#5262), where a dirty allowed-surface test file stays allowed because the
+/// loop expects the focused test edit.
+pub(crate) fn trusted_head_surface_violations(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    head: &str,
+) -> Result<Vec<String>, String> {
     let tracked = git_paths(
         root,
         &[
@@ -2811,7 +2840,7 @@ fn validate_trusted_head_surface(
             "--no-ext-diff",
             "--name-only",
             "-z",
-            before_head,
+            head,
             "--",
         ],
     )?;
@@ -2823,14 +2852,11 @@ fn validate_trusted_head_surface(
     let written_untracked = untracked
         .into_iter()
         .filter(|path| observed.contains(path.as_str()));
-    for path in tracked.into_iter().chain(written_untracked) {
-        if !policy.allows_path(&path) {
-            return Err(format!(
-                "repair receipt observed repository path outside trusted edit surface: {path}"
-            ));
-        }
-    }
-    Ok(())
+    Ok(tracked
+        .into_iter()
+        .chain(written_untracked)
+        .filter(|path| !policy.allows_path(path))
+        .collect())
 }
 
 /// Cooperative deadline for the trusted-surface git inventory (#2303, #4363).
@@ -3922,6 +3948,68 @@ mod tests {
                     "a committed production change must block the receipt: {other:?}"
                 )),
             }
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// The surface inventory's boundary is the allowed edit surface, not
+    /// worktree cleanliness (#5262): a dirty focused test file inside the
+    /// allowed surface is the loop's expected mid-loop edit and is not a
+    /// violation, while the same inventory refuses dirty production content
+    /// outside it. The before-phase premise gate shares this function, so the
+    /// production-vs-test boundary is pinned at the shared owner.
+    #[test]
+    fn trusted_surface_violations_allow_a_dirty_test_file_and_name_production_only()
+    -> Result<(), String> {
+        let root = test_repo_root("trusted-surface-boundary")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(root.join("tests"))
+                .map_err(|error| format!("create tests dir: {error}"))?;
+            std::fs::write(root.join("tests/target.rs"), "#[test]\nfn focused() {}\n")
+                .map_err(|error| format!("write test: {error}"))?;
+            run_git(&root, &["add", "tests/target.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/target.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+
+            // A tracked, committed, then dirtied allowed-surface test file is
+            // a tracked difference from HEAD that the surface allows.
+            std::fs::write(root.join("tests/target.rs"), "#[test]\nfn stronger() {}\n")
+                .map_err(|error| format!("edit test: {error}"))?;
+            let violations = trusted_head_surface_violations(&root, &policy, &[], &head)?;
+            if !violations.is_empty() {
+                return Err(format!(
+                    "a dirty allowed-surface test file must not violate the surface: {violations:?}"
+                ));
+            }
+
+            // The same dirty test edit plus a tracked, worktree-modified
+            // production file violates exactly the production path: the
+            // issue's premise is a committed file modified but not
+            // recommitted, which untracked content alone would not exercise.
+            std::fs::write(root.join("src.rs"), "pub fn base() {}\n")
+                .map_err(|error| format!("write production file: {error}"))?;
+            run_git(&root, &["add", "src.rs"])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-qm", "production"])?;
+            std::fs::write(root.join("src.rs"), "pub fn drift() {}\n")
+                .map_err(|error| format!("modify production file: {error}"))?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let violations = trusted_head_surface_violations(&root, &policy, &[], &head)?;
+            if violations != vec!["src.rs".to_string()] {
+                return Err(format!(
+                    "dirty production content must be the only violation: {violations:?}"
+                ));
+            }
+            Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
         result

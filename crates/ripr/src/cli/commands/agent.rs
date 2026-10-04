@@ -751,8 +751,9 @@ struct AfterPhaseRefusalContext {
     )>,
     narration: Vec<String>,
     /// Set only at a deliberate named refusal (diverged HEAD, drifted
-    /// analysis inputs, a no-movement verify refusal, or a replaced
-    /// trust-binding manifest): a refusal the command narrates with its
+    /// analysis inputs, a no-movement verify refusal, a replaced
+    /// trust-binding manifest, or a receipt refused on trusted-surface
+    /// grounds #5262): a refusal the command narrates with its
     /// cause and recovery before returning. Only this maps to the decision
     /// exit code 3; operational errors after attempt selection (an
     /// unreadable retained packet or manifest, a failed snapshot write,
@@ -886,6 +887,30 @@ fn run_agent_repair_phase(
                     format!("{error} No workflow was prepared and no repair attempt was started.")
                 },
             )?;
+
+            // Fail early on a dirty production premise (#5262): the repair
+            // loop pins the repository at its before phase, so tracked
+            // content that already differs from HEAD outside the allowed
+            // test surface would silently pass the edit cage (the baseline
+            // records it as the before state) and only refuse the receipt
+            // after the whole attempt was consumed. The inventory is the
+            // receipt's own, so its boundary is identical: a dirty focused
+            // test file inside the allowed surface stays allowed.
+            let premise_head = crate::agent::artifact::current_git_head(&root)?;
+            let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
+                &root,
+                &policy,
+                &[],
+                &premise_head,
+            )?;
+            if !premise_violations.is_empty() {
+                return Err(before_phase_dirty_premise_refusal(
+                    &seam_id,
+                    &root,
+                    store_ref,
+                    &premise_violations,
+                ));
+            }
 
             // Compose existing commands: start (creates workflow + brief) +
             // packet. The start step's `Next: ripr check ...` hint is dropped
@@ -1275,6 +1300,23 @@ fn run_agent_repair_phase(
                             }
                         }
                     }
+                }
+                // The receipt's trusted-surface refusal is a deliberate named
+                // refusal (#5262): the attempt is terminal, and the bare
+                // one-liner never said the production premise must be
+                // committed first. Narrate the cause and the restart route so
+                // an agent that still hits it mid-loop can recover, and let
+                // the narration ride into the attempt record that
+                // `agent status` reports.
+                if let Err(error) = &receipt_result
+                    && error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
+                {
+                    for line in repair_after_trusted_surface_recovery_lines(
+                        &root, store_ref, &attempt, error,
+                    ) {
+                        refusal.narrate(line);
+                    }
+                    refusal.typed = true;
                 }
                 receipt_result?;
                 apply_record_result?;
@@ -1724,6 +1766,60 @@ fn repair_after_input_drift_lines(
     lines
 }
 
+/// Recovery narration for an after phase whose finish passed the edit cage
+/// but whose receipt was refused because tracked repository content differs
+/// from the attempt's before-phase head outside the allowed test surface
+/// (#5262). The attempt is terminal: the dominant cause is a production
+/// change that was already uncommitted when the attempt started, which the
+/// before phase now refuses up front; a production edit made during the loop
+/// refuses identically. Names the refusal and the one route that recovers —
+/// repair the premise, then start a new attempt — mirroring the sibling
+/// refusal families' `to recover:` narration.
+fn repair_after_trusted_surface_recovery_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    error: &str,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let attempt_id = attempt.attempt_id.as_str();
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let seam_arg = shell_arg(&attempt.seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    vec![
+        format!("attempt `{attempt_id}` passed its edit cage but its receipt was refused: {error}."),
+        "the refusal means a tracked file differs from the attempt's before-phase head outside the allowed test surface: most often a production change that was already uncommitted when the attempt started, or a production edit made during the loop; the edit cage cannot see either as an edit of this attempt.".to_string(),
+        format!(
+            "to recover: if the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, undo it (`git checkout {} -- <path>`) or set it aside (`git stash`). Then start a new attempt: set your test edit aside (`git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",
+            attempt.repository_head
+        ),
+    ]
+}
+
+/// A before phase refused because tracked content already differs from HEAD
+/// outside the allowed test surface (#5262). Names the paths, states the
+/// production-vs-test boundary, and gives the commit-first route the late
+/// receipt refusal cannot offer because the attempt no longer exists. The
+/// caller has written nothing yet, so the tail says so explicitly.
+fn before_phase_dirty_premise_refusal(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    violations: &[String],
+) -> String {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let seam_arg = shell_arg(seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let first = violations.first().map(String::as_str).unwrap_or_default();
+    format!(
+        "repair attempt cannot start: tracked file(s) outside the allowed test surface already differ from HEAD: {}. The repair loop pins the repository at its before phase, so an uncommitted production change would pass the edit cage and only refuse the receipt at the end, burning the attempt; a dirty focused test file inside the allowed test surface is fine. to recover: commit the listed file(s) (for example `git commit -- {first}`), or restore them, then rerun `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before`. No workflow was prepared and no repair attempt was started.",
+        violations.join(", "),
+    )
+}
+
 /// A before phase refused because the seam's repair packet cannot bound a
 /// test-only edit. Names the seam and the reason in plain words, says that
 /// nothing was started, states the observable packet field (#4332 — the
@@ -2070,6 +2166,58 @@ mod tests {
                     "recovery line must rerun this after phase: {lines:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// The late trusted-surface refusal narrates like its sibling refusal
+    /// families (#5262): a cause line carrying the raw refusal, and a
+    /// `to recover:` line with the commit-first premise repair and the full
+    /// restart route. The narration is what `after_refusal_reason` folds into
+    /// the attempt record `agent status` reports.
+    #[test]
+    fn repair_after_trusted_surface_lines_name_cause_and_commit_first_recovery()
+    -> Result<(), String> {
+        use crate::app::repair_attempt::{RepairAttemptId, ResolvedRepairAttempt};
+
+        let attempt = ResolvedRepairAttempt {
+            attempt_id: RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567".to_string(),
+            )?,
+            seam_id: "seam:sample".to_string(),
+            repository_head: "abc123".to_string(),
+            manifest_path: PathBuf::from("attempt.json"),
+            before_snapshot_path: PathBuf::from("before.json"),
+            packet_path: PathBuf::from("packet.json"),
+        };
+        let root = Path::new("some-checkout");
+        let error = format!(
+            "repair receipt observed repository path {}: src/lib.rs",
+            crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL
+        );
+        let lines = repair_after_trusted_surface_recovery_lines(root, None, &attempt, &error);
+        if lines.len() != 3 {
+            return Err(format!(
+                "expected cause, boundary, and recovery lines, got {lines:?}"
+            ));
+        }
+        let joined = lines.join("\n");
+        for fragment in [
+            "src/lib.rs",
+            "outside trusted edit surface",
+            "to recover:",
+            "git commit -- <path>",
+            "--phase before",
+            "abc123",
+        ] {
+            if !joined.contains(fragment) {
+                return Err(format!("narration must name `{fragment}`:\n{joined}"));
+            }
+        }
+        if !lines[2].starts_with("to recover:") {
+            return Err(format!(
+                "recovery must be the explicit to-recover line: {lines:?}"
+            ));
         }
         Ok(())
     }
