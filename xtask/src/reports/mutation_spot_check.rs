@@ -56,6 +56,9 @@ const HARNESS_OWNED_MUTANTS_ARGS: &[&str] = &[
     "-j",
     "--timeout",
     "-t",
+    // cargo-mutants ignores the multiplier when --timeout is given, and the
+    // harness always gives it, so the receipt would record a no-op.
+    "--timeout-multiplier",
     "--manifest-path",
     "--shuffle",
     "--no-shuffle",
@@ -1078,7 +1081,7 @@ mod tests {
             "--mutants-arg",
             "hex=--re=decode",
             "--mutants-arg",
-            "hex=--timeout-multiplier=2",
+            "hex=--jobserver=false",
             "--mutants-arg",
             "hex=-Dx.diff",
         ]))?;
@@ -1087,7 +1090,7 @@ mod tests {
             Some(&vec![
                 "--file=src/lib.rs".to_string(),
                 "--re=decode".to_string(),
-                "--timeout-multiplier=2".to_string(),
+                "--jobserver=false".to_string(),
                 "-Dx.diff".to_string()
             ])
         );
@@ -1122,6 +1125,14 @@ mod tests {
             ),
             (
                 vec!["--run-mutants", "--mutants-arg", "hex=-t5"],
+                "would override how the harness runs",
+            ),
+            (
+                vec![
+                    "--run-mutants",
+                    "--mutants-arg",
+                    "hex=--timeout-multiplier=2",
+                ],
                 "would override how the harness runs",
             ),
             (

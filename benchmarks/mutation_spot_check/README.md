@@ -32,11 +32,14 @@ The receipt is `target/ripr/reports/mutation-spot-check.{json,md}`.
 
 Large repositories take hours to mutate in full. `--mutants-arg <name>=<arg>`
 passes one argument to that repository's cargo-mutants run, and can be
-repeated to sample a subset. The receipt records the arguments, so the run can
-be reproduced, and the scoreboard marks rates from runs with extra arguments.
+repeated. Use it to narrow the run (`--file`, `--re`) or to choose packages
+(`--package`, `--workspace`, which can widen it). The receipt records the
+arguments, so the run can be reproduced, and the scoreboard marks rates from
+runs with extra arguments.
 Each value is one argument (`--re=decode`, not `--re decode`). Options the
 harness owns or that would stop it writing outcomes, such as `--output`,
-`--jobs`, `--in-place`, `--manifest-path` or `--list-files`, are refused.
+`--jobs`, `--timeout-multiplier`, `--in-place`, `--manifest-path` or
+`--list-files`, are refused.
 
 Package selection follows cargo-mutants. In a workspace whose root is a
 package, it mutates only that package unless given `--workspace` or
