@@ -3,6 +3,34 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
+
+Pinned `rmcp` 3.5.0 answers pre-init `ping` in the handshake loop (any
+params, including handshake `_meta`) with `{}`. After `initialize`, the
+same SDK classifies a ping whose `params._meta` names `2026-07-28` as a
+discovery-lifecycle request and returns `-32601` with message `"ping"`.
+Empty-params ping on that session still succeeds, so that control is not
+proof. Route initialize-session ping from the negotiated peer version
+(`has_initialize`), not `RequestContext::protocol_version()` — that helper
+prefers request `_meta` over the session. Do not change
+`server/discover` ping rejection. Do not treat this as a `#5267` pre-init
+repair.
+
+## 2026-10-04: `help --json` must project the typed 0/2/3 exit contract (#5066)
+
+`stop_states` is free-text. An orchestrator that branches on process status
+cannot recover that `ripr check` exits 0 on `exposed` findings, that
+`gate evaluate` maps `config_error` to 2 and `blocked` to 3, or that
+standalone `agent verify` refuses with exit 3 and empty stdout. Put a closed
+`exit` object on every command row, pin the orchestrator-branching rows to
+the implemented `CommandError` / `gate evaluate` mapping, and bump
+`HELP_JSON_SCHEMA_VERSION`. The `config_error` / `blocked` tokens are owned
+by `output::gate` (`top_level_status`); the CLI exit map consumes those
+bytes. `ExitJson::GateEvaluate` still declares those names as fixed serde
+keys; a compile-time assertion requires the keys to match the producer
+tokens. Do not treat a limitation sentence or a "non-zero" stop-state as
+the contract.
+
 ## 2026-10-04: `help --json` must be named and self-reported (#5266)
 
 A machine-only route that human `ripr help` does not name is undiscoverable.
