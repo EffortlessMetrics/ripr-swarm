@@ -727,3 +727,13 @@ surface = "config"
 classification = "config"
 reason = "cargo-allow spec-system conformance fixtures for legacy TOML dialect validation (#1761/#1836)"
 covered_by = ["cargo xtask check-spec-format", "cargo xtask check-doc-index"]
+
+[[allow]]
+glob = "metrics/public-proof/*.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "generated"
+reason = "Committed scoreboard, verdict-corpus, mutation spot-check, first-run and agent-as-user receipts that docs/PUBLIC_PROOF.md is rendered from."
+generated_by = "cargo xtask public-proof --refresh-receipts"
+covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask public_proof"]
