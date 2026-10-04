@@ -12,7 +12,7 @@ pub(in crate::app) fn select_finding<'a>(
 /// Add location syntax guidance only after selection misses. Finding IDs are
 /// opaque: this helper never rejects a matched ID or changes locator matching.
 pub(in crate::app) fn location_selector_needs_syntax_hint(selector: &str) -> bool {
-    if selector.starts_with("probe:") {
+    if selector.starts_with("probe:") || selector.starts_with("repo-probe:") {
         return false;
     }
     let Some((file, line)) = selector.rsplit_once(':') else {
@@ -150,6 +150,8 @@ mod tests {
             "repo\\lib.rs:12",
             "path:with:colon.rs:12",
             "probe:src/lib.rs:predicate:missing",
+            "repo-probe:src_lib.rs:error_path:3bf8c64c",
+            "repo-probe:src_lib.rs:error_path:3bf8c64c.2",
             "missing-finding-id",
         ] {
             assert!(!location_selector_needs_syntax_hint(selector), "{selector}");

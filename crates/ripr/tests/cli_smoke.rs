@@ -2081,9 +2081,19 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
             .into());
         }
         let packet: serde_json::Value = serde_json::from_slice(&listed.stdout)?;
-        let finding = packet["findings"]
+        let findings = packet["findings"]
             .as_array()
-            .and_then(|findings| findings.first())
+            .ok_or("selector fixture must carry a finding set")?;
+        // Producer-shaped ID from probes::repo's retained emission control.
+        let missing_repo_id = "repo-probe:src_lib.rs:error_path:3bf8c64c";
+        if findings
+            .iter()
+            .any(|finding| finding["id"].as_str() == Some(missing_repo_id))
+        {
+            return Err("repo-probe negative control must be absent from this fixture".into());
+        }
+        let finding = findings
+            .first()
             .ok_or("selector fixture must produce a nonempty finding set")?;
         let id = finding["id"].as_str().ok_or("finding must carry an id")?;
         let line = finding["probe"]["line"]
@@ -2096,6 +2106,7 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                 ("src/lib.rs:abc", true, false),
                 (":::", true, false),
                 ("probe:not-a-real-id", false, false),
+                (missing_repo_id, false, false),
                 ("src/lib.rs:999999", false, false),
                 (id, false, true),
                 (locator.as_str(), false, true),
