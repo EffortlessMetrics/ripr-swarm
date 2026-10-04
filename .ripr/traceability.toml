@@ -11701,6 +11701,7 @@ code = [
 outputs = []
 metrics = [
   "unit_test_pass_rate",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0215"
@@ -11718,7 +11719,10 @@ tests = [
   "crates/ripr/src/domain/intervention_study.rs::tests::stopping_on_favorable_interim_is_rejected",
   "crates/ripr/src/domain/intervention_study.rs::tests::missing_grader_or_rubric_is_rejected",
   "crates/ripr/src/domain/intervention_study.rs::tests::protocol_mutation_after_first_attempt_requires_new_study_id",
+  "crates/ripr/src/domain/intervention_study.rs::tests::recorded_attempt_lock_cannot_be_cleared_under_the_same_study_id",
+  "crates/ripr/src/domain/intervention_study.rs::tests::mutation_cannot_ride_along_with_recording_the_first_attempt",
   "crates/ripr/src/output/intervention_study.rs::tests::json_and_markdown_derive_from_one_sealed_object",
+  "crates/ripr/src/output/intervention_study.rs::tests::markdown_rejects_a_stale_digest_after_post_seal_mutation",
   "crates/ripr/src/output/intervention_study.rs::tests::committed_valid_fixture_matches_sealed_example",
   "crates/ripr/src/output/intervention_study.rs::tests::corpus_falsifiers_are_rejected_with_preregistered_codes",
 ]
