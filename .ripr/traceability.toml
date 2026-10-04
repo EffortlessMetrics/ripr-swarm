@@ -11863,6 +11863,9 @@ outputs = [
 metrics = [
   "intervention_study_valid_protocols",
   "intervention_study_falsifiers_rejected",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0217"
 name = "Repair-attempt discovery selection and fresh-process resume"
 spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
