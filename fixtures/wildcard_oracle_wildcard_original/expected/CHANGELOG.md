@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wildcard_oracle_wildcard_original (2)
+
+Reason:
+RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_original --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

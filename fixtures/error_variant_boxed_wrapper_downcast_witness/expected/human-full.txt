@@ -161,10 +161,20 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 56)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) ) { return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into()); }`
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) )`
-  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source misses: no call to the changed code found; linked by name only; checked `if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("malformed source should produce ParseSummaryError::MalformedSource".into()); }`
-  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source misses: no call to the changed code found; linked by name only; checked `matches!(result, Err(ParseSummaryError::MalformedSource))`
+  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    ); misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
+}; misses: no call to the changed code found; linked by name only
+  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: matches!(result, Err(ParseSummaryError::MalformedSource)); misses: no call to the changed code found; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 11
   - source enum variant value ParseSummaryError::MalformedSource at line 11
   - source function argument value raw = "@bad;" at line 20
@@ -211,9 +221,19 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_parse_summary(raw).map_err(Into::into) (line 56)
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) ) { return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into()); }`
-  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) )`
-  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source misses: no call to the changed code found; linked by name only; checked `if !matches!(result, Err(ParseSummaryError::MalformedSource)) { return Err("malformed source should produce ParseSummaryError::MalformedSource".into()); }`
+  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:18 parse_summary_boxed_variant_propagates_malformed_source uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    ); misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
+}; misses: no call to the changed code found; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 11
   - source enum variant value ParseSummaryError::MalformedSource at line 11
   - source function argument value raw = "@bad;" at line 20
@@ -260,8 +280,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_checksum_summary(payload).map_err(Into::into) (line 67)
-  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ChecksumError>(), Some(ChecksumError::MalformedPayload) ) { return Err("checksum witness pinned the malformed-payload sibling".into()); }`
-  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ChecksumError>(), Some(ChecksumError::MalformedPayload) )`
+  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ChecksumError>(),
+Some(ChecksumError::MalformedPayload)
+) {
+return Err("checksum witness pinned the malformed-payload sibling".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: matches!(
+        error.downcast_ref::<ChecksumError>(),
+        Some(ChecksumError::MalformedPayload)
+    ); misses: assertion does not mention the changed expression
   - source function argument value payload = "payload?" at line 34
   - source enum variant value ChecksumError::MalformedPayload at line 37
   - source enum variant value ChecksumError::MalformedPayload at line 37
@@ -306,8 +334,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_checksum_summary(payload).map_err(Into::into) (line 67)
-  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ChecksumError>(), Some(ChecksumError::MalformedPayload) ) { return Err("checksum witness pinned the malformed-payload sibling".into()); }`
-  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ChecksumError>(), Some(ChecksumError::MalformedPayload) )`
+  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ChecksumError>(),
+Some(ChecksumError::MalformedPayload)
+) {
+return Err("checksum witness pinned the malformed-payload sibling".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:33 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: matches!(
+        error.downcast_ref::<ChecksumError>(),
+        Some(ChecksumError::MalformedPayload)
+    ); misses: assertion does not mention the changed expression
   - source function argument value payload = "payload?" at line 34
   - source enum variant value ChecksumError::MalformedPayload at line 37
   - source enum variant value ChecksumError::MalformedPayload at line 37
@@ -352,8 +388,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_render_summary(raw).map_err(Into::into) (line 81)
-  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) ) { return Err("render witness pinned the parse-summary variant instead".into()); }`
-  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) )`
+  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("render witness pinned the parse-summary variant instead".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "zhex" at line 48
   - source enum variant value ParseSummaryError::MalformedSource at line 51
   - source enum variant value ParseSummaryError::MalformedSource at line 51
@@ -398,8 +442,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_render_summary(raw).map_err(Into::into) (line 81)
-  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) ) { return Err("render witness pinned the parse-summary variant instead".into()); }`
-  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ParseSummaryError>(), Some(ParseSummaryError::MalformedSource) )`
+  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(
+error.downcast_ref::<ParseSummaryError>(),
+Some(ParseSummaryError::MalformedSource)
+) {
+return Err("render witness pinned the parse-summary variant instead".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:47 render_summary_observes_other_enum_variant uses strong exact value oracle: matches!(
+        error.downcast_ref::<ParseSummaryError>(),
+        Some(ParseSummaryError::MalformedSource)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "zhex" at line 48
   - source enum variant value ParseSummaryError::MalformedSource at line 51
   - source enum variant value ParseSummaryError::MalformedSource at line 51
@@ -444,7 +496,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_length_summary(raw).map_err(Into::into) (line 95)
-  - related test tests/errors.rs:61 length_summary_only_checks_is_err misses: assertion too weak to tell the old behavior from the new; checked `assert!(result.is_err())`
+  - related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err()); misses: assertion too weak to tell the old behavior from the new
   - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 62
 
 Weakness
@@ -487,7 +539,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_length_summary(raw).map_err(Into::into) (line 95)
-  - related test tests/errors.rs:61 length_summary_only_checks_is_err misses: assertion too weak to tell the old behavior from the new; checked `assert!(result.is_err())`
+  - related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err()); misses: assertion too weak to tell the old behavior from the new
   - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 62
 
 Weakness
@@ -530,8 +582,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 109)
-  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<GlyphError>(), Some(GlyphError::MalformedGlyph) ) { return Err("glyph variant witness requires the typed conversion".into()); }`
-  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<GlyphError>(), Some(GlyphError::MalformedGlyph) )`
+  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(
+error.downcast_ref::<GlyphError>(),
+Some(GlyphError::MalformedGlyph)
+) {
+return Err("glyph variant witness requires the typed conversion".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: matches!(
+        error.downcast_ref::<GlyphError>(),
+        Some(GlyphError::MalformedGlyph)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "#glyph" at line 69
   - source enum variant value GlyphError::MalformedGlyph at line 72
   - source enum variant value GlyphError::MalformedGlyph at line 72
@@ -576,8 +636,16 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_glyph_summary(raw).map_err(|error| error.to_string().into()) (line 109)
-  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper misses: assertion does not mention the changed expression; checked `if !matches!( error.downcast_ref::<GlyphError>(), Some(GlyphError::MalformedGlyph) ) { return Err("glyph variant witness requires the typed conversion".into()); }`
-  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<GlyphError>(), Some(GlyphError::MalformedGlyph) )`
+  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: if !matches!(
+error.downcast_ref::<GlyphError>(),
+Some(GlyphError::MalformedGlyph)
+) {
+return Err("glyph variant witness requires the typed conversion".into());
+}; misses: assertion does not mention the changed expression
+  - related test tests/errors.rs:67 glyph_summary_downcast_witness_on_stringified_wrapper uses strong exact value oracle: matches!(
+        error.downcast_ref::<GlyphError>(),
+        Some(GlyphError::MalformedGlyph)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "#glyph" at line 69
   - source enum variant value GlyphError::MalformedGlyph at line 72
   - source enum variant value GlyphError::MalformedGlyph at line 72
@@ -622,7 +690,10 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_theme_summary(raw).map_err(Into::into) (line 123)
-  - related test tests/errors.rs:82 theme_summary_ignores_matches_result misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ThemeError>(), Some(ThemeError::DuplicateTheme) )`
+  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses strong exact value oracle: matches!(
+        error.downcast_ref::<ThemeError>(),
+        Some(ThemeError::DuplicateTheme)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "&theme" at line 83
   - source enum variant value ThemeError::DuplicateTheme at line 86
 
@@ -666,7 +737,10 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_theme_summary(raw).map_err(Into::into) (line 123)
-  - related test tests/errors.rs:82 theme_summary_ignores_matches_result misses: assertion does not mention the changed expression; checked `matches!( error.downcast_ref::<ThemeError>(), Some(ThemeError::DuplicateTheme) )`
+  - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses strong exact value oracle: matches!(
+        error.downcast_ref::<ThemeError>(),
+        Some(ThemeError::DuplicateTheme)
+    ); misses: assertion does not mention the changed expression
   - source function argument value raw = "&theme" at line 83
   - source enum variant value ThemeError::DuplicateTheme at line 86
 

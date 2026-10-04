@@ -52,12 +52,14 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
-        if let Some(why) = crate::output::related_test_miss::related_test_miss_reason(
+        let why = crate::output::related_test_miss::related_test_miss_reason(
             test,
             &finding.activation.missing_discriminators,
-        ) {
-            // #5344: a test that misses says why, then shows the assertion
-            // it was judged by, so the claim can be checked in the source.
+        );
+        if let Some(why) = why.as_deref().filter(|_| test.is_unmatched()) {
+            // #5344: an examined test with no matched oracle says why it
+            // misses, then shows the assertion it was judged by, so the
+            // claim can be checked in the source.
             let mut line = format!(
                 "related test {}:{} {} misses: {why}",
                 display_path(&test.file),
@@ -84,6 +86,13 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         );
         if let Some(oracle) = &test.oracle {
             line.push_str(&format!(": {oracle}"));
+        }
+        // A matched row keeps its oracle projection and adds the reason it
+        // still misses, so the oracle kind and strength stay readable.
+        if let Some(why) = why {
+            let kept = line.trim_end_matches(';').len();
+            line.truncate(kept);
+            line.push_str(&format!("; misses: {why}"));
         }
         lines.push(line);
     }
