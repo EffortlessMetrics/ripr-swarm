@@ -799,7 +799,7 @@
         },
         {
           "path": "spare/src/lib.rs",
-          "sha256": "4b875d1719b1af757593b3c3ccefc287fe1372955ea87d1fddf74ac9d4aa334d"
+          "sha256": "96e8ac33339c391f29a8f44044eee6a0aa016e7ea5157acd8fadaf06458a6723"
         }
       ]
     },
@@ -5938,7 +5938,7 @@
       },
       "reasoning": "code_parses pins only the success value and long_code_is_rejected only checks is_err(), so returning NotDigit instead of TooLong passes every test. Spec cells: RIPR-SPEC-0103.",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -5993,7 +5993,7 @@
       },
       "reasoning": "blank_tag_downcasts_to_blank downcasts the boxed error and pins TagError::Blank, so boxing a string or swallowing the error fails it; no test loads a spaced tag, so boxing Blank for every error passes. Spec cells: RIPR-SPEC-0106 (boxed map_err(Into::into) wrapper).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6036,7 +6036,7 @@
       },
       "reasoning": "slot_zero_is_a_slot_error matches the Result with a loud Ok arm and an Err arm that panics unless the error downcasts to SlotError, so returning SlotError::Missing instead of Closed passes. Spec cells: RIPR-SPEC-0175 (downcast-only pin).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6080,7 +6080,7 @@
       },
       "reasoning": "unknown_unit_is_rejected pins Err(UnitError::Unknown) through a local assert_matches! macro, so the fallback arm returning Blank fails it. Spec cells: RIPR-SPEC-0002 (assert_matches-style exact error check), RIPR-SPEC-0120.",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "exposed",
@@ -6124,7 +6124,7 @@
       },
       "reasoning": "override_sets_attempts sets attempts to 5 before building, so the builder's default of 3 never reaches an assertion and changing it to 4 passes. Spec cells: RIPR-SPEC-0040 (builder override).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "exposed",
@@ -6174,7 +6174,7 @@
       },
       "reasoning": "page_size_defaults_to_fifty runs with OLD_ERRORS_PAGE_SIZE unset (as it was at labeling), so page_size() returns the constant and any other value fails the assert_eq. Spec cells: RIPR-SPEC-0048 (opaque config lookup).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6216,7 +6216,7 @@
       },
       "reasoning": "The recording mock asserts one call and the order id but never the amount, so doubling the fee passes. Spec cells: RIPR-SPEC-0040 (mock expectation mismatch).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6266,7 +6266,7 @@
       },
       "reasoning": "surcharge_starts_at_a_big_order feeds 1000 and 999 through big_order() and small_order() and pins both results, so moving the boundary either way fails it. Spec cells: RIPR-SPEC-0032 (activation input from a call expression).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6308,7 +6308,7 @@
       },
       "reasoning": "net_is_stable asserts a value equals itself, which no change to net() can fail. Spec cells: RIPR-SPEC-0005 (duplicative equality), RIPR-SPEC-0004.",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6357,7 +6357,7 @@
       },
       "reasoning": "Two identical tests pin tip(200) to 30, so either mutant fails both. Spec cells: RIPR-SPEC-0004 (duplicative tests stay credited, not penalized).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "credited",
         "full_checkout_classifications": [
           "exposed"
@@ -6407,7 +6407,7 @@
       },
       "reasoning": "The edit only adds spaces; rounding_halves_up pins 150 and 149 on either side of the half, so both mutants of the reformatted expression fail it. Spec cells: RIPR-SPEC-0002 (format-only edit).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "credited",
         "full_checkout_classifications": [
           "exposed"
@@ -6456,7 +6456,7 @@
       },
       "reasoning": "check_ratio is only an assert; equal_ratio_is_allowed and the should_panic test pin both sides of num <= den, so each mutant fails one. Spec cells: RIPR-SPEC-0133 (assert-only src fn without a production caller).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6504,7 +6504,7 @@
       },
       "reasoning": "quarter_share only calls share(1, 4), so den > 1 still passes while den > 4 panics on a denominator of 4. Spec cells: RIPR-SPEC-0133 (assert-only fn with a production caller).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6554,7 +6554,7 @@
       },
       "reasoning": "doubled_rate_is_fourteen pins twice!(base_rate), which calls base_rate, so any other rate fails it. Spec cells: RIPR-SPEC-0117 (macro that does not mention the owner).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6604,7 +6604,7 @@
       },
       "reasoning": "banner_brackets_the_title pins the full banner, which embeds title(), so any other title fails it. Spec cells: RIPR-SPEC-0117 (external macro).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
@@ -6647,7 +6647,7 @@
       },
       "reasoning": "help_mentions_json checks that the usage text contains --json, so renaming the flag fails it. Spec cells: RIPR-SPEC-0043 (observed help text).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6689,7 +6689,7 @@
       },
       "reasoning": "about_is_present only checks the text is non-empty, so rewording it passes. Spec cells: RIPR-SPEC-0043 (visible but unobserved text).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6731,7 +6731,7 @@
       },
       "reasoning": "version_prints calls print_version and checks nothing, so the printed text can change freely. Spec cells: RIPR-SPEC-0043 (opaque output sink).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6781,7 +6781,7 @@
       },
       "reasoning": "head_reads_the_first_byte pins head(&[5, 9]) to 6, so reading the second byte or flipping the low bit fails it. Spec cells: RIPR-SPEC-0168 (shared edge line).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
@@ -6830,7 +6830,7 @@
       },
       "reasoning": "no_arguments_exits_two runs the built binary through CARGO_BIN_EXE_tally and pins exit code 2, so any other usage code fails it. Spec cells: RIPR-SPEC-0166.",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -6872,7 +6872,7 @@
       },
       "reasoning": "The crate's only test runs sh -c echo with a CARGO_BIN_EXE token in its text and never runs the binary, so no test observes the banner width. The crate has no real CARGO_BIN_EXE invocation, so only the sh shape is in play. Spec cells: RIPR-SPEC-0166 (sh negative).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -6921,7 +6921,7 @@
       },
       "reasoning": "build.rs sets TALLY_LIMIT, which limit() reads through env!, and limit_is_sixty_four pins 64, so either neighbor fails it. Spec cells: RIPR-SPEC-0153 (a manifest-built build.rs still seeds probes).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -6971,7 +6971,7 @@
       },
       "reasoning": "sample_words lives in the out-of-line #[cfg(test)] mod tests; and counts_the_sample_words pins 3 words, so changing the sample fails it. Spec cells: RIPR-SPEC-0169, RIPR-SPEC-0153.",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "silent",
         "full_checkout_classifications": [],
         "excerpt_parity": "matched"
@@ -7019,7 +7019,7 @@
       },
       "reasoning": "fixture_line comes from a #[cfg(test)] include! and counts_the_fixture_fields pins 3 fields, so changing the fixture fails it. Spec cells: RIPR-SPEC-0169 (cfg(test) include!).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "silent",
         "full_checkout_classifications": [],
         "excerpt_parity": "matched"
@@ -7036,7 +7036,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value",
       "test_shape": "type_path_call_via_imported_dependency_type",
-      "hard_case": "The owner name is ambiguous across crates, and RIPR-SPEC-0172 admits the test through the type-path route because Gauge is imported at file level from the owner's declared dependency.",
+      "hard_case": "The owner name is ambiguous across crates only through a free fn, which cannot be a type-path target, so RIPR-SPEC-0172 admits the test through the type-path route because Gauge is imported at file level from the owner's declared dependency.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -7065,9 +7065,9 @@
           "silent"
         ]
       },
-      "reasoning": "panel's gauge_reads_forty_two imports meter::Gauge at file level and pins Gauge::reading() to 42, so either neighbor fails it; spare defines its own Gauge::reading, so the owner name is ambiguous across crates. Spec cells: RIPR-SPEC-0172 (T::owner() through a dependency).",
+      "reasoning": "panel's gauge_reads_forty_two imports meter::Gauge at file level and pins Gauge::reading() to 42, so either neighbor fails it; spare defines a free fn reading, so the owner name is ambiguous across crates without competing for the type path. Spec cells: RIPR-SPEC-0172 (T::owner() through a dependency).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -7114,9 +7114,9 @@
           "silent"
         ]
       },
-      "reasoning": "knob_level_is_seven pins Knob::level() to 7 where Knob is meter::Dial renamed, so either neighbor fails it; spare also defines Dial::level, and RIPR-SPEC-0172 refuses an aliased import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (aliased-import control).",
+      "reasoning": "knob_level_is_seven pins Knob::level() to 7 where Knob is meter::Dial renamed, so either neighbor fails it; spare also defines a free fn level, and RIPR-SPEC-0172 refuses an aliased import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (aliased-import control).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -7163,9 +7163,9 @@
           "silent"
         ]
       },
-      "reasoning": "lamp_gives_eight_hundred_lumens glob-imports meter and pins Lamp::lumens() to 800, so either neighbor fails it; spare also defines Lamp::lumens, and RIPR-SPEC-0172 refuses a glob import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (glob-import control).",
+      "reasoning": "lamp_gives_eight_hundred_lumens glob-imports meter and pins Lamp::lumens() to 800, so either neighbor fails it; spare also defines a free fn lumens, and RIPR-SPEC-0172 refuses a glob import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (glob-import control).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
@@ -7208,7 +7208,7 @@
       },
       "reasoning": "spare_meter_ticks_once imports spare::Meter, not meter::Meter, so changing meter's tick passes. Spec cells: RIPR-SPEC-0172 (wrong-dependency control).",
       "labeling_observation": {
-        "ripr_commit": "18ac0d5",
+        "ripr_commit": "b9d6f00",
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "no_static_path"
