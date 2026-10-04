@@ -393,12 +393,7 @@ fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
     use crate::cli::commands_options::InitCi;
-    use crate::output::first_pr::{
-        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-        REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// #4378: on Windows `ripr init --dry-run --root <drive>:/Temp/demo`
@@ -449,26 +444,13 @@ mod tests {
         );
     }
 
-    /// The workflow carries the shared proof-path labels (#3906) inside
-    /// single-quoted shell strings, so none may hold a single quote, and
-    /// every placeholder must be substituted.
+    /// Every render-time placeholder is substituted; the shared proof-path
+    /// labels (#3906) now render in `ripr reports ci-summary`, not the
+    /// workflow text.
     #[test]
-    fn generated_workflow_substitutes_shared_labels_into_single_quoted_strings() {
-        for text in [
-            REPAIR_AFTER_PHASE_LABEL,
-            REPAIR_AFTER_PHASE_STEP,
-            MANUAL_VERIFY_LABEL,
-            MANUAL_RECEIPT_LABEL,
-            VERIFY_AFTER_EDIT_LABEL,
-            RECEIPT_AFTER_VERIFY_LABEL,
-            NO_RECEIPT_BEFORE_REPAIR,
-        ] {
-            assert!(!text.contains('\''), "{text}");
-        }
+    fn generated_workflow_substitutes_every_placeholder() {
         let workflow = generated_github_actions_workflow();
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
-        assert!(workflow.contains(&format!("='{MANUAL_VERIFY_LABEL}'")));
-        assert!(workflow.contains(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'")));
     }
 
     /// #4726: the gate reads PR labels from `$GITHUB_EVENT_PATH`, so a run

@@ -1055,7 +1055,10 @@ summary leads with starts the repair where the test edit happens; the
 receipt. The summary labels the low-level verify and receipt commands as steps
 that run after the test edit.
 
-The workflow also writes a `RIPR advisory summary` step summary. It starts with
+The workflow also writes a `RIPR advisory summary` step summary with one
+command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
+reads the artifacts earlier steps wrote and prints a regeneration route for any
+that are missing or malformed instead of failing. The summary starts with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables

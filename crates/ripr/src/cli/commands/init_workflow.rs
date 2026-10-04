@@ -4,7 +4,8 @@
 //! a ~2,400-line raw string inline in `init.rs`, dwarfing the command logic
 //! around it. This module owns the generated workflow bytes; `init.rs` keeps
 //! only the init command surface. The template is stored as a head, the
-//! advisory-summary step ([`advisory_summary`]), and a tail, spliced in
+//! advisory-summary step ([`advisory_summary`], now one `ripr reports
+//! ci-summary` call), and a tail, spliced in
 //! source order; the assembled bytes are pinned by hash in the test below.
 //! `generated_github_actions_workflow` substitutes `@RIPR_...@` placeholders
 //! at render time; rendered behavior stays pinned by the
@@ -16,11 +17,6 @@
 mod advisory_summary;
 
 use crate::agent::loop_commands;
-use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
-use crate::output::first_pr::{
-    MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-    REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-};
 
 use advisory_summary::ADVISORY_SUMMARY_STEP;
 
@@ -1184,18 +1180,6 @@ pub(super) fn generated_github_actions_workflow() -> String {
     generated_workflow_template()
         .replace("@RIPR_VERSION@", env!("CARGO_PKG_VERSION"))
         .replace(
-            "@RIPR_REPAIR_AFTER_PHASE@",
-            &format!("{REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"),
-        )
-        .replace("@RIPR_MANUAL_VERIFY_LABEL@", MANUAL_VERIFY_LABEL)
-        .replace("@RIPR_MANUAL_RECEIPT_LABEL@", MANUAL_RECEIPT_LABEL)
-        .replace("@RIPR_VERIFY_AFTER_EDIT_LABEL@", VERIFY_AFTER_EDIT_LABEL)
-        .replace(
-            "@RIPR_RECEIPT_AFTER_VERIFY_LABEL@",
-            RECEIPT_AFTER_VERIFY_LABEL,
-        )
-        .replace("@RIPR_NO_RECEIPT_BEFORE_REPAIR@", NO_RECEIPT_BEFORE_REPAIR)
-        .replace(
             "target/ripr/pilot/repo-exposure.json",
             loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
         )
@@ -1278,14 +1262,15 @@ mod template_pin_tests {
     /// SHA-256 of the pre-extraction inline raw string
     /// (`9a9779116f239c59173b929cebb044c5de3685577c8218ff89cb8f7c7c9a4315`,
     /// base commit 08de7c3bf). The pin now guards against unintended template
-    /// edits; the only intended change since extraction replaced the
-    /// toolchain, rust-cache, and `cargo install` steps with the prebuilt
-    /// release download and the analysis-cache restore. The unrendered
-    /// template is the stable identity: rendering additionally substitutes
-    /// the crate version and shared labels, which the `generated_workflow_*`
-    /// tests pin at the rendered level.
+    /// edits; the intended changes since extraction replaced the toolchain,
+    /// rust-cache, and `cargo install` steps with the prebuilt release
+    /// download and the analysis-cache restore, and the advisory summary's
+    /// shell with `ripr reports ci-summary`. The unrendered template is the
+    /// stable identity: rendering additionally substitutes the crate version
+    /// and artifact paths, which the `generated_workflow_*` tests pin at the
+    /// rendered level.
     const TEMPLATE_SHA256: &str =
-        "fa208810f9edfcb3c26f1dad54e3120bed3f0eff1fb7c9a8543fd7ecb142cce1";
+        "4cb034a82890f201628565cc0c1a2f744b8039d18c94d62425c7bc820095f45d";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
