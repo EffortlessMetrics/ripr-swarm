@@ -1449,7 +1449,7 @@ fn evidence_promotion_human_oracle_line_rejects_diagnostic_overrides() {
 }
 
 #[test]
-fn evidence_promotion_semantic_assertions_retain_related_test_identity() {
+fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Result<(), String> {
     let assertions = vec![
         super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
             name: "observes_score".to_string(),
@@ -1462,7 +1462,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() {
     let original: serde_json::Value = serde_json::from_str(include_str!(
         "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
     ))
-    .unwrap();
+    .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
     let human =
         include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
     let inspect = |json: &serde_json::Value| {
@@ -1501,11 +1501,12 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() {
     let mut missing = original.clone();
     missing["findings"][0]
         .as_object_mut()
-        .unwrap()
+        .ok_or("canonical wildcard finding must be an object")?
         .remove("related_tests");
     assert!(!inspect(&missing).is_empty());
     missing["findings"] = serde_json::json!([]);
     assert!(!inspect(&missing).is_empty());
+    Ok(())
 }
 
 #[test]

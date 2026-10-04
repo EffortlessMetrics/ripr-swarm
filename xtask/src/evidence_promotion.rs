@@ -4542,7 +4542,7 @@ mod related_test_assertion_tests {
     use super::evidence_promotion_parse_assertion;
 
     #[test]
-    fn requires_source_identity() {
+    fn requires_source_identity() -> Result<(), String> {
         let original = serde_json::json!({
             "type": "expected_related_test",
             "name": "observes_score",
@@ -4554,7 +4554,10 @@ mod related_test_assertion_tests {
         assert!(evidence_promotion_parse_assertion("related_test_identity", 0, &original).is_ok());
         for field in ["name", "file", "line", "kind", "strength"] {
             let mut missing = original.clone();
-            missing.as_object_mut().unwrap().remove(field);
+            missing
+                .as_object_mut()
+                .ok_or("related-test assertion must be an object")?
+                .remove(field);
             assert!(
                 evidence_promotion_parse_assertion("related_test_identity", 0, &missing).is_err(),
                 "{field}"
@@ -4565,6 +4568,7 @@ mod related_test_assertion_tests {
         assert!(
             evidence_promotion_parse_assertion("related_test_identity", 0, &zero_line).is_err()
         );
+        Ok(())
     }
 }
 
