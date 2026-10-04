@@ -347,5 +347,5 @@ fn matcher_computation_and_asserted_result_have_different_runtime_grip() {
     let original = std::panic::catch_unwind(|| assert!(matches!(original_value, 2)));
     let wrong = std::panic::catch_unwind(|| assert!(matches!(wrong_value, 2)));
     assert!(matches!(original, Ok(())));
-    assert!(matches!(wrong, Err(_)));
+    assert!(wrong.is_err());
 }
