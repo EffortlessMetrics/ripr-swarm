@@ -190,6 +190,16 @@ pub(crate) fn render_check_with_config_and_progress(
     }
 }
 
+/// Unbounded JSON render for in-process consumers (#5203, Codex P1 on #5271).
+///
+/// `pr-evidence` runs its check in-process and routes from the full finding
+/// set; the findings-array byte budget protects external document consumers
+/// (agents, editors, CI logs), so it must not truncate a JSON string that
+/// never leaves the process. Same stamping as the `Json` arm, budget `None`.
+pub(crate) fn render_check_json_unbounded(output: &CheckOutput, config: &RiprConfig) -> String {
+    stamp_check_json(json::render_with_config(output, config, None), &output.root)
+}
+
 /// #4544: stamp the check JSON with the content digests of every file a gap
 /// ledger derived from it would name, read in this analysis run, so the
 /// ledger writer can copy them instead of hashing the workspace later.

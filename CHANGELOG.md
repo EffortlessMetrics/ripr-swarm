@@ -17,7 +17,10 @@ are scoped or reviewed.
   with full `summary` counts and a `run_limitations[]` entry
   (`limited_findings_bound`, `downstream_consumable: false`) so it never
   presents as complete; the gate refuses bounded inputs with a `config_error`
-  naming the budget repair (#5203).
+  naming the budget repair (#5203). Gap ledgers generated from a bounded
+  check document propagate `run_limitations[]` so the gate refuses them like
+  the bounded check itself, and `pr-evidence` renders its internal check
+  input unbounded so routing counts the full finding set.
 
 ### Fixed
 

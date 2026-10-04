@@ -1,4 +1,4 @@
-use super::{run_ripr, run_ripr_with_env, unique_temp_workspace};
+use super::{run_command_with_env, run_git, run_ripr, run_ripr_with_env, unique_temp_workspace};
 
 /// Top-level findings-array byte budget (#5203): a tiny budget renders the
 /// deterministic first-finding prefix with disclosed totals, `0` restores the
@@ -174,6 +174,137 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
                 .as_str()
                 .is_some_and(|text| text.contains("limited_findings_bound"))),
             "gate refusal must name the bound run state: {gate_errors:?}"
+        );
+        Ok(())
+    })();
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
+}
+
+/// Codex P1 on #5271: `pr-evidence` runs its check in-process and routes
+/// from the full finding set, so its internal render must ignore
+/// `RIPR_CHECK_FINDINGS_BYTES`. The bound protects external document
+/// consumers; applied to the internal input it silently under-counts severe
+/// gaps (pre-repair: `severe_gaps` 4 -> 1 under budget=1 with no disclosure).
+#[test]
+fn pr_evidence_internal_check_ignores_findings_byte_budget() -> Result<(), String> {
+    let root = unique_temp_workspace("pr-evidence-byte-budget");
+    let result = (|| {
+        let bin = env!("CARGO_BIN_EXE_ripr");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"pr_evidence_byte_budget\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn record_mark(values: &mut Vec<u32>) {\n    values.push(0);\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        run_git(&root, &["init", "-b", "master"])?;
+        run_git(&root, &["config", "user.email", "test@test.com"])?;
+        run_git(&root, &["config", "user.name", "Test"])?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", "base"])?;
+        run_git(&root, &["checkout", "-b", "work"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn record_mark(values: &mut Vec<u32>) {\n    values.push(1);\n}\n\npub fn tally(values: &[u32]) -> u32 {\n    values.iter().sum()\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        run_git(&root, &["commit", "-am", "work"])?;
+
+        let packet_path = root.join("target/ripr/pr/repo-exposure.json");
+        let read_packet = || -> Result<serde_json::Value, String> {
+            let text = std::fs::read_to_string(&packet_path)
+                .map_err(|error| format!("read PR evidence packet: {error}"))?;
+            serde_json::from_str(&text).map_err(|error| error.to_string())
+        };
+
+        // Baseline: the uncovered candidate-side change routes severe gaps.
+        let plain = run_command_with_env(bin, &root, &["pr-evidence"], &[])
+            .map_err(|error| format!("spawn ripr pr-evidence: {error}"))?;
+        assert!(
+            plain.status.success(),
+            "baseline pr-evidence: {}",
+            String::from_utf8_lossy(&plain.stderr)
+        );
+        let baseline = read_packet()?;
+        assert_eq!(baseline["status"], "advisory");
+        let severe = baseline["summary"]["severe_gaps"]
+            .as_u64()
+            .ok_or("baseline packet must carry severe_gaps")?;
+        assert!(
+            severe >= 2,
+            "fixture must yield >= 2 severe gaps to discriminate truncation, got {severe}"
+        );
+
+        // Setup: the underlying check really holds >= 2 findings, so a
+        // budget of 1 truncates. (`check` may exit nonzero with gaps; the
+        // packet runs above are the success-asserted surfaces.)
+        let root_arg = root.to_string_lossy().into_owned();
+        let diff_arg = root
+            .join("target/ripr/pr/pr.diff")
+            .to_string_lossy()
+            .into_owned();
+        let check = run_command_with_env(
+            bin,
+            &root,
+            &[
+                "check",
+                "--root",
+                root_arg.as_str(),
+                "--diff",
+                diff_arg.as_str(),
+                "--format",
+                "json",
+            ],
+            &[],
+        )
+        .map_err(|error| format!("spawn ripr check: {error}"))?;
+        let check_value: serde_json::Value = serde_json::from_slice(&check.stdout)
+            .map_err(|error| format!("fixture check JSON should parse: {error}"))?;
+        let total = check_value["findings"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0);
+        assert!(
+            total >= 2,
+            "fixture check must hold >= 2 findings, got {total}"
+        );
+
+        // Budgeted run: routing counts must match the baseline exactly —
+        // the internal render ignores the external document budget.
+        let bounded = run_command_with_env(
+            bin,
+            &root,
+            &["pr-evidence"],
+            &[("RIPR_CHECK_FINDINGS_BYTES", "1")],
+        )
+        .map_err(|error| format!("spawn budgeted ripr pr-evidence: {error}"))?;
+        assert!(
+            bounded.status.success(),
+            "budgeted pr-evidence: {}",
+            String::from_utf8_lossy(&bounded.stderr)
+        );
+        let budgeted = read_packet()?;
+        assert_eq!(budgeted["status"], "advisory");
+        for class in [
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "severe_gaps",
+        ] {
+            assert_eq!(
+                budgeted["summary"][class], baseline["summary"][class],
+                "pr-evidence {class} must ignore the external findings budget"
+            );
+        }
+        assert_eq!(
+            budgeted["summary"]["requires_targeted_mutation"],
+            baseline["summary"]["requires_targeted_mutation"],
+            "pr-evidence routing must ignore the external findings budget"
         );
         Ok(())
     })();

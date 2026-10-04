@@ -1991,9 +1991,14 @@ prefix only, so alignment rows always resolve inside the document; per-finding
 `canonical_gap_group_size` counts the analyzed group (a total, like
 `related_tests_total`). The gate refuses a bounded document at the pr-guidance,
 gap-ledger, and baseline positions with a `config_error` naming
-`limited_findings_bound` and the budget repair. The run exit code is unchanged
-(analysis completed); consumers must read `run_limitations[]` before treating
-`findings[]` as the full set.
+`limited_findings_bound` and the budget repair. Gap ledgers generated from a
+bounded check document (`reports gap-ledger --check-output`) propagate
+`run_limitations[]` unchanged, so the gate refuses the generated ledger like
+the bounded check itself. `pr-evidence` renders its internal check input
+unbounded: routing counts the full finding set regardless of the external
+budget, since that JSON never leaves the process. The run exit code is
+unchanged (analysis completed); consumers must read `run_limitations[]`
+before treating `findings[]` as the full set.
 
 Example (budget engaged after the first of 61 findings):
 

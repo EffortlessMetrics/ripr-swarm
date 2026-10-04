@@ -337,6 +337,80 @@ fn check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers() -> 
 }
 
 #[test]
+fn gate_refuses_ledger_generated_from_findings_bounded_check_output() -> Result<(), String> {
+    // #5203 follow-up to the Codex P1 on #5271: a ledger generated from a
+    // findings-bounded check document must carry the bound marker, or the
+    // gate evaluates a truncated prefix as a complete denominator. The
+    // fixture renders 1 of 2 findings (the alignment covers the rendered
+    // prefix only, exactly like the bounded producer); the gate must refuse
+    // the generated ledger, not evaluate the prefix.
+    let dir = temp_dir("gate-findings-bound-generated-ledger")?;
+    let check_output = serde_json::json!({
+        "schema_version": "0.2",
+        "findings": [
+            {"id": "rendered-prefix-finding", "classification": "reachable_unrevealed"}
+        ],
+        "summary": {"findings": 2},
+        "finding_alignment": {
+            "items": [
+                {"evidence_class": "presentation_text", "gap_state": "unknown"}
+            ]
+        },
+        "run_limitations": [
+            {
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 1 of 2 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set)",
+                "repair_route": "output/check-findings-budget"
+            }
+        ]
+    });
+    let source = serde_json::to_string(&check_output)
+        .map_err(|error| format!("serialize check output failed: {error}"))?;
+    let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: dir.display().to_string(),
+            generated_at: "test".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check-output.json".to_string(),
+            records_json: Ok(source),
+        },
+    );
+    let ledger_json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)?;
+    assert!(
+        ledger_json.contains("limited_findings_bound"),
+        "generated ledger must propagate the bound marker: {ledger_json}"
+    );
+    let ledger_path = write_temp_json(&dir, "gap-ledger.json", &ledger_json)?;
+
+    let mut gate_input = fixture_input(GateMode::VisibleOnly)?;
+    gate_input.pr_guidance = None;
+    gate_input.gap_ledger = Some(ledger_path);
+    let report = build_gate_decision_report(&gate_input)?;
+
+    assert_eq!(
+        report.status, "config_error",
+        "gate must refuse a ledger generated from a bounded run"
+    );
+    assert_eq!(report.summary.evaluated, 0);
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("limited_findings_bound")
+                && error.contains("RIPR_CHECK_FINDINGS_BYTES")),
+        "refusal must name the bound run state and the budget repair: {:?}",
+        report.config_errors
+    );
+
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_fails_closed_on_limited_partial_scope_gap_ledger() -> Result<(), String> {
     let dir = temp_dir("gate-partial-gap-ledger")?;
     let ledger = write_temp_json(
