@@ -160,11 +160,23 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 
 fn parse_named_path(value: &str, flag: &str) -> Result<(String, PathBuf), String> {
     match value.split_once('=') {
-        Some((name, path)) if !name.trim().is_empty() && !path.trim().is_empty() => {
+        Some((name, path)) if is_repo_name(name.trim()) && !path.trim().is_empty() => {
             Ok((name.trim().to_string(), PathBuf::from(path.trim())))
         }
-        _ => Err(format!("{flag} expects <name>=<path>, got `{value}`")),
+        _ => Err(format!(
+            "{flag} expects <name>=<path> with a name of letters, digits, `.`, `_` or `-` (it names files under {SCRATCH}), got `{value}`"
+        )),
     }
+}
+
+/// Repo names become scratch file names, so they may not carry separators.
+fn is_repo_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
 }
 
 fn parse_positive(value: &str, flag: &str) -> Result<u64, String> {
@@ -243,8 +255,15 @@ fn spot_check_repo(
             ));
         }
     };
-    let outcomes = read_json(&mutants_dir.join("outcomes.json"))?;
-    let mutant_records = read_json(&mutants_dir.join("mutants.json"))?;
+    let read_mutants_out = |file: &str| {
+        read_json(&mutants_dir.join(file)).map_err(|err| {
+            format!(
+                "{err}\nexpected a cargo-mutants mutants.out directory for `{name}` containing outcomes.json and mutants.json"
+            )
+        })
+    };
+    let outcomes = read_mutants_out("outcomes.json")?;
+    let mutant_records = read_mutants_out("mutants.json")?;
 
     let calibration = run_text(
         &path_arg(binary),
@@ -759,6 +778,19 @@ fn spot_check_markdown(report: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_names_cannot_escape_the_scratch_directory() -> Result<(), String> {
+        let (name, _) = parse_named_path("semver=../corpus/semver", "--repo")?;
+        assert_eq!(name, "semver");
+        for bad in ["../x=/tmp/x", "a/b=/tmp/x", "..=/tmp/x", "=/tmp/x"] {
+            let Err(err) = parse_named_path(bad, "--repo") else {
+                return Err(format!("`{bad}` should be refused"));
+            };
+            assert!(err.contains("letters, digits"), "{err}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn original_operator_reads_replace_and_delete_names() {
