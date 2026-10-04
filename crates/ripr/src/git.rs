@@ -1856,11 +1856,13 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
     }
 
     /// #5348: a child that exits in a few milliseconds must not cost a full
-    /// 50 ms poll interval. Up to 20 trials, stopping at the first under the bound, absorb load spikes.
+    /// 50 ms poll interval. Up to 20 trials, stopping at the first under the
+    /// bound, absorb load spikes. The child sleeps 10 ms so the first
+    /// `try_wait` always sees it running; an `exit 0` child could be reaped
+    /// before that first poll and pass without exercising the backoff.
     /// Negative experiment: with the pre-#5348 fixed 50 ms sleep restored in
-    /// `poll_child`, the first `try_wait` right after spawn sees a running
-    /// child in every trial and each trial takes >= 50 ms. Unix only: a
-    /// Windows `cmd` start can itself take tens of milliseconds.
+    /// `poll_child`, every trial takes >= 50 ms. Unix only: a Windows `cmd`
+    /// start can itself take tens of milliseconds.
     #[cfg(unix)]
     #[test]
     fn poll_child_returns_promptly_for_a_fast_exiting_child() -> Result<(), String> {
@@ -1874,7 +1876,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             }
             let mut command = Command::new("sh");
             command
-                .args(["-c", "exit 0"])
+                .args(["-c", "sleep 0.01"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
