@@ -537,7 +537,9 @@ agent action:
   the opacity and document the intent.
 ```
 
-The limitation names the test and the call path ripr could not trace. When the
+The limitation names the test and the call path ripr could not trace. Trait-dispatch
+evidence can name a production function that tests may call instead of a test;
+then find the tests that call it. When the
 named test exercises the seam and asserts on the changed value, the seam needs
 no new test; a test that only runs the code is not enough. See
 [Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).

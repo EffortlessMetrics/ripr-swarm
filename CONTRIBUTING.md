@@ -70,7 +70,7 @@ Each PR should include:
   comment (`<!-- section: Fixed -->`), and write the entry below it in the
   prose style of `CHANGELOG.md`, ending with the issue or PR reference. Two PRs
   that each add a file never conflict. The fragments are folded into
-  `Unreleased` at the release cut; existing `CHANGELOG.md` entries stay put.
+  `Unreleased` by hand at the release cut (no tool does it); existing `CHANGELOG.md` entries stay put.
   Sections are listed in [Changelog policy](docs/CHANGELOG_POLICY.md)
 - traceability from spec to tests to code for behavior changes
 
