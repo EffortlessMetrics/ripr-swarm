@@ -14,6 +14,9 @@ cargo xtask scale-cliff-benchmark --sizes 250,1000,4000,16000
 cargo xtask scale-cliff-benchmark --repo /path/to/rust --base HEAD~3 --timeout-ms 900000
 ```
 
+`--mode` and `--base` apply to `check` only; `pilot` always analyzes the whole
+repository. `--sizes` is ignored when `--repo` is given.
+
 The receipt (`target/ripr/reports/scale-cliff-benchmark.{json,md}`) records
 wall time, peak RSS (GNU `time -v`, Linux runners only; `null` elsewhere),
 check finding counts, and a log-log scaling exponent across synthetic sizes
@@ -30,7 +33,10 @@ with name-colliding code (`--repo`).
 
 ## Recorded observations (2026-10-04, `a7a089e`, release build, 4 cores, 15 GB)
 
-One cold run each; single-threaded (about 100% of one core). `check` is
+One cold run each; single-threaded (about 100% of one core). The 160-crate
+row, the real-repo rows and the rust-lang/rust timeout rows (with their RSS) were
+measured by hand with an out-of-tree wrapper, not by this command: the generator
+builds a single crate, and a timed-out run records no peak RSS. `check` is
 `--mode draft` with a small diff and the index cap raised.
 
 | Corpus | Files | check | pilot |
@@ -47,8 +53,9 @@ One cold run each; single-threaded (about 100% of one core). `check` is
 | bevy | 1,927 | 1.8 s, 142 MB | not run |
 | rust-lang/rust @ `1d9e68013` | 39,123 | see below | 227 s, 2.0 GB |
 
-Synthetic single-crate `check` grows with an exponent of about 1.4 across
-1,000 to 32,000 files: slow but still usable.
+Synthetic single-crate `check` is superlinear: about 1.2 between 1,000 and
+32,000 files overall, rising to about 1.4 between 16,000 and 32,000. Slow but
+still usable.
 
 ### rust-lang/rust
 
