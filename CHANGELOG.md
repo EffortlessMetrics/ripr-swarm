@@ -11,10 +11,58 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
+  the default base and HEAD each resolve to the same commit after analysis (for
+  example `origin/HEAD` tracking the checked-out branch in a clone of a feature
+  branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
+  skips it. The empty result alone is not a clean pass, and the warning names
+  `--base <ref>`. The stdout note and JSON are unchanged.
+- `ripr check`: the uncommitted-changes note no longer offers `--worktree`
+  as the remedy for untracked files, which the flag never sees. The tracked
+  wording now says "staged and unstaged tracked edits" (matching
+  `check --help`), and when untracked source/test files exist the note names
+  them and the real repair — stage first (`git add`, or `git add -N`
+  intent-to-add makes a new file visible to `--worktree`) — or `--diff PATH`.
+  The GitHub-format warning carries the same two states (#5258).
+
+- `ripr doctor`: a repository with no commits yet (unborn HEAD) records the
+  advisory `git_head` check naming the commit-first repair, and the
+  recommended first command becomes the commit-first guidance plus the
+  repository-free full-repo scan instead of a `ripr check` that cannot
+  resolve a base there (#5259).
+
+- `ripr help --json` is discoverable from human help: the `ripr --help`
+  `More:` block names the machine catalog route, and the catalog's own
+  `cmd:help` row reports `json_support: true` with limitations that name the
+  `--json` route, so the catalog no longer contradicts the parser that
+  accepts it (#5266).
+
+- LSP: `shutdown` publishes an empty diagnostic set for every previously
+  published URI on push clients (pull clients stay silent), matching the
+  root-change path. The terminal clear serializes with in-flight refresh
+  publication behind the shared transition guard, and a refresh cancelled
+  by shutdown no longer rolls back previous diagnostics afterward, so no
+  stale diagnostics survive shutdown (#5202).
+- The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
+  line, the `agent repair --phase before` next command (stdout and stderr) and
+  the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
+  form when the path holds an apostrophe or typographic quote, so the command
+  pastes as one argument in PowerShell. A new advisory `printed-command-paste`
+  lane pastes the commands from the main flows it runs into bash, zsh, sh and
+  PowerShell on Linux, macOS and Windows. Commands carried in JSON are checked
+  in Bash only.
+- `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
   `ripr.toml` already failed loudly.
+- The workflow from `ripr init --ci github` now explains a failed install.
+  When no prebuilt binary fits the runner and the runner has no `cargo`, the
+  Install ripr step fails with the cause and the fix (install Rust or add a
+  toolchain step) instead of a bare `cargo: command not found`. When ripr was
+  never installed, the advisory summary says so and points at that step's log
+  instead of rendering nothing.
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
@@ -33,14 +81,14 @@ are scoped or reviewed.
   The progress heartbeat thread is woken on the terminal stage instead of
   finishing its 50 ms tick, `pilot` renders each `repo-exposure.json` seam
   once instead of once per pass (subject, hash, write) when the rendered
-  seams fit 64 MiB, pilot ranking computes each seam's rank key once, and the
-  same-file assertion-helper pass parses only files with a candidate helper
-  call. Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
+  seams fit 64 MiB, and pilot ranking computes each seam's rank key once.
+  Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
   bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.08/0.04/0.05 s,
   `check --format json` 0.36/0.36/0.46 s -> 0.09/0.06/0.05 s, `explain`
   0.39/0.24/0.38 s -> 0.05/0.04/0.05 s, `doctor` 0.16 s -> 0.07 s, `pilot`
   0.93/0.30/0.35 s -> 0.38/0.15/0.13 s; cold-cache `pilot` 2.76/0.65/0.75 s
   -> 2.09/0.50/0.54 s. Output bytes are unchanged (#5348).
+
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -59,6 +107,19 @@ are scoped or reviewed.
   initialization options. A malformed value such as `checkMode: "Deep"` keeps
   the session up, discloses the `repo` or `default` fallback, and emits one
   `window/logMessage` warning naming the rejected key (#5092).
+
+- Editors: the LSP and VS Code accept the TypeScript verify commands ripr
+  emits (`npx --no-install jest <file>`, `pnpm exec vitest run <file>`,
+  `yarn ava <file>`, `bun run …`, `bun test`, `node --test`, and the
+  `npm|pnpm test --` / `yarn test` scripts), so a TypeScript repair no longer
+  reads as an unsafe command and loses its copy actions. VS Code's first-PR
+  view and actionable-gaps queue also accept the Python `python -m pytest`,
+  `pytest` and `python -m unittest` verify commands. `npx` without
+  `--no-install`, `bunx` and `dlx` stay refused, because they can fetch a
+  package from the registry. A test path that is absolute or leaves the
+  package through `..`, or a runner option such as `--config` or `-p`, is
+  refused too, since ripr's own verify commands name only package-relative
+  test paths and node ids.
 
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
@@ -89,6 +150,29 @@ are scoped or reviewed.
   cores and stops once one file already leaves every trusted macro
   unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
   (8.0s to 4.4s on two cores) with identical output.
+- The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
+  and report steps now run inside one `ripr reports ci-packet` step, which
+  keeps each old step's semantics: a log group per step, advisory failures
+  logged without stopping the rest, and the job failing only when the diff
+  capture or the gate fails, or a gate input fails under a blocking
+  `RIPR_GATE_MODE`. `--step NAME` reruns one step. The comment capture and
+  publish steps stay in YAML, so the token never reaches ripr. Regenerate the
+  workflow with `ripr init --ci github --force` to pick this up (#4696).
+
+- Performance: the per-seam evidence pass behind `ripr pilot` and repo
+  exposure runs on all cores, parses each related test file once instead of
+  once per seam, and resolves each seam's owner arguments once. Cold pilot
+  on a 4-core Linux host fell from 212s to 68s on ripr-swarm, 32s to 14s on
+  regex, 23s to 8.6s on ripgrep and 3.0s to 2.1s on serde, with pilot
+  artifacts byte-identical. Crediting same-file assertion helpers parses only
+  files that hold tests, in parallel, so a warm draft-mode check of a
+  four-file ripr-swarm diff fell from 16.1s to 12.6s. The transitive-reach
+  limitation check builds its call graph once per run and walks backwards
+  from each owner, so a 22-file rust-lang/rust diff checks in 24s instead of
+  594s, with identical JSON. The evidence pass also sorts each file's
+  functions once for owner lookup and collects each owner file's fixture names
+  once, so cold pilot on a generated one-file crate with 200,000 functions
+  takes 20s instead of 416s, with identical artifacts.
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
@@ -104,6 +188,16 @@ are scoped or reviewed.
   bash and `jq`, so the generated workflow drops from about 2,400 lines to
   about 1,150. The new command prints the same Markdown from the same
   artifacts and can be run locally against a `target/ripr` tree.
+
+- Classified seam-cache publication serializes borrowed records through a
+  bounded atomic writer. Encoded bytes are the primary single-entry/shard
+  ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, default 8 MiB); record
+  count remains a secondary cap. Ordinary store no longer deep-clones a shard
+  or retains the complete encoded `Vec<u8>`. One oversized record skips with
+  `skipped_oversized_record_index_*` instead of claiming a populated cache
+  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
+  through the related-test table the loader expects. Cache load/decode bounds
+  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
@@ -211,6 +305,31 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
+  reported as strongly gripped with every mutant missed. Neither is credited
+  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
+  reads limited. The spot-check miss on the otel line came from a build that
+  did not compile it, so its truth comes from `--features profiling-traced`.
+  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
+  #5332, #5335).
+- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
+  scoreboards (speed, ci, trust, paste, first_run) on a pinned
+  real-repository corpus: cold pilot and warm check time and peak memory,
+  generated workflow size, false-clean and self-contradicting output, and
+  paste safety of printed commands under a hostile repository path. Targets
+  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
+  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
+  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
+  nightly `DX Scoreboard` workflow runs it.
+
+- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
+  second semver and bytesize pins), now 32 cases across 10 subjects. The
+  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
+  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
+  `no_static_path_with_related_tests` contradictions, for 10 of 20
+  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
+  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
+  later (RIPR-SPEC-0219, #5332).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards
