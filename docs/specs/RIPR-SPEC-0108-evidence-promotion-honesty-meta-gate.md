@@ -69,6 +69,19 @@ There was no standing CI gate that read the byte-pinned golden and asserted "no
 finding may be `exposed` for charter member X, regardless of what the golden
 says it was re-blessed to."
 
+## Whole-wildcard discriminator controls
+
+The six `wildcard_oracle_*` fixtures cross original/wrong return values with
+whole wildcard, exact2 and guarded equality assertions. Each actual fast-mode
+output retains one return-value finding and one related test. Whole unguarded
+wildcards remain relational/weak and must not promote; exact and guarded
+controls retain strong discrimination. The independent `score(1) == 2`
+contract and native runtime control establish why the wildcard is vacuous.
+These synthetic charter members do not alter the selected real-Rust corpus
+denominator or establish representative-project accuracy. Golden assertions
+pin a nonzero finding count and oracle fields so empty findings cannot pass
+even when report-level scope or limitations are retained.
+
 ## Behavior
 
 ### The invariant

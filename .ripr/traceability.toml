@@ -7183,6 +7183,12 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
 ]
 fixtures = [
+  "fixtures/wildcard_oracle_wildcard_original",
+  "fixtures/wildcard_oracle_wildcard_wrong",
+  "fixtures/wildcard_oracle_exact_original",
+  "fixtures/wildcard_oracle_exact_wrong",
+  "fixtures/wildcard_oracle_guarded_original",
+  "fixtures/wildcard_oracle_guarded_wrong",
   "fixtures/benches_harness_evidence",
   "fixtures/evidence-promotion-honesty-corpus",
   "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
