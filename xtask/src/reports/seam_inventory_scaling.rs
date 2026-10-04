@@ -77,7 +77,7 @@ pub(crate) fn seam_inventory_scaling_benchmark(args: &[String]) -> Result<(), St
             })?;
         }
     }
-    fs::remove_dir_all(&cache_dir).ok();
+    let _ = fs::remove_dir_all(&cache_dir);
 
     let report = build_report(&options, &sizes);
     let json_text = serde_json::to_string_pretty(&report)
@@ -490,11 +490,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_sizes_rejects_zero_and_oversize() {
-        assert!(parse_sizes("0").is_err());
-        assert!(parse_sizes("12001").is_err());
-        assert!(parse_sizes("").is_err());
-        assert_eq!(parse_sizes("800,200,800").expect("dedup"), vec![200, 800]);
+    fn parse_sizes_rejects_zero_and_oversize() -> Result<(), String> {
+        for bad in ["0", "12001", ""] {
+            if parse_sizes(bad).is_ok() {
+                return Err(format!("parse_sizes({bad:?}) unexpectedly succeeded"));
+            }
+        }
+        let deduped = parse_sizes("800,200,800")?;
+        assert_eq!(deduped, vec![200, 800]);
+        Ok(())
     }
 
     #[test]
