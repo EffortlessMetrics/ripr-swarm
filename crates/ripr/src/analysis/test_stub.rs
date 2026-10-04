@@ -601,8 +601,8 @@ fn boundary_inputs(seam: &RepoSeam, signature: &OwnerSignature) -> Vec<(String, 
     }
 }
 
-/// True when `name` is a crate-root `pub const` in `source`. `pub(crate)`
-/// and private constants are not visible from a `tests/` file.
+/// True when `name` is a crate-root `pub const` in `source`. Nested-module,
+/// `pub(crate)`, and private constants are not visible from a `tests/` file.
 fn crate_public_const_declared(source: &str, name: &str) -> bool {
     if name.is_empty()
         || !name.starts_with(|c: char| c.is_ascii_uppercase())
@@ -612,12 +612,18 @@ fn crate_public_const_declared(source: &str, name: &str) -> bool {
     {
         return false;
     }
+    let mut depth = 0usize;
     source.lines().any(|line| {
-        let Some(rest) = line.trim().strip_prefix("pub const ") else {
-            return false;
-        };
-        rest.strip_prefix(name)
-            .is_some_and(|after| after.starts_with(|c: char| c == ':' || c.is_whitespace()))
+        let trimmed = line.trim();
+        let found = depth == 0
+            && trimmed.strip_prefix("pub const ").is_some_and(|rest| {
+                rest.strip_prefix(name)
+                    .is_some_and(|after| after.starts_with(|c: char| c == ':' || c.is_whitespace()))
+            });
+        depth = depth
+            .saturating_add(trimmed.chars().filter(|&c| c == '{').count())
+            .saturating_sub(trimmed.chars().filter(|&c| c == '}').count());
+        found
     })
 }
 

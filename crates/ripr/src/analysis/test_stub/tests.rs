@@ -476,6 +476,43 @@ pub fn gate(n: u8) -> u8 {
 }
 
 #[test]
+fn integration_stub_leaves_a_nested_module_public_constant_as_a_fill_in() -> Result<(), String> {
+    const SOURCE: &str = "mod limits {
+    pub const LIMIT: u8 = 3;
+}
+use limits::LIMIT;
+pub fn gate(n: u8) -> u8 {
+    if n > LIMIT { n } else { 0 }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "n > LIMIT",
+        SeamKind::PredicateBoundary,
+        boundary("n == LIMIT"),
+    )?;
+    let proposal = NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/gate.rs"),
+        owner: "demo::gate".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+    };
+    let inline = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(
+        inline.text.contains("let n: u8 = LIMIT;"),
+        "{}",
+        inline.text
+    );
+    let stub =
+        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
+    assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
+    assert!(stub.derived_inputs.is_empty());
+    Ok(())
+}
+
+#[test]
 fn integration_stub_rebases_crate_paths_and_keeps_a_public_constant() -> Result<(), String> {
     const SOURCE: &str = "pub const LIMIT: u8 = 3;
 pub struct Tag;
