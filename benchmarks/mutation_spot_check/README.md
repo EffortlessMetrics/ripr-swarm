@@ -33,7 +33,9 @@ The receipt is `target/ripr/reports/mutation-spot-check.{json,md}`.
 Large repositories take hours to mutate in full. `--mutants-arg <name>=<arg>`
 passes one argument to that repository's cargo-mutants run, and can be
 repeated to sample a subset. The receipt records the arguments, so the sample
-can be reproduced. Multi-crate workspaces also need `--workspace` or
+can be reproduced, and the scoreboard marks sampled rates. Each value is one
+argument (`--re=decode`, not `--re decode`). Options the harness owns, such as
+`--output`, `--jobs` or `--in-place`, are refused. Multi-crate workspaces also need `--workspace` or
 `--package`, because cargo-mutants mutates only the root package by default:
 
 ```bash

@@ -44,7 +44,34 @@ const EXPOSURE_TIMEOUT: Duration = Duration::from_mins(15);
 const CALIBRATE_TIMEOUT: Duration = Duration::from_mins(5);
 const MUTANTS_TIMEOUT: Duration = Duration::from_hours(4);
 const SCRATCH: &str = "target/ripr/reports/mutation-spot-check";
+/// cargo-mutants options the harness sets itself or that would change what
+/// the receipt means (where outcomes land, how they are scheduled, whether the
+/// checkout is mutated in place). `--mutants-arg` is for selecting mutants.
+const HARNESS_OWNED_MUTANTS_ARGS: &[&str] = &[
+    "--dir",
+    "-d",
+    "--output",
+    "-o",
+    "--jobs",
+    "-j",
+    "--timeout",
+    "--shuffle",
+    "--no-shuffle",
+    "--in-place",
+    "--list",
+    "--check",
+    "--json",
+];
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
+
+fn harness_owned_mutants_arg(arg: &str) -> bool {
+    HARNESS_OWNED_MUTANTS_ARGS.iter().any(|owned| {
+        arg == *owned
+            || arg.strip_prefix(owned).is_some_and(|rest| {
+                rest.starts_with('=') || (!owned.starts_with("--") && !rest.is_empty())
+            })
+    })
+}
 
 pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -130,6 +157,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 else {
                     return Err(format!("--mutants-arg expects <name>=<arg>, got `{value}`"));
                 };
+                if harness_owned_mutants_arg(arg) {
+                    return Err(format!(
+                        "--mutants-arg `{arg}` would override how the harness runs cargo-mutants; use the spot-check options (--jobs, --mutant-timeout-secs) or select mutants with --file, --re, --exclude, --package or --workspace"
+                    ));
+                }
                 options
                     .mutants_args
                     .entry(name.trim().to_string())
@@ -1058,6 +1090,18 @@ mod tests {
             (
                 vec!["--run-mutants", "--mutants-arg", "hex="],
                 "expects <name>=<arg>",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=--in-place"],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=--output=/tmp/x"],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=-j8"],
+                "would override how the harness runs",
             ),
         ] {
             let Err(err) = parse_options(&args(&extra)) else {

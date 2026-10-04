@@ -574,9 +574,25 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         value("trust.mutation_join_coverage").is_some_and(|v| (v - 172.0 / 1745.0).abs() < 1e-9)
     );
 
+    let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();
+    assert!(
+        !evidence(&input).contains("sampled"),
+        "{}",
+        evidence(&input)
+    );
+
     let config = load_config(&committed_config())?;
     let samples = parse_ingest(&receipt, &config)?;
     assert_eq!(samples.len(), 3);
+
+    let mut sampled = receipt.clone();
+    sampled["repos"][0]["cargo_mutants_args"] = json!(["--re=decode"]);
+    let input = mutation_spot_check_to_input(&sampled)?;
+    assert!(
+        evidence(&input).contains("1 sampled with cargo-mutants arguments"),
+        "{}",
+        evidence(&input)
+    );
     Ok(())
 }
 

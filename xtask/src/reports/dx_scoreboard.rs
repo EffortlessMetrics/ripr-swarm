@@ -884,10 +884,29 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
         }));
     }
+    // A sampled run scores only the mutants it selected, so the board says so
+    // rather than presenting its rates as whole-repository rates.
+    let sampled = repos
+        .iter()
+        .filter(|repo| {
+            repo["cargo_mutants_args"]
+                .as_array()
+                .is_some_and(|args| !args.is_empty())
+        })
+        .count();
+    let mut evidence = format!(
+        "ripr-mutation-spot-check-v1 receipt, {} repositories",
+        repos.len()
+    );
+    if sampled > 0 {
+        evidence.push_str(&format!(
+            " ({sampled} sampled with cargo-mutants arguments; rates cover only the sampled mutants)"
+        ));
+    }
     Ok(json!({
         "schema_version": INPUT_SCHEMA_VERSION,
         "source": "mutation-spot-check",
-        "evidence": format!("ripr-mutation-spot-check-v1 receipt, {} repositories", repos.len()),
+        "evidence": evidence,
         "metrics": rows,
     }))
 }
