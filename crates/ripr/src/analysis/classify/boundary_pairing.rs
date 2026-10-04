@@ -77,8 +77,13 @@ fn test_pairs_boundary_input_with_oracle(
         {
             return false;
         }
-        assertion_observes_boundary_owner_call(probe, owner, test, assertion, activation)
-            || assertion_observes_bound_name(assertion, &bound_names)
+        // Only the asserted operands observe anything: a call or binding
+        // named in a message argument (`assert!(gate(50), "{got}")`) is
+        // formatted, not checked, so it cannot pair with the boundary.
+        let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+            .unwrap_or_else(|| assertion.text.clone());
+        assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
+            || assertion_observes_bound_name(&operands, &bound_names)
     })
 }
 
@@ -97,9 +102,10 @@ fn assertion_observes_boundary_owner_call(
     owner: &FunctionSummary,
     test: &TestSummary,
     assertion: &OracleFact,
+    operands: &str,
     activation: &ActivationEvidence,
 ) -> bool {
-    let subject = assertion_subject(&assertion.text);
+    let subject = assertion_subject(operands);
     if owner_call_argument_lists(&subject, &owner.name)
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
@@ -107,8 +113,10 @@ fn assertion_observes_boundary_owner_call(
         return true;
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
-    // only when the assertion text names the owner once.
+    // only when the assertion text names the owner once, inside an operand.
+    // The call fact keeps the original text so it matches extracted calls.
     owner_call_count(&assertion.text, &owner.name) == 1
+        && owner_call_count(operands, &owner.name) == 1
         && activation_marks_boundary_call(
             activation,
             &CallFact {
@@ -119,10 +127,10 @@ fn assertion_observes_boundary_owner_call(
         )
 }
 
-fn assertion_observes_bound_name(assertion: &OracleFact, bound_names: &[String]) -> bool {
+fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
     bound_names
         .iter()
-        .any(|name| contains_ident(&assertion.text, name))
+        .any(|name| contains_ident(operands, name))
 }
 
 fn boundary_bound_locals(

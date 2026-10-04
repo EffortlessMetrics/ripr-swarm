@@ -1491,6 +1491,21 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             false,
         ),
         (
+            "boundary_only_in_message",
+            "let got = gate(10);\n        assert!(gate(50), \"{got}\");",
+            false,
+        ),
+        (
+            "boundary_call_in_message",
+            "assert!(gate(50), \"{}\", gate(10));",
+            false,
+        ),
+        (
+            "assert_eq_boundary_only_in_message",
+            "let got = gate(10);\n        assert_eq!(gate(50), true, \"{got}\");",
+            false,
+        ),
+        (
             "uncalled_closure",
             "let _check = || assert!(gate(10));\n        assert!(!gate(9));",
             false,
