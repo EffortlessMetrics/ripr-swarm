@@ -35,7 +35,10 @@ impl Default for ImpactedEvidenceOptions {
     }
 }
 
-pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
+/// Shared entry point for `ripr impacted-evidence` and the compatibility
+/// `cargo xtask impacted-evidence` route, so the refusal and routing logic has
+/// one owner.
+pub fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
@@ -313,18 +316,18 @@ fn require_pr_evidence(repo: &Path, relative: &str) -> Result<PrEvidenceInput, S
                 Ok(input)
             } else {
                 Err(format!(
-                    "impacted-evidence: PR evidence {relative} lacks boolean summary.{}; a packet without routing fields would read as \"no mutation needed\". Regenerate it with `ripr pr-evidence`.",
+                    "impacted-evidence: PR evidence {relative} lacks boolean summary.{}; a packet without routing fields would read as \"no mutation needed\". Regenerate it with `ripr pr-evidence` (`cargo xtask ripr-pr` in the ripr repository).",
                     missing.join(" and summary.")
                 ))
             }
         }
         InputState::Missing => Err(format!(
             "impacted-evidence: PR evidence {relative} is missing or unreadable; refusing to route mutation from labels alone. \
-             Run `ripr pr-evidence` first or pass --pr-evidence <path>."
+             Run `ripr pr-evidence` (`cargo xtask ripr-pr` in the ripr repository) first or pass --pr-evidence <path>."
         )),
         InputState::Invalid(err) => Err(format!(
             "impacted-evidence: PR evidence {relative} is not valid JSON ({err}); \
-             regenerate it with `ripr pr-evidence` or pass --pr-evidence <path>."
+             regenerate it with `ripr pr-evidence` (`cargo xtask ripr-pr` in the ripr repository) or pass --pr-evidence <path>."
         )),
     }
 }
