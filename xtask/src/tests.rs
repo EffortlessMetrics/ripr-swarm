@@ -1417,6 +1417,11 @@ fn evidence_promotion_human_oracle_line_matches_real_rust_evidence() {
         "relational_check",
         "weak"
     ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 r#match uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
 }
 
 #[test]

@@ -2797,9 +2797,7 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
                 || line.is_empty()
                 || !line.bytes().all(|byte| byte.is_ascii_digit())
                 || test_name.is_empty()
-                || !test_name
-                    .chars()
-                    .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':'))
+                || test_name.chars().any(char::is_whitespace)
             {
                 continue;
             }
