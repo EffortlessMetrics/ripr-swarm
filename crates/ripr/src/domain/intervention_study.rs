@@ -771,13 +771,21 @@ impl RiprInterventionStudyV1 {
         if self.stopping_rule.kind != StoppingKind::FixedSample
             || self.stopping_rule.may_depend_on_interim_estimate
             || self.stopping_rule.favorable_interim_stop != FavorableInterimStop::Forbidden
-            || self.stopping_rule.planned_pair_count == 0
-            || u32::try_from(self.assignment.pairs.len()).ok()
-                != Some(self.stopping_rule.planned_pair_count)
         {
             return Err(error(
                 codes::STOPPING_ON_FAVORABLE_INTERIM,
                 "the stopping rule cannot depend on a favorable interim estimate",
+            ));
+        }
+        // A count mismatch is a malformed fixed sample, not an interim stop;
+        // runners and adjudicators key on the code, so keep them distinct.
+        if self.stopping_rule.planned_pair_count == 0
+            || u32::try_from(self.assignment.pairs.len()).ok()
+                != Some(self.stopping_rule.planned_pair_count)
+        {
+            return Err(error(
+                codes::MALFORMED_IDENTITY,
+                "planned_pair_count must equal the number of preregistered assignment pairs",
             ));
         }
         if !self.protocol_lock.immutable_after_first_attempt
@@ -1248,6 +1256,19 @@ mod tests {
             assert_code(study.validate(), codes::MISSING_FIELD)?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn planned_pair_count_mismatch_is_malformed_identity_not_an_interim_stop() -> Result<(), String>
+    {
+        for planned in [0, 3] {
+            let mut study = example_preregistered_study();
+            study.stopping_rule.planned_pair_count = planned;
+            assert_code(study.validate(), codes::MALFORMED_IDENTITY)?;
+        }
+        let mut interim = example_preregistered_study();
+        interim.stopping_rule.may_depend_on_interim_estimate = true;
+        assert_code(interim.validate(), codes::STOPPING_ON_FAVORABLE_INTERIM)
     }
 
     #[test]
