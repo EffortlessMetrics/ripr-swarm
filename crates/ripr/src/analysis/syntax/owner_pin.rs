@@ -168,10 +168,17 @@ pub(crate) fn empty_macro_binding_ambiguities(
         BTreeSet::new()
     };
     // Empty-macro names are local declarations, never a drop-in import.
-    macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved, &|_| false)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect()
+    macro_binding_ambiguities(
+        source,
+        packages,
+        &trusted,
+        &allowed,
+        module_resolved,
+        &|_| false,
+    )
+    .into_iter()
+    .map(|(name, _)| name)
+    .collect()
 }
 
 /// Where a file may rebind a trusted macro name, and how.
@@ -245,9 +252,9 @@ pub(crate) fn macro_binding_scan(
         &|_, _| false,
         drop_in_verified,
     )
-        .into_iter()
-        .filter(|(_, site)| site.scope.is_none())
-        .collect()
+    .into_iter()
+    .filter(|(_, site)| site.scope.is_none())
+    .collect()
 }
 
 fn macro_binding_ambiguities(

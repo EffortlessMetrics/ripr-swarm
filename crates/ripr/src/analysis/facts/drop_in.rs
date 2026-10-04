@@ -11,9 +11,11 @@
 //! analysis root declares the crate, every declaration is a plain registry
 //! requirement (resolved through `[workspace.dependencies]` for
 //! `workspace = true`), and no manifest or `.cargo/config` between the file
-//! and the root patches or replaces it. Anything unread, unparsable or
-//! unexpected is unverified. Cargo configuration outside the analysis root
-//! (`$CARGO_HOME`, directories above the root) is not read.
+//! and the root can substitute it (RIPR-SPEC-0197). Anything unread,
+//! unparsable or unexpected is unverified. Cargo configuration outside the
+//! analysis root (`$CARGO_HOME`, directories above the root) is not read,
+//! and a file compiled by a sibling package's target `path` is judged by its
+//! nearest manifest.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -56,16 +58,13 @@ impl DropInManifests {
     }
 
     /// Whether `krate`, imported by `file`, is the plain registry package of
-    /// that name. `file` may be root-relative or already carry the root.
+    /// that name. `file` is root-relative, as index and dependent-scope paths
+    /// are; an absolute path is used as is.
     pub(crate) fn verified(&self, file: &Path, krate: &str) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
-        let file = if file.is_absolute() || file.starts_with(root) {
-            file.to_path_buf()
-        } else {
-            root.join(file)
-        };
+        let file = root.join(file);
         let Some(directory) = file.parent() else {
             return false;
         };
@@ -113,6 +112,15 @@ fn verify(root: &Path, directory: &Path, krate: &str) -> bool {
     let Some(own) = manifests.first() else {
         return false;
     };
+    // `package.workspace` can name a workspace off the ancestor chain, whose
+    // dependencies and patches ripr did not read.
+    if own
+        .get("package")
+        .and_then(|package| package.get("workspace"))
+        .is_some()
+    {
+        return false;
+    }
     if manifests.iter().any(|manifest| patches(manifest, krate)) {
         return false;
     }
@@ -178,7 +186,10 @@ fn plain(spec: &toml::Value, krate: &str, workspace: Option<&toml::Table>) -> bo
     }
 }
 
-/// `[patch.<source>]` or `[replace]` entries that name the crate.
+/// A `[patch.<source>]` entry Cargo may match to the crate (by key, or by a
+/// `package =` rename, which Cargo matches on), or any `[replace]` entry:
+/// its package-ID specs (`name@version`, `url#name@version`) are not worth
+/// parsing for a deprecated table.
 fn patches(manifest: &toml::Table, krate: &str) -> bool {
     let patched = manifest
         .get("patch")
@@ -186,24 +197,38 @@ fn patches(manifest: &toml::Table, krate: &str) -> bool {
         .into_iter()
         .flat_map(|sources| sources.values())
         .filter_map(toml::Value::as_table)
-        .flat_map(|entries| entries.keys())
-        .any(|key| normalized(key) == krate);
+        .flat_map(|entries| entries.iter())
+        .any(|(key, spec)| {
+            normalized(key) == krate
+                || spec
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|package| normalized(package) == krate)
+        });
     let replaced = manifest
         .get("replace")
         .and_then(toml::Value::as_table)
-        .into_iter()
-        .flat_map(|entries| entries.keys())
-        .any(|key| normalized(key.split(':').next().unwrap_or(key)) == krate);
+        .is_some_and(|entries| !entries.is_empty());
     patched || replaced
 }
 
-/// A `.cargo/config` that mentions the crate in either spelling may patch
-/// it; text matching keeps this fail-closed for every config form.
+/// A `.cargo/config` that can substitute a package without naming it in a
+/// way ripr resolves: a `paths` override, a `[patch]` or `[source]` table,
+/// an `include` of another config, or any mention of the crate. An
+/// unreadable or unparsable config fails closed too.
 fn config_mentions(directory: &Path, krate: &str) -> bool {
     let hyphenated = krate.replace('_', "-");
     ["config.toml", "config"].iter().any(|name| {
         match std::fs::read_to_string(directory.join(".cargo").join(name)) {
-            Ok(text) => text.contains(krate) || text.contains(&hyphenated),
+            Ok(text) => {
+                text.contains(krate)
+                    || text.contains(&hyphenated)
+                    || text.parse::<toml::Table>().map_or(true, |config| {
+                        ["paths", "patch", "source", "include"]
+                            .iter()
+                            .any(|key| config.contains_key(*key))
+                    })
+            }
             Err(error) => error.kind() != std::io::ErrorKind::NotFound,
         }
     })
@@ -285,6 +310,11 @@ mod tests {
             "[dev-dependencies]\npretty_assertions = \"1\"\n[patch.crates-io]\npretty_assertions = { path = \"../fake\" }",
             "[dev-dependencies]\npretty_assertions = \"1\"\n[replace]\n\"pretty_assertions:1.4.0\" = { path = \"../fake\" }",
             "[dev-dependencies]\npretty_assertions = { workspace = true }",
+            // Cargo matches a patch on its `package`, whatever the key.
+            "[dev-dependencies]\npretty_assertions = \"1\"\n[patch.crates-io]\nanything = { path = \"fake\", package = \"pretty_assertions\" }",
+            // Package-ID-spec `[replace]` keys.
+            "[dev-dependencies]\npretty_assertions = \"1\"\n[replace]\n\"pretty_assertions@1.4.1\" = { path = \"fake\" }",
+            "[dev-dependencies]\npretty_assertions = \"1\"\n[replace]\n\"https://github.com/rust-lang/crates.io-index#pretty_assertions@1.4.1\" = { path = \"fake\" }",
         ] {
             assert!(
                 !verified("aliased", &[("Cargo.toml", &manifest(dependencies))], FILE)?,
@@ -301,7 +331,9 @@ mod tests {
         let member = "crates/a/src/lib.rs";
         let plain_member = manifest("[dev-dependencies]\npretty_assertions = { workspace = true }");
         let workspace = |dependency: &str| {
-            format!("[workspace]\nmembers = [\"crates/a\"]\n\n[workspace.dependencies]\n{dependency}\n")
+            format!(
+                "[workspace]\nmembers = [\"crates/a\"]\n\n[workspace.dependencies]\n{dependency}\n"
+            )
         };
         assert!(verified(
             "inherited",
@@ -326,7 +358,10 @@ mod tests {
         assert!(!verified(
             "member-alias",
             &[
-                ("Cargo.toml", &manifest("[dev-dependencies]\npretty_assertions = \"1\"")),
+                (
+                    "Cargo.toml",
+                    &manifest("[dev-dependencies]\npretty_assertions = \"1\"")
+                ),
                 (
                     "crates/a/Cargo.toml",
                     &manifest("[dev-dependencies]\npretty_assertions = { path = \"../fake\" }"),
@@ -349,10 +384,51 @@ mod tests {
             ],
             member,
         )?);
+        // `package.workspace` names a workspace off the ancestor chain.
+        assert!(!verified(
+            "foreign-workspace",
+            &[
+                ("Cargo.toml", &workspace("pretty_assertions = \"1\"")),
+                (
+                    "crates/a/Cargo.toml",
+                    &format!(
+                        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nworkspace = \"../../ws2\"\n\n[dev-dependencies]\npretty_assertions = {{ workspace = true }}\n"
+                    ),
+                ),
+            ],
+            member,
+        )?);
+        // A `paths` override substitutes a same-named package unnamed.
+        assert!(!verified(
+            "config-paths",
+            &[
+                (
+                    "Cargo.toml",
+                    &manifest("[dev-dependencies]\npretty_assertions = \"1\"")
+                ),
+                (".cargo/config.toml", "paths = [\"vendorx\"]\n"),
+            ],
+            FILE,
+        )?);
+        // An unrelated config setting leaves the verdict alone.
+        assert!(verified(
+            "config-unrelated",
+            &[
+                (
+                    "Cargo.toml",
+                    &manifest("[dev-dependencies]\npretty_assertions = \"1\"")
+                ),
+                (".cargo/config.toml", "[build]\njobs = 2\n"),
+            ],
+            FILE,
+        )?);
         assert!(!verified(
             "config-patch",
             &[
-                ("Cargo.toml", &manifest("[dev-dependencies]\npretty_assertions = \"1\"")),
+                (
+                    "Cargo.toml",
+                    &manifest("[dev-dependencies]\npretty_assertions = \"1\"")
+                ),
                 (
                     ".cargo/config.toml",
                     "[patch.crates-io]\npretty_assertions = { path = \"fake\" }\n",
@@ -367,7 +443,10 @@ mod tests {
     fn a_file_outside_the_root_is_unverified() -> Result<(), String> {
         let root = temp_workspace(
             "outside",
-            &[("Cargo.toml", &manifest("[dev-dependencies]\npretty_assertions = \"1\""))],
+            &[(
+                "Cargo.toml",
+                &manifest("[dev-dependencies]\npretty_assertions = \"1\""),
+            )],
         )?;
         let outside = std::env::temp_dir().join("elsewhere/src/lib.rs");
         let verdict = DropInManifests::new(&root).verified(&outside, KRATE);

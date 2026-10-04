@@ -262,11 +262,16 @@ rule only for an assertion whose context was admitted.
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
   plain registry requirement (version, features, `optional`; through
-  `[workspace.dependencies]` for `workspace = true`), and no manifest or
-  `.cargo/config` between the file and the root patches or replaces it. A
-  `package`, `path`, `git` or `registry` key binds the name to another
-  package that Rust source cannot reveal, so the import then refuses with
-  that reason. Cargo configuration outside the root is not read.
+  `[workspace.dependencies]` for `workspace = true`), the manifest names no
+  `package.workspace`, no manifest between the file and the root has a
+  `[patch]` entry for it (by key or `package =`) or any `[replace]`, and no
+  `.cargo/config` there mentions it or sets `paths`, `[patch]`, `[source]`
+  or `include`. A `package`, `path`, `git` or `registry` key binds the name
+  to another package that Rust source cannot reveal, so the import then
+  refuses with that reason. Limits: Cargo configuration outside the root
+  (or found from another working directory) is not read, and a file
+  compiled by a package other than its nearest manifest (a target `path`
+  or `#[path]` from a sibling) is judged by the nearest manifest.
 
 ### Matched before/after observations
 

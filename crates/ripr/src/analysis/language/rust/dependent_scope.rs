@@ -1283,8 +1283,18 @@ mod tests {
         let mut bindings = classify::WithheldMacroBindings::default();
         let path = Path::new("e/src/lib.rs");
         assert!(!bindings.absorb(path, "fn plain() {}", &packages, &Default::default()));
-        assert!(!bindings.absorb(path, "use core::prelude::*;", &packages, &Default::default()));
-        assert!(bindings.absorb(path, "use proptest::prelude::*;", &packages, &Default::default()));
+        assert!(!bindings.absorb(
+            path,
+            "use core::prelude::*;",
+            &packages,
+            &Default::default()
+        ));
+        assert!(bindings.absorb(
+            path,
+            "use proptest::prelude::*;",
+            &packages,
+            &Default::default()
+        ));
         assert!(bindings.absorb(path, "fn plain() {}", &packages, &Default::default()));
     }
 

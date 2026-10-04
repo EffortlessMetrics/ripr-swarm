@@ -1065,7 +1065,9 @@ fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() 
 fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> Result<(), String> {
     let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     let manifest = |dependency: &str| {
-        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n")
+        format!(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n"
+        )
     };
     let plain = crate::analysis::facts::drop_in::temp_workspace(
         "owner-pin-plain",
