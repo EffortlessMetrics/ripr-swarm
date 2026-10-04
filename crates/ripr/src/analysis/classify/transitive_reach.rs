@@ -127,6 +127,9 @@ struct ReachGraph<'a> {
     /// tell `StringDecoder::decode` from `StringDecoderRange::decode`, so the
     /// walk follows all of them rather than whichever one was indexed first.
     by_name: HashMap<&'a str, Vec<&'a FunctionSummary>>,
+    /// Macro invocations in each function body, aligned with `by_name`.
+    /// Every macro sweep reads them, and they depend only on the body.
+    macro_invocations_by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>>,
     /// Callee name to the distinct production function names that call it,
     /// over non-macro call facts: the forward walk's edges, reversed.
     callers: HashMap<&'a str, Vec<&'a str>>,
@@ -134,6 +137,14 @@ struct ReachGraph<'a> {
     /// needs a definition whose body names the owner, so an owner no body
     /// names cannot have one.
     macro_bodies: Vec<&'a str>,
+    /// Macro invocations in each test body, in `all_tests` order. Every
+    /// macro sweep reads them, and they depend only on the body.
+    test_macro_invocations: Vec<Vec<MacroInvocation>>,
+    /// Per macro name: one entry per `macro_rules!` definition of that name,
+    /// holding its body when it has one, as [`macro_definitions_named`]
+    /// would find them. Built in one pass over every source, instead of one
+    /// pass per owner and invoked macro name.
+    macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>>,
 }
 
 impl<'a> ReachGraph<'a> {
@@ -163,17 +174,47 @@ impl<'a> ReachGraph<'a> {
             names.sort_unstable();
             names.dedup();
         }
-        let macro_bodies = index
-            .files()
-            .values()
-            .flat_map(|file| macro_definition_bodies(&file.data().source))
+        let macro_invocations_by_name = by_name
+            .iter()
+            .map(|(&name, functions)| {
+                let invocations = functions
+                    .iter()
+                    .map(|function| macro_invocations_in_text(&function.body, function.start_line))
+                    .collect();
+                (name, invocations)
+            })
+            .collect();
+        let mut macro_bodies = Vec::new();
+        let mut macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>> = HashMap::new();
+        for file in index.files().values() {
+            add_macro_definitions(
+                &file.data().source,
+                &mut macro_bodies,
+                &mut macro_definitions,
+            );
+        }
+        let test_macro_invocations = all_tests
+            .iter()
+            .map(|test| macro_invocations_in_text(&test.body, test.start_line))
             .collect();
         Self {
             all_tests,
             by_name,
+            macro_invocations_by_name,
             callers,
             macro_bodies,
+            test_macro_invocations,
+            macro_definitions,
         }
+    }
+
+    /// Whether `macro_name` has exactly one `macro_rules!` definition in the
+    /// index and its body names `owner_name` as an identifier.
+    fn macro_definition_mentions_owner(&self, macro_name: &str, owner_name: &str) -> bool {
+        matches!(
+            self.macro_definitions.get(macro_name).map(Vec::as_slice),
+            Some([Some(body)]) if contains_identifier(body, owner_name)
+        )
     }
 
     /// Names from which the forward walk reaches `owner_name`: every name
@@ -376,7 +417,6 @@ impl TransitiveReachIndex<'_> {
         if owner_name.is_empty() {
             return None;
         }
-        let index = self.index;
         let graph = self.graph();
         if !graph
             .macro_bodies
@@ -385,29 +425,28 @@ impl TransitiveReachIndex<'_> {
         {
             return None;
         }
-        let mut sweep = ReachSweep::new(&graph.by_name, owner_name);
-        macro_reach_witness_with(&graph.all_tests, &mut sweep, owner_name, index)
+        let mut sweep = ReachSweep::new(graph, owner_name);
+        macro_reach_witness_with(graph, &mut sweep, owner_name)
     }
 }
 
 fn macro_reach_witness_with(
-    all_tests: &[&TestFact],
+    graph: &ReachGraph<'_>,
     sweep: &mut ReachSweep<'_, '_>,
     owner_name: &str,
-    index: &RustIndex,
 ) -> Option<MacroReachWitness> {
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
-    for test in all_tests {
+    for (test, invocations) in graph.all_tests.iter().zip(&graph.test_macro_invocations) {
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
-        for macro_invocation in macro_invocations_in_text(&test.body, test.start_line) {
+        for macro_invocation in invocations {
             if let Some(edge) = ReachSweep::macro_edge_for_invocation(
                 &mut sweep.macro_mention_memo,
-                &macro_invocation,
+                macro_invocation,
                 &test.file,
                 MACRO_WITNESS_TEST_BODY_HOST,
                 owner_name,
-                index,
+                graph,
             ) {
                 found.push((format!("{}!", macro_invocation.name), edge));
             }
@@ -417,7 +456,7 @@ fn macro_reach_witness_with(
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
-            if let Some(edge) = sweep.macro_edge(&callee.name, index) {
+            if let Some(edge) = sweep.macro_edge(&callee.name) {
                 found.push((callee.name.clone(), edge));
             }
         }
@@ -652,16 +691,16 @@ fn collect_all_tests(index: &RustIndex) -> Vec<&TestFact> {
 /// without changing any traversal order, first-match resolution, or witness
 /// selection (goldens depend on all three).
 struct ReachSweep<'g, 'a> {
-    by_name: &'g HashMap<&'a str, Vec<&'a FunctionSummary>>,
+    graph: &'g ReachGraph<'a>,
     owner_name: String,
     macro_edge_memo: HashMap<String, Option<MacroReachEdge>>,
     macro_mention_memo: HashMap<String, bool>,
 }
 
 impl<'g, 'a> ReachSweep<'g, 'a> {
-    fn new(by_name: &'g HashMap<&'a str, Vec<&'a FunctionSummary>>, owner_name: &str) -> Self {
+    fn new(graph: &'g ReachGraph<'a>, owner_name: &str) -> Self {
         Self {
-            by_name,
+            graph,
             owner_name: owner_name.to_string(),
             macro_edge_memo: HashMap::new(),
             macro_mention_memo: HashMap::new(),
@@ -669,24 +708,20 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
     }
 
     fn resolve(&self, name: &str) -> &'g [&'a FunctionSummary] {
-        self.by_name.get(name).map_or(&[], Vec::as_slice)
+        self.graph.by_name.get(name).map_or(&[], Vec::as_slice)
     }
 
-    fn macro_edge(&mut self, start_name: &str, index: &RustIndex) -> Option<MacroReachEdge> {
+    fn macro_edge(&mut self, start_name: &str) -> Option<MacroReachEdge> {
         if let Some(cached) = self.macro_edge_memo.get(start_name) {
             return cached.clone();
         }
-        let edge = self.bfs_hits_owner_macro_uncached(start_name, index);
+        let edge = self.bfs_hits_owner_macro_uncached(start_name);
         self.macro_edge_memo
             .insert(start_name.to_string(), edge.clone());
         edge
     }
 
-    fn bfs_hits_owner_macro_uncached(
-        &mut self,
-        start_name: &str,
-        index: &RustIndex,
-    ) -> Option<MacroReachEdge> {
+    fn bfs_hits_owner_macro_uncached(&mut self, start_name: &str) -> Option<MacroReachEdge> {
         let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
         let mut visited: HashSet<&str> = HashSet::new();
 
@@ -697,18 +732,20 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
             if depth > MAX_TRANSITIVE_DEPTH {
                 continue;
             }
-            let candidates: Vec<&'a FunctionSummary> = self.resolve(current_name).to_vec();
-            for current_fn in candidates {
-                for macro_invocation in
-                    macro_invocations_in_text(&current_fn.body, current_fn.start_line)
-                {
+            let graph = self.graph;
+            let invocations = graph
+                .macro_invocations_by_name
+                .get(current_name)
+                .map_or(&[][..], Vec::as_slice);
+            for (current_fn, fn_invocations) in self.resolve(current_name).iter().zip(invocations) {
+                for macro_invocation in fn_invocations {
                     if let Some(edge) = Self::macro_edge_for_invocation(
                         &mut self.macro_mention_memo,
-                        &macro_invocation,
+                        macro_invocation,
                         &current_fn.file,
                         &current_fn.name,
                         &self.owner_name,
-                        index,
+                        self.graph,
                     ) {
                         return Some(edge);
                     }
@@ -733,14 +770,14 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
         invocation_file: &std::path::Path,
         host: &str,
         owner_name: &str,
-        index: &RustIndex,
+        graph: &ReachGraph<'_>,
     ) -> Option<MacroReachEdge> {
         if let Some(cached) = memo.get(invocation.name.as_str()) {
             if !*cached {
                 return None;
             }
         } else {
-            let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
+            let mentions = graph.macro_definition_mentions_owner(&invocation.name, owner_name);
             memo.insert(invocation.name.clone(), mentions);
             if !mentions {
                 return None;
@@ -805,18 +842,6 @@ fn next_non_ws_is_macro_delimiter(bytes: &[u8], start: usize) -> bool {
     matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{'))
 }
 
-fn macro_definition_mentions_owner(index: &RustIndex, macro_name: &str, owner_name: &str) -> bool {
-    let mut same_name_count = 0usize;
-    let mut owner_mention_count = 0usize;
-    for file in index.files().values() {
-        let scan = scan_macro_definitions(&file.source, macro_name, owner_name);
-        same_name_count = same_name_count.saturating_add(scan.same_name_count);
-        owner_mention_count = owner_mention_count.saturating_add(scan.owner_mention_count);
-    }
-
-    same_name_count == 1 && owner_mention_count == 1
-}
-
 #[cfg(test)]
 fn source_macro_definition_mentions_owner(
     source: &str,
@@ -827,15 +852,34 @@ fn source_macro_definition_mentions_owner(
     scan.same_name_count == 1 && scan.owner_mention_count == 1
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct MacroDefinitionScan {
     same_name_count: usize,
     owner_mention_count: usize,
 }
 
+#[cfg(test)]
 fn scan_macro_definitions(source: &str, macro_name: &str, owner_name: &str) -> MacroDefinitionScan {
+    let definitions = macro_definitions_named(source, macro_name);
+    MacroDefinitionScan {
+        same_name_count: definitions.len(),
+        owner_mention_count: definitions
+            .iter()
+            .flatten()
+            .filter(|body| contains_identifier(body, owner_name))
+            .count(),
+    }
+}
+
+/// One entry per `macro_rules! macro_name` definition in `source`, holding
+/// its body when it has one. A definition nested inside a counted body of
+/// the same name is skipped; definitions inside other macros' bodies count.
+/// The per-name scan the one-pass table in [`ReachGraph::build`] reproduces.
+#[cfg(test)]
+fn macro_definitions_named<'s>(source: &'s str, macro_name: &str) -> Vec<Option<&'s str>> {
     let marker = "macro_rules!";
-    let mut scan = MacroDefinitionScan::default();
+    let mut definitions = Vec::new();
     let mut cursor = 0usize;
 
     while let Some(relative_start) = source.get(cursor..).and_then(|tail| tail.find(marker)) {
@@ -851,48 +895,85 @@ fn scan_macro_definitions(source: &str, macro_name: &str, owner_name: &str) -> M
         }
 
         if found_name == macro_name {
-            scan.same_name_count = scan.same_name_count.saturating_add(1);
             if let Some((body_start, body_end)) = macro_body_range(source, name_end) {
-                if source
-                    .get(body_start..body_end)
-                    .is_some_and(|body| contains_identifier(body, owner_name))
-                {
-                    scan.owner_mention_count = scan.owner_mention_count.saturating_add(1);
-                }
+                definitions.push(source.get(body_start..body_end));
                 cursor = body_end;
                 continue;
             }
+            definitions.push(None);
         }
 
         cursor = name_end;
     }
 
-    scan
+    definitions
 }
 
-/// Every `macro_rules!` body in `source`, visiting each definition marker
-/// (including ones nested in another body), so any body
-/// [`scan_macro_definitions`] reads for a single name is among them.
-fn macro_definition_bodies(source: &str) -> Vec<&str> {
+/// Add `source`'s `macro_rules!` bodies to `bodies`, and its definitions to
+/// the per-name `definitions` table exactly as [`macro_definitions_named`]
+/// would count them for each name.
+fn add_macro_definitions<'s>(
+    source: &'s str,
+    bodies: &mut Vec<&'s str>,
+    definitions: &mut HashMap<&'s str, Vec<Option<&'s str>>>,
+) {
+    // The per-name scan resumes after a counted body, so a same-name
+    // definition nested in it is not counted again.
+    let mut counted_until: HashMap<&str, usize> = HashMap::new();
+    for definition in macro_definition_markers(source) {
+        let body = definition.body.map(|(_, body)| body);
+        bodies.extend(body);
+        if counted_until
+            .get(definition.name)
+            .is_some_and(|&end| definition.marker_start < end)
+        {
+            continue;
+        }
+        if let Some((body_end, _)) = definition.body {
+            counted_until.insert(definition.name, body_end);
+        }
+        definitions.entry(definition.name).or_default().push(body);
+    }
+}
+
+struct MacroDefinitionMarker<'s> {
+    marker_start: usize,
+    name: &'s str,
+    /// The body's end offset and text, when the name is followed by one.
+    body: Option<(usize, &'s str)>,
+}
+
+/// Every named `macro_rules!` definition in `source`, in order, visiting each
+/// marker (including ones nested in another body), so every definition
+/// [`macro_definitions_named`] reads for any one name is among them.
+fn macro_definition_markers(source: &str) -> Vec<MacroDefinitionMarker<'_>> {
     let marker = "macro_rules!";
-    let mut bodies = Vec::new();
+    let mut definitions = Vec::new();
     let mut cursor = 0usize;
     while let Some(relative_start) = source.get(cursor..).and_then(|tail| tail.find(marker)) {
         let marker_start = cursor.saturating_add(relative_start);
         let name_start = skip_ascii_whitespace(source, marker_start.saturating_add(marker.len()));
         let name_end = ascii_ident_end(source, name_start);
-        if source.get(name_start..name_end).is_none_or(str::is_empty) {
+        let Some(name) = source
+            .get(name_start..name_end)
+            .filter(|name| !name.is_empty())
+        else {
             cursor = marker_start.saturating_add(marker.len());
             continue;
-        }
-        if let Some(body) = macro_body_range(source, name_end)
-            .and_then(|(body_start, body_end)| source.get(body_start..body_end))
-        {
-            bodies.push(body);
-        }
+        };
+        let body = macro_body_range(source, name_end).and_then(|(body_start, body_end)| {
+            source
+                .get(body_start..body_end)
+                .map(|body| (body_end, body))
+        });
+        definitions.push(MacroDefinitionMarker {
+            marker_start,
+            name,
+            body,
+        });
         cursor = name_end;
     }
-    bodies
+    definitions
 }
 
 fn skip_ascii_whitespace(source: &str, start: usize) -> usize {
@@ -1036,7 +1117,7 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FileFacts, FunctionSummary, RustIndex, TestFact};
     use crate::domain::SymbolId;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
     fn make_fn(name: &str, calls: Vec<&str>) -> FunctionSummary {
@@ -1726,6 +1807,47 @@ mod tests {
             "call_inner",
             "inner",
         ));
+    }
+
+    #[test]
+    fn one_pass_macro_table_matches_the_per_name_scan() {
+        let sources = [
+            // A same-name definition nested in a counted body is skipped.
+            "macro_rules! outer { () => { macro_rules! outer { () => { inner() } } } }",
+            // Other macros' bodies are entered.
+            "macro_rules! host { () => { macro_rules! guest { () => { inner() } } } }\n\
+             macro_rules! guest { () => {} }",
+            // A definition with no body is counted but stops nothing.
+            "macro_rules! bare;\nmacro_rules! bare { () => { inner() } }",
+            // A name that ends in the marker text, and an empty name.
+            "macro_rules! xmacro_rules! { () => {} }\nmacro_rules! (oops)\n\
+             macro_rules! after { [] => [ inner() ] }",
+            // Unbalanced body, then a nested same name after a closed one.
+            "macro_rules! a { () => { macro_rules! a ( ) } }\nmacro_rules! a { ",
+            "",
+        ];
+        for source in sources {
+            let mut bodies = Vec::new();
+            let mut table: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
+            add_macro_definitions(source, &mut bodies, &mut table);
+            let names: BTreeSet<&str> = macro_definition_markers(source)
+                .iter()
+                .map(|definition| definition.name)
+                .chain(["inner", "missing"])
+                .collect();
+            for name in names {
+                assert_eq!(
+                    table.get(name).cloned().unwrap_or_default(),
+                    macro_definitions_named(source, name),
+                    "{name} in {source:?}"
+                );
+            }
+        }
+        // The nested same-name case really is one entry, so a table that
+        // counts every marker fails above.
+        let mut table = HashMap::new();
+        add_macro_definitions(sources[0], &mut Vec::new(), &mut table);
+        assert_eq!(table.get("outer").map(Vec::len), Some(1));
     }
 
     /// The removed per-callee forward walk, kept as the reference the reverse
