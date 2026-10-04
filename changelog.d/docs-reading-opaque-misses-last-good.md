@@ -1,8 +1,7 @@
 <!-- section: Docs -->
-- Docs cover the `opaque` and `activation_unknown` seam readings, per-test miss
-  reasons and last-good receipt recovery. `docs/STATIC_LIMITS.md`
-  explains the `opaque` and `activation_unknown` seam readings and what to do
-  about each; `docs/how-to/triage-a-finding.md` explains the per-test miss
-  reasons that gap output now lists; `docs/BADGE_POLICY.md` documents the
-  `ripr-plus.last-good.{json,md}` files `ripr plus` keeps when a bad input fails
-  a run; `CONTRIBUTING.md` describes `changelog.d/` fragments (#5342).
+- Docs cover the `opaque` and `activation_unknown` seam readings
+  (`docs/STATIC_LIMITS.md`), the per-test miss reasons in gap output
+  (`docs/how-to/triage-a-finding.md`), the `ripr-plus.last-good.{json,md}`
+  recovery copies `ripr plus` keeps when a bad input fails a run
+  (`docs/BADGE_POLICY.md`), and `changelog.d/` fragments (`CONTRIBUTING.md`,
+  #5342).
