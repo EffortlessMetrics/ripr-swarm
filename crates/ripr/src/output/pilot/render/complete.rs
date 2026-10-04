@@ -465,6 +465,12 @@ pub(crate) fn render_pilot_terminal(
             if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
                 out.push_str(&format!("  (PowerShell) {form}\n"));
             }
+        } else if !outline.is_not_applicable() {
+            // The focused test above is a suggestion, not a repair offer. Say
+            // so on the screen, so the README's "run the `ripr agent repair`
+            // command pilot prints" is not left waiting for a command that
+            // will never appear.
+            out.push_str(&format!("  repair this seam: {NO_REPAIR_START_LINE}\n"));
         }
         out.push('\n');
         outline.is_not_applicable()
@@ -578,6 +584,10 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: {}, then compare against this run:\n",
             no_repair_target_hand_step(entry)
         ));
+    } else if !top.is_empty() {
+        out.push_str(
+            "Next, by hand: add the focused test named above, then compare against this run:\n",
+        );
     } else {
         out.push_str("Run after adding the focused test:\n");
     }
@@ -585,6 +595,10 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  {}\n", commands.outcome));
     out
 }
+
+/// Terminal note for a top seam whose focused test is named but that fails the
+/// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
+const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
 
 /// Closing line when every language pilot did not rank is unavailable in
 /// this binary, so no runnable command exists.
