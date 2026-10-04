@@ -63,6 +63,42 @@ impl std::fmt::Display for Parser {
     }
 }
 
+pub type Res<T> = std::result::Result<T, AppError>;
+
+#[derive(Debug)]
+pub enum AppError {
+    Bad,
+}
+
+pub fn checked(n: u8) -> Res<u8> {
+    if n > 5 { Err(AppError::Bad) } else { Ok(n) }
+}
+
+pub fn read_len(n: u8) -> std::io::Result<u8> {
+    if n > 4 { Ok(n) } else { Err(std::io::Error::other("short")) }
+}
+
+pub struct Duration(pub u64);
+
+pub fn wait(n: u64) -> Duration {
+    if n > 9 { Duration(n) } else { Duration(0) }
+}
+
+pub mod shapes {
+    pub struct S {
+        pub v: u8,
+    }
+
+    impl self::S {
+        pub fn get(&self, n: u8) -> u8 {
+            if n > 2 { n } else { self.v }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {}
+}
+
 pub mod inner {
     pub struct Cfg {
         pub on: bool,
@@ -100,6 +136,13 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("subject > self.max", Expect::StopsAtRiprTodo),
         // `self::Cfg` is respelled for the child test module.
         ("n < 0", Expect::StopsAtRiprTodo),
+        // Result aliases, qualified paths and shadowed std names are not
+        // assumed comparable: the assertion is the fill-in.
+        ("n > 5 { Err", Expect::StopsAtRiprTodo),
+        ("n > 4 { Ok", Expect::StopsAtRiprTodo),
+        ("n > 9", Expect::StopsAtRiprTodo),
+        // `impl self::S` is respelled for the child test module.
+        ("n > 2 { n }", Expect::StopsAtRiprTodo),
         ("n > 7", Expect::Refused("owner_unsupported")),
         ("self.max > 3", Expect::Refused("owner_trait_method")),
     ];

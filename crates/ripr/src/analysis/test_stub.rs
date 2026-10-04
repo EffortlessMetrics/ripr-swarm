@@ -371,10 +371,11 @@ fn stub_body(
 ) -> Result<StubBody, TestStubRefusal> {
     let self_type = match &signature.container {
         OwnerContainer::Inherent { self_type } | OwnerContainer::TraitImpl { self_type } => {
-            Some(self_type.as_str())
+            Some(rebase_paths(self_type, path_scope).ok_or(TestStubRefusal::ParameterUnsupported)?)
         }
         OwnerContainer::Free | OwnerContainer::Unsupported(_) => None,
     };
+    let self_type = self_type.as_deref();
     let return_type = signature
         .return_type
         .as_deref()
@@ -399,7 +400,16 @@ fn stub_body(
     let mut lines = vec![scope_import.to_string()];
     let mut fill_ins = Vec::new();
     let mut derived_inputs = Vec::new();
-    let boundary = boundary_inputs(seam, signature);
+    let mut boundary = boundary_inputs(seam, signature);
+    if matches!(path_scope, PathScope::Integration(_)) {
+        // A `tests/` file sees only the crate's public items; a named
+        // constant may be private, so it stays a fill-in there.
+        boundary.retain(|(_, value)| {
+            value
+                .trim_start_matches('-')
+                .starts_with(|c: char| c.is_ascii_digit())
+        });
+    }
 
     let receiver = match (signature.receiver, self_type) {
         (Some(receiver), Some(self_type)) => {
@@ -646,7 +656,11 @@ fn value_traits(ty: &str, source: &str) -> ValueTraits {
         "Box", "Rc", "Arc", "Cow", "Ordering", "Duration", "PathBuf", "HashMap", "HashSet",
         "BTreeMap", "BTreeSet",
     ];
-    let mut weakest = ValueTraits::PartialEqAndDebug;
+    // A qualified path (`io::Error`, `crate::Out`) may name a type other
+    // than the same-named one ripr can see, so it is never assumed.
+    if ty.contains("::") {
+        return ValueTraits::Unknown;
+    }
     let chars = ty.char_indices().collect::<Vec<_>>();
     let mut index = 0;
     while index < chars.len() {
@@ -663,26 +677,51 @@ fn value_traits(ty: &str, source: &str) -> ValueTraits {
         }
         let end = chars.get(end_index).map_or(ty.len(), |(at, _)| *at);
         let word = &ty[start..end];
-        let lifetime = ty[..start].ends_with('\'');
-        let path_segment = ty[end..].starts_with("::");
         index = end_index;
-        if lifetime
-            || path_segment
+        if ty[..start].ends_with('\'')
             || word == "_"
             || word == "mut"
             || word.starts_with(|c: char| c.is_ascii_digit())
-            || STD.contains(&word)
         {
+            continue;
+        }
+        if STD.contains(&word) {
+            // A local item with a std name (`type Result<T> = ..`, `struct
+            // Duration`) shadows it; an alias can hide a non-comparable
+            // error type. `Result` must also show both type arguments.
+            if super::syntax::fn_signature::defines_local_type(source, word)
+                || (word == "Result" && top_level_type_arguments(&ty[end..]) != Some(2))
+            {
+                return ValueTraits::Unknown;
+            }
             continue;
         }
         let traits =
             super::syntax::fn_signature::local_type_traits(source, word).unwrap_or_default();
         let has = |name: &str| traits.iter().any(|item| item == name);
         if !(has("PartialEq") && has("Debug")) {
-            weakest = ValueTraits::Unknown;
+            return ValueTraits::Unknown;
         }
     }
-    weakest
+    ValueTraits::PartialEqAndDebug
+}
+
+/// The number of top-level type arguments in the `<..>` list that starts
+/// `rest`, or `None` when `rest` does not start with one.
+fn top_level_type_arguments(rest: &str) -> Option<usize> {
+    let inner = rest.trim_start().strip_prefix('<')?;
+    let mut depth = 0usize;
+    let mut arguments = 1;
+    for c in inner.chars() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' if depth == 0 => return Some(arguments),
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => arguments += 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether `ty` is a `Result` (`Result<..>`, `io::Result<..>`, ...), so an

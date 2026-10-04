@@ -430,3 +430,80 @@ fn lifetime_annotated_mut_reference_binds_the_referent_mutably() -> Result<(), S
     assert_eq!(strip_mut_reference("&mutable"), None);
     Ok(())
 }
+
+#[test]
+fn integration_stub_leaves_a_named_constant_as_a_fill_in() -> Result<(), String> {
+    const SOURCE: &str = "const LIMIT: u8 = 3;
+pub fn gate(n: u8) -> u8 {
+    if n > LIMIT { n } else { 0 }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "n > LIMIT",
+        SeamKind::PredicateBoundary,
+        boundary("n == LIMIT"),
+    )?;
+    let proposal = NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/gate.rs"),
+        owner: "demo::gate".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+    };
+    // Inline, the private constant is in scope through `use super::*`.
+    let inline = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(
+        inline.text.contains("let n: u8 = LIMIT;"),
+        "{}",
+        inline.text
+    );
+    // A `tests/` file cannot see it, so the input stays a todo!().
+    let stub =
+        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
+    assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
+    assert!(stub.derived_inputs.is_empty());
+    Ok(())
+}
+
+#[test]
+fn result_aliases_and_qualified_or_shadowed_types_are_not_assumed_comparable() {
+    let plain = "pub fn f() {}";
+    assert_eq!(
+        value_traits("Result<u8, String>", plain),
+        ValueTraits::PartialEqAndDebug
+    );
+    assert_eq!(
+        value_traits("std::io::Result<u8>", plain),
+        ValueTraits::Unknown
+    );
+    assert_eq!(value_traits("Result<u8>", plain), ValueTraits::Unknown);
+    assert_eq!(
+        value_traits("Result<Vec<(u8, u8)>, String>", plain),
+        ValueTraits::PartialEqAndDebug
+    );
+    let alias = "pub type Result<T> = std::result::Result<T, Bad>;
+#[derive(Debug)]
+pub struct Bad;";
+    assert_eq!(value_traits("Result<u8, Bad>", alias), ValueTraits::Unknown);
+    let local_error = "#[derive(Debug, PartialEq)]
+pub enum Error { A }";
+    assert_eq!(
+        value_traits("Error", local_error),
+        ValueTraits::PartialEqAndDebug
+    );
+    assert_eq!(
+        value_traits("Result<u8, std::io::Error>", local_error),
+        ValueTraits::Unknown
+    );
+    let shadow = "pub struct Duration(pub u64);";
+    assert_eq!(value_traits("Duration", shadow), ValueTraits::Unknown);
+    let test_only = "pub fn f() {}
+#[cfg(test)]
+mod tests {
+    #[derive(Debug, PartialEq)]
+    pub struct Out;
+}";
+    assert_eq!(value_traits("Out", test_only), ValueTraits::Unknown);
+}

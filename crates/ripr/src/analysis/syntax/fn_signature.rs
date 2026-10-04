@@ -86,11 +86,18 @@ pub(crate) fn owner_signature_at(source: &str, byte_offset: usize) -> Option<Own
 pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>> {
     let parse = parse_clean_source_file(source)?;
     let tree = parse.tree();
+    // A test-only definition does not stand in for the production type.
+    let in_test_module = |node: &ra_ap_syntax::SyntaxNode| {
+        node.ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module_attributes_require_test(&module))
+    };
     let mut definitions = tree
         .syntax()
         .descendants()
         .filter_map(ast::Adt::cast)
-        .filter(|adt| adt.name().is_some_and(|ident| ident.text() == name));
+        .filter(|adt| adt.name().is_some_and(|ident| ident.text() == name))
+        .filter(|adt| !in_test_module(adt.syntax()));
     let adt = definitions.next()?;
     if definitions.next().is_some() {
         return None;
@@ -143,6 +150,26 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
         }
     }
     Some(traits)
+}
+
+/// Whether `source` defines a struct, enum, union or type alias named
+/// `name` outside test-only modules, which shadows any std type of that
+/// name. An unparsed file counts as defining it, so callers fail closed.
+pub(crate) fn defines_local_type(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        let named = ast::Adt::cast(node.clone())
+            .and_then(|adt| adt.name())
+            .or_else(|| ast::TypeAlias::cast(node.clone()).and_then(|alias| alias.name()))
+            .is_some_and(|ident| ident.text() == name);
+        named
+            && !node
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .any(|module| module_attributes_require_test(&module))
+    })
 }
 
 /// Whether `source` parses without errors under the analyzer's own parse.
