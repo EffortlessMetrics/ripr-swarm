@@ -106,8 +106,8 @@ hold:
    `Ok`, `Some` or `Err` must itself be a workspace enum that meets rule 3)
    that names `f`
    explicitly with an independent expected value: an expression built only
-   from literals, constants and constructor or conversion calls on them
-   (`4`, `MAX`, `"x".into()`). An expected value that names any local
+   from literals, constants and standard-library or prelude constructors and
+   conversions on them (`4`, `MAX`, `"x".into()`, `Some(4)`). An expected value that names any local
    binding or calls any function of the workspace gives no credit, because
    it can carry the owner's result (`retries: c.retries`, `let r =
    c.retries; .. retries: r`, `retries: build(3).retries`).
@@ -115,7 +115,9 @@ hold:
    manual `impl PartialEq for T` in the workspace.
 4. The type of `f` compares by value: a primitive, `String`, `&str`, or a
    standard collection or `Option`/`Result` of such types, or a workspace type
-   that itself meets rule 3. No attribute on `f` or `T` changes equality
+   that itself meets rule 3 and whose own field types meet this rule,
+   recursively. Any manual `PartialEq` anywhere in that type tree refuses
+   credit. No attribute on `f`, `T` or a type in that tree changes equality
    (for example `educe` or `derivative` ignore attributes).
 
 Then activation clears the `FieldValue` missing discriminator for `f` and the
@@ -207,6 +209,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
     not `exposed`.
 15. `let c = build(3); let r = c.retries; assert_eq!(c, Config { retries: r, name: "x".into() })`:
     not `exposed`.
+16. `retries` of type `Retries { n: Count }` with derived `PartialEq` on
+    `Retries` and `impl PartialEq for Count { fn eq(&self, _: &Self) -> bool { true } }`,
+    test as in example 1: not `exposed`.
 
 ## Test Mapping
 
