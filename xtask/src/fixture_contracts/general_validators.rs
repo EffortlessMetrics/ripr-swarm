@@ -2180,25 +2180,12 @@ pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
                 "issue lifecycle contract plan snapshot binding failed: {error}"
             ));
         }
-        let assessment =
-            crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(&row.attempt);
-        if !assessment.counted {
-            violations.push(format!(
-                "issue lifecycle contract plan row `{}` was rejected by the RIPR-SPEC-0218 counting law: {:?}",
-                row.id, assessment.reasons
-            ));
-        }
-        let root_disposition = row
-            .contract
-            .as_ref()
-            .map(|contract| contract.root_disposition)
-            .unwrap_or(row.attempt.disposition);
-        if assessment.disposition != Some(root_disposition) {
-            violations.push(format!(
-                "issue lifecycle contract plan row `{}` root disposition {:?} disagrees with the assessed disposition {:?}",
-                row.id, root_disposition, assessment.disposition
-            ));
-        }
+    }
+    let (law_failures, _assessed) = contract_plan::assess_real_rows_against_counting_law(&corpus);
+    for failure in law_failures {
+        violations.push(format!(
+            "issue lifecycle contract plan counting law failed: {failure}"
+        ));
     }
     let controls_path = root.join("controls.json");
     if controls_path.exists() {
@@ -2236,46 +2223,11 @@ pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
     let body = read_text_lossy(&provenance_path)?;
     match contract_plan::load_issue_lifecycle_contract_plan_provenance(&body) {
         Ok(provenance) => {
-            if provenance.rows.len() != corpus.rows.len() {
+            if let Err(error) = contract_plan::check_provenance_against_corpus(&corpus, &provenance)
+            {
                 violations.push(format!(
-                    "issue lifecycle contract plan provenance must name {} rows, got {}",
-                    corpus.rows.len(),
-                    provenance.rows.len()
+                    "issue lifecycle contract plan provenance binding failed: {error}"
                 ));
-            }
-            if provenance.base_main != corpus.base_main {
-                violations.push(format!(
-                    "issue lifecycle contract plan provenance base_main `{}` disagrees with corpus `{}`",
-                    provenance.base_main, corpus.base_main
-                ));
-            }
-            if provenance.captured_at != corpus.captured_at {
-                violations.push(format!(
-                    "issue lifecycle contract plan provenance captured_at `{}` disagrees with corpus `{}`",
-                    provenance.captured_at, corpus.captured_at
-                ));
-            }
-            for row in &corpus.rows {
-                match provenance
-                    .rows
-                    .iter()
-                    .find(|entry| entry.issue == row.snapshot.issue_number)
-                {
-                    Some(entry) => {
-                        if entry.category != row.category {
-                            violations.push(format!(
-                                "issue lifecycle contract plan provenance category `{}` disagrees with row `{}` category `{}`",
-                                entry.category, row.id, row.category
-                            ));
-                        }
-                    }
-                    None => {
-                        violations.push(format!(
-                            "issue lifecycle contract plan provenance is missing issue `{}`",
-                            row.snapshot.issue_ref
-                        ));
-                    }
-                }
             }
         }
         Err(error) => {

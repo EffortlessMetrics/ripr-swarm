@@ -1237,9 +1237,12 @@
      "plan": {
       "plan_id": "plan-synthetic-control",
       "work_items": [
-       "wi-control-a"
+       "wi-control-a",
+       "wi-control-b"
       ],
-      "dependencies": [],
+      "dependencies": [
+       "wi-control-b->wi-control-a"
+      ],
       "acceptance_coverage": [
        "synthetic acceptance row"
       ]
@@ -1277,7 +1280,7 @@
      "non_claims": [
       "claims nothing about any real issue"
      ],
-     "row_digest": "dfc5f54049753bfe5120798813f46ebf77f24d43982a2f985ff0148b3175d624"
+     "row_digest": "1593c2183b15070d125d8494d0ea8770be77cfc23ba37ba6e82e1db5c34bf6ed"
     }
    }
   },

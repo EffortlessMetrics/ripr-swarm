@@ -12450,6 +12450,11 @@ tests = [
   "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_fabricated_retrieval_bytes_fail_closed",
   "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_root_disposition_downgrade_rejected",
   "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_extra_provenance_row_rejected",
+  "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_empty_control_corpus_rejected",
+  "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_missing_required_control_rejected",
+  "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_author_and_adversary_results_must_be_distinct",
+  "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_planning_drift_from_embedded_attempt_rejected",
+  "xtask/src/issue_lifecycle_contract_plan.rs::tests::issue_lifecycle_contract_plan_pilot_provenance_captured_at_mismatch_rejected",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_contract_plan",
