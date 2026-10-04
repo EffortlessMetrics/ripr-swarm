@@ -51,6 +51,7 @@ use crate::analysis::syntax::{
     trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
+use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -181,24 +182,7 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            // One scan per run: workspace-wide sites feed the shared set,
-            // scoped ones (an inline module or block) are kept per file.
-            let mut global = BTreeSet::new();
-            let mut scoped = ScopedMacroBindings::new();
-            for (path, facts) in index.files().iter() {
-                for (name, site) in trusted_macro_binding_sites(
-                    &facts.source,
-                    index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
-                    &|line, declaration| module_resolved(path, line, declaration),
-                ) {
-                    if site.scope.is_some() {
-                        scoped.entry(path.clone()).or_default().push((name, site));
-                    } else {
-                        global.insert(name);
-                    }
-                }
-            }
+            let (global, scoped) = trusted_macro_sites_in(index, &module_resolved);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
             global
         });
@@ -482,6 +466,76 @@ fn macro_binding_sites(
         &[name],
         &|line, declaration| module_resolved(path, line, declaration),
     )
+}
+
+/// Trusted macro names some workspace file may rebind for every test, and
+/// the scoped sites (an inline module or block) kept per file.
+///
+/// Parses workspace files, so on a warm `ripr check` of a large workspace
+/// this scan dominated wall time (37% on ripr-swarm). Files are independent,
+/// so the scan runs on the rayon pool; the ordered collect keeps each file's
+/// scoped sites in source order.
+fn trusted_macro_sites_in(
+    index: &RustIndex,
+    module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+) -> (BTreeSet<String>, ScopedMacroBindings) {
+    let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
+        files
+            .par_iter()
+            .flat_map_iter(|(path, source)| {
+                trusted_macro_binding_sites(
+                    source,
+                    index.macro_scope_crates(),
+                    NON_RETURNING_MACROS,
+                    &|line, declaration| module_resolved(path, line, declaration),
+                )
+                .into_iter()
+                .map(|(name, site)| ((*path).clone(), name, site))
+            })
+            .collect()
+    };
+    let mut global = BTreeSet::new();
+    let mut scoped = ScopedMacroBindings::new();
+    let mut absorb = |sites: Vec<(PathBuf, String, MacroBindingSite)>,
+                      global: &mut BTreeSet<String>| {
+        for (path, name, site) in sites {
+            if site.scope.is_some() {
+                scoped.entry(path).or_default().push((name, site));
+            } else {
+                global.insert(name);
+            }
+        }
+    };
+    // One foreign glob import, `#[macro_use]` or unparsable file makes
+    // every trusted name ambiguous, and most workspaces have one. Scan
+    // the files that can do that first; once every name is ambiguous for
+    // every test, no later file (scoped sites included) changes an answer,
+    // so the rest are skipped.
+    let (likely, rest): (Vec<_>, Vec<_>) = index
+        .files()
+        .iter()
+        .map(|(path, facts)| (path, facts.data().source.as_str()))
+        .partition(|(_, source)| may_saturate_macro_ambiguity(source));
+    absorb(scan(&likely), &mut global);
+    if global.len() < NON_RETURNING_MACROS.len() {
+        absorb(scan(&rest), &mut global);
+    }
+    (global, scoped)
+}
+
+/// Scan-order hint for the trusted-macro ambiguity scan, never its answer:
+/// a glob import not rooted at `super`/`self`/`crate`, `#[macro_use]` or
+/// `no_implicit_prelude`. `use super::*;` in nearly every test module is
+/// workspace-owned and would otherwise put every file first.
+fn may_saturate_macro_ambiguity(source: &str) -> bool {
+    source.contains("macro_use")
+        || source.contains("no_implicit_prelude")
+        || source.match_indices("::*").any(|(offset, _)| {
+            let before = source[..offset].trim_end_matches(|character: char| {
+                character.is_ascii_alphanumeric() || character == '_'
+            });
+            !matches!(&source[before.len()..offset], "super" | "self" | "crate")
+        })
 }
 
 /// Whether a test file imports a name from outside the workspace; the
