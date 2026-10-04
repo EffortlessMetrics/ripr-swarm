@@ -374,11 +374,14 @@ fn pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only() {
 
     let note = "   - Also in this function: 2 more actionable seams not listed here\n";
     assert_eq!(md.matches(note).count(), 1, "{md}");
-    // The note follows the owner's first pick (line 10), not its second.
-    let first = md.find("src/a.rs:10").unwrap_or(usize::MAX);
-    let second = md.find("src/a.rs:11").unwrap_or(usize::MAX);
-    let at = md.find(note).unwrap_or(usize::MAX);
-    assert!(first < at && at < second, "{md}");
+    // In the ranked list, the note sits inside entry 1 (a::clone at line 10),
+    // before entry 2 (b::parse) and entry 3 (a::clone's second pick).
+    let ranked = md.find("## Ranked Seams").map_or("", |start| &md[start..]);
+    let entry = |prefix: &str| ranked.find(prefix).unwrap_or(usize::MAX);
+    let at = ranked.find(note).unwrap_or(usize::MAX);
+    assert!(ranked.contains("src/a.rs:10"), "{md}");
+    assert!(entry("1. `") < at && at < entry("2. `"), "{md}");
+    assert!(entry("3. `") > entry("2. `"), "{md}");
 }
 
 #[test]

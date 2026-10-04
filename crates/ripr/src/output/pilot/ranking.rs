@@ -54,6 +54,8 @@ fn spread_across_owners(ranked: &mut Vec<&ClassifiedSeam>) {
 
 /// Actionable seams that share an owning function with `entry`, itself
 /// included, so a renderer can say how many more a ranked seam stands for.
+/// Pass the same slice `top_actionable_seams` ranked: the renderer subtracts
+/// the listed seams from this count, so a narrower slice would undercount.
 pub(super) fn actionable_in_owner(classified: &[ClassifiedSeam], entry: &ClassifiedSeam) -> usize {
     classified
         .iter()
