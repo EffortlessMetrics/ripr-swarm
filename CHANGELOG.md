@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr help --json` now projects a typed per-command `exit` object for the
+  0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
+  `check` findings still completing with 0, `gate evaluate` `config_error`=2
+  versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
+  scraping `stop_states` (#5066).
+
 ### Fixed
 
 - Gap findings name every related test ripr examined and say why each one
@@ -22,6 +30,11 @@ are scoped or reviewed.
   this verdict" section: each examined test with the assertion it was judged
   by, what a test would need to change the verdict, and what each stop reason
   means (#5356). No verdict changes.
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
@@ -159,6 +172,12 @@ are scoped or reviewed.
   actionable receipt status. Retained evidence and recorded finish admission
   remain unchanged. Durable reads run off the async executor; supported stdio
   request admission remains serialized through reply flush (#5399).
+
+- MCP durable attempts at a current HEAD use the selected CLI attempt's next
+  action: a finished result offers none, and failed or open-gap work starts a
+  new before phase. Retained typed packet routes remain available only for a
+  current after continuation; a restart display never supplies typed command
+  authority. Retained receipts and freshness refusals are unchanged (#5413).
 
 ### Changed
 
