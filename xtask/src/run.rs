@@ -2377,7 +2377,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn probe_process_group_alive_classifies_a_missing_group_as_gone() -> Result<(), String> {
-        match super::probe_process_group_alive(u32::MAX) {
+        match super::probe_process_group_alive(i32::MAX as u32) {
             Ok(super::GroupProbe::Gone) => Ok(()),
             other => Err(format!(
                 "LC_ALL=C kill -0 of a missing group should be ESRCH, got {other:?}"
