@@ -204,7 +204,8 @@ cat "$o"; cat "$e" >&2; rm -f "$o" "$e"; exit $rc
 ```
 
 Keep the answer key, mutant output and logs outside any directory the agent
-may read.
+may read. Give each agent its own `AAU_LOG` path: the shim appends a header and
+the output in separate writes, so agents sharing a log would interleave.
 
 ### Agent brief
 
