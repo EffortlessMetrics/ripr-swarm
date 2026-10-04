@@ -1534,14 +1534,13 @@ mod tests {
         }
         // Spec law: a queue-shaped draft identity fails closed.
         let mut mutated = row.clone();
-        let draft_identity = {
+        {
             let contract = mutated
                 .contract
                 .as_mut()
                 .ok_or_else(|| "the contract case must carry contract evidence".to_string())?;
             contract.draft_spec_identity = "work-order-queue-1".to_string();
-            contract.draft_spec_identity.clone()
-        };
+        }
         let failures = assess_contract_plan_row(&mutated);
         if !failures
             .iter()
