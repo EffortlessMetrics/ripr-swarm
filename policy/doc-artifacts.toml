@@ -1236,3 +1236,43 @@ path = "docs/specs/RIPR-SPEC-0223-issue-lifecycle-intake-pilot.md"
 status = "proposed"
 owner = "test-infra"
 standalone_reason = "Issue #4930 runs the read-only intake pilot (ISSUE-D2) as the first real-corpus consumer of the frozen RIPR-SPEC-0218 attempt contract: exactly six REAL captured issue snapshots (#5439 narrow accepted-contract bug, #5440 duplicate of #5270, #5399 overlapping open PR #5408, #5373 needs-evidence, #2928 partially landed umbrella with merged child #4643/PR #5366 and open residuals, #5441 architecture/authority ambiguity against ADR 0017) are classified through the closed fifteen-value disposition vocabulary with an independent root disposition per row, immutable digest-bound issue/comments/timeline snapshots, provenance with capture timestamp and base main SHA, packet selected/omitted/overflow bytes measured or explicitly not_measured, triager candidates with root corrections retained verbatim, exact missing-evidence questions instead of guessed implementation, the movement law (bound-identity movement invalidates a row, unrelated movement does not), the selection law (no active.toml, label, age or title silently selects work; the packet projection reads only committed corpus fields), byte-identical cold-start reconstruction from the corpus alone, and a synthetic mechanics control corpus (false-duplicate correction, overlapping-PR pickup block, explicit not_measured bytes) kept outside the six real rows; results flow through the unchanged #4929 counting law and IssueLifecycleScorecardV1 projection without a parallel intake report, claiming read-only intake quality for six exact issues only — no triage universality, no duplicate-detection accuracy, no implementation or closeout claim."
+
+[[artifact]]
+id = "RIPR-SPEC-0225"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records when a whole-value assert_eq! against a struct literal naming the changed field confirms a Rust field_construction probe, gated on derived PartialEq and RIPR-SPEC-0197 call identity, and makes the whole_object_equality oracle kind parser-backed."
+
+[[artifact]]
+id = "RIPR-SPEC-0226"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0226-same-line-finding-agreement.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records which facts findings on one changed line and owner must agree on (reach, related tests, observation of one call) and which family evidence may differ, with a goldens-wide contradiction check."
+
+[[artifact]]
+id = "RIPR-SPEC-0227"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0227-result-side-oracles.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records one contract for oracles that observe only the Ok/Err side of a Result: never a variant or value discriminator, and a proposed same-test side-flip credit for guards and the ? operator."
+
+[[artifact]]
+id = "RIPR-SPEC-0228"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records how changed Rust field assignments are probed and observed: typed field_construction probes, same-test field reads after the owner call, resolved-body getters, and named limits for &mut aliasing."
+
+[[artifact]]
+id = "RIPR-SPEC-0229"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records how ripr decides which match arm a test input selects, names the unselected changed arm as a missing discriminator (#5432), and credits a selecting call paired with an exact oracle."
