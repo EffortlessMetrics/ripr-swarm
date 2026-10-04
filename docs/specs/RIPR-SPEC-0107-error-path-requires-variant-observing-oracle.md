@@ -357,6 +357,14 @@ seam was wrongfully downgraded.
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
+## Later Amendment
+
+RIPR-SPEC-0227 decision 3 (2026-10-04) adds one narrow exception for an
+added or removed `?`: a broad `is_err()`/`is_ok()` oracle confirms the
+`error_path` probe only when the test input provably reaches the `?` call's
+`Err` and the original code provably returned `Ok` on that input. Every
+other `error_path` probe still needs a variant-observing oracle.
+
 ## Metrics
 
 - `error_path_variant_confirmation_required`: classification `weakly_exposed`

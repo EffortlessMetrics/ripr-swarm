@@ -4,3 +4,4 @@
   normative, and six admission rules stop `assert_ne!`, guarded `Err(e)`
   patterns, `Ok(_)` side checks, substring identifier matches and inequality
   helper names from reading as strong or effect oracles (#5513).
+  RIPR-SPEC-0107 gains one narrow `?` exception from RIPR-SPEC-0227.

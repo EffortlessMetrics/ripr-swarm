@@ -173,22 +173,29 @@ it, each credited from another function's
 `matches!(refund(..), Err(PayError::Limit))` or a sibling-variant
 `assert_eq!`; examples 10 and 11 below restate them.
 
-### Decisions for the owner
+### Decisions
 
-1. **Rule 3 credit.** Recommended: adopt it. Without it, the common
-   `is_err`/`is_ok` boundary test stays a false gap. Alternative: keep every
+Steven delegated these choices on 2026-10-04 ("make reasonable documented
+decisions and proceed"). Each records the adopted option, why, and the
+rejected alternative. Any can be reversed later without touching the rest.
+
+1. **Rule 3 credit.** Adopted. Without it, the common
+   `is_err`/`is_ok` boundary test stays a false gap. Rejected: keep every
    result-side oracle weak.
-2. **Bare `unwrap_err()` and `should_panic`.** Recommended: read them as
+2. **Bare `unwrap_err()` and `should_panic`.** Adopted: read them as
    result-side oracles (weak), moving their findings from
-   `reachable_unrevealed` to `weakly_exposed` and letting rule 3 apply.
-   Alternative: keep them unread.
+   `reachable_unrevealed` to `weakly_exposed` and letting rule 3 apply,
+   because a test that panics on the wrong side does observe the side.
+   Rejected: keep them unread.
 3. **The `?` operator.** An added or removed `?` swaps `Err` for `Ok` the
    same way a guard does, but a `?` line is an `error_path` probe, and
    RIPR-SPEC-0107 says a broad oracle never confirms `error_path`.
-   Recommended: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
+   Adopted: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
    input provably reaches the `?` call's `Err` and the original code returned
-   `Ok` on that input. Alternative: leave `?` under RIPR-SPEC-0107 (always
-   weak with a broad oracle).
+   `Ok` on that input, because then the side alone tells the original from
+   the change; when either fact is not established, RIPR-SPEC-0107 still
+   applies. RIPR-SPEC-0107 records this exception. Rejected: leave `?`
+   under RIPR-SPEC-0107 (always weak with a broad oracle).
 
 ## Required Evidence
 
@@ -206,7 +213,7 @@ it, each credited from another function's
 
 - No credit for message text in `should_panic(expected = ..)`.
 - No change to exact-variant authorities (RIPR-SPEC-0106, 0107, 0175, 0197)
-  beyond rule 4's binding, unless decision 3 is adopted.
+  beyond rule 4's binding and decision 3's narrow `?` exception to 0107.
 - No change to how a `?` probe is confirmed by an exact `Err(E::X)`
   assertion; that under-credit is tracked separately.
 
@@ -231,8 +238,8 @@ Source: `check` as in Problem.
    `weakly_exposed`.
 9. `let d = digit(c)?;` changed from `let d = digit(c).unwrap_or(0);` in
    `total`, where `digit('x')` returns `Err` and the original `total("x")`
-   returned `Ok`, test `assert!(total("x").is_err())`: `exposed` if decision 3
-   is adopted, otherwise `weakly_exposed` under RIPR-SPEC-0107.
+   returned `Ok`, test `assert!(total("x").is_err())`: `exposed` (decision 3;
+   `weakly_exposed` under RIPR-SPEC-0107 before this spec).
 10. `withdraw` changed to return `Err(PayError::Frozen)`; the only related
     test pinning a variant is `assert!(matches!(refund(20_000), Err(PayError::Limit)))`
     for another function: not `exposed` (rule 4).

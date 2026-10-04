@@ -171,13 +171,20 @@ strength.
    `.assert_*` method call). An inequality-named helper is rule 1's case.
    Any other helper is step 11 `unknown`.
 
-### Decisions for the owner
+### Decisions
 
-1. **`assert_ne!` strength.** Recommended: `relational_check` / weak, as rule
-   1, and weak `whole_object_equality` for a struct literal. Alternative: a
-   new `inequality` kind; that is a schema addition.
-2. **Observer words.** Recommended: whole segments as rule 5. Alternative:
-   drop step 9's observer words entirely and keep only the mock call forms.
+Steven delegated these choices on 2026-10-04 ("make reasonable documented
+decisions and proceed"). Each records the adopted option, why, and the
+rejected alternative. Any can be reversed later without touching the rest.
+
+1. **`assert_ne!` strength.** Adopted: `relational_check` / weak, as rule
+   1, and weak `whole_object_equality` for a struct literal. Rejected: a
+   new `inequality` kind, because that is a schema addition for a reading
+   that is already weak.
+2. **Observer words.** Adopted: whole segments as rule 5, because names
+   such as `events_sent` do observe an effect and keep their medium
+   credit. Rejected: drop step 9's observer words entirely and keep only the
+   mock call forms.
 
 ## Required Evidence
 
