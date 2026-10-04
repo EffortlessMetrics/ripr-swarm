@@ -7986,6 +7986,10 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_two_witnesses_then_first_by_file_line_is_selected",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_named_away_from_the_call_then_the_test_is_not_corroborated",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_cross_type_same_named_call_then_the_caller_still_reaches",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_normalizes_backslashes_in_path",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_reports_plural_other_tests",
@@ -8003,6 +8007,7 @@ fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/rust_transitive_reach_positive",
   "fixtures/rust_transitive_reach_test_helper_chain",
+  "fixtures/rust_transitive_reach_same_name_other_type",
   "fixtures/rust_transitive_reach_negative",
 ]
 code = [
@@ -8270,6 +8275,8 @@ name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/tests/property_macro_quarantine.rs::property_mentions_respect_known_package_boundaries",
+  "crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs",
+  "crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal",
   "crates/ripr/src/output/human.rs::tests::digest_next_step_keeps_the_remedy_clause",
   "crates/ripr/src/output/human.rs::tests::digest_next_step_line_counts_its_label_against_the_budget",
   "crates/ripr/src/output/human.rs::tests::digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure",
@@ -10506,7 +10513,6 @@ tests = [
   "crates/ripr/tests/cli_progress.rs::check_quiet_keeps_json_stdout_byte_identical_and_drops_progress",
   "crates/ripr/tests/cli_progress.rs::check_sarif_stdout_is_unchanged_by_progress",
   "crates/ripr/tests/cli_progress.rs::check_github_stdout_is_unchanged_by_progress",
-  "crates/ripr/tests/cli_progress.rs::check_markdown_stdout_is_unchanged_by_progress",
   "crates/ripr/tests/cli_progress.rs::check_worktree_projects_worktree_scope_on_stderr",
   "crates/ripr/tests/cli_progress.rs::check_progress_failure_emits_failed_not_completed",
   "crates/ripr/tests/cli_progress.rs::check_quiet_failure_keeps_errors_and_drops_progress",
