@@ -1670,7 +1670,9 @@ fn is_workspace_relative_value(dir: &str) -> bool {
         && !path.components().any(|component| {
             matches!(
                 component,
-                std::path::Component::ParentDir | std::path::Component::RootDir
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
             )
         })
 }
@@ -1768,19 +1770,25 @@ fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
     if absent.is_empty() {
         return None;
     }
-    // Grammar and repair follow the count: the repair names the workspace-
+    // Grammar and repair follow the count. The repair names the workspace-
     // rooted path, not a bare relative name, so running it from a different
     // working directory than the selected root still creates the directory
-    // cargo will actually use.
+    // cargo will actually use; it is quoted through the shared shell-arg
+    // owner so a root containing spaces survives as one argument, and the
+    // plural repair names every absent directory.
+    let repair_paths = absent
+        .iter()
+        .map(|dir| {
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&root.join(dir)))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
     let (dirs_phrase, existence, persistence, repair) = if absent.len() == 1 {
         (
             format!("{}/", absent[0]),
             "does not exist",
             "it exists",
-            format!(
-                "Create it before building from source (for example `mkdir {}`)",
-                output::path::human_path(&root.join(absent[0]))
-            ),
+            format!("Create it before building from source (for example `mkdir {repair_paths}`)"),
         )
     } else {
         let dirs_list = absent
@@ -1792,10 +1800,7 @@ fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
             dirs_list,
             "do not exist",
             "they exist",
-            format!(
-                "Create each before building from source (for example `mkdir {}`)",
-                output::path::human_path(&root.join(absent[0]))
-            ),
+            format!("Create each before building from source (for example `mkdir {repair_paths}`)"),
         )
     };
     let override_note = if redirect.all_forced {
@@ -2033,6 +2038,13 @@ mod tests {
             linker_temp_redirect("[env]\nTEMP = { value = \"../outside\", relative = true }\n",),
             None
         );
+        // Windows drive-relative values ("C:target") carry a Prefix component
+        // without a root, and joining them discards the workspace base too.
+        #[cfg(windows)]
+        assert_eq!(
+            linker_temp_redirect("[env]\nTEMP = { value = \"C:target\", relative = true }\n",),
+            None
+        );
 
         assert_eq!(linker_temp_redirect("[env]\nTEMP = \"target\"\n"), None);
         assert_eq!(linker_temp_redirect("[env]\nRUST_LOG = \"debug\"\n"), None);
@@ -2088,8 +2100,22 @@ mod tests {
         oversized.push_str(&"#".repeat(CARGO_CONFIG_MAX_BYTES as usize));
         std::fs::write(&config, oversized).map_err(|err| format!("write oversized: {err}"))?;
         let too_big = linker_temp_redirect_advisory(&root);
-        // Compute the rooted-repair expectation before the tree is removed.
+        // A root whose path contains a space must get a shell-quoted repair,
+        // so the example stays one argument instead of splitting.
+        let spaced_root = root.join("dir with spaces");
+        std::fs::create_dir_all(spaced_root.join(".cargo"))
+            .map_err(|err| format!("create spaced root: {err}"))?;
+        std::fs::write(
+            spaced_root.join(".cargo/config.toml"),
+            REPO_SHAPED_CARGO_CONFIG,
+        )
+        .map_err(|err| format!("write spaced config: {err}"))?;
+        let spaced = linker_temp_redirect_advisory(&spaced_root);
+        // Compute the rooted-repair expectations before the tree is removed.
         let rooted_target = output::path::human_path(&root.join("target"));
+        let spaced_target = crate::agent::loop_commands::shell_arg(&output::path::human_path(
+            &spaced_root.join("target"),
+        ));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
         let absent = absent.unwrap_or_default();
@@ -2104,6 +2130,11 @@ mod tests {
         assert!(
             absent.contains(&format!("mkdir {rooted_target}")),
             "the repair must name the workspace-rooted directory, not a cwd-relative one: {absent}"
+        );
+        let spaced = spaced.unwrap_or_default();
+        assert!(
+            spaced.contains(&format!("mkdir {spaced_target}")),
+            "a root with spaces must get a quoted repair argument: {spaced}"
         );
         assert!(
             absent.contains("exported TEMP/TMP cannot override it (force = true)"),
@@ -2148,10 +2179,20 @@ mod tests {
         std::fs::write(root.join(".cargo/config.toml"), config_text)
             .map_err(|err| format!("write config: {err}"))?;
         let advisory = linker_temp_redirect_advisory(&root).unwrap_or_default();
+        // Compute both rooted-repair expectations before the tree is removed.
+        let target_arg =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&root.join("target")));
+        let elsewhere_arg = crate::agent::loop_commands::shell_arg(&output::path::human_path(
+            &root.join("elsewhere"),
+        ));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         assert!(
             advisory.contains("target/, elsewhere/, which do not exist"),
             "{advisory}"
+        );
+        assert!(
+            advisory.contains(&format!("mkdir {target_arg} {elsewhere_arg}")),
+            "the plural repair must name every absent directory: {advisory}"
         );
         assert!(advisory.contains("until they exist"), "{advisory}");
         assert!(

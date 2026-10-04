@@ -9438,6 +9438,16 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
 #[test]
 fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    // RAII cleanup: a failed assertion or early error must not leak the
+    // temporary workspace, matching the Drop-guard fixtures used by the
+    // other test files.
+    struct TempWorkspaceGuard<'a>(&'a Path);
+    impl Drop for TempWorkspaceGuard<'_> {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(self.0);
+        }
+    }
+    let _cleanup = TempWorkspaceGuard(&workspace);
     std::fs::create_dir_all(workspace.join(".cargo")).map_err(|e| format!("create .cargo: {e}"))?;
     std::fs::write(
         workspace.join(".cargo/config.toml"),
@@ -9469,6 +9479,10 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         "source-build",
         "--json",
     ]);
+    assert!(
+        source.status.success(),
+        "an advisory must not fail the source-build doctor: {source:?}"
+    );
     let source_report: serde_json::Value = serde_json::from_slice(&source.stdout)
         .map_err(|e| format!("source-build doctor JSON did not parse: {e}"))?;
     if check_status(&source_report, "linker_temp_redirect") != "advisory" {
@@ -9496,6 +9510,10 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
     // The analysis profile stays quiet: the constraint matters only when
     // building ripr from source.
     let analysis = run_ripr(&["doctor", "--root", &root, "--profile", "analysis", "--json"]);
+    assert!(
+        analysis.status.success(),
+        "analysis doctor must succeed: {analysis:?}"
+    );
     let analysis_report: serde_json::Value = serde_json::from_slice(&analysis.stdout)
         .map_err(|e| format!("analysis doctor JSON did not parse: {e}"))?;
     assert_eq!(
@@ -9536,6 +9554,10 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         "source-build",
         "--json",
     ]);
+    assert!(
+        resolved.status.success(),
+        "resolved doctor must succeed: {resolved:?}"
+    );
     let resolved_report: serde_json::Value = serde_json::from_slice(&resolved.stdout)
         .map_err(|e| format!("resolved doctor JSON did not parse: {e}"))?;
     assert_eq!(
@@ -9544,7 +9566,6 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         "a present workspace target must resolve the advisory"
     );
 
-    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
