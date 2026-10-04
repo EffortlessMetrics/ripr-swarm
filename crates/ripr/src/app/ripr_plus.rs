@@ -26,7 +26,7 @@
 //! receipt-composition subcommand.
 //!
 //! Output: `target/ripr/reports/ripr-plus.{json,md}`. A failed run that would
-//! replace a real receipt first copies it to
+//! replace a receipt whose status is not `indeterminate` first copies it to
 //! `target/ripr/reports/ripr-plus.last-good.{json,md}`; that copy describes an
 //! earlier run and is never current evidence.
 
@@ -239,13 +239,14 @@ cannot be read or composed, or --check cannot establish zero (an
 Outputs:
   target/ripr/reports/ripr-plus.json
   target/ripr/reports/ripr-plus.md
-  target/ripr/reports/ripr-plus.last-good.json  (failed runs only)
-  target/ripr/reports/ripr-plus.last-good.md    (failed runs only)
+  target/ripr/reports/ripr-plus.last-good.json  (only after a failed run)
+  target/ripr/reports/ripr-plus.last-good.md    (only after a failed run)
 
-A failed run still writes an `indeterminate` receipt to ripr-plus.json. When
-that replaces a real receipt, the previous pair is first copied to
-ripr-plus.last-good.{json,md}. The copy describes an earlier run, may be stale
-for the current HEAD, and is not current evidence.
+A failed run still writes an `indeterminate` receipt to ripr-plus.json. If the
+receipt it replaces has a status other than `indeterminate`, that receipt and
+its Markdown, when present, are first copied to ripr-plus.last-good.{json,md}.
+The copy describes an earlier run, may be stale for the current HEAD, and is
+not current evidence.
 
 Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement or bind that evidence to current candidate
