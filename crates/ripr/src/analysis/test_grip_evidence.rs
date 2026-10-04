@@ -671,7 +671,7 @@ fn observed_value_facts_for_test(
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
-    for call in &indexed.test.calls {
+    for call in indexed.test.body_calls() {
         if call.name != owner_name {
             continue;
         }
@@ -1193,7 +1193,7 @@ fn boundary_equality_overlap_score(
     };
 
     let mut score = 0;
-    for call in &indexed.test.calls {
+    for call in indexed.test.body_calls() {
         if call.name != owner_fn.name {
             continue;
         }
@@ -1425,7 +1425,7 @@ fn boundary_constant_operand(
         return None;
     }
     let left_operand = boundary_operand_argument(owner_fn, &parameters, &left)?;
-    let lookup = index.files.get(&owner_fn.file).map_or(
+    let lookup = index.files().get(&owner_fn.file).map_or(
         super::value_resolution::NamedConstant::Undeclared,
         |facts| super::value_resolution::named_constant(&facts.source, name),
     );
@@ -1453,9 +1453,9 @@ fn test_passes_boundary_constant(
         &owner_fn.file,
         &indexed.test.file,
         index
-            .files
+            .files()
             .get(&indexed.test.file)
-            .map(|facts| facts.source.as_str()),
+            .map(|facts| facts.data().source.as_str()),
         &constant.name,
     ) {
         return false;
