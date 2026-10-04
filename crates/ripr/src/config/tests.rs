@@ -141,6 +141,27 @@ fn unresolvable_config_symlink_is_a_loud_error_not_defaults() -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn dangling_config_symlink_at_a_nearer_ancestor_is_not_skipped() -> Result<(), String> {
+    let outer = temp_root("ancestor-walk")?;
+    write_file(&outer.join("ripr.toml"), "")?;
+    let middle = outer.join("middle");
+    let nested = middle.join("nested");
+    fs::create_dir_all(&nested).map_err(|err| format!("mkdir failed: {err}"))?;
+    std::os::unix::fs::symlink("no-such-target.toml", middle.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+
+    let error = match load_for_root(&nested) {
+        Ok(_) => return Err("expected an error, got a config".to_string()),
+        Err(error) => error,
+    };
+
+    assert!(error.contains("middle"), "{error}");
+    let _ = fs::remove_dir_all(&outer);
+    Ok(())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn missing_config_detects_root_python_project_markers() -> Result<(), String> {
