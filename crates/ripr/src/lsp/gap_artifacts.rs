@@ -1565,22 +1565,38 @@ fn substitution_is_quoted(command: &str) -> bool {
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
     let words = tokens.iter().map(String::as_str).collect::<Vec<_>>();
-    match words.as_slice() {
-        ["cargo" | "ripr" | "pytest", ..] | ["python", "-m", "unittest" | "pytest", ..] => true,
+    if matches!(words.as_slice(), ["cargo" | "ripr", ..]) {
+        return true;
+    }
+    // A producer's test-runner command names test paths and node ids only;
+    // an option token could load a config, plugin or module outside the one
+    // test the packet points at.
+    test_runner_arguments(&words)
+        .is_some_and(|arguments| arguments.iter().all(|word| !word.starts_with('-')))
+}
+
+/// The arguments after a test-runner verify command's program, or `None` when
+/// the command is not one of the runners the preview-language producers emit.
+fn test_runner_arguments<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
+    match words {
+        ["pytest", arguments @ ..] | ["python", "-m", "unittest" | "pytest", arguments @ ..] => {
+            Some(arguments)
+        }
         // TypeScript verify commands (RIPR-SPEC-0085). Package scripts first,
         // so `yarn test` is not read as a `yarn <bin>` launch.
-        ["bun" | "yarn", "test", ..]
-        | ["npm" | "pnpm", "test", "--", ..]
-        | ["node", "--test", ..] => true,
+        ["bun" | "yarn", "test", arguments @ ..]
+        | ["npm" | "pnpm", "test", "--", arguments @ ..]
+        | ["node", "--test", arguments @ ..] => Some(arguments),
         // Only launchers that run the package's installed binary: `npx`
         // without `--no-install` and `bunx` fetch a missing package.
         ["npx", "--no-install", binary @ ..]
         | ["pnpm", "exec", binary @ ..]
         | ["bun", "run", binary @ ..]
-        | ["yarn", binary @ ..] => {
-            matches!(binary, ["jest" | "ava", ..] | ["vitest", "run", ..])
-        }
-        _ => false,
+        | ["yarn", binary @ ..] => match binary {
+            ["jest" | "ava", arguments @ ..] | ["vitest", "run", arguments @ ..] => Some(arguments),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -3304,6 +3320,12 @@ mod tests {
             "vitest tests/discount.test.ts",
             "npx --no-install jest ../outside/discount.test.ts",
             "npx --no-install jest tests/a.test.ts; rm -rf target",
+            // Runner options can load a config, plugin or module beyond the
+            // one test the packet names.
+            "npx --no-install jest --config other.config.js tests/a.test.ts",
+            "node --test --import ./setup.mjs tests/math.test.ts",
+            "npm test -- --watch tests/math.test.ts",
+            "python -m pytest -p plugin tests/test_pricing.py",
         ] {
             assert!(!command_payload_is_safe(&workspace, command), "{command}");
         }

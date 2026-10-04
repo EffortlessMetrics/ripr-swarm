@@ -49,8 +49,9 @@ are scoped or reviewed.
   view and actionable-gaps queue also accept the Python `python -m pytest`,
   `pytest` and `python -m unittest` verify commands. `npx` without
   `--no-install`, `bunx` and `dlx` stay refused, because they can fetch a
-  package from the registry, and so does a test path that leaves the package
-  through `../`.
+  package from the registry. A test path that leaves the package through
+  `../`, or a runner option such as `--config` or `-p`, is refused too, since
+  ripr's own verify commands name only test paths and node ids.
 
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted

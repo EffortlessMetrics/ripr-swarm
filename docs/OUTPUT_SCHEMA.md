@@ -15387,7 +15387,9 @@ repair-routing records. Python preview GapRecords accept bounded
 `python -m unittest ...` verification commands, and TypeScript preview
 GapRecords accept the local-only launcher forms (`npx --no-install`,
 `pnpm exec`, `yarn`, `bun run` followed by `jest`, `vitest run` or `ava`, plus
-`bun test`, `node --test`, `npm|pnpm test --` and `yarn test`). Both expose
+`bun test`, `node --test`, `npm|pnpm test --` and `yarn test`). After the
+runner, a verify command may name only test paths and node ids: an option
+token (`--config`, `-p`) or a `../` path is refused. Both expose
 verify and receipt copy actions when those commands are safe, expose `Agent handoff: copy Python
 packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
 --gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a

@@ -74,15 +74,20 @@ export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
 ];
 
 /**
- * A test-runner verify command must name test paths inside the package, as
- * the LSP's `command_payload_is_safe` requires; `../` would run tests outside
- * the producer's package-local scope.
+ * A test-runner verify command names test paths and node ids inside the
+ * package, as the LSP's `command_payload_is_safe` requires: `../` would run
+ * tests outside the producer's package-local scope, and an option token could
+ * load a config, plugin or module beyond the one test the packet points at.
  */
-export function testRunnerCommandLeavesPackage(normalized: string): boolean {
+export function testRunnerCommandLeavesScope(normalized: string): boolean {
+  const prefix = TEST_RUNNER_VERIFY_COMMAND_PREFIXES.find((candidate) =>
+    normalized === candidate || normalized.startsWith(`${candidate} `)
+  );
+  if (prefix === undefined) {
+    return false;
+  }
   return normalized.includes('../')
-    && TEST_RUNNER_VERIFY_COMMAND_PREFIXES.some((prefix) =>
-      normalized === prefix || normalized.startsWith(`${prefix} `)
-    );
+    || normalized.slice(prefix.length).split(' ').some((word) => word.startsWith('-'));
 }
 
 /**

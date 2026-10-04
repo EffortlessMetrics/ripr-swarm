@@ -2333,7 +2333,10 @@ suite('Extension Smoke', () => {
       'pnpm dlx jest tests/discount.test.ts',
       'yarn add jest',
       'npx --no-install jest ../outside/discount.test.ts',
-      'python -m pytest ../outside/test_pricing.py'
+      'python -m pytest ../outside/test_pricing.py',
+      'npx --no-install jest --config other.config.js tests/discount.test.ts',
+      'node --test --import ./setup.mjs tests/math.test.ts',
+      'npm test -- --watch tests/math.test.ts'
     ]) {
       assert.strictEqual(await verifyPacketState(verify), 'unsafeCommand', verify);
     }
@@ -2519,6 +2522,7 @@ suite('Extension Smoke', () => {
     assert.strictEqual(await queueVerifyState('npx jest tests/discount.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('bunx vitest run src/util.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx --no-install jest ../outside/discount.test.ts'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('python -m pytest -p plugin tests/test_pricing.py'), 'unsafeCommand');
 
     // #4265: a queue command may redirect into the workspace, not out of it.
     const queueVerifyTo = async (target: string) => {

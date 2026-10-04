@@ -22,7 +22,7 @@ import {
   hasUnsafeShellMetacharacter,
   redirectStaysInWorkspace,
   TEST_RUNNER_VERIFY_COMMAND_PREFIXES,
-  testRunnerCommandLeavesPackage
+  testRunnerCommandLeavesScope
 } from './packetJson';
 
 const FIRST_PR_STATIC_EVIDENCE_BOUNDARY = 'static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.';
@@ -411,7 +411,7 @@ export function firstPrCommandIsSafe(command: string, redirectRoots: readonly st
   const normalized = command.trim().replace(/\s+/g, ' ');
   return normalized !== ''
     && !hasUnsafeShellMetacharacter(normalized)
-    && !testRunnerCommandLeavesPackage(normalized)
+    && !testRunnerCommandLeavesScope(normalized)
     && redirectStaysInWorkspace(normalized, redirectRoots)
     && FIRST_PR_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
