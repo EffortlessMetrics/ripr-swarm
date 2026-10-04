@@ -398,10 +398,11 @@ block the most useful output ripr gave.
 The stub route now produces stubs: four of five calls returned one, against
 none in pass 2. Three of those four do not help, and one call still fails:
 
-- bytesize (two calls): after the agent's first test, `check` suggested
-  `agent stub --at src/lib.rs:259` for the `return None` probe. The stub it
-  printed targets the line-258 predicate, and `--at 261` printed the same
-  stub (#6298).
+- bytesize (three calls): `--at src/lib.rs:258` stubbed the predicate on that
+  line. After the agent's first test, `check` suggested
+  `agent stub --at src/lib.rs:259` for the `return None` probe. That stub
+  also targets the line-258 predicate, and `--at 261` printed it again
+  (#6298).
 - humantime: the `parse_unit` arm's value leaves through `out: &mut Duration`,
   but the stub asserts only the `Result`, which is `Ok(())` either way. Filled
   in honestly, it passes on the arm mutant (#6300).
