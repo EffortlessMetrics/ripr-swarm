@@ -273,9 +273,8 @@ missing tests.
    base or the head it analyzed. `ripr --help` describes the loop as "you add
    one focused test -> ripr records whether the gap closed", which the
    default does not do for an uncommitted test.
-   Since this run the human header prints ``edits: uncommitted changes not
-   analyzed (reads HEAD; add `--worktree`)`` above the summary; whether the
-   default should read the worktree when it is dirty is #5358.
+   Tracked in #5358: when the tree is dirty, `check` will read the worktree
+   by default, and the header will name the base and head it analyzed.
 2. **Tests that discriminate stay `weakly_exposed` when they don't quote the
    changed text.** Measured:
    - humantime: exact-value tests through `parse_duration` catch all answer-key
