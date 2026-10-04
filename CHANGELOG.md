@@ -9,6 +9,16 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr check --format json` caps the rendered `findings` array at
+  `RIPR_CHECK_FINDINGS_BYTES` emitted bytes (default 1,000,000; `0` removes
+  the cap). A bounded document renders the deterministic first-finding prefix
+  with full `summary` counts and a `run_limitations[]` entry
+  (`limited_findings_bound`, `downstream_consumable: false`) so it never
+  presents as complete; the gate refuses bounded inputs with a `config_error`
+  naming the budget repair (#5203).
+
 ### Fixed
 
 - LSP: `session_value_sources` reports `initialization` only for applied

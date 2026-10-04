@@ -430,6 +430,132 @@ fn limited_partial_scope_detection_covers_run_state_vocabulary() {
 }
 
 #[test]
+fn limited_findings_bound_detection_covers_disclosed_position() {
+    let run_status = crate::output::json::FINDINGS_BOUND_RUN_STATUS;
+    assert!(discloses_limited_findings_bound(&json!({
+        "run_limitations": [{"run_status": run_status}]
+    })));
+    assert!(discloses_limited_findings_bound(&json!({
+        "run_limitations": [{"category": run_status}]
+    })));
+    assert!(!discloses_limited_findings_bound(&json!({
+        "schema_version": "0.2",
+        "findings": []
+    })));
+    assert!(!discloses_limited_findings_bound(&json!({
+        "run_limitations": [{"run_status": "diff_scope_oversized"}]
+    })));
+    // The two limited states are independent predicates: a partial-scope
+    // disclosure must not trip the findings-bound refusal and vice versa.
+    assert!(!discloses_limited_findings_bound(&json!({
+        "analysis_scope": {"run_status": "limited_partial_scope"}
+    })));
+    assert!(!discloses_limited_partial_scope(&json!({
+        "run_limitations": [{"run_status": run_status}]
+    })));
+}
+
+#[test]
+fn gate_fails_closed_on_limited_findings_bound_pr_guidance() -> Result<(), String> {
+    // #5203: a structurally valid guidance document that discloses a
+    // `limited_findings_bound` producer run is a bounded denominator, never
+    // a gate input — fail closed like a malformed document.
+    let dir = temp_dir("gate-findings-bound-pr-guidance")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "status": "advisory",
+          "comments": [],
+          "run_limitations": [
+            {
+              "category": "limited_findings_bound",
+              "run_status": "limited_findings_bound",
+              "basis": "check_findings_byte_budget",
+              "downstream_consumable": false,
+              "message": "rendered 1 of 61 findings within the findings-array byte budget",
+              "repair_route": "output/check-findings-budget"
+            }
+          ]
+        }"#,
+    )?;
+    let mut input = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert!(gate_decision_should_fail(&report));
+    assert_eq!(
+        report.summary.evaluated, 0,
+        "a bounded denominator must not be evaluated as a complete input"
+    );
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("limited_findings_bound")
+                && error.contains("RIPR_CHECK_FINDINGS_BYTES")),
+        "config error must name the bound run state and the repair: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_gap_ledger_and_baseline_refuse_limited_findings_bound() -> Result<(), String> {
+    // #5203: the ledger and baseline enforcement points refuse the same
+    // vocabulary as the pr-guidance point.
+    let dir = temp_dir("gate-findings-bound-consumers")?;
+    let envelope = r#"{
+      "run_limitations": [
+        {
+          "category": "limited_findings_bound",
+          "run_status": "limited_findings_bound",
+          "basis": "check_findings_byte_budget",
+          "downstream_consumable": false,
+          "message": "rendered 1 of 61 findings within the findings-array byte budget",
+          "repair_route": "output/check-findings-budget"
+        }
+      ]
+    }"#;
+
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", envelope)?;
+    let mut gap_input = fixture_input(GateMode::VisibleOnly)?;
+    gap_input.pr_guidance = None;
+    gap_input.gap_ledger = Some(gap_ledger);
+    let gap_report = build_gate_decision_report(&gap_input)?;
+    assert_eq!(gap_report.status, "config_error");
+    assert!(
+        gap_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("limited_findings_bound")),
+        "ledger refusal must name the bound run state: {:?}",
+        gap_report.config_errors
+    );
+
+    let baseline = write_temp_json(&dir, "baseline.json", envelope)?;
+    let mut baseline_input = fixture_input(GateMode::BaselineCheck)?;
+    baseline_input.baseline = Some(baseline);
+    let baseline_report = build_gate_decision_report(&baseline_input)?;
+    assert_eq!(baseline_report.status, "config_error");
+    assert!(
+        baseline_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("limited_findings_bound")),
+        "baseline refusal must name the bound run state: {:?}",
+        baseline_report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     assert!(discloses_incomplete_analysis_outcome(&json!({
         "analysis_outcome": {

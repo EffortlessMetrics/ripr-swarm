@@ -44,10 +44,15 @@ pub(crate) fn render_check_with_config_and_progress(
     match format {
         OutputFormat::Human => Ok(human::render_bounded_with_config(output, config)),
         OutputFormat::HumanFull => Ok(human::render_full_with_config(output, config)),
-        OutputFormat::Json => Ok(stamp_check_json(
-            json::render_with_config(output, config),
-            &output.root,
-        )),
+        OutputFormat::Json => {
+            // Fail-closed budget resolution (#5203): an unparseable
+            // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
+            let findings_budget = json::check_findings_byte_budget()?;
+            Ok(stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            ))
+        }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
         OutputFormat::Sarif => {
             let suppressions = load_suppressions(output, config)?;
