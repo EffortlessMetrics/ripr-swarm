@@ -67,7 +67,7 @@ ripr:
     - file="ripr-server-v${RIPR_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
     - curl -fsSLO "$base/$file" && curl -fsSLO "$base/$file.sha256"
     - echo "$(cat $file.sha256)  $file" | sha256sum -c -
-    - tar xzf "$file" ripr
+    - tar xzf "$file"          # members are ./ripr, so extract everything
     - ./ripr check --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --format sarif > ripr.sarif
     - ./ripr check --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
   artifacts:
