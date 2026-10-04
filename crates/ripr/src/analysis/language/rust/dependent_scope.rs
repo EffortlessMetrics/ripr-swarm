@@ -123,6 +123,8 @@ std::thread_local! {
     // Thread-owned so parallel tests never see each other's mode or files.
     static FORCED_MODE: std::cell::Cell<Option<DependentScopeMode>> =
         const { std::cell::Cell::new(None) };
+    static FORCED_REACH_LIMIT: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
     static OBSERVED_REACH_FILES: std::cell::RefCell<Vec<PathBuf>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static OBSERVED_MAIN_FILES: std::cell::RefCell<Option<Vec<PathBuf>>> =
@@ -137,6 +139,16 @@ pub(super) fn with_forced_mode<T>(mode: DependentScopeMode, work: impl FnOnce() 
     OBSERVED_MAIN_FILES.with(|files| *files.borrow_mut() = None);
     let result = work();
     FORCED_MODE.with(|forced| forced.set(None));
+    result
+}
+
+/// Run `work` with the reach-widening limit forced to `limit` on this
+/// thread, so a small fixture can exercise the over-limit path.
+#[cfg(test)]
+pub(super) fn with_forced_reach_limit<T>(limit: usize, work: impl FnOnce() -> T) -> T {
+    FORCED_REACH_LIMIT.with(|forced| forced.set(Some(limit)));
+    let result = work();
+    FORCED_REACH_LIMIT.with(|forced| forced.set(None));
     result
 }
 
@@ -657,6 +669,10 @@ impl NarrowedScope {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
+        #[cfg(test)]
+        let limit = FORCED_REACH_LIMIT
+            .with(std::cell::Cell::get)
+            .unwrap_or(limit);
         if !self.closures.contains_key(owner) {
             let closure = self.extend_reach(owner, main_index)?;
             self.closures.insert(owner.to_string(), closure);
@@ -914,10 +930,17 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 /// Identifier-shaped byte runs. Non-ASCII bytes count as identifier bytes,
-/// so a Unicode identifier stays one token and a match is never split.
+/// so a Unicode identifier stays one token and a match is never split. A
+/// run with non-ASCII bytes also yields its ASCII parts: the whole-index
+/// name scans take ASCII word boundaries, so `“owner”` in a doc comment
+/// names `owner` for them and must spell it here too.
 fn identifier_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
     bytes
         .split(|byte| !is_identifier_byte(*byte))
+        .flat_map(|run| {
+            let unicode = !run.is_ascii();
+            std::iter::once(run).chain(run.split(|byte| !byte.is_ascii()).filter(move |_| unicode))
+        })
         .filter(|run| run.first().is_some_and(|first| !first.is_ascii_digit()))
 }
 
@@ -1011,6 +1034,18 @@ mod tests {
         let set = names(&["größe"]);
         assert!(spells_any("fn größe() {}".as_bytes(), &set));
         assert!(!spells_any("fn größer() {}".as_bytes(), &set));
+    }
+
+    #[test]
+    fn spelling_takes_ascii_boundaries_next_to_unicode() {
+        // The reach scan treats a non-ASCII byte as a word boundary.
+        let set = names(&["quarble_gauge"]);
+        assert!(spells_any(
+            "/// Wraps “quarble_gauge” here".as_bytes(),
+            &set
+        ));
+        assert!(spells_any("let s = \"→quarble_gauge\";".as_bytes(), &set));
+        assert!(!spells_any("/// “quarble_gauges”".as_bytes(), &set));
     }
 
     #[test]

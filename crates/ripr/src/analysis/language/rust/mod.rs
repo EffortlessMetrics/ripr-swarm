@@ -180,17 +180,17 @@ fn repo_index_file_limit_from_env(
     positive_limit_from_env(REPO_INDEX_FILE_LIMIT_ENV, REPO_INDEX_FILE_LIMIT, value)
 }
 
-/// Fail closed when a repo-scoped working set exceeds the guard (#2109).
-/// The repair route names only effective continuations: a diff-based run
-/// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
-/// offered — repo-scoped analysis does not select files by mode, so that
-/// retry would hit the same guard.
 /// How many files the full selection indexes once the admitted open files
 /// join it: an open file the selection already holds counts once.
 fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> usize {
     selected.len() + open.iter().filter(|file| !selected.contains(file)).count()
 }
 
+/// Fail closed when a repo-scoped working set exceeds the guard (#2109).
+/// The repair route names only effective continuations: a diff-based run
+/// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
+/// offered — repo-scoped analysis does not select files by mode, so that
+/// retry would hit the same guard.
 fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Result<(), String> {
     if file_count <= scope_limit {
         return Ok(());
@@ -1364,12 +1364,12 @@ impl RustAdapter {
         } else {
             tracked_open_rust_index_paths(options, &analyzable_rust_files, scope_limit)?
         };
+        // With the open files the full selection can already span the
+        // workspace, which turns on the workspace-complete admits.
+        let full_selection = selection_with_open_files(&index_files, &open_index_files);
         if !dependent_package_roots.is_empty()
-            && index_files.len() < analyzable_rust_files.len()
-            && dependent_scope::DependentScopeMode::from_env()?.narrows(
-                selection_with_open_files(&index_files, &open_index_files),
-                scope_limit,
-            )
+            && full_selection < analyzable_rust_files.len()
+            && dependent_scope::DependentScopeMode::from_env()?.narrows(full_selection, scope_limit)
         {
             let seeded_changed_files = analyzable_changed_files
                 .iter()
@@ -1680,12 +1680,24 @@ impl RustAdapter {
                         );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
-                        dependent_scope::apply_reach_search_over_limit(
+                        // A witness the main index proves is a searched
+                        // result; only an owner it leaves unresolved reads
+                        // as unsearched.
+                        apply_rust_no_static_path_limit(
                             &mut finding,
                             &probe,
-                            files,
-                            limit,
+                            &index,
+                            &property_macro_mentions,
+                            &transitive_reach,
                         );
+                        if needs_no_static_path_limit(&finding) {
+                            dependent_scope::apply_reach_search_over_limit(
+                                &mut finding,
+                                &probe,
+                                files,
+                                limit,
+                            );
+                        }
                     }
                 }
                 // Name unresolved custom assertion macros only after reach has
@@ -3126,6 +3138,79 @@ mod tests {
         assert!(
             !main.contains(&"b/src/lib.rs".to_string()),
             "a dependent file without the receiver stays withheld: {main:?}"
+        );
+        Ok(())
+    }
+
+    /// #5320: the reach scan reads a name next to a non-ASCII byte (a
+    /// curly-quoted doc mention) as a whole word, which keeps reach
+    /// undecided in the full index. The admission spelling must agree, or
+    /// the narrowed run would rule reach out and report `no_static_path`.
+    #[test]
+    fn dependent_scope_admits_a_curly_quoted_mention() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-curly-mention")?;
+        write_dependent_scope_workspace(
+            &root,
+            "/// Wraps “quarble_gauge” for callers.\npub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        let (full, _, _) = scoped_findings(&root, DependentScopeMode::Full)?;
+        let (named, named_main, _) = scoped_findings(&root, DependentScopeMode::NameAdmitted)?;
+        assert_eq!(
+            named, full,
+            "name-admitted findings must equal the full closure's"
+        );
+        let main = slash_paths(&named_main.ok_or("the named mode must narrow")?);
+        assert!(
+            main.contains(&"e/src/lib.rs".to_string()),
+            "the curly-quoted mention must be admitted: {main:?}"
+        );
+        Ok(())
+    }
+
+    /// #5320: an owner whose caller closure exceeds the limit names the
+    /// unsearched reach only when the main index finds no witness itself. A
+    /// test in the changed package that reaches the owner through a helper
+    /// is a searched result and keeps its named witness; without that test
+    /// the finding carries the over-limit note.
+    #[test]
+    fn dependent_scope_over_limit_keeps_a_main_index_witness() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let over_limit = |root: &Path| {
+            dependent_scope::with_forced_reach_limit(1, || {
+                scoped_findings(root, DependentScopeMode::NameAdmitted)
+            })
+            .map(|(findings, _, _)| findings)
+        };
+        let unsearched = "did not search dependent packages";
+
+        let root = temp_root("dependent-scope-over-limit")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+        let plain = over_limit(&root)?;
+        assert!(
+            plain.contains(unsearched),
+            "fixture premise: the closure is over the forced limit: {plain}"
+        );
+
+        let witnessed_root = temp_root("dependent-scope-over-limit-witnessed")?;
+        write_dependent_scope_workspace(&witnessed_root, UNRELATED_E_SOURCE)?;
+        write(
+            &witnessed_root.join("a/src/lib.rs"),
+            "pub fn quarble_gauge(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\n\
+             pub fn wrap(flag: bool) -> bool {\n    quarble_gauge(flag)\n}\n",
+        )?;
+        write(
+            &witnessed_root.join("a/tests/wrap_tests.rs"),
+            "#[test]\nfn wrap_holds() {\n    assert!(scope_a::wrap(true));\n}\n",
+        )?;
+        let witnessed = over_limit(&witnessed_root)?;
+        assert!(
+            witnessed.contains("wrap_holds"),
+            "the main-index witness must be named: {witnessed}"
+        );
+        assert!(
+            !witnessed.contains(unsearched),
+            "a searched witness must not read as unsearched: {witnessed}"
         );
         Ok(())
     }
