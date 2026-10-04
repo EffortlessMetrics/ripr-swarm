@@ -49,7 +49,8 @@ are scoped or reviewed.
   view and actionable-gaps queue also accept the Python `python -m pytest`,
   `pytest` and `python -m unittest` verify commands. `npx` without
   `--no-install`, `bunx` and `dlx` stay refused, because they can fetch a
-  package from the registry.
+  package from the registry, and so does a test path that leaves the package
+  through `../`.
 
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted

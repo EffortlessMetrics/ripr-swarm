@@ -74,6 +74,18 @@ export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
 ];
 
 /**
+ * A test-runner verify command must name test paths inside the package, as
+ * the LSP's `command_payload_is_safe` requires; `../` would run tests outside
+ * the producer's package-local scope.
+ */
+export function testRunnerCommandLeavesPackage(normalized: string): boolean {
+  return normalized.includes('../')
+    && TEST_RUNNER_VERIFY_COMMAND_PREFIXES.some((prefix) =>
+      normalized === prefix || normalized.startsWith(`${prefix} `)
+    );
+}
+
+/**
  * Quote one argument exactly as the server's `shell_arg`
  * (`crates/ripr/src/agent/loop_commands.rs`): bare when every character is in
  * `[A-Za-z0-9._/:-]`, otherwise single-quoted with `'` written as `'\''`.
