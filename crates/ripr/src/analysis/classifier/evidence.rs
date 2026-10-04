@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    current_path_witness, function_parameters, has_same_test_boundary_oracle_pairing,
+    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
     same_test_pairing_missing_summary,
 };
@@ -102,6 +102,20 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_local_binding_names)
             .unwrap_or_default();
+        let owner_parameters = context
+            .owner_fn
+            .map(owner_parameter_names)
+            .unwrap_or_default();
+        // #5830: names of functions that transitively call the owner,
+        // computed once per probe and only when an assertion asks.
+        let owner_callers = std::cell::OnceCell::new();
+        let expected_reaches_owner = |name: &str| {
+            context.owner_fn.is_some_and(|owner| {
+                owner_callers
+                    .get_or_init(|| transitive_caller_names(owner, context.index))
+                    .contains(name)
+            })
+        };
         let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
@@ -164,6 +178,8 @@ impl ClassifiedProbeEvidence {
                     })
                 },
                 assertion_admitted: &assertion_admitted,
+                owner_parameters: &owner_parameters,
+                expected_reaches_owner: &expected_reaches_owner,
             },
         );
 
@@ -353,6 +369,59 @@ fn owner_local_binding_names(owner: &FunctionSummary) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+/// Names the owner's signature binds as parameters, without `mut` or `ref`.
+fn owner_parameter_names(owner: &FunctionSummary) -> Vec<String> {
+    let mut names = function_parameters(owner)
+        .into_iter()
+        .map(|name| {
+            name.trim_start_matches("ref ")
+                .trim_start_matches("mut ")
+                .trim()
+                .to_string()
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Bound on the caller walk: deeper chains keep the assertion's credit.
+const MAX_CALLER_DEPTH: usize = 6;
+
+/// Names of indexed production functions whose calls reach `owner`'s name
+/// within `MAX_CALLER_DEPTH` hops. Names are matched without type
+/// resolution, so a same-named function elsewhere counts as a caller: the
+/// over-approximation can only withhold credit, never grant it.
+fn transitive_caller_names(
+    owner: &FunctionSummary,
+    index: &crate::analysis::facts::RustIndex,
+) -> std::collections::BTreeSet<String> {
+    let mut callers = std::collections::BTreeSet::new();
+    let mut frontier = vec![owner.name.clone()];
+    for _ in 0..MAX_CALLER_DEPTH {
+        let mut next = Vec::new();
+        for function in index.functions().iter() {
+            if function.name == owner.name || callers.contains(&function.name) {
+                continue;
+            }
+            if function
+                .calls
+                .iter()
+                .any(|call| frontier.contains(&call.name))
+            {
+                callers.insert(function.name.clone());
+                next.push(function.name.clone());
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    callers
 }
 
 /// Per-file defeat results for one probe, keyed by test file then callee.

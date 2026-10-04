@@ -13,7 +13,7 @@
       "id": "probe:src_lib.rs:return_value:672a64b9",
       "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.43,
+      "confidence": 0.53,
       "probe": {
         "id": "probe:src_lib.rs:return_value:672a64b9",
         "family": "return_value",
@@ -27,13 +27,13 @@
         "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (cents + 49) / 100"},
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach no: No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches returned value: (cents + 49) / 100", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: (cents + 49) / 100 (line 6)", "related test src/lib.rs:14 discount_applies_at_100 uses strong exact value oracle: assert_eq!(discount(100), 90);", "related test src/lib.rs:19 discount_small_unchanged uses strong exact value oracle: assert_eq!(discount(50), 50);", "source assertion argument value 100 at line 15", "source assertion argument value 90 at line 15", "source assertion argument value 50 at line 20"],
+      "evidence_path": ["reach no: No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches returned value: (cents + 49) / 100", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: (cents + 49) / 100 (line 6)", "related test src/lib.rs:14 discount_applies_at_100 uses strong exact value oracle: assert_eq!(discount(100), 90);", "related test src/lib.rs:19 discount_small_unchanged uses strong exact value oracle: assert_eq!(discount(50), 50);", "source assertion argument value 100 at line 15", "source assertion argument value 90 at line 15", "source assertion argument value 50 at line 20"],
       "flow_sinks": [
         {"kind":"return_value","text":"(cents + 49) / 100","line":6}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: (cents + 49) / 100", "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["Complete propagation witness reaches returned value: (cents + 49) / 100", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, discount_small_unchanged", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can observe this change"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
         "15": "assert_eq!(discount(100), 90);",

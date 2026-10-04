@@ -6676,11 +6676,19 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::direct_collection_state_write_requires_complete_witness",
   "crates/ripr/src/analysis/classify/flow.rs::tests::cache_insert_call_deletion_keeps_legacy_syntax_propagation",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::self_computed_expected_value_is_weak_and_unconfirmed",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::expected_computed_through_owner_reads_either_side_and_masks_strings",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/oracle_confirmation_mixed",
+  "fixtures/owner_parameter_token_coincidence",
+  "fixtures/self_computed_expected_value",
+  "fixtures/self_computed_expected_helper",
   "fixtures/proximity_name_oracle_not_credited",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
@@ -6693,13 +6701,23 @@ fixtures = [
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
-  "crates/ripr/src/analysis/classify/reveal.rs"
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
+  "fixtures/owner_parameter_token_coincidence/expected/check.json",
+  "fixtures/owner_parameter_token_coincidence/expected/human.txt",
+  "fixtures/owner_parameter_token_coincidence/expected/human-full.txt",
+  "fixtures/self_computed_expected_value/expected/check.json",
+  "fixtures/self_computed_expected_value/expected/human.txt",
+  "fixtures/self_computed_expected_value/expected/human-full.txt",
+  "fixtures/self_computed_expected_helper/expected/check.json",
+  "fixtures/self_computed_expected_helper/expected/human.txt",
+  "fixtures/self_computed_expected_helper/expected/human-full.txt",
   "fixtures/proximity_name_oracle_not_credited/expected/check.json",
   "fixtures/proximity_name_oracle_not_credited/expected/human.txt",
   "fixtures/observation_unverified_return_value/expected/check.json",

@@ -1,0 +1,47 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_parameter_token_coincidence/input
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+WARNING fixtures/owner_parameter_token_coincidence/input/src/lib.rs:6
+  id: probe:src_lib.rs:return_value:df11903a
+
+Changed
+  before: subtotal * 9 / 100
+  after:  subtotal * 8 / 100
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::tax
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach tax: tax_is_owed, subtotal_multiplies
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: subtotal * 8 / 100
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches returned value: subtotal * 8 / 100 (line 6)
+  - related test src/lib.rs:14 tax_is_owed uses weak relational check oracle: assert!(owed > 0); misses: assertion too weak to tell the old behavior from the new
+  - related test src/lib.rs:20 subtotal_multiplies uses strong exact value oracle: assert_eq!(subtotal(3, 100), 300); misses: assertion does not mention the changed expression
+  - source function argument value subtotal = 300 at line 15
+  - source assertion argument value 0 at line 16
+  - source assertion argument value 100 at line 21
+  - source assertion argument value 3 at line 21
+  - source assertion argument value 300 at line 21
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+Drill in:
+  ripr explain --root fixtures/owner_parameter_token_coincidence/input --diff fixtures/owner_parameter_token_coincidence/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
+  ripr context --root fixtures/owner_parameter_token_coincidence/input --diff fixtures/owner_parameter_token_coincidence/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a

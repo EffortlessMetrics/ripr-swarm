@@ -171,3 +171,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (15)
+
+Reason:
+RIPR-SPEC-0094 (#5830): the literal 100 in discount(100) is a coincidental test input, not an observation of untested_rounding; discriminator no longer confirmed, no_static_path confidence 0.43 -> 0.53, class unchanged
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

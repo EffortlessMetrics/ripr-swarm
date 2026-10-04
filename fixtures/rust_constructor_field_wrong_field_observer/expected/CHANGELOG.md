@@ -291,3 +291,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (11)
+
+Reason:
+RIPR-SPEC-0094 (#5830): the sibling field 'name' is also an owner parameter, so statement.name no longer confirms the changed 'storage' field; discriminator yes -> weak, class unchanged
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

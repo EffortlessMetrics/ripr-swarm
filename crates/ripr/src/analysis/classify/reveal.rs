@@ -7,6 +7,7 @@ use super::propagation_witness::{
 };
 use super::reach::is_proximity_only;
 use super::rust_string_literals;
+use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -15,6 +16,18 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Names the changed owner's signature binds. A test can never hold
+    /// the owner's parameter, so for a value probe a shared parameter name
+    /// confirms observation only in an assertion that calls the owner
+    /// (#5830: `subtotal` in `tax(subtotal)` matched an unrelated
+    /// `subtotal(3, 100)` test).
+    pub(in crate::analysis) owner_parameters: &'a [String],
+    /// Whether a function of this name transitively calls the changed
+    /// owner. An equality whose one side calls the owner and whose other
+    /// side reaches it computes its expected value through the changed
+    /// code, so the two sides move together (RIPR-SPEC-0035
+    /// self-computed expected value, #5830).
+    pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(&str) -> bool,
 }
 
 #[cfg(test)]
@@ -32,6 +45,8 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_| false,
         },
     );
     (observe, discriminate, related)
@@ -325,6 +340,43 @@ fn analyze_related_assertions(
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
         )
         && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression]);
+    // #5830: on a value probe, a token naming the owner's own parameter or
+    // `let` local (`subtotal` in `subtotal * 8 / 100`, `sku` in
+    // `sku.get_unchecked(start..)`) is a binding no test holds, and a
+    // numeric literal (`100`) matches any test input of the same number.
+    // Both confirm only in an assertion that calls the owner. Effect
+    // families already drop owner locals from their tokens above and keep
+    // parameters, because a test commonly passes its receiver by the same
+    // name.
+    // The constructed field's own name stays a confirming token even when
+    // it is also a parameter (`storage` in the shorthand `HirLet { storage }`):
+    // `statement.storage` names the field, not the binding. A return-value
+    // probe on a field initializer of the returned literal (`storage,`) has
+    // the same shape.
+    // The probe's own changed text names the field; the analysis expression
+    // may be the whole enclosing literal.
+    let field_fragment = matches!(probe.family, ProbeFamily::FieldConstruction)
+        || probe.expression.trim_end().ends_with(',');
+    let constructed_field = field_fragment
+        .then(|| constructed_field_name(&probe.expression))
+        .flatten();
+    let owner_scoped_tokens: Vec<String> = if matches!(
+        probe.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        probe_tokens
+            .iter()
+            .filter(|token| constructed_field != Some(token.as_str()))
+            .filter(|token| {
+                return_admission.owner_parameters.contains(token)
+                    || owner_local_bindings.contains(token)
+                    || token.starts_with(|ch: char| ch.is_ascii_digit())
+            })
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
@@ -341,6 +393,7 @@ fn analyze_related_assertions(
             let name = symbol.0.rsplit("::").next()?;
             (!name.is_empty()).then_some(name)
         }),
+        owner_scoped_tokens: &owner_scoped_tokens,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -434,6 +487,12 @@ fn analyze_related_assertions(
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 )
                 && (return_admission.owner_return_pin)(test, assertion);
+            let owner_bound = !match_context.owner_scoped_tokens.is_empty()
+                && oracle_binds_sink_identity(
+                    &assertion.text,
+                    &test.body,
+                    match_context.owner_callee,
+                );
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
@@ -441,6 +500,7 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
                 owner_pinned,
+                owner_bound,
             );
             if matched && !credits_oracle {
                 related.push(RelatedTest {
@@ -455,12 +515,23 @@ fn analyze_related_assertions(
                     miss: Some(RelatedTestMiss::NoCallPath),
                 });
             } else if matched {
-                let observation_confirmed = !confirm_required
-                    || collection_observer_confirms(&probe.expression, assertion)
-                    || (direct_collection_mutation_receiver(&probe.expression).is_none()
-                        && (has_token_match
-                            || (is_effect_family(&probe.family)
-                                && effect_observer_confirms(assertion))));
+                // RIPR-SPEC-0035 / #5830: an equality whose expected side is
+                // computed through the changed owner moves with it, so it
+                // neither pins the value nor confirms observation.
+                let self_computed = match_context.owner_callee.is_some_and(|owner| {
+                    expected_computed_through_owner(
+                        &assertion.text,
+                        owner,
+                        return_admission.expected_reaches_owner,
+                    )
+                });
+                let observation_confirmed = !self_computed
+                    && (!confirm_required
+                        || collection_observer_confirms(&probe.expression, assertion)
+                        || (direct_collection_mutation_receiver(&probe.expression).is_none()
+                            && (has_token_match
+                                || (is_effect_family(&probe.family)
+                                    && effect_observer_confirms(assertion)))));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -483,7 +554,11 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
+                let mut relative_strength =
+                    probe_relative_oracle_strength(&probe.family, assertion);
+                if self_computed && relative_strength.rank() > OracleStrength::Weak.rank() {
+                    relative_strength = OracleStrength::Weak;
+                }
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -623,6 +698,88 @@ struct RevealMatchContext<'a> {
     /// callee observes the owner's returned `Result` — the exact sink for
     /// the value/error families — without any changed-line token overlap.
     owner_callee: Option<&'a str>,
+    /// Probe tokens that name a binding only the owner holds (a parameter
+    /// or `let` local) on a value probe. They confirm observation only in
+    /// an assertion that calls the owner; anywhere else the shared name is
+    /// coincidence (#5830).
+    owner_scoped_tokens: &'a [String],
+}
+
+/// The field a `field_construction` expression assigns: the identifier
+/// before a single `:` (`total: a + b`), or the whole shorthand
+/// identifier (`storage,`).
+fn constructed_field_name(expression: &str) -> Option<&str> {
+    let expression = expression.trim().trim_end_matches(',').trim();
+    let head = match expression.find(':') {
+        Some(colon) if !expression[colon + 1..].starts_with(':') => &expression[..colon],
+        Some(_) => return None,
+        None => expression,
+    };
+    let head = head.trim();
+    (!head.is_empty() && head.bytes().all(is_ident_byte)).then_some(head)
+}
+
+/// True when `text`, comments and strings masked, calls `name`: the whole
+/// word followed by `(` or a turbofish, as `name(..)`, `recv.name(..)` or
+/// `Path::name(..)`.
+fn text_calls(text: &str, name: &str) -> bool {
+    called_names(text).iter().any(|called| called == name)
+}
+
+/// Every identifier `text` calls (comments and strings masked), excluding
+/// macro invocations: the word immediately before `(` or `::<`.
+fn called_names(text: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_byte(bytes[index]) {
+            index += 1;
+        }
+        let preceded_by_ident = start > 0 && is_ident_byte(bytes[start - 1]);
+        let rest = masked[index..].trim_start();
+        if !preceded_by_ident && (rest.starts_with('(') || rest.starts_with("::<")) {
+            names.push(masked[start..index].to_string());
+        }
+    }
+    names
+}
+
+/// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
+/// with one operand calling `owner` and the other calling a function that
+/// transitively reaches `owner`. Both sides then carry the changed
+/// behavior, so a wrong owner value moves them together and the equality
+/// still holds: `assert_eq!(invoice(3, 100), sub + tax(sub))` for a
+/// changed `tax` that `invoice` calls. An operand that computes its
+/// value without the owner (a literal, or a call that never reaches it)
+/// keeps the assertion's strength.
+fn expected_computed_through_owner(
+    text: &str,
+    owner: &str,
+    reaches_owner: &dyn Fn(&str) -> bool,
+) -> bool {
+    if !text.contains("assert_eq!") {
+        return false;
+    }
+    let Some([left, right]) = assertion_comparison_operands(text) else {
+        return false;
+    };
+    let reaches = |operand: &str| {
+        called_names(operand)
+            .iter()
+            .any(|called| called != owner && reaches_owner(called))
+    };
+    match (text_calls(left, owner), text_calls(right, owner)) {
+        (true, false) => reaches(right),
+        (false, true) => reaches(left),
+        _ => false,
+    }
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -1278,6 +1435,7 @@ fn assertion_matches_probe_detail_with_literals(
     import_defeats_owner: bool,
     cross_package_defeats_owner: bool,
     owner_pinned: bool,
+    owner_bound: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -1289,6 +1447,7 @@ fn assertion_matches_probe_detail_with_literals(
         family,
         wrapper_seam,
         owner_callee,
+        owner_scoped_tokens,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -1306,6 +1465,14 @@ fn assertion_matches_probe_detail_with_literals(
     let token_match = probe_tokens
         .iter()
         .any(|token| contains_as_whole_word(&assertion.text, token));
+    // #5830: the subset of `token_match` that can confirm observation. An
+    // owner-scoped token counts only when the assertion is bound to the
+    // owner's result: it calls the owner, or names a test `let` bound from
+    // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
+    let confirming_token_match = probe_tokens.iter().any(|token| {
+        contains_as_whole_word(&assertion.text, token)
+            && (owner_bound || !owner_scoped_tokens.contains(token))
+    });
     let effect_literal_match = !effect_literals.is_empty()
         && rust_string_literals(&assertion.text)
             .iter()
@@ -1423,7 +1590,10 @@ fn assertion_matches_probe_detail_with_literals(
         // the same error type would otherwise clear the unverified flag.
         producer_owned_result
     } else {
-        token_match || effect_literal_match || producer_owned_result || owner_return_pinned
+        confirming_token_match
+            || effect_literal_match
+            || producer_owned_result
+            || owner_return_pinned
     };
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
@@ -1473,9 +1643,11 @@ fn assertion_matches_probe_detail(
             family,
             wrapper_seam: false,
             owner_callee,
+            owner_scoped_tokens: &[],
         },
         assertion,
         assertion_count,
+        false,
         false,
         false,
         false,
@@ -2695,6 +2867,8 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_| false,
                 },
             )
             .1
@@ -3041,6 +3215,8 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(total, 9);
@@ -3105,6 +3281,8 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(total, 9, "every examined test is counted");
@@ -3377,6 +3555,7 @@ mod tests {
                 family: &family,
                 wrapper_seam: false,
                 owner_callee: Some("route"),
+                owner_scoped_tokens: &empty,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -3384,6 +3563,7 @@ mod tests {
                 2,
                 import_defeats_owner,
                 cross_package_defeats_owner,
+                false,
                 false,
             );
             assert_eq!(
@@ -4622,6 +4802,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
 
@@ -4671,6 +4853,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(
@@ -4691,6 +4875,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(
@@ -4730,6 +4916,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(
@@ -4771,6 +4959,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
 
@@ -4937,6 +5127,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(
@@ -4960,6 +5152,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
         assert_eq!(
@@ -5546,6 +5740,8 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_| false,
             },
         );
 
@@ -5787,6 +5983,201 @@ return Err(\"typed pin\".into());
             !discriminate.summary.contains("observation_unverified"),
             "non-collection effect observers stay on the existing Part C path: got `{}`",
             discriminate.summary
+        );
+    }
+
+    /// Runs reveal for a `tax(subtotal)` return-value probe with the owner's
+    /// parameter list and a caller set, and returns the discriminate stage
+    /// plus the first related row's strength.
+    fn tax_reveal(
+        expression: &str,
+        test: &TestSummary,
+        owner_parameters: &[String],
+        reaches: &dyn Fn(&str) -> bool,
+    ) -> (StageEvidence, OracleStrength) {
+        let probe = owned_probe(ProbeFamily::ReturnValue, expression, "tax");
+        let (_, discriminate, related, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(test, RelationReason::DirectOwnerCall)],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                owner_parameters,
+                expected_reaches_owner: reaches,
+            },
+        );
+        let strength = related
+            .first()
+            .map_or(OracleStrength::None, |row| row.oracle_strength.clone());
+        (discriminate, strength)
+    }
+
+    fn exact(text: &str) -> OracleFact {
+        oracle(text, OracleKind::ExactValue, OracleStrength::Strong)
+    }
+
+    /// #5830: `subtotal` names `tax`'s parameter. A test of the unrelated
+    /// `subtotal` function shares the word, not the binding, so it cannot
+    /// confirm that it observes `tax`'s return value.
+    #[test]
+    fn owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner() {
+        let params = vec!["subtotal".to_string()];
+        let unrelated = test_with_assertions(
+            "subtotal_multiplies",
+            vec![exact("assert_eq!(subtotal(3, 5), 15);")],
+        );
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &params, &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+
+        let calling = test_with_assertions(
+            "tax_of_subtotal",
+            vec![exact("assert_eq!(tax(subtotal), 24);")],
+        );
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &calling, &params, &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+
+        // A test `let` bound from an owner call holds the owner's result,
+        // so naming it confirms whatever the binding is called.
+        let bound = test_with_body_assertions(
+            "bound_tax",
+            "let subtotal = tax(300);\nassert_eq!(subtotal, 24);",
+            vec![exact("assert_eq!(subtotal, 24);")],
+        );
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+
+        // Without the parameter list the old token rule still confirms, which
+        // is what the first case relied on before #5830.
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    /// #5830: a numeric literal in the changed expression matches any test
+    /// input of the same number; only an assertion calling the owner counts.
+    #[test]
+    fn numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner() {
+        let unrelated = test_with_assertions(
+            "subtotal_multiplies",
+            vec![exact("assert_eq!(subtotal(3, 100), 300);")],
+        );
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &unrelated, &[], &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+
+        let calling = test_with_assertions("tax_of_100", vec![exact("assert_eq!(tax(100), 8);")]);
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &calling, &[], &|_| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    /// RIPR-SPEC-0035 / #5830: the expected side `subtotal + tax(subtotal)`
+    /// calls the owner and the actual side `invoice(..)` reaches it, so both
+    /// sides move together and the equality pins nothing about `tax`.
+    #[test]
+    fn self_computed_expected_value_is_weak_and_unconfirmed() {
+        let params = vec!["subtotal".to_string()];
+        let test = test_with_assertions(
+            "invoice_adds_tax",
+            vec![exact(
+                "assert_eq!(invoice(3, 100), subtotal + tax(subtotal));",
+            )],
+        );
+        let (discriminate, strength) = tax_reveal("subtotal * 8 / 1000", &test, &params, &|name| {
+            name == "invoice"
+        });
+        assert_eq!(strength, OracleStrength::Weak);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+
+        // The same assertion against an `invoice` that never calls `tax`
+        // compares tax with an independent value and keeps its credit.
+        let (discriminate, strength) =
+            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn expected_computed_through_owner_reads_either_side_and_masks_strings() {
+        let reaches = |name: &str| name == "invoice";
+        assert!(expected_computed_through_owner(
+            "assert_eq!(sub + tax(sub), invoice(3, 100));",
+            "tax",
+            &reaches
+        ));
+        assert!(expected_computed_through_owner(
+            "assert_eq!(cart.invoice(3), tax(300) + 300);",
+            "tax",
+            &reaches
+        ));
+        // A literal expected value is independent of the owner.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(300), 24);",
+            "tax",
+            &reaches
+        ));
+        // `tax(` inside a message string is not a call.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(invoice(3, 100), 324, \"tax(sub)\");",
+            "tax",
+            &reaches
+        ));
+        // Inequality is never strong in the first place.
+        assert!(!expected_computed_through_owner(
+            "assert_ne!(invoice(3, 100), tax(300));",
+            "tax",
+            &reaches
+        ));
+        assert_eq!(constructed_field_name("storage,"), Some("storage"));
+        assert_eq!(
+            constructed_field_name("total_cents: shipping + subtotal,"),
+            Some("total_cents")
+        );
+        assert_eq!(constructed_field_name("Storage::Local"), None);
+        assert_eq!(
+            called_names("a.tax(1) + vec![x] + Tax::new::<u8>(2) + taxes (3)"),
+            vec!["tax", "new", "taxes"]
         );
     }
 }
