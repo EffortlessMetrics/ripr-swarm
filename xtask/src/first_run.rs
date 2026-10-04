@@ -24,6 +24,8 @@ const DEFAULT_OUT: &str = "target/ripr/first-run";
 const SCHEMA_VERSION: &str = "first_run.v1";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
+const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
+const OUT_MARKER: &str = ".first-run-output";
 const PROGRESS_PREFIX: &str = "ripr progress:";
 const VERDICT_CLASSES: [&str; 7] = [
     "exposed",
@@ -134,12 +136,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let out = absolute(&options.out)?;
-    // A stale tree would let one release's leftovers pass for the next one's run.
-    if out.exists() {
-        fs::remove_dir_all(&out)
-            .map_err(|err| format!("failed to clear {}: {err}", out.display()))?;
-    }
-    fs::create_dir_all(&out).map_err(|err| format!("failed to create {}: {err}", out.display()))?;
+    prepare_out_dir(&out)?;
 
     let mut setup_steps = Vec::new();
     let ripr = if options.install_published {
@@ -157,6 +154,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             ],
         )?;
         let failed = step.exit != Some(0);
+        if failed {
+            // The reports keep a count; the cause lives in the full stderr.
+            fs::write(out.join(INSTALL_STDERR_LOG), &step.stderr)
+                .map_err(|err| format!("failed to write {INSTALL_STDERR_LOG}: {err}"))?;
+        }
         setup_steps.push(step);
         if failed {
             return finish(&options, &out, "unavailable", setup_steps, Vec::new());
@@ -180,6 +182,31 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         cases.push(walk_case(&out, &ripr, case)?);
     }
     finish(&options, &out, &version, setup_steps, cases)
+}
+
+/// A stale tree would let one release's leftovers pass for the next one's run,
+/// so a previous walk's directory is replaced. Only a directory this command
+/// created (it carries the marker) or an empty one is replaced; `--out` pointed
+/// at anything else is refused rather than deleted.
+fn prepare_out_dir(out: &Path) -> Result<(), String> {
+    if out.exists() {
+        let owned = out.join(OUT_MARKER).is_file();
+        let empty = fs::read_dir(out)
+            .map_err(|err| format!("failed to read {}: {err}", out.display()))?
+            .next()
+            .is_none();
+        if !owned && !empty {
+            return Err(format!(
+                "{} exists and was not created by `cargo xtask first-run`, so it is not cleared\npass --out <new or empty directory>",
+                out.display()
+            ));
+        }
+        fs::remove_dir_all(out)
+            .map_err(|err| format!("failed to clear {}: {err}", out.display()))?;
+    }
+    fs::create_dir_all(out).map_err(|err| format!("failed to create {}: {err}", out.display()))?;
+    fs::write(out.join(OUT_MARKER), "first-run output; safe to replace\n")
+        .map_err(|err| format!("failed to mark {}: {err}", out.display()))
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, String> {
@@ -544,7 +571,13 @@ fn finish(
         "schema_version": SCHEMA_VERSION,
         "ripr": version,
         "binary": if options.install_published { "cargo install ripr --locked".to_string() } else { options.ripr.clone() },
-        "setup": setup.iter().map(|s| step_json(s, &[])).collect::<Vec<Value>>(),
+        "setup": setup.iter().map(|s| {
+            let mut entry = step_json(s, &[]);
+            if s.name == "install_published" && s.exit != Some(0) {
+                entry["stderr_log"] = json!(INSTALL_STDERR_LOG);
+            }
+            entry
+        }).collect::<Vec<Value>>(),
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
@@ -572,6 +605,9 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
             "- `{}`: {:.1}s, exit {:?}\n",
             step.name, step.secs, step.exit
         ));
+        if step.name == "install_published" && step.exit != Some(0) {
+            text.push_str(&format!("  stderr: `{INSTALL_STDERR_LOG}`\n"));
+        }
     }
     let mut friction_total = 0usize;
     for case in cases {
@@ -683,6 +719,29 @@ mod tests {
         assert_eq!(flags.len(), 2, "{flags:?}");
         let prebuilt = "run: sha256sum -c; fallback: cargo install ripr --version 1 --locked\n";
         assert!(friction(&init, Some(prebuilt)).is_empty());
+    }
+
+    #[test]
+    fn an_unowned_non_empty_out_directory_is_refused_and_an_owned_one_is_replaced()
+    -> Result<(), String> {
+        let io = |err: std::io::Error| err.to_string();
+        let base = std::env::temp_dir().join(format!("first-run-out-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let foreign = base.join("foreign");
+        fs::create_dir_all(&foreign).map_err(io)?;
+        fs::write(foreign.join("keep.txt"), "mine").map_err(io)?;
+        let err = prepare_out_dir(&foreign).err().unwrap_or_default();
+        assert!(err.contains("not cleared"), "{err}");
+        assert!(foreign.join("keep.txt").is_file(), "foreign file remained");
+
+        let owned = base.join("owned");
+        prepare_out_dir(&owned)?;
+        fs::write(owned.join("stale.json"), "old").map_err(io)?;
+        prepare_out_dir(&owned)?;
+        assert!(!owned.join("stale.json").exists(), "stale output replaced");
+        assert!(owned.join(OUT_MARKER).is_file());
+        let _ = fs::remove_dir_all(&base);
+        Ok(())
     }
 
     #[test]
