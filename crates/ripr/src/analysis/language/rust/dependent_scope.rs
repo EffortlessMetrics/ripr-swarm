@@ -127,6 +127,7 @@ std::thread_local! {
         const { std::cell::Cell::new(None) };
     static OBSERVED_REACH_FILES: std::cell::RefCell<Vec<PathBuf>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static OBSERVED_REACH_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static OBSERVED_MAIN_FILES: std::cell::RefCell<Option<Vec<PathBuf>>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -136,6 +137,7 @@ std::thread_local! {
 pub(super) fn with_forced_mode<T>(mode: DependentScopeMode, work: impl FnOnce() -> T) -> T {
     FORCED_MODE.with(|forced| forced.set(Some(mode)));
     OBSERVED_REACH_FILES.with(|files| files.borrow_mut().clear());
+    OBSERVED_REACH_PARSES.with(|parses| parses.set(0));
     OBSERVED_MAIN_FILES.with(|files| *files.borrow_mut() = None);
     let result = work();
     FORCED_MODE.with(|forced| forced.set(None));
@@ -157,6 +159,13 @@ pub(super) fn with_forced_reach_limit<T>(limit: usize, work: impl FnOnce() -> T)
 #[cfg(test)]
 pub(super) fn observed_main_files() -> Option<Vec<PathBuf>> {
     OBSERVED_MAIN_FILES.with(|files| files.borrow().clone())
+}
+
+/// How many withheld files the reach closures on this thread parsed since
+/// the last forced-mode run began.
+#[cfg(test)]
+pub(super) fn observed_reach_parses() -> usize {
+    OBSERVED_REACH_PARSES.with(std::cell::Cell::get)
 }
 
 /// The withheld files the last reach widening on this thread admitted.
@@ -433,7 +442,9 @@ pub(super) struct NarrowedScope {
     withheld: Vec<PathBuf>,
     /// The identifiers each withheld file spells, read once at admission.
     tokens: WithheldTokens,
-    /// Each searched owner's caller closure: the withheld files it admits.
+    /// Each searched owner's caller closure: the withheld files it admits,
+    /// or where it passed the limit. The limit is fixed for the scope's
+    /// run, so a cached `Over` stays valid.
     closures: std::collections::BTreeMap<String, Closure>,
     /// The last widened index and the files it holds; owners whose closure
     /// selects the same files reuse it.
@@ -884,6 +895,8 @@ impl NarrowedScope {
         // The level scan reads only call and body facts, so the parse is
         // enough; the reach index runs the full role pipeline later.
         let index = parse_index(&self.root, &new_files, &mut self.consumed)?;
+        #[cfg(test)]
+        OBSERVED_REACH_PARSES.with(|parses| parses.set(parses.get() + new_files.len()));
         admitted_now.extend(new_files);
         Ok(Some((Some(index), macros)))
     }

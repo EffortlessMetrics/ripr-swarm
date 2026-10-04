@@ -3197,15 +3197,15 @@ mod tests {
         // #5450: the closure stops at the first caller level that would pass
         // the limit, before parsing it, so no withheld file is indexed.
         assert_eq!(
-            dependent_scope::observed_reach_files(),
-            Vec::<PathBuf>::new(),
+            dependent_scope::observed_reach_parses(),
+            0,
             "an over-limit closure must not parse its caller levels"
         );
         let searched = dependent_scope::with_forced_reach_limit(100, || {
             scoped_findings(&root, DependentScopeMode::NameAdmitted)
         })?;
         assert!(
-            !dependent_scope::observed_reach_files().is_empty() && !searched.0.contains(unsearched),
+            dependent_scope::observed_reach_parses() > 0 && !searched.0.contains(unsearched),
             "control: under a roomy limit the same closure admits and searches files"
         );
 
