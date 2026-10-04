@@ -1,7 +1,7 @@
 use super::measure::{
     PasteVerdict, Probe, builds_ripr_from_source, check_contradictions, classify_replay,
-    contradiction_outcome, extract_commands, linked_target, parse_test_result, probe_result,
-    repo_exposure_contradictions, rss_sample,
+    contradiction_outcome, extract_commands, hostile_outcome, linked_target, parse_test_result,
+    probe_result, repo_exposure_contradictions, rss_sample,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput};
@@ -1146,10 +1146,85 @@ fn a_symlinked_target_is_never_cleared() -> Result<(), String> {
     std::os::unix::fs::symlink(&outside, checkout.join("target/ripr"))
         .map_err(|e| e.to_string())?;
     let reason = linked_target(&checkout);
+    // A symlinked `target` itself is refused too, not only `target/ripr`.
+    let other = root.join("other");
+    std::fs::create_dir_all(&other).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, other.join("target")).map_err(|e| e.to_string())?;
+    let linked_parent = linked_target(&other);
     let _ = std::fs::remove_dir_all(&root);
+    assert!(linked_parent.is_some());
     assert!(
         reason.is_some_and(|r| r.contains("refusing to clear") && r.contains("remove the link"))
     );
+    Ok(())
+}
+
+fn smoke_receipt(rows: &[(&str, &str, u64)]) -> Value {
+    json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "corpus_version": "2026-10-04.5",
+        "tier": "fast",
+        "repos": rows
+            .iter()
+            .map(|(id, status, ms)| {
+                let mut row = json!({"id": id, "status": status, "duration_ms": ms});
+                if *status == "not_fetched" {
+                    row["reason"] = json!("missing checkout");
+                } else {
+                    row["findings"] = json!(2);
+                }
+                row
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn corpus_gate(base: &Value, current: &Value) -> Result<Value, String> {
+    let config = load_config(&committed_config())?;
+    let boards = vec!["corpus".to_string()];
+    let base = parse_ingest(base, &config)?;
+    let baseline = build_report(&config, &boards, &base, &context("r"), None, false);
+    let current = parse_ingest(current, &config)?;
+    Ok(build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    ))
+}
+
+#[test]
+fn a_corpus_repo_that_stops_analyzing_fails_the_gate() -> Result<(), String> {
+    // `c` failed closed in the baseline too, so it is not a new failure.
+    let base = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("b", "analyzed", 1200),
+        ("c", "diff_scope_oversized", 40),
+    ]);
+    let same = corpus_gate(&base, &base)?;
+    assert_eq!(same["gate"]["status"].as_str(), Some("pass"));
+
+    let current = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("b", "timed_out", 600_000),
+        ("c", "diff_scope_oversized", 40),
+    ]);
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    let regressions = report["gate"]["regressions"]
+        .as_array()
+        .ok_or("regressions missing")?;
+    assert!(
+        regressions
+            .iter()
+            .any(|r| r["metric"] == "corpus.not_analyzed"),
+        "{regressions:?}"
+    );
+    let text = regressions.iter().map(Value::to_string).collect::<String>();
+    assert!(text.contains("\"b\""), "{text}");
+    assert!(!text.contains("\"c\""), "{text}");
     Ok(())
 }
 
@@ -1172,6 +1247,51 @@ fn a_negative_ingested_value_is_refused() -> Result<(), String> {
 }
 
 #[test]
+fn a_status_flip_is_listed_next_to_a_lost_completion() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
+    let current = smoke_receipt(&[("a", "timed_out", 600_000), ("b", "not_fetched", 0)]);
+    let report = corpus_gate(&base, &current)?;
+    let regression = report["gate"]["regressions"]
+        .as_array()
+        .and_then(|all| all.iter().find(|r| r["metric"] == "corpus.not_analyzed"))
+        .ok_or("corpus.not_analyzed regression missing")?;
+    let repos: Vec<&str> = regression["regressed_repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["repo"].as_str())
+        .collect();
+    assert_eq!(repos, ["b", "a"], "{regression}");
+    Ok(())
+}
+
+#[test]
+fn a_corpus_repo_that_was_not_fetched_is_lost_completion_not_a_pass() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("b", "not_fetched", 0)]);
+    let input = rust_corpus_smoke_to_input(&current)?;
+    let rows = input["metrics"].as_array().ok_or("metrics missing")?;
+    assert!(rows.iter().filter(|row| row["repo"] == "b").all(|row| {
+        row["completed"] == false
+            && row["evidence"]
+                .as_str()
+                .is_some_and(|e| e.contains("missing checkout"))
+    }));
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    Ok(())
+}
+
+#[test]
+fn a_smoke_receipt_without_repos_is_refused() {
+    let empty = json!({"schema_version": "ripr-rust-corpus-smoke-v1", "repos": []});
+    assert!(rust_corpus_smoke_to_input(&empty).is_err_and(|e| e.contains("repos")));
+    let unnamed =
+        json!({"schema_version": "ripr-rust-corpus-smoke-v1", "repos": [{"status": "analyzed"}]});
+    assert!(rust_corpus_smoke_to_input(&unnamed).is_err_and(|e| e.contains("needs an id")));
+}
+
+#[test]
 fn libtest_summary_counts_are_read_by_label_not_position() {
     let line = "test result: FAILED. 123 passed; 45 failed; 6 ignored; 7 measured; 890 filtered out; finished in 1.0s\n";
     assert_eq!(parse_test_result(line), Some((123, 45)));
@@ -1186,4 +1306,63 @@ fn a_probe_ended_by_a_signal_is_a_refusal_not_a_clean_exit() {
     assert_eq!(probe_result(&run), Probe::Refused);
     run.output.status = Some(std::process::ExitStatus::from_raw(0));
     assert_eq!(probe_result(&run), Probe::ExitedZero);
+}
+
+#[test]
+fn a_negative_first_run_duration_is_refused() {
+    let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
+    let text = [
+        row(r#""case":"a","step":"check","metric":"secs","value":-100.0"#),
+        row(r#""case":"a","step":"check","metric":"exit","value":0"#),
+    ]
+    .join("\n");
+    let parsed = parse_ingest_text(&text);
+    let converted = parsed.and_then(|value| first_run_rows_to_input(&value));
+    assert!(converted.is_err_and(|e| e.contains("negative")));
+}
+
+#[test]
+fn a_hostile_run_with_no_tests_is_not_zero_failures() {
+    let none = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out\n";
+    let (outcome, detail) = hostile_outcome(parse_test_result(none), "");
+    assert!(matches!(outcome, SampleOutcome::Failed), "{detail}");
+    let (outcome, _) = hostile_outcome(Some((13, 2)), "");
+    assert!(matches!(outcome, SampleOutcome::Value(n) if (n - 2.0).abs() < 1e-9));
+}
+
+#[test]
+fn the_gate_message_reports_the_compared_value_not_a_new_repos_worst() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let base = vec![sample(
+        "speed.warm_check_ms",
+        Some("a"),
+        SampleOutcome::Value(1000.0),
+    )];
+    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let current = vec![
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Value(3000.0),
+        ),
+        sample(
+            "speed.warm_check_ms",
+            Some("new"),
+            SampleOutcome::Value(9000.0),
+        ),
+    ];
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    let regression = report["gate"]["regressions"]
+        .as_array()
+        .and_then(|all| all.first())
+        .ok_or("regression missing")?;
+    assert_eq!(regression["current"].as_f64(), Some(3000.0), "{regression}");
+    Ok(())
 }

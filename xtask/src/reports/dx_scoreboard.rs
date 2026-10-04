@@ -41,12 +41,21 @@ const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
 const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
+const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Row metrics that carry their own per-step `budget`.
 const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 6] = ["speed", "ci", "trust", "paste", "first_run", "agent"];
+const BOARDS: [&str; 7] = [
+    "speed",
+    "ci",
+    "trust",
+    "paste",
+    "first_run",
+    "agent",
+    "corpus",
+];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
 
@@ -464,9 +473,13 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = first_run_rows_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(RUST_CORPUS_SMOKE_SCHEMA_VERSION) {
+        let converted = rust_corpus_smoke_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
         ));
     }
     let source = value["source"]
@@ -675,6 +688,13 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
             ));
         }
         let value = number.unwrap_or(0.0);
+        // A negative duration or count would shorten the journey it is
+        // summed into and read as a pass.
+        if numeric && metric != "exit" && value < 0.0 {
+            return Err(format!(
+                "row {line} ({case}/{step} {metric}): value {value} is negative; fix the harness that wrote it"
+            ));
+        }
         if metric == "secs" || metric == "exit" {
             // Pair with the earliest run of this step still missing this
             // metric, so rows for repeated runs may arrive in any order.
@@ -810,6 +830,80 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
             if install.is_some() { "" } else { "; no install step timed" }
         ),
         "metrics": out,
+    }))
+}
+
+/// Convert a `ripr-rust-corpus-smoke-v1` receipt (`cargo xtask rust-corpus
+/// smoke`) into per-repository scoreboard rows:
+///
+/// - `corpus.not_analyzed`: 0 when the diff-scoped check reached `analyzed`,
+///   1 when it failed closed, timed out or broke. A repository that flips from
+///   0 to 1 against the baseline is a per-repository regression.
+/// - `corpus.check_ms`: wall time of an analyzed run. A run that did not
+///   analyze has no comparable time, so its sample is incomplete.
+///
+/// A repository the smoke could not run (`not_fetched`, `spawn_failed`) is an
+/// instrument gap, not a verdict: every row for it is incomplete, which the
+/// gate treats as lost completion against a baseline that analyzed it.
+pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String> {
+    let repos = value["repos"]
+        .as_array()
+        .filter(|repos| !repos.is_empty())
+        .ok_or("rust-corpus smoke receipt needs a non-empty repos array")?;
+    let corpus_version = value["corpus_version"].as_str().unwrap_or("unknown");
+    let tier = value["tier"].as_str().unwrap_or("unknown");
+    let mut rows = Vec::new();
+    for (index, repo) in repos.iter().enumerate() {
+        let id = repo["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("rust-corpus smoke repo {} needs an id", index + 1))?;
+        let status = repo["status"]
+            .as_str()
+            .ok_or_else(|| format!("rust-corpus smoke repo `{id}` needs a status"))?;
+        let ms = repo["duration_ms"].as_f64().unwrap_or(0.0);
+        let row = |metric: &str, number: f64, completed: bool, evidence: String| {
+            json!({
+                "id": metric,
+                "repo": id,
+                "value": number,
+                "completed": completed,
+                "evidence": evidence,
+            })
+        };
+        if matches!(status, "not_fetched" | "spawn_failed") {
+            let reason = repo["reason"].as_str().unwrap_or(status);
+            let evidence = format!("{status}: {reason}");
+            rows.push(row("corpus.not_analyzed", 1.0, false, evidence.clone()));
+            rows.push(row("corpus.check_ms", 0.0, false, evidence));
+            continue;
+        }
+        let analyzed = status == "analyzed";
+        rows.push(row(
+            "corpus.not_analyzed",
+            if analyzed { 0.0 } else { 1.0 },
+            true,
+            status.to_string(),
+        ));
+        rows.push(row(
+            "corpus.check_ms",
+            ms,
+            analyzed,
+            if analyzed {
+                format!("`ripr check --base <pinned base>` in {ms:.0} ms")
+            } else {
+                format!("{status} after {ms:.0} ms; no analyzed run to time")
+            },
+        ));
+    }
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "rust-corpus-smoke",
+        "evidence": format!(
+            "ripr-rust-corpus-smoke-v1 receipt, corpus {corpus_version}, tier {tier}, {} repositories",
+            repos.len()
+        ),
+        "metrics": rows,
     }))
 }
 
@@ -1025,7 +1119,16 @@ pub(crate) fn build_report(
             json!({
                 "metric": row["id"],
                 "baseline": row["baseline"]["value"],
-                "current": row["value"],
+                // The compared value: the baseline plus the delta over the
+                // repositories both runs measured, not the overall worst,
+                // which may come from a repository new to this run.
+                "current": match (
+                    row["baseline"]["value"].as_f64(),
+                    row["baseline"]["delta"].as_f64(),
+                ) {
+                    (Some(base), Some(delta)) => json!(round(base + delta)),
+                    _ => row["value"].clone(),
+                },
                 "allowed_worsening": row["baseline"]["allowed_worsening"],
                 "reason": row["baseline"]["reason"],
                 "regressed_repos": row["baseline"]["regressed_repos"],
@@ -1461,13 +1564,25 @@ pub(crate) fn compare_with_baseline(
     // repository as well as for the metric.
     let lost = repo_completion_losses(row, base_row);
     if !lost.is_empty() || (incomplete(row) && !incomplete(base_row)) {
+        // Repositories that completed but got worse would otherwise be hidden
+        // behind the lost completion; list them too where values compare.
+        let mut lost = lost;
+        if !def.runner_dependent
+            || baseline["runner_class"].as_str() == Some(context.runner_class.as_str())
+        {
+            for regression in repo_regressions(def, row, base_row) {
+                if !lost.iter().any(|entry| entry["repo"] == regression["repo"]) {
+                    lost.push(regression);
+                }
+            }
+        }
         return json!({
             "comparable": true,
             "value": base_row["value"],
             "delta": Value::Null,
             "allowed_worsening": 0.0,
             "regressed": true,
-            "reason": "current run did not complete where the baseline did",
+            "reason": "a repository stopped completing or regressed; see each repository below",
             "regressed_repos": lost,
         });
     }
