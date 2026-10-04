@@ -11806,7 +11806,16 @@ tests = [
   "crates/ripr/src/mcp/repair.rs::tests::receipt_status_for_session_attempt_awaits_the_external_edit",
   "crates/ripr/src/mcp/repair.rs::tests::unknown_and_invalid_durable_attempts_fail_closed",
   "crates/ripr/src/mcp/repair.rs::tests::receipt_status_vocabulary_maps_the_shared_lifecycle",
+  "crates/ripr/src/mcp/repair.rs::tests::terminal_receipts_preserve_stale_and_mismatch_before_completeness",
+  "crates/ripr/src/mcp/repair.rs::tests::terminal_legacy_regression_preserves_completeness_and_field_precedence",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_improved_receipt_preserves_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_changed_receipt_never_closes_the_gap",
+  "crates/ripr/src/mcp/repair.rs::tests::typed_incomplete_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::partial_incomplete_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::missing_outcome_receipt_never_claims_improvement",
+  "crates/ripr/src/mcp/repair.rs::tests::invalid_outcome_receipt_preserves_invalid_status",
   "crates/ripr/src/mcp/repair.rs::tests::regressed_movement_survives_the_presence_lifecycle",
+  "crates/ripr/src/mcp/repair.rs::tests::complete_unchanged_receipt_preserves_unchanged_status",
   "crates/ripr/src/mcp/repair.rs::tests::repair_reads_fail_closed_while_refresh_is_in_flight",
   "crates/ripr/src/mcp/repair.rs::tests::evicted_transactions_keep_the_superseded_typed_code",
   "crates/ripr/src/mcp/repair.rs::tests::command_spec_modes_round_trip_without_display_authority",
@@ -12046,8 +12055,32 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0220"
+name = "VS Code shared repair-attempt status and active-attempt resolution"
+spec = "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md"
+tests = [
+  "editors/vscode/test/suite/attempt_status.test.ts::Agent attempt status adapter parity (#4643)",
+  "editors/vscode/test/suite/attempt_status.test.ts::Active attempt resolution law (#4643)",
+  "editors/vscode/test/suite/attempt_status.test.ts::Show Repair Attempt Status command (#4643)",
+]
+fixtures = [
+  "editors/vscode/test-fixtures/attempt-status",
+]
+code = [
+  "editors/vscode/src/attemptStatus.ts",
+  "editors/vscode/src/client.ts",
+  "editors/vscode/src/extension.ts",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0222"
 name = "Byte-bounded classified-cache store publication"
-spec = "docs/specs/RIPR-SPEC-0220-byte-bounded-classified-cache-store.md"
+spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
 tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_shard_matches_owned_codec_bytes",
@@ -12077,7 +12110,7 @@ code = [
   "crates/ripr/src/analysis/seam_classification.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0220-byte-bounded-classified-cache-store.md",
+  "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md",
   "docs/CONFIGURATION.md",
 ]
 metrics = [

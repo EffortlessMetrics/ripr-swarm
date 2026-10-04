@@ -1,4 +1,4 @@
-# RIPR-SPEC-0220: Byte-bounded classified-cache store publication
+# RIPR-SPEC-0222: Byte-bounded classified-cache store publication
 
 Status: proposed
 
@@ -7,8 +7,9 @@ Owner: product-analysis
 Created: 2026-10-03
 
 Linked issues: #4999 (write-side store amplification; sibling load bound is #5124).
-Renumbered from RIPR-SPEC-0218 after #5370 landed that id for the
-issue-lifecycle attempt extension.
+Renumbered from RIPR-SPEC-0218 after #5370 landed that id, and from
+RIPR-SPEC-0220 after #5366 landed the vscode shared-attempt status under
+that id. Open #5416 occupies RIPR-SPEC-0221.
 
 Support-tier impact:
 
