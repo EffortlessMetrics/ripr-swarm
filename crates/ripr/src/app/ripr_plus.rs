@@ -45,6 +45,9 @@ const RIPR_PLUS_LAST_GOOD_MD: &str = "target/ripr/reports/ripr-plus.last-good.md
 /// Shared by the error text and help so both carry the same authority limit.
 const LAST_GOOD_IS_STALE: &str =
     "it describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
+/// The same limit as a standalone sentence, for messages that name no copy
+/// before it.
+const LAST_GOOD_IS_STALE_SENTENCE: &str = "A kept copy describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RiprPlusOptions {
@@ -148,15 +151,24 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                     )
                 }
                 (json, markdown) => {
+                    let mut kept = Vec::new();
                     let mut failures = Vec::new();
-                    if let Err(err) = json {
-                        failures.push(err);
+                    match json {
+                        Ok(()) => kept.push(RIPR_PLUS_LAST_GOOD_JSON),
+                        Err(err) => failures.push(err),
                     }
-                    if let Err(err) = markdown {
-                        failures.push(err);
+                    match markdown {
+                        Ok(true) => kept.push(RIPR_PLUS_LAST_GOOD_MD),
+                        Ok(false) => {}
+                        Err(err) => failures.push(err),
                     }
+                    let kept_at = if kept.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Kept: {}.", kept.join(" and "))
+                    };
                     format!(
-                        " The previous receipt (status `{status}`) was only partly kept ({}); {LAST_GOOD_IS_STALE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
+                        " The previous receipt (status `{status}`) was only partly kept ({}).{kept_at} {LAST_GOOD_IS_STALE_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
                         failures.join("; ")
                     )
                 }
@@ -1241,6 +1253,12 @@ mod tests {
         assert!(kept.contains("only partly kept"), "{kept}");
         assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
         assert!(!kept.contains("ripr-plus.last-good.json:"), "{kept}");
+        // The surviving copy is named, with the same authority limit.
+        assert!(
+            kept.contains("Kept: target/ripr/reports/ripr-plus.last-good.json."),
+            "{kept}"
+        );
+        assert!(kept.contains("may be stale for the current HEAD"), "{kept}");
         assert_eq!(json.map_err(|err| err.to_string())?, r#"{"status":"pass"}"#);
         Ok(())
     }
