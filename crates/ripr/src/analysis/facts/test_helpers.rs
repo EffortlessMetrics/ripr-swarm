@@ -54,27 +54,51 @@
 
 use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     let mut helpers_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<&FunctionFact>>> =
         BTreeMap::new();
-    let mut scopes_by_file: BTreeMap<PathBuf, ModuleItemScopes> = BTreeMap::new();
     for (file, facts) in index.files().iter() {
         if facts.used_lexical_fallback {
             continue;
         }
-        let Some(scopes) = module_item_scopes(&facts.source) else {
-            continue;
-        };
-        scopes_by_file.insert(file.clone(), scopes);
         let names = helpers_by_file.entry(file.clone()).or_default();
         for function in facts.functions.iter() {
             names
                 .entry(function.name.clone())
                 .or_default()
                 .push(function);
+        }
+    }
+    // Re-parsing a file for its module scopes is the cost of this pass
+    // (#5348): it runs on every index build, cache hits included. Only a
+    // file where some test calls a name that resolves to a unique
+    // evidence-only helper can be credited, so parse only those; for any
+    // other file every call below already `continue`s without scopes.
+    let mut scopes_by_file: BTreeMap<PathBuf, ModuleItemScopes> = BTreeMap::new();
+    let mut parsed_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    for test in index.tests().iter() {
+        if parsed_files.contains(&test.file) {
+            continue;
+        }
+        let Some(functions_by_name) = helpers_by_file.get(&test.file) else {
+            continue;
+        };
+        let has_candidate = test
+            .calls
+            .iter()
+            .any(|call| unique_assertion_helper(functions_by_name, &call.name).is_some());
+        if !has_candidate {
+            continue;
+        }
+        parsed_files.insert(&test.file);
+        let Some(facts) = index.files().get(&test.file) else {
+            continue;
+        };
+        if let Some(scopes) = module_item_scopes(&facts.source) {
+            scopes_by_file.insert(test.file.clone(), scopes);
         }
     }
 
