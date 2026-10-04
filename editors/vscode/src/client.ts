@@ -1782,7 +1782,7 @@ export class RiprClientController {
     if (!this.runtime.isWorkspaceTrusted()) {
       // #4643: untrusted workspaces never read repair authority.
       this.runtime.showInformationMessage(
-        'ripr repair-attempt status is unavailable until this workspace is trusted.'
+        'ripr repair-attempt status is unavailable in an untrusted workspace; trust the workspace to read shared attempt state.'
       );
       return;
     }
