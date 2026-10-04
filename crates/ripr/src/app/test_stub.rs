@@ -371,6 +371,45 @@ fn resolve_at(
             seam.display_line().abs_diff(line),
         )
     });
+    // A single-file parse lists every seam, not only the reported gaps, so
+    // two disjoint seams of one kind that rank equally (`a > 10 && b > 20`)
+    // cannot be told apart by `--at` and `--kind`. Picking the first could
+    // stub a boundary the tests already pin, so refuse and name the seam
+    // IDs. Nested seams (`return Err(E)` around `E`) are one behavior.
+    if let [lead, rest @ ..] = candidates.as_slice()
+        && matches!(lead, AtCandidate::Shape(_))
+    {
+        let rank = |candidate: &AtCandidate<'_>| {
+            (
+                candidate.seam().kind(),
+                candidate.seam().display_line().abs_diff(line),
+            )
+        };
+        let tied = std::iter::once(lead)
+            .chain(
+                rest.iter()
+                    .filter(|candidate| rank(candidate) == rank(lead)),
+            )
+            .map(|candidate| candidate.seam())
+            .collect::<Vec<_>>();
+        let disjoint = tied.iter().enumerate().any(|(index, a)| {
+            tied[index + 1..]
+                .iter()
+                .any(|b| !seam_spans_nest(a, b) && !seam_spans_nest(b, a))
+        });
+        if disjoint {
+            let ids = tied
+                .iter()
+                .map(|seam| format!("--seam-id {}", seam.id().as_str()))
+                .collect::<Vec<_>>();
+            return Err(TestStubError::NotFound(format!(
+                "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
+                lead.seam().display_line(),
+                lead.seam().kind().as_str(),
+                ids.join(", ")
+            )));
+        }
+    }
     let mut first_refusal = None;
     for candidate in candidates {
         let resolution = candidate.resolution(source.clone());
@@ -399,6 +438,13 @@ fn resolve_at(
         "no {noun} is in the function at {file}:{line}; nearest: {}",
         listed.join(", ")
     )))
+}
+
+/// Whether `inner`'s source span lies within `outer`'s.
+fn seam_spans_nest(outer: &RepoSeam, inner: &RepoSeam) -> bool {
+    outer.byte_offset() <= inner.byte_offset()
+        && inner.byte_offset() + inner.expression().len()
+            <= outer.byte_offset() + outer.expression().len()
 }
 
 fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubError> {

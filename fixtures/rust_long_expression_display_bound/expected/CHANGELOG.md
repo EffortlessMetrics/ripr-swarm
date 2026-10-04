@@ -264,3 +264,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (12)
+
+Reason:
+RIPR-SPEC-0122: #5471 line 10 holds several disjoint predicate seams that --at --kind cannot tell apart, so check prints no stub route; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

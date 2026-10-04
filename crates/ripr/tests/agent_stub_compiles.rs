@@ -429,9 +429,11 @@ fn ripr_command() -> Command {
 /// it prints produces a stub. `src/lib.rs` holds seams that sort before the
 /// other files; `src/gated.rs` puts its owner behind a feature cfg a plain
 /// `cargo test` build may not enable, so its stub is refused; `src/zz.rs` is
-/// stubbable.
-const ROUTE_LIB: &str = "pub mod gated;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+/// stubbable; `src/pair.rs` has two predicate seams on one line, which
+/// `--at` and `--kind` cannot tell apart.
+const ROUTE_LIB: &str = "pub mod gated;\npub mod pair;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
 const ROUTE_GATED: &str = "#[cfg(feature = \"extra\")] pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n";
+const ROUTE_PAIR: &str = "pub fn both(a: u32, b: u32) -> u32 {\n    if a > 10 && b > 20 { 1 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a_boundary() {\n        assert_eq!(both(9, 30), 0);\n        assert_eq!(both(10, 30), 0);\n        assert_eq!(both(11, 30), 1);\n    }\n}\n";
 const ROUTE_ZZ: &str =
     "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
 
@@ -445,6 +447,7 @@ fn route_crate(scratch: &Scratch) -> Result<(), String> {
     for (file, text) in [
         ("src/lib.rs", ROUTE_LIB),
         ("src/gated.rs", ROUTE_GATED),
+        ("src/pair.rs", ROUTE_PAIR),
         ("src/zz.rs", ROUTE_ZZ),
     ] {
         std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
@@ -522,6 +525,24 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
         "the refusal reason is printed instead: {stdout}"
     );
 
+    // Two seams of the finding's kind on its line: the route could stub the
+    // `a > 10` boundary the tests already pin, so no route is printed.
+    let pair = one_line_diff(
+        &scratch,
+        "src/pair.rs",
+        "    if a > 10 && b >= 20 { 1 } else { 0 }",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &pair)?;
+    assert!(
+        stdout.contains("src/pair.rs:2"),
+        "the selected finding is the pair.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "an ambiguous location must not be offered: {stdout}"
+    );
+
     // A stubbable location prints the route, and the printed command, run
     // as printed, yields a stub through the same resolver.
     let zz = one_line_diff(
@@ -537,6 +558,11 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     assert!(
         args.iter().any(|arg| arg == "src/zz.rs:2"),
         "the route names the finding location: {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--kind" && pair[1] == "predicate"),
+        "the route carries the finding's probe family: {args:?}"
     );
     // The full inventory, capped to one seam, holds only a `src/lib.rs`
     // seam; the location-scoped resolver must not depend on it.
