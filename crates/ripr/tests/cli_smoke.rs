@@ -12193,6 +12193,98 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+/// A mistyped `--root` must not read as a completed run: `first-pr` and
+/// `reports gap-ledger` exit 2, say what is wrong, and write nothing.
+#[test]
+fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), String> {
+    let cwd = unique_temp_workspace("missing-root-refusal");
+    std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd: {e}"))?;
+    let missing = cwd.join("no-such-repo").display().to_string();
+    std::fs::write(cwd.join("readable.json"), "{}").map_err(|e| format!("write source: {e}"))?;
+    for args in [
+        vec!["first-pr", "--root", missing.as_str()],
+        vec!["first-pr", "--root", missing.as_str(), "--check"],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "no-such-exposure.json",
+        ],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "readable.json",
+        ],
+    ] {
+        let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)
+            .map_err(|e| e.to_string())?;
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code();
+        let wrote = cwd.join("target").exists();
+        if code != Some(2) || !stderr.contains("not a directory") || wrote {
+            let _ = std::fs::remove_dir_all(&cwd);
+            return Err(format!(
+                "{args:?}: expected exit 2, a `not a directory` message and no writes; got {code:?} wrote={wrote}\n{stderr}"
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&cwd);
+    Ok(())
+}
+
+/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
+/// suggestion but no repair target. The README sends readers to the
+/// `ripr agent repair` command pilot prints, so the terminal must say none is
+/// coming instead of going silent and offering the snapshot choreography as if
+/// it were the repair route.
+#[test]
+fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
+    let root = unique_temp_workspace("pilot-no-repair-command");
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: not available for this seam"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Next, by hand: add the focused test named above"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("agent repair --root"),
+        "no repair command may be printed for an ineligible seam:\n{stdout}"
+    );
+    Ok(())
+}
+
 #[test]
 fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
     let root = workspace_root().join("fixtures/boundary_gap/input");
@@ -13160,6 +13252,172 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// A Python preview gap reaches `agent packet` through a check-output gap
+/// ledger. That packet stays blocked (check output carries no snapshot
+/// identity), and its `refresh_commands` are the only next step it names.
+/// They used to rewrite `check.json` with the Rust-only repo-exposure route
+/// and rebuild the ledger from it, which dropped every Python record, so the
+/// same packet command then failed with "gap_id ... was not found". Pasting
+/// the printed refresh from another directory must keep the check-output
+/// route, the recorded base and the Python gap.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-packet-refresh",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"python-packet-refresh\"\nversion = \"0.0.0\"\n",
+            ),
+            (
+                "src/pricing.py",
+                "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+            ),
+        ],
+        (
+            "src/pricing.py",
+            "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let reports = root.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|err| format!("create reports: {err}"))?;
+    let check_path = reports.join("check.json");
+    let ledger_path = reports.join("gap-decision-ledger.json");
+    let check_arg = check_path.display().to_string();
+    let ledger_arg = ledger_path.display().to_string();
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--base",
+        "origin/main",
+        "--json",
+    ]);
+    assert_success(&check);
+    std::fs::write(&check_path, &check.stdout).map_err(|err| format!("write check: {err}"))?;
+    assert_success(&run_ripr(&[
+        "reports",
+        "gap-ledger",
+        "--check-output",
+        &check_arg,
+        "--root",
+        &root_arg,
+        "--out",
+        &ledger_arg,
+    ]));
+
+    let python_gap_ids = |ledger: &std::path::Path| -> Result<Vec<String>, String> {
+        let text = std::fs::read_to_string(ledger).map_err(|err| format!("read ledger: {err}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|err| format!("parse ledger: {err}"))?;
+        Ok(json["records"]
+            .as_array()
+            .map(|records| {
+                records
+                    .iter()
+                    .filter(|record| record["language"] == "python")
+                    .filter_map(|record| record["gap_id"].as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    };
+    let before_ids = python_gap_ids(&ledger_path)?;
+    let gap_id = before_ids
+        .first()
+        .cloned()
+        .ok_or_else(|| format!("the fixture must yield a Python gap record: {before_ids:?}"))?;
+
+    let packet_for = |gap_id: &str| -> Result<serde_json::Value, String> {
+        let packet = run_ripr(&[
+            "agent",
+            "packet",
+            "--root",
+            &root_arg,
+            "--gap-ledger",
+            &ledger_arg,
+            "--gap-id",
+            gap_id,
+            "--json",
+        ]);
+        if !packet.status.success() {
+            return Err(format!(
+                "agent packet failed for {gap_id}: {}",
+                String::from_utf8_lossy(&packet.stderr)
+            ));
+        }
+        serde_json::from_slice(&packet.stdout).map_err(|err| format!("parse packet: {err}"))
+    };
+    let packet = packet_for(&gap_id)?;
+    let currentness = &packet["source_currentness"];
+    assert_eq!(currentness["source_kind"], "check_output", "{packet}");
+    assert_eq!(currentness["status"], "not_evaluated", "{packet}");
+    let reason = currentness["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains("repair_route")
+            && reason.contains("--diff")
+            && !reason.contains("repo-exposure"),
+        "the blocked reason must name the usable route and the unreplayable --diff scope, not the Rust-only route: {reason}"
+    );
+    let refresh: Vec<String> = currentness["refresh_commands"]
+        .as_array()
+        .map(|commands| {
+            commands
+                .iter()
+                .filter_map(|command| command.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(refresh.len(), 2, "{refresh:?}");
+    assert!(
+        refresh[0].contains("--base origin/main")
+            && refresh[0].contains("--json >")
+            && refresh[1].contains("gap-ledger --check-output"),
+        "refresh must replay the check-output route with its recorded base: {refresh:?}"
+    );
+    assert!(
+        refresh
+            .iter()
+            .all(|command| !command.contains("repo-exposure")),
+        "refresh must not route a check-output ledger through repo-exposure: {refresh:?}"
+    );
+
+    // Paste the printed refresh from an unrelated directory, `ripr` resolving
+    // to the binary under test.
+    let elsewhere = unique_temp_workspace("python-packet-refresh-elsewhere");
+    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create elsewhere: {err}"))?;
+    for command in &refresh {
+        let script = format!("ripr() {{ \"$0\" \"$@\"; }}; {command}");
+        let run = run_command(
+            "bash",
+            Some(&elsewhere),
+            &["-c", &script, env!("CARGO_BIN_EXE_ripr")],
+        )
+        .map_err(|err| format!("run refresh `{command}`: {err}"))?;
+        assert_success(&run);
+    }
+    assert_eq!(
+        python_gap_ids(&ledger_path)?,
+        before_ids,
+        "the refreshed ledger must keep the Python records"
+    );
+    let refreshed = packet_for(&gap_id)?;
+    assert_eq!(
+        refreshed["source_currentness"]["source_kind"], "check_output",
+        "{refreshed}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&elsewhere);
     Ok(())
 }
 
@@ -20307,6 +20565,37 @@ fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<
     assert!(
         !dir.join("target").exists(),
         "nothing may be written into the cwd"
+    );
+    Ok(())
+}
+
+#[test]
+fn impacted_evidence_failure_removes_stale_outputs() -> Result<(), String> {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
+    let dir = unique_temp_workspace("impacted-stale");
+    let out_dir = dir.join("target/xtask/impacted-evidence");
+    std::fs::create_dir_all(&out_dir).map_err(|err| err.to_string())?;
+    let _cleanup = Scratch(dir.clone());
+    std::fs::write(out_dir.join("latest.json"), "{}").map_err(|err| err.to_string())?;
+    std::fs::write(out_dir.join("latest.md"), "old").map_err(|err| err.to_string())?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("Removed stale"), "{stderr}");
+    assert!(!out_dir.join("latest.json").exists(), "stale JSON must go");
+    assert!(
+        !out_dir.join("latest.md").exists(),
+        "stale Markdown must go"
     );
     Ok(())
 }
