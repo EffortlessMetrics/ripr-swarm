@@ -813,7 +813,11 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         ));
     }
 
-    let reply = session.call("b2-gap", "ripr_get_gap", json!({ "canonical_id": canonical }))?;
+    let reply = session.call(
+        "b2-gap",
+        "ripr_get_gap",
+        json!({ "canonical_id": canonical }),
+    )?;
     let gap = tool_success(&reply, "b2 get_gap")?.clone();
     if as_str(&gap, "/snapshot_id", "b2 get_gap")? != snapshot {
         return Err(format!("b2 get_gap: snapshot drifted: {gap}"));
