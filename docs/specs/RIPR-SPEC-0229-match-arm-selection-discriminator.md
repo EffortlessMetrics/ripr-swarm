@@ -211,10 +211,13 @@ Implemented:
   arm that provably matches means the input selects another arm;
 - a changed pattern earns no selection credit, and names the arm only when
   neither the original nor the changed pattern selects any observed input.
-  The diff pairs a changed line with an adjacent removed line by a shared
-  token, which a qualified enum name satisfies for every arm of a
-  multi-line hunk, so the original pattern counts as read only when it
-  shares an alternative with the changed one;
+  A changed arm's original is the adjacent removed arm with the same
+  pattern, else the first adjacent removed line sharing a token. A
+  qualified enum name is such a token for every arm of a multi-line hunk,
+  so a token-paired original counts as read only when it shares an
+  alternative with the changed pattern. A token-paired original that
+  shares one may still be another arm of the hunk; the arm is then named
+  against that arm's pattern;
 - selection outranks tokens whenever the scrutinee is a direct owner input.
 
 Not yet implemented (each reads as not provable):
@@ -232,7 +235,8 @@ implies but does not spell out:
   `self: Pin<&mut Self>` receiver used anywhere else refuses);
 - a free owner called through a path (`a::reason(..)`) is read only when
   the path starts with `crate`, `self`, `super`, `Self`, the owner's impl
-  type, or a workspace package;
+  type, or the indexed root package or its lib target (a `pub use`
+  re-export under that root is not resolved);
 - selection credit requires the `match` to be the owner body's first
   unconditional expression, since a nested, short-circuited or
   early-returned match may never run;
@@ -334,6 +338,8 @@ the diff changes `None => 1` to `None => 0`.
   owner-identity defeats for a named arm.
 - `crates/ripr/src/analysis/classify/reveal.rs`: selection confirmation and
   the selection-outranks-tokens gate.
+- `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
+  removed arm of the same pattern.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` (#5416): no change;
   rule 3 already keeps a gap with a named missing discriminator.
 
