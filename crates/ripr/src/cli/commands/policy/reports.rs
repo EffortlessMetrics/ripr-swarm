@@ -338,6 +338,15 @@ pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_suppression_health(args: &[String]) -> Result<(), String> {
     let options = parse_policy_suppression_health_options(args)?;
+    // A root that does not exist has no manifest to read, which would otherwise
+    // report `no_suppressions` (clean) and write reports into the cwd.
+    if !options.root.is_dir() {
+        return Err(format!(
+            "policy suppression-health --root {} is not a directory; pass the repository root that holds {}",
+            options.root.display(),
+            output::suppressions::SUPPRESSIONS_PATH
+        ));
+    }
     let input = output::suppression_health::SuppressionHealthInput {
         root: output::suppression_health::display_path(&options.root),
         generated_at: policy_readiness_generated_at()?,

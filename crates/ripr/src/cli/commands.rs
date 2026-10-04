@@ -5656,6 +5656,34 @@ language = "rust"
     }
 
     #[test]
+    fn policy_suppression_health_rejects_missing_root_without_writing() -> Result<(), String> {
+        let dir = unique_command_test_dir("suppression-health-no-root");
+        let out = dir.join("suppression-health.json");
+        let out_md = dir.join("suppression-health.md");
+        let missing = dir.join("does-not-exist");
+
+        let err = policy(&args(&[
+            "suppression-health",
+            "--root",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .err()
+        .ok_or_else(|| "missing --root must fail".to_string())?;
+
+        assert!(err.contains("is not a directory"), "{err}");
+        assert!(err.contains("does-not-exist"), "{err}");
+        assert!(
+            !out.exists() && !out_md.exists(),
+            "no report may be written"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn pr_evidence_ledger_parses_option_surface() {
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[

@@ -19589,6 +19589,26 @@ fn impacted_evidence_unknown_arg_fails_clearly() {
     );
 }
 
+#[test]
+fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("ripr-impacted-missing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let wrote = dir.join("target").exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "must exit nonzero:\n{stderr}");
+    assert!(stderr.contains("missing.json"), "{stderr}");
+    assert!(!wrote, "nothing may be written into the cwd");
+    Ok(())
+}
+
 // ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
 
 #[test]
