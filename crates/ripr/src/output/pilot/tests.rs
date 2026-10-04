@@ -1527,6 +1527,28 @@ fn changed(file: &str, line: usize) -> PilotCurrentChange {
 }
 
 #[test]
+fn seam_budget_keeps_only_actionable_changed_seams() {
+    let change = changed("src/a.rs", 10);
+    let changed_actionable =
+        classified_with(SeamGripClass::WeaklyGripped, "src/a.rs", 10, vec![], vec![]);
+    let changed_solved = classified_with(
+        SeamGripClass::StronglyGripped,
+        "src/a.rs",
+        10,
+        vec![],
+        vec![],
+    );
+    let untouched_actionable =
+        classified_with(SeamGripClass::WeaklyGripped, "src/b.rs", 10, vec![], vec![]);
+    assert!(change.touches(&changed_solved));
+    assert!(change.keeps_past_budget(&changed_actionable));
+    // A solved changed seam must not take a budget slot from an actionable
+    // seam: with budget 1 it would leave pilot nothing to recommend.
+    assert!(!change.keeps_past_budget(&changed_solved));
+    assert!(!change.keeps_past_budget(&untouched_actionable));
+}
+
+#[test]
 fn pilot_ranking_puts_seams_in_the_current_change_first() {
     // The untouched seam is the better class (weak beats ungripped), so the
     // repo-wide order puts it first.
@@ -1708,9 +1730,9 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     let (terminal, md, json) = render(Some(&changed("src/other.rs", 3)))?;
     // The named root is bound like every other pilot command, so it pastes
     // from any directory.
-    let bound = crate::output::path::display_path(&crate::agent::loop_commands::bound_root_path(
-        Path::new("."),
-    ));
+    let bound = crate::agent::loop_commands::shell_path(
+        &crate::agent::loop_commands::bound_root_path(Path::new(".")),
+    );
     assert!(
         terminal.contains(&format!(
             "  current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since origin/main. For the change itself, run: ripr check --root {bound}\n"

@@ -120,6 +120,13 @@ impl PilotCurrentChange {
 
     /// Whether a changed new-side line falls inside the seam's source span
     /// (its display line through the last line of its expression text).
+    /// Whether the seam budget keeps this seam past its cut: pilot can
+    /// recommend it and it is on a changed line. A changed seam pilot cannot
+    /// recommend would only displace an actionable one.
+    pub(crate) fn keeps_past_budget(&self, entry: &ClassifiedSeam) -> bool {
+        super::ranking::is_actionable(entry) && self.touches(entry)
+    }
+
     pub(crate) fn touches(&self, entry: &ClassifiedSeam) -> bool {
         let Self::Changed { root, lines, .. } = self else {
             return false;

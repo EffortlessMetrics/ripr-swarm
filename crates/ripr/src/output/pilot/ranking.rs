@@ -79,6 +79,12 @@ pub(super) fn actionable_total(classified: &[ClassifiedSeam]) -> usize {
         .count()
 }
 
+/// Whether pilot can recommend this seam. The seam budget uses the same
+/// predicate, so a changed seam kept past the cut is one ranking can use.
+pub(super) fn is_actionable(entry: &ClassifiedSeam) -> bool {
+    class_rank(entry.class).is_some()
+}
+
 fn class_rank(class: SeamGripClass) -> Option<u8> {
     Some(match class {
         SeamGripClass::WeaklyGripped => 0,
