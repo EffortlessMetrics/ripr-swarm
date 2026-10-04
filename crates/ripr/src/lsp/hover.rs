@@ -482,19 +482,36 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                 test,
                 &finding.activation.missing_discriminators,
             );
+            // #5927: only an unmatched row uses the `misses/checked` form, as
+            // in human output; a matched row keeps its oracle kind and
+            // strength and adds the reason it still misses.
             let oracle_text = match (&why, &test.oracle) {
-                (Some(why), Some(oracle)) => format!(
+                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
                     " misses: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
-                (Some(why), None) => format!(" misses: {why}"),
-                (None, Some(oracle)) => format!(
-                    " \u{2014} {} {} oracle: {}",
-                    test.oracle_strength.as_str(),
-                    test.oracle_kind.as_str(),
-                    oracle
-                ),
-                (None, None) => String::new(),
+                (Some(why), None) if test.is_unmatched() => format!(" misses: {why}"),
+                (why, oracle) => {
+                    let mut text = match oracle {
+                        Some(oracle) => format!(
+                            " \u{2014} {} {} oracle: {}",
+                            test.oracle_strength.as_str(),
+                            test.oracle_kind.as_str(),
+                            oracle
+                        ),
+                        None if why.is_some() => format!(
+                            " \u{2014} {} {} oracle",
+                            test.oracle_strength.as_str(),
+                            test.oracle_kind.as_str()
+                        ),
+                        None => String::new(),
+                    };
+                    if let Some(why) = why {
+                        text.truncate(text.trim_end_matches(';').len());
+                        text.push_str(&format!("; misses: {why}"));
+                    }
+                    text
+                }
             };
             lines.push(format!(
                 "- `{}:{}` `{}`{}",
