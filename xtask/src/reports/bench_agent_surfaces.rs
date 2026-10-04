@@ -1822,7 +1822,7 @@ fn run_m3_corpus(
             cold: Vec::new(),
             warm: Vec::new(),
             limitation: Some(
-                "recorded limitation: no textDocument/publishDiagnostics for the opened document arrives within any bounded ceiling on this runner class for the repo corpus. Measured on this host: the workspace-scope analysis behind the first publish stayed analysis_outcome null for 720 s cold (trace of one session; attempt 2), the same scope's cold CLI check took 572 s, and warm-cache sessions also produced no document publish within 600 s. The empty-population gate is defined for harness regressions on corpora where the population can exist; for the repo corpus the population itself is the finding, so it is recorded here by name instead of failing the run."
+                "recorded limitation: this run recorded no M3 repo populations because the workspace-scale analysis behind the repo's first textDocument/publishDiagnostics exceeds the per-sample timeout ceiling on large checkouts, so a first-publish population cannot exist within any bounded ceiling; the M3 timeout is the named outcome here, which is distinct from an empty-population gate failure (that gate stays reserved for corpora whose population can exist). The authoring session's observations and their measurements are recorded in RIPR-SPEC-0218; a run whose repo sessions do observe a first publish replaces this limitation with measured populations."
                     .to_string(),
             ),
         });

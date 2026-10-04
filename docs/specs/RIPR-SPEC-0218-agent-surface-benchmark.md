@@ -69,7 +69,7 @@ One new xtask command, `cargo xtask bench-agent-surfaces`, writes
   population: n, min, p50, p95, max, and the warm/cold p50 speedup.
 - **M2 — MCP stdio round-trip latency.** Newline-delimited JSON-RPC
   sessions (`initialize`, `notifications/initialized`, then
-  `tools/call rippr_workspace_status`, `ripr_refresh` twice — first is
+  `tools/call ripr_workspace_status`, `ripr_refresh` twice — first is
   server-side cold, second warm — `ripr_list_gaps`, and `ripr_get_gap`
   for the first listed gap id), replies drained on a reader thread so a
   blocked server cannot deadlock the harness. Reported per op × corpus:
@@ -84,13 +84,17 @@ One new xtask command, `cargo xtask bench-agent-surfaces`, writes
   measured on tiny and mid, where the interactive first-publish contract
   completes within bounded time. For the repo corpus the first publish
   is bounded by a workspace-scale analysis that does not complete within
-  any reasonable per-sample ceiling on large checkouts (measured:
-  `analysis_outcome` stayed null for 720 s in a traced cold session and
-  warm-cache sessions produced no document publish within 600 s), so
-  repo M3 is recorded in the receipt as a named limitation carrying that
-  measured evidence — the finding itself — and is never silently
-  dropped; the empty-population gate stays reserved for corpora whose
-  population can exist.
+  any reasonable per-sample ceiling on large checkouts, so repo M3
+  normally ends as the M3 per-sample timeout — a distinct, named outcome
+  recorded in the receipt as `recorded_limitation`, never silently
+  dropped and never read as an empty-population gate failure (that gate
+  stays reserved for corpora whose population can exist; a run whose
+  repo sessions do observe a first publish replaces the limitation with
+  measured populations). The authoring session's observations, kept here
+  rather than in the portable receipt: a traced cold session held
+  `analysis_outcome` null for 720 s, the same scope's cold CLI check
+  took 572 s, and warm-cache sessions produced no document publish
+  within 600 s.
 - **M4 — output actionability.** Pooled from the M1 envelopes per
   corpus: findings total, the seven static-class histogram,
   actionable-intent fraction (missing discriminator or typed next
@@ -139,10 +143,9 @@ identity:
   a mixed corpus with any valid sample still gates as usual;
   (2) when the M3 first publish is bounded by a workspace-scale
   analysis that does not complete within any reasonable per-sample
-  ceiling (measured: `analysis_outcome` stayed null for 720 s in a
-  traced cold session; warm-cache sessions produced no document publish
-  within 600 s), repo M3 is recorded as a named limitation carrying
-  that evidence. Downstream M2 `no_snapshot` failures that follow a
+  ceiling, repo M3 ends as the named M3-timeout limitation (see the M3
+  bullet for the authoring session's observations). Downstream M2
+  `no_snapshot` failures that follow a
   refresh attempt carrying a typed failure are named chained absences
   citing that refusal. Cold repo-scale samples also legitimately exceed
   the default 120 s per-sample timeout on large workspaces; the
@@ -175,8 +178,9 @@ joins `precommit` or CI.
 
 - A real end-to-end run on a clean checkout writing both report files
   with populated M1–M5 samples (no zero-subject populations).
-- A `--compare` negative control: an artificially slowed prior receipt
-  is flagged `regressed` with the named metric.
+- A `--compare` negative control: a prior receipt with artificially
+  lowered p50s (so the real child looks more than 25% slower) is flagged
+  `regressed` with the named metric.
 - A determinism negative control: an injected volatile field fails
   `determinism_outcome` with the empty check-envelope allowlist and
   passes as disclosed only when the field is explicitly allowlisted.
