@@ -114,8 +114,9 @@ are scoped or reviewed.
   pilot says the recommendation is elsewhere in the repo and points to
   `ripr check` for the change itself, with `--worktree` when the change is
   uncommitted (plain `ripr check` reads committed history only). The "Inspected" block names the scope:
-  `change-first (...)` with a change, otherwise `whole repository` (with a short
-  reason when the change could not be loaded). With no change, or when the diff
+  `change-first (Rust seams ...)` with a change, otherwise `whole repository`
+  (with a short reason when the change could not be loaded); a Python preview
+  repair card is still chosen from the committed diff. With no change, or when the diff
   cannot be loaded, the ranking is unchanged; `pilot-summary.json` adds a
   `current_change` object whose `state` keeps `no_change` and `unavailable`
   apart (#1169).

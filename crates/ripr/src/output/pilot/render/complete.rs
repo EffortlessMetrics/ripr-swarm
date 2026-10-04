@@ -635,12 +635,12 @@ fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
     Some(if change.is_changed() {
         match change.base() {
             Some(base) if code => {
-                format!("change-first (seams on lines changed since `{base}` rank first)")
+                format!("change-first (Rust seams on lines changed since `{base}` rank first)")
             }
             Some(base) => {
-                format!("change-first (seams on lines changed since {base} rank first)")
+                format!("change-first (Rust seams on lines changed since {base} rank first)")
             }
-            None => "change-first (seams on changed lines rank first)".to_string(),
+            None => "change-first (Rust seams on changed lines rank first)".to_string(),
         }
     } else if let Some(reason) = change.unavailable_reason() {
         format!("whole repository (current change unavailable: {reason})")

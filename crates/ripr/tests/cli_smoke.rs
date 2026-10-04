@@ -13224,6 +13224,14 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     .map_err(|err| format!("write changed pricing: {err}"))?;
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
+    // An uncommitted edit to another tracked Python file makes the working
+    // tree the current change. The scope line names Rust seam ranking only,
+    // and the Python card is still chosen from the committed diff.
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
+    )
+    .map_err(|err| format!("write uncommitted tests edit: {err}"))?;
 
     let out_dir = unique_temp_workspace("pilot-python-git-out");
     let output = run_ripr(&[
@@ -13245,6 +13253,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
+        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -13271,6 +13280,16 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
             "missing summary JSON needle: {needle}"
         );
     }
+    let summary: serde_json::Value = serde_json::from_str(&summary_json)
+        .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "changed",
+        "{summary_json}"
+    );
+    assert_eq!(
+        summary["current_change"]["actionable_seams_in_change"], 0,
+        "{summary_json}"
+    );
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
@@ -13943,7 +13962,7 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     assert!(!stdout.contains("--worktree"), "{stdout}");
     assert!(
         stdout.contains(
-            "  scope: change-first (seams on lines changed since origin/main rank first)\n"
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
         ),
         "{stdout}"
     );

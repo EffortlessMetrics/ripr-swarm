@@ -15166,9 +15166,12 @@ changed). `base` is the resolved base, or `null` when unavailable. `reason` is
 a short fixed phrase for an unavailable change (`not a Git work tree`, `no
 default base resolved`, `git is not on PATH`, `git timed out`, `git status
 failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
-carries a matching scope line: `change-first (seams on lines changed since
+carries a matching scope line: `change-first (Rust seams on lines changed since
 <base> rank first)` for `changed`, `whole repository` for `no_change`, and
 `whole repository (current change unavailable: <reason>)` for `unavailable`.
+The change-first scope and the change counts cover Rust seam ranking only. A
+Python preview repair card shown as the top recommendation is still selected
+from the committed diff against the base, not from uncommitted edits.
 `actionable_seams_in_change` and `top_recommendation_in_change` are `null`
 unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
 no seam is ranked. When it is `false`, the terminal and Markdown say the
