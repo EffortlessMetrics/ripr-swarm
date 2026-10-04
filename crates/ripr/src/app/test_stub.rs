@@ -202,16 +202,19 @@ fn classified_candidates(classified: &[ClassifiedSeam]) -> Vec<AtCandidate<'_>> 
 }
 
 /// `file` as a root-relative path when it names a regular file under
-/// `root`; `None` otherwise.
+/// `root`; `None` otherwise. Both sides are canonicalized, so `..` or a
+/// symlink cannot point `--at` (and `--write`) at a file outside the root.
 fn scoped_file(root: &Path, file: &str) -> Option<PathBuf> {
     let normalized = file.replace('\\', "/");
     let path = Path::new(normalized.trim_start_matches("./"));
-    let relative = if path.is_absolute() {
-        path.strip_prefix(root).ok()?.to_path_buf()
+    let canonical_root = root.canonicalize().ok()?;
+    let target = if path.is_absolute() {
+        path.canonicalize().ok()?
     } else {
-        path.to_path_buf()
+        root.join(path).canonicalize().ok()?
     };
-    (!relative.as_os_str().is_empty() && root.join(&relative).is_file()).then_some(relative)
+    let relative = target.strip_prefix(&canonical_root).ok()?.to_path_buf();
+    (!relative.as_os_str().is_empty() && target.is_file()).then_some(relative)
 }
 
 /// What `ripr check` prints under its selected finding for the test-stub
@@ -835,6 +838,21 @@ mod tests {
         // lookup and its more-than-one-file refusal.
         let suffix = scoped_file(&root, "src/lib.rs");
         let directory = scoped_file(&root, "crates/a/src");
+        // A path that leaves the root, by `..` or a symlink, is not under it.
+        let outside = root.with_extension("outside.rs");
+        std::fs::write(&outside, "").map_err(|error| error.to_string())?;
+        let outside_name = outside
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let dotdot = scoped_file(&root, &format!("crates/../../{outside_name}"));
+        #[cfg(unix)]
+        let linked = {
+            std::os::unix::fs::symlink(&outside, root.join("crates/a/src/link.rs"))
+                .map_err(|error| error.to_string())?;
+            scoped_file(&root, "crates/a/src/link.rs")
+        };
+        let _ = std::fs::remove_file(&outside);
         let _ = std::fs::remove_dir_all(&root);
         let expected = Some(PathBuf::from("crates/a/src/lib.rs"));
         assert_eq!(exact, expected);
@@ -843,6 +861,9 @@ mod tests {
         assert_eq!(absolute, expected);
         assert_eq!(suffix, None);
         assert_eq!(directory, None);
+        assert_eq!(dotdot, None);
+        #[cfg(unix)]
+        assert_eq!(linked, None);
         Ok(())
     }
 
