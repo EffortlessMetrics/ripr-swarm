@@ -89,8 +89,8 @@
           "oracle": "assert_eq!(reason(Some(5)), 6);",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_exact_assertion",
-          "why": "no assertion pins `None`"
+          "miss": "missing_input",
+          "why": "no test input selects arm `None =>`"
         }
       ],
       "stop_reasons": [],

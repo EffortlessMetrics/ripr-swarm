@@ -990,8 +990,7 @@ fn missing_error_variant_discriminator(
 
 /// Opens the reason of a match-arm missing discriminator; infection reads
 /// it to keep an unselected arm from counting as activated.
-pub(in crate::analysis) const ARM_UNSELECTED_REASON_PREFIX: &str =
-    "No related test call selects arm";
+pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
 /// discriminator when every related test calls the owner directly and every

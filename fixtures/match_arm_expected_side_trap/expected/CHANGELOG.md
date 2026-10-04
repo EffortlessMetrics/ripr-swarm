@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (4)
+
+Reason:
+RIPR-SPEC-0229 with RIPR-SPEC-0224: an unselected arm is a missing input (no test input selects the arm), not a missing exact assertion
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: "sensor" =>
   Missing discriminator (1 of 2): "sensor"
-  Related test: tests/route.rs:7 sibling_assertion_mentions_sensor_only_in_its_message (no assertion pins `"sensor"`)
+  Related test: tests/route.rs:7 sibling_assertion_mentions_sensor_only_in_its_message (no test input selects arm `"sensor" =>`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach route: sibling_assertion_mentions_sensor_only_in_its_message

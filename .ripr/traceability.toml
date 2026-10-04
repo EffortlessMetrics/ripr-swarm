@@ -12355,6 +12355,7 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::typed_mutable_receivers_establish_nothing",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_free_owner_called_through_a_foreign_path_is_not_read",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_change_pairs_with_its_own_removed_arm",
+  "crates/ripr/src/output/related_test_miss.rs::tests::an_unselected_arm_miss_names_the_arm_as_a_missing_input",
   "crates/ripr/tests/match_arm_unselected_identity.rs::own_crate_call_with_a_sibling_input_names_the_unselected_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
@@ -12373,6 +12374,8 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/related_test_miss.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",

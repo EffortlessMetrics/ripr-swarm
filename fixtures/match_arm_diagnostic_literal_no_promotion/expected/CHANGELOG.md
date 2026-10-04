@@ -174,3 +174,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_diagnostic_literal_no_promotion (14)
+
+Reason:
+RIPR-SPEC-0229 with RIPR-SPEC-0224: an unselected arm is a missing input (no test input selects the arm), not a missing exact assertion
+
+Command:
+`cargo xtask goldens bless match_arm_diagnostic_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

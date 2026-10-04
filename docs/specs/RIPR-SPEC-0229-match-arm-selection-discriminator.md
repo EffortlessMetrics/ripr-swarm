@@ -340,6 +340,10 @@ the diff changes `None => 1` to `None => 0`.
   the selection-outranks-tokens gate.
 - `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
   removed arm of the same pattern.
+- `crates/ripr/src/domain/probe.rs` (`input_boundary_fact`) and
+  `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
+  arm misses an input (`missing_input`, "no test input selects arm"), not an
+  exact assertion (RIPR-SPEC-0224).
 - `crates/ripr/src/analysis/classify/gap_admission.rs` (#5416): no change;
   rule 3 already keeps a gap with a named missing discriminator.
 

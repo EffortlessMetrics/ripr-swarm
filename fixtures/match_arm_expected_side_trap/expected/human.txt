@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: Kind::Beta =>
   Missing discriminator (1 of 2): Kind::Beta
-  Related test: tests/flip.rs:4 alpha_flips_to_beta (no assertion pins `Kind::Beta`)
+  Related test: tests/flip.rs:4 alpha_flips_to_beta (no test input selects arm `Kind::Beta =>`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach flip: alpha_flips_to_beta

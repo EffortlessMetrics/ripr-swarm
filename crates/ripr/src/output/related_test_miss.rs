@@ -35,13 +35,20 @@ pub(crate) fn related_test_miss_reason(
             "assertion does not mention the changed expression".to_string()
         }
         // The analyzer assigns `missing_input` only for a predicate probe
-        // with a boundary fact, and `missing_exact_assertion` only when no
-        // boundary fact exists, so reading the facts as a predicate's picks
-        // the fact each miss was assigned from.
+        // with a boundary fact or a match-arm probe with an unselected-arm
+        // fact, and `missing_exact_assertion` only when neither exists, so
+        // reading the facts as a predicate's picks the fact each miss was
+        // assigned from.
         RelatedTestMiss::MissingInput => {
-            match input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate) {
-                Some(fact) => format!("no test input reaches `{}`", one_line(&fact.value)),
-                None => "no test input reaches the changed boundary".to_string(),
+            if let Some(fact) = input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
+            {
+                format!("no test input reaches `{}`", one_line(&fact.value))
+            } else if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::MatchArm)
+            {
+                format!("no test input selects arm `{} =>`", one_line(&fact.value))
+            } else {
+                "no test input reaches the changed boundary".to_string()
             }
         }
         RelatedTestMiss::MissingExactAssertion => {
@@ -174,6 +181,21 @@ mod tests {
         assert_eq!(
             related_test_miss_reason(&test, &finding.activation.missing_discriminators).as_deref(),
             Some("no assertion pins `CalcError::TooLarge`")
+        );
+    }
+
+    #[test]
+    fn an_unselected_arm_miss_names_the_arm_as_a_missing_input() {
+        let facts = vec![MissingDiscriminatorFact {
+            value: "Kind::Beta".to_string(),
+            reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
+                .to_string(),
+            flow_sink: None,
+        }];
+        let test = test_with(Some(RelatedTestMiss::MissingInput), None);
+        assert_eq!(
+            related_test_miss_reason(&test, &facts).as_deref(),
+            Some("no test input selects arm `Kind::Beta =>`")
         );
     }
 }

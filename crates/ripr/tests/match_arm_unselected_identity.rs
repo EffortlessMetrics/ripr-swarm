@@ -151,6 +151,18 @@ fn own_crate_call_with_a_sibling_input_names_the_unselected_arm() -> Result<(), 
         "the control must name the unselected arm: {:?}",
         finding.ripr.infect
     );
+    // The test asserts `Kind::Beta` exactly; what it lacks is an input that
+    // selects the arm, not an assertion.
+    let misses = finding
+        .related_tests
+        .iter()
+        .map(|test| test.miss)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        misses,
+        vec![Some(ripr::domain::RelatedTestMiss::MissingInput)],
+        "the examined test misses an input, not an assertion"
+    );
     Ok(())
 }
 

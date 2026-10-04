@@ -99,8 +99,8 @@
           "oracle": "assert_eq!(route(\"focused-test\"), \"proof\", \"sensor\");",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_exact_assertion",
-          "why": "no assertion pins `\"sensor\"`"
+          "miss": "missing_input",
+          "why": "no test input selects arm `\"sensor\" =>`"
         }
       ],
       "stop_reasons": [],
