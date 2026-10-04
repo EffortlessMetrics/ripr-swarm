@@ -19425,14 +19425,16 @@ fn agent_status_attempt_types_a_malformed_row_and_isolates_valid_rows()
         "{valid_report:#}"
     );
 
-    // The discovery surface still lists the valid attempt and reports the
-    // malformed row as a warning instead of swallowing it.
+    // The discovery surface fails closed: a malformed row keeps the whole
+    // listing untrusted, so the inventory names the bad row and withholds
+    // every candidate instead of crediting a subset. Exact `--attempt`
+    // selection above already proved the valid row itself stays readable.
     let inventory = repair_route_status(&root)?;
     assert_eq!(
         inventory["repair_attempts"]
             .as_array()
             .map(|attempts| attempts.len()),
-        Some(1),
+        Some(0),
         "{inventory:#}"
     );
     assert!(

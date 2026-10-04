@@ -141,8 +141,9 @@ execution or mutation authority.
   (prepare → resume → external test-only edit → finish → retained
   terminal read), the `finished_historical` downgrade after HEAD movement,
   same-seam attempts staying distinct by ID, an explicit non-default store
-  across processes, one malformed row leaving valid rows discoverable and
-  resumable, tampered terminal evidence never falling back to another
+  across processes, one malformed row keeping the store listing fail-closed
+  while valid rows stay resumable by exact selection, tampered terminal
+  evidence never falling back to another
   attempt's projection, and a legacy manifest reporting at compatibility
   strength only.
 - `cargo xtask check-output-contracts`, `check-fixture-contracts`,
