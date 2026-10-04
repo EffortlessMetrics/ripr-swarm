@@ -103,13 +103,19 @@ In this section `f` is the full projection path (`r.child.count`, never
 `r.count`, for a write to `self.child.count`).
 
 1. calls the owner method on a local binding `r` (the receiver), and the
-   changed statement is not inside a loop, and after it, on any path to the
-   owner's return, nothing can write `f`: no assignment to `f` or to any
-   prefix of it (`self.child = ..`, `*self = ..`), no `&mut` borrow of
-   `self` or of such a prefix (`&mut self.count`, `mem::take(&mut
-   self.child)`), no method call taking `&mut self`, and no macro call.
-   Any of these refuses credit (`self.count += 1; self.count = 0` and
-   `self.count += 2; self.reset()` both give none), and
+   changed statement is not inside a loop or closure, and after it, on any
+   path to the owner's return, the body uses `self` only in plain reads of
+   fields whose values are copied or compared (`let n = self.limit;`,
+   `self.count > 3`). Any other later use refuses credit, written or
+   implicit: an assignment to `f` or a prefix (`self.child = ..`,
+   `*self = ..`), a method call on `self` or on any field path
+   (`self.reset()`, `self.child.reset()`, `self.count.set(0)` through a
+   `Cell`), `self` or a field passed to a call (`zero(self)`,
+   `mem::take(&mut self.child)`), a closure capturing `self`, a macro call,
+   or a use of any binding that borrows `self` or one of its fields
+   (`let p = &mut self.count;` before or after the change). So
+   `self.count += 1; self.count = 0` and `self.count += 2; self.reset()`
+   both give no credit, and
 2. after that call, holds an admitted exact oracle that reads `r.f`
    (`assert_eq!(r.f, v)`, or a whole-value comparison of `r` that names `f`
    under RIPR-SPEC-0225); and
