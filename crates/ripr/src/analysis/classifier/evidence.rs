@@ -1,7 +1,7 @@
 use crate::analysis::classify::{
-    ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
-    ReturnOracleAdmission, activation_evidence_with_value_facts, callee_is_unique, classify,
-    confidence_score, contains_as_whole_word, current_path_witness,
+    ARM_UNSELECTED_REASON_PREFIX, ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    PropagationWitnessV1, ReturnOracleAdmission, activation_evidence_with_value_facts,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
     has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
     owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
     reveal_evidence_with_expression, same_test_pairing_missing_summary,
@@ -50,7 +50,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let mut activation = activation_evidence_with_value_facts(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -60,6 +60,47 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
+        // #3731 review (F11, G1): the changed owner's package scope, computed
+        // once — the cross-package same-name defeats compare each related
+        // test's package against it.
+        let owner_package = context
+            .owner_fn
+            .and_then(|owner| package_prefix(&owner.file));
+        // RIPR-SPEC-0229: an unselected-arm discriminator reads each related
+        // test's owner calls as inputs to the changed owner. A test whose
+        // file imports a foreign same-named function, or whose own package
+        // defines one, may be calling that function instead, so the same
+        // identity defeats reveal applies withhold the named arm here.
+        if let Some(owner) = context.owner_fn
+            && activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            && test_summaries.iter().any(|test| {
+                let imports_foreign = context.index.files().get(&test.file).is_some_and(|facts| {
+                    context.test_file_imports_foreign_callee_name(
+                        &test.file,
+                        &facts.source,
+                        &owner.name,
+                    )
+                });
+                let package_defines = package_prefix(&test.file).is_some_and(|test_package| {
+                    owner_package
+                        .as_deref()
+                        .is_some_and(|owner_package| owner_package != test_package)
+                        && context.index.functions().iter().any(|function| {
+                            function.name == owner.name
+                                && package_prefix(&function.file).as_deref()
+                                    == Some(test_package.as_str())
+                        })
+                });
+                imports_foreign || package_defines
+            })
+        {
+            activation
+                .missing_discriminators
+                .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
+        }
         let infect = infection_evidence(context.probe, &test_summaries, &activation);
         let valid_witness = propagation_witness
             .as_ref()
@@ -69,12 +110,6 @@ impl ClassifiedProbeEvidence {
             });
         let propagate =
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
-        // #3731 review (G1): the changed owner's package scope, computed
-        // once — the cross-package same-name defeat below compares each
-        // related test's package against it.
-        let owner_package = context
-            .owner_fn
-            .and_then(|owner| package_prefix(&owner.file));
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
         // high-traffic owner relates to thousands of tests spread over a
