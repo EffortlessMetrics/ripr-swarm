@@ -740,6 +740,12 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    if matches!(probe.family, ProbeFamily::MatchArm)
+        && let Some(fact) =
+            missing_match_arm_discriminator(probe, owner_fn, related_tests, flow_sinks)
+    {
+        missing.push(fact);
+    }
     if missing.is_empty()
         && observed_values
             .iter()
@@ -971,6 +977,57 @@ fn missing_error_variant_discriminator(
         flow_sink: flow_sinks
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
+            .or_else(|| first_visible_flow_sink(flow_sinks))
+            .cloned(),
+    })
+}
+
+/// Opens the reason of a match-arm missing discriminator; infection reads
+/// it to keep an unselected arm from counting as activated.
+pub(super) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
+
+/// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
+/// discriminator when every related test calls the owner directly and every
+/// call's scrutinee input provably selects a different arm (`reason(Some(5))`
+/// against `None => 0`). One unreadable use of the owner, one variable or
+/// computed input, one wildcard or refutable alternative, or one related
+/// test that never names the owner leaves the arm unnamed: such a test may
+/// select the arm in a way this reading cannot see.
+fn missing_match_arm_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+) -> Option<MissingDiscriminatorFact> {
+    if related_tests.is_empty() {
+        return None;
+    }
+    let selector = super::arm_selection::ArmSelector::establish(probe, owner_fn?)?;
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    let pattern = selector.pattern_text();
+    Some(MissingDiscriminatorFact {
+        value: pattern.to_string(),
+        reason: format!(
+            "{ARM_UNSELECTED_REASON_PREFIX} `{pattern} =>`; observed `{}` values: {}",
+            selector.scrutinee(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        flow_sink: flow_sinks
+            .iter()
+            .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
     })

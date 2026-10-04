@@ -6600,15 +6600,28 @@ tests = [
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::projection_return_boundary_unreachable_assertions_cannot_certify_the_arm",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::projection_return_boundary_after_complete_observation_preserves_exposure",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::relative_prefixed_root_keeps_the_derived_arm_admission",
-  "crates/ripr/tests/match_arm_tuple_derived_local.rs::relative_prefixed_root_keeps_the_return_boundary"
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::relative_prefixed_root_keeps_the_return_boundary",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::sibling_variant_input_selects_other_arm",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::matching_input_selects_and_any_selecting_call_wins",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::receiver_scrutinee_reads_glob_imported_variants",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::refutable_or_unprovable_patterns_stay_unknown",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::computed_or_rebound_scrutinee_establishes_nothing",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_earlier_arm_that_may_match_blocks_selection"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/match_arm_blind",
+  "fixtures/match_arm_expected_side_trap",
   "fixtures/match_arm_observer",
+  "fixtures/match_arm_selected_credit",
   "fixtures/match_arm_tuple_derived_return_before_assertion"
 ]
 code = [
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/arm_selection.rs",
+  "crates/ripr/src/analysis/classify/infection.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission.rs",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match_derived.rs"
@@ -6617,8 +6630,12 @@ outputs = [
   "docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md",
   "fixtures/match_arm_blind/expected/check.json",
   "fixtures/match_arm_blind/expected/human.txt",
+  "fixtures/match_arm_expected_side_trap/expected/check.json",
+  "fixtures/match_arm_expected_side_trap/expected/human.txt",
   "fixtures/match_arm_observer/expected/check.json",
-  "fixtures/match_arm_observer/expected/human.txt"
+  "fixtures/match_arm_observer/expected/human.txt",
+  "fixtures/match_arm_selected_credit/expected/check.json",
+  "fixtures/match_arm_selected_credit/expected/human.txt"
 ]
 metrics = [
   "match_arm_blind_downgrades_to_weakly_exposed"

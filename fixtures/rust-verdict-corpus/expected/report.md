@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.3. Cases: 34.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 10/34 | 0.2941 |
-| False actionable (of discriminated) | 10/20 | 0.5000 |
+| False verdicts (all cases) | 8/34 | 0.2353 |
+| False actionable (of discriminated) | 8/20 | 0.4000 |
 | False exposed (of not fully discriminated) | 0/14 | 0.0000 |
 | False silent (of not fully discriminated) | 0/14 | 0.0000 |
-| Ideal verdict | 5/34 | 0.1471 |
+| Ideal verdict | 7/34 | 0.2059 |
 | Abstained (limited or silent where acceptable) | 19/34 | 0.5588 |
 | Findings with a contradiction | 4/42 | 0.0952 |
 
@@ -30,8 +30,8 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.3. Cases: 34.
 | `itoa-two-digit-tail` | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `regex-syntax-word-byte` | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `regex-syntax-max-scalar-two-byte` | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `serde-derive-rename-variant-lower` | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `serde-derive-rename-field-upper` | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `serde-derive-rename-variant-lower` | discriminated | credited | credited | exposed | ideal | yes | none |
+| `serde-derive-rename-field-upper` | discriminated | credited | credited | exposed | ideal | yes | none |
 | `semver-leading-zero` | discriminated | credited | limited | no_static_path | abstained | no | none |
 | `semver-op-greater-eq` | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | reach_yes_without_related_tests |
 | `itoa-four-digit-loop` | not_discriminated | gap | limited | no_static_path | abstained | no | none |

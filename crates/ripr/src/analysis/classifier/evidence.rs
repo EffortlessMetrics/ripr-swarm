@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
+    ReturnOracleAdmission, activation_evidence_with_value_facts, classify, confidence_score,
+    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
+    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
     same_test_pairing_missing_summary,
 };
@@ -97,6 +97,11 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+        let arm_selector = context
+            .owner_fn
+            .filter(|_| matches!(context.probe.family, ProbeFamily::MatchArm))
+            .and_then(|owner| ArmSelector::establish(context.probe, owner));
         let package_defeats_by_file = FileDefeatMemo::default();
         let owner_locals = context
             .owner_fn
@@ -165,6 +170,7 @@ impl ClassifiedProbeEvidence {
                 },
                 assertion_admitted: &assertion_admitted,
             },
+            arm_selector.as_ref(),
         );
 
         let discriminate =

@@ -260,3 +260,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_blind (8)
+
+Reason:
+RIPR-SPEC-0093: match-arm selection (#5432) - every related owner call selects another arm, so the changed arm is named as the missing discriminator and infection reads weak; class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_blind --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

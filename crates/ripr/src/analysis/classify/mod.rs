@@ -1,4 +1,5 @@
 mod activation;
+mod arm_selection;
 mod boundary_pairing;
 mod context;
 mod decision;
@@ -21,6 +22,7 @@ pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, literal_operand_value,
     local_boundary,
 };
+pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };

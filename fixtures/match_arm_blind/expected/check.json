@@ -13,7 +13,7 @@
       "id": "probe:src_lib.rs:match_arm:bb59fbfe",
       "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.84,
       "probe": {
         "id": "probe:src_lib.rs:match_arm:bb59fbfe",
         "family": "match_arm",
@@ -24,17 +24,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach reason: some_arm_returns_incremented_value"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "infect": {"state":"weak","confidence":"medium","summary":"No related test call selects arm `None =>`; observed `x` values: `Some(5)`"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: None =>"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach reason: some_arm_returns_incremented_value", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 4)", "related test tests/reason.rs:4 some_arm_returns_incremented_value uses strong exact value oracle: assert_eq!(reason(Some(5)), 6);", "source assertion argument value 6 at line 5", "source function argument value x = 5 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach reason: some_arm_returns_incremented_value", "infection weak: No related test call selects arm `None =>`; observed `x` values: `Some(5)`", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 4)", "related test tests/reason.rs:4 some_arm_returns_incremented_value uses strong exact value oracle: assert_eq!(reason(Some(5)), 6);", "source assertion argument value 6 at line 5", "source function argument value x = 5 at line 5", "missing discriminator None: No related test call selects arm `None =>`; observed `x` values: `Some(5)`"],
       "flow_sinks": [
         {"kind":"match_arm","text":"None =>","line":4}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach reason: some_arm_returns_incremented_value"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `None =>`; observed `x` values: `Some(5)`", "Related tests appear to reach reason: some_arm_returns_incremented_value"],
+      "missing": ["Missing discriminator value: None", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(reason(Some(5)), 6);"
       },
@@ -52,6 +52,11 @@
           }
         ],
         "missing_discriminators": [
+          {
+            "value": "None",
+            "reason": "No related test call selects arm `None =>`; observed `x` values: `Some(5)`",
+            "flow_sink": {"kind":"match_arm","text":"None =>","line":4}
+          }
         ]
       },
       "observed_values": [
@@ -67,6 +72,11 @@
         }
       ],
       "missing_discriminators": [
+        {
+          "value": "None",
+          "reason": "No related test call selects arm `None =>`; observed `x` values: `Some(5)`",
+          "flow_sink": {"kind":"match_arm","text":"None =>","line":4}
+        }
       ],
       "related_tests_total": 1,
       "related_tests": [

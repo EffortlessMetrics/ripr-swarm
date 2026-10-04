@@ -11,6 +11,23 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust match arms: ripr now reads which arm a related test's owner call
+  selects, from the input it passes at the `match` scrutinee (`self` or a
+  named parameter). A call that selects the changed arm inside an exact
+  assertion confirms it, so glob-imported variants (`LowerCase =>`),
+  `Option`/`Result` constructors and integer or string literal arms can read
+  `exposed`; on the verdict corpus both serde_derive rename cases move from
+  false gaps to credited (false actionable 10/20 to 8/20, false exposed and
+  false silent unchanged at 0/14). When every related test calls the owner
+  with an input that provably selects another arm, the finding names the
+  changed arm as its missing discriminator (`None` for `reason(Some(5))`)
+  and infection reads weak. That named arm is what the unknown-not-a-gap
+  rule (#5416) needs to keep `match_arm_blind` and four other sibling-arm
+  fixtures as gaps (#5432). It also turns a false `exposed` into
+  `weakly_exposed` when a sibling arm's variant appears only on an
+  assertion's expected side. Variable, computed, multi-line or
+  function-pointer uses of the owner, guards, wildcards and refutable
+  payloads leave the arm unjudged.
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
