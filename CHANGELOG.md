@@ -11,6 +11,7 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
@@ -211,6 +212,14 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
+  second semver and bytesize pins), now 32 cases across 10 subjects. The
+  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
+  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
+  `no_static_path_with_related_tests` contradictions, for 10 of 20
+  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
+  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
+  later (RIPR-SPEC-0219, #5332).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards
