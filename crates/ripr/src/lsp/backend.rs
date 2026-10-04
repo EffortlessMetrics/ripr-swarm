@@ -1676,12 +1676,12 @@ impl Backend {
             }
             RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
             // A deadline-expired attempt is a fail-closed dropped refresh
-            // (#1972, #5093). Name it on analysisStatus so a client without
-            // `window.workDoneProgress` can distinguish it from a user or
-            // superseded cancel: `state` and `failure.kind` are both
-            // `deadline_exceeded`.
+            // (#1972, #5093). Keep `state` on the existing `cancelled`
+            // allowlist so fail-closed clients (including VS Code) still parse
+            // the payload, and distinguish it from a user or superseded cancel
+            // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
-                health.state = AnalysisAttemptState::DeadlineExceeded;
+                health.state = AnalysisAttemptState::Cancelled;
                 health.failure = Some(AnalysisFailure {
                     kind: AnalysisFailureKind::DeadlineExceeded,
                     message: bounded_failure_message(&deadline_exceeded_log_message(

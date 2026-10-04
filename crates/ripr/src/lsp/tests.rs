@@ -17530,9 +17530,9 @@ fn deadline_exceeded_disclosed_in_logs_and_analysis_status_without_work_done_pro
             .disclose_deadline_exceeded(&request, RefreshAttemptOutcome::DeadlineExceeded)
             .await;
         let status = backend.analysis_status_payload();
-        if status["state"].as_str() != Some("deadline_exceeded") {
+        if status["state"].as_str() != Some("cancelled") {
             return Err(format!(
-                "analysisStatus.state must be deadline_exceeded, got {}",
+                "deadline drop keeps analysisStatus.state on the cancelled allowlist, got {}",
                 status["state"]
             ));
         }

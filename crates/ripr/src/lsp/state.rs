@@ -396,7 +396,6 @@ pub(super) enum AnalysisAttemptState {
     Succeeded,
     Failed,
     Cancelled,
-    DeadlineExceeded,
     Superseded,
     Stopped,
 }
@@ -409,7 +408,6 @@ impl AnalysisAttemptState {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
-            Self::DeadlineExceeded => "deadline_exceeded",
             Self::Superseded => "superseded",
             Self::Stopped => "stopped",
         }
