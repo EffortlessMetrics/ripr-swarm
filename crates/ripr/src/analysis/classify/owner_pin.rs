@@ -50,7 +50,7 @@ use crate::analysis::syntax::{
     owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -71,6 +71,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
 }
 
 impl OwnerPinSyntax {
@@ -93,17 +94,45 @@ impl OwnerPinSyntax {
             || self.admits(test, assertion, index)
     }
 
-    fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
-        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
-        let ambiguous = ambiguous.get_or_insert_with(|| {
+    /// Every out-of-line `mod name;` the module composition resolved to an
+    /// indexed file, keyed by declaring file, line and declaration text.
+    fn resolved_module_declarations(
+        &self,
+        index: &RustIndex,
+    ) -> &BTreeSet<(PathBuf, usize, String)> {
+        self.resolved_modules.get_or_init(|| {
             index
                 .files()
                 .values()
                 .flat_map(|facts| {
+                    facts
+                        .role_provenance
+                        .edges
+                        .iter()
+                        .filter(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+                        .map(|edge| (edge.parent.clone(), edge.line, edge.declaration.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+    }
+
+    fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
+        let ambiguous = ambiguous.get_or_insert_with(|| {
+            index
+                .files()
+                .iter()
+                .flat_map(|(path, facts)| {
                     trusted_macro_binding_ambiguities(
                         &facts.source,
                         &index.package_names,
                         NON_RETURNING_MACROS,
+                        &|line, declaration| module_resolved(path, line, declaration),
                     )
                 })
                 .collect()
@@ -133,6 +162,7 @@ impl OwnerPinSyntax {
                         &index.package_names,
                         &names,
                         path == &test.file,
+                        &|line, declaration| module_resolved(path, line, declaration),
                     )
                 })
                 .collect()

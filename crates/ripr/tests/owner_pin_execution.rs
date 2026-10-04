@@ -1186,6 +1186,59 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("let _future = async {{ return;\n{direct} }};"),
                 false,
             ),
+            // `loop` runs its body at least once; the first iteration reaches
+            // an assertion that no earlier `break`/`continue` can skip.
+            (
+                "loop_then_break",
+                format!("loop {{ {direct}\nbreak; }}"),
+                true,
+            ),
+            (
+                "loop_counted_break_after",
+                format!(
+                    "let mut runs = 0u8;\nloop {{ {direct}\nruns += 1;\nif runs == 3 {{ break; }} }}"
+                ),
+                true,
+            ),
+            (
+                "loop_exhaustive_match_break_after",
+                format!(
+                    "let mut step = 0u8;\nloop {{ {direct}\nmatch step.checked_add(64) {{ Some(next) => step = next, None => break }} }}"
+                ),
+                true,
+            ),
+            (
+                "labeled_nested_loop",
+                format!("'outer: loop {{ loop {{ {direct}\nbreak 'outer; }} }}"),
+                true,
+            ),
+            (
+                "break_before_assertion_in_loop",
+                format!("let stop = true;\nloop {{ if stop {{ break; }}\n{direct} }}"),
+                false,
+            ),
+            (
+                "inner_loop_break_before_assertion",
+                format!(
+                    "let stop = true;\n'outer: loop {{ loop {{ if stop {{ break 'outer; }}\n{direct} }} }}"
+                ),
+                false,
+            ),
+            (
+                "unrelated_break_before_assertion",
+                format!("loop {{ break; }}\n{direct}"),
+                true,
+            ),
+            (
+                "zero_iteration_for",
+                format!("for _ in 0..0 {{ {direct} }}"),
+                false,
+            ),
+            (
+                "zero_iteration_while",
+                format!("while false {{ {direct} }}"),
+                false,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
@@ -1248,6 +1301,120 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
     Ok(())
 }
 
+/// `#[macro_use]` on a module only widens the textual scope of that module's
+/// `macro_rules!`, so it is admitted when the module's source is scanned and
+/// refused when its file is outside discovery. Each row records whether the
+/// compiled test catches the wrong library; the unresolved row stays
+/// refused although it would, which is the conservative direction.
+#[test]
+fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/owner_return_pin_direct");
+    let production = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let unrelated = "macro_rules! twice { ($value:expr) => { $value * 2 }; }";
+    let shadowing = "macro_rules! assert_eq { ($left:expr, $right:expr $(,)?) => { let _ = (&$left, &$right); }; }";
+    for (case, declaration, module, exposed, runtime_catches) in [
+        (
+            "inline_unrelated",
+            format!("#[macro_use]\nmod helpers {{ {unrelated} }}"),
+            None,
+            true,
+            true,
+        ),
+        (
+            "inline_shadows_assert_eq",
+            format!("#[macro_use]\nmod helpers {{ {shadowing} }}"),
+            None,
+            false,
+            false,
+        ),
+        (
+            "out_of_line_unrelated",
+            "#[macro_use]\nmod helpers;".to_string(),
+            Some(("helpers.rs", unrelated)),
+            true,
+            true,
+        ),
+        (
+            "out_of_line_shadows_assert_eq",
+            "#[macro_use]\nmod helpers;".to_string(),
+            Some(("helpers.rs", shadowing)),
+            false,
+            false,
+        ),
+        (
+            "undiscovered_module_file",
+            "#[macro_use]\n#[path = \"target/helpers.rs\"]\nmod helpers;".to_string(),
+            Some(("target/helpers.rs", unrelated)),
+            false,
+            true,
+        ),
+    ] {
+        let source = format!(
+            "{production}\n{declaration}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn checks() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        );
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+        if let Some((relative, text)) = module {
+            let path = scratch.0.join("src").join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(path, text).map_err(|error| error.to_string())?;
+        }
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{case}");
+        assert_eq!(
+            findings[0]["classification"],
+            if exposed {
+                "exposed"
+            } else {
+                "reachable_unrevealed"
+            },
+            "{case}"
+        );
+        assert_eq!(
+            findings[0]["oracle_strength"],
+            if exposed { "strong" } else { "none" },
+            "{case}"
+        );
+        let modules: Vec<_> = module.into_iter().collect();
+        for wrong in [false, true] {
+            let runtime_source = if wrong {
+                source.replace("input * 3", "input * 2")
+            } else {
+                source.clone()
+            };
+            source_runtime_control_with(
+                &runtime_source,
+                &modules,
+                &format!("macro_use runtime: {case}, wrong={wrong}"),
+                1,
+                wrong && runtime_catches,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
@@ -1288,9 +1455,27 @@ fn source_runtime_control(
     expected_tests: usize,
     should_fail: bool,
 ) -> Result<(), String> {
+    source_runtime_control_with(source, &[], label, expected_tests, should_fail)
+}
+
+/// `modules` are written next to the subject, as rustc resolves `mod name;`.
+fn source_runtime_control_with(
+    source: &str,
+    modules: &[(&str, &str)],
+    label: &str,
+    expected_tests: usize,
+    should_fail: bool,
+) -> Result<(), String> {
     let runtime = Scratch::create()?;
     let path = runtime.0.join("subject.rs");
     std::fs::write(&path, source).map_err(|error| error.to_string())?;
+    for (relative, module) in modules {
+        let module_path = runtime.0.join(relative);
+        if let Some(parent) = module_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(module_path, module).map_err(|error| error.to_string())?;
+    }
     let executable = runtime
         .0
         .join(format!("test{}", std::env::consts::EXE_SUFFIX));

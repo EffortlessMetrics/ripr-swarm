@@ -59,12 +59,20 @@ impl OwnerPinAssertions {
 /// Visible bindings that may shadow trusted macros. Visibility and namespace
 /// are intentionally not resolved; each test consults only names it uses.
 /// Unknown macro imports affect all trusted names, including cross-file scope.
+///
+/// `module_resolved(line, "mod name;")` says whether this file's out-of-line
+/// module declaration on `line` resolves to an indexed file. `#[macro_use]`
+/// on such a module, or on an inline one, only widens the textual scope of
+/// `macro_rules!` items whose definitions every scanned file already
+/// reports, so it adds no unseen binding. Any other `#[macro_use]` (an
+/// `extern crate`, an unresolved module) stays ambiguous for every name.
 pub(crate) fn trusted_macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,
     trusted: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
 ) -> BTreeSet<String> {
-    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new())
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
 }
 
 /// Apply the same binding/import/opaque-expansion authority to candidate empty
@@ -74,6 +82,7 @@ pub(crate) fn empty_macro_binding_ambiguities(
     packages: &BTreeSet<String>,
     names: &BTreeSet<String>,
     declaring_file: bool,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
 ) -> BTreeSet<String> {
     let trusted: Vec<_> = names.iter().map(String::as_str).collect();
     let allowed = if declaring_file {
@@ -81,7 +90,7 @@ pub(crate) fn empty_macro_binding_ambiguities(
     } else {
         BTreeSet::new()
     };
-    macro_binding_ambiguities(source, packages, &trusted, &allowed)
+    macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved)
 }
 
 fn macro_binding_ambiguities(
@@ -89,6 +98,7 @@ fn macro_binding_ambiguities(
     packages: &BTreeSet<String>,
     trusted: &[&str],
     allowed_empty: &BTreeSet<String>,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
 ) -> BTreeSet<String> {
     let mut ambiguous = BTreeSet::new();
     if !source.contains("macro")
@@ -102,6 +112,8 @@ fn macro_binding_ambiguities(
     let Some(parse) = parse_clean_source_file(source) else {
         return all();
     };
+    // Built only for a `#[macro_use]` module, which most files lack.
+    let mut lines = None;
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
@@ -115,14 +127,38 @@ fn macro_binding_ambiguities(
                 ambiguous.insert(name.to_string());
             }
         }
-        if let Some(attr) = ast::Attr::cast(node.clone())
-            && attr
+        if let Some(attr) = ast::Attr::cast(node.clone()) {
+            let words: Vec<_> = attr
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
-                .any(|token| matches!(token.text(), "macro_use" | "no_implicit_prelude"))
-        {
-            return all();
+                .collect();
+            if words
+                .iter()
+                .any(|token| token.text() == "no_implicit_prelude")
+            {
+                return all();
+            }
+            if words.iter().any(|token| token.text() == "macro_use")
+                && !attr
+                    .syntax()
+                    .parent()
+                    .and_then(ast::Module::cast)
+                    .is_some_and(|module| {
+                        module.item_list().is_some()
+                            || module
+                                .mod_token()
+                                .zip(module.name())
+                                .is_some_and(|(token, name)| {
+                                    let line = lines
+                                        .get_or_insert_with(|| LineIndex::new(source))
+                                        .line(token.text_range().start());
+                                    module_resolved(line, &format!("mod {};", name.text()))
+                                })
+                    })
+            {
+                return all();
+            }
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && call
@@ -477,6 +513,9 @@ fn has_escape(
 
         // Root returns are checked against the actual invocation's statement
         // prefix below. A later return cannot undo an earlier assertion.
+        // `break`/`continue` are checked the same way against each enclosing
+        // `loop` in `eager_path`: outside a loop that holds the assertion they
+        // only leave a loop or labeled block the assertion is not inside.
         // Closure returns retain the existing conservative refusal, including
         // returns in closures other than the selected one.
         (ast::ReturnExpr::can_cast(node.kind())
@@ -487,8 +526,6 @@ fn has_escape(
                 && node
                     .ancestors()
                     .any(|parent| ast::ClosureExpr::can_cast(parent.kind())))
-            || ast::BreakExpr::can_cast(node.kind())
-            || ast::ContinueExpr::can_cast(node.kind())
             || ast::YieldExpr::can_cast(node.kind())
     })
 }
@@ -559,6 +596,17 @@ fn eager_path(
                 || block.try_block_modifier().is_some()
                 || block.label().is_some()
             {
+                return false;
+            }
+        } else if let Some(body) = ast::LoopExpr::cast(parent.clone()) {
+            // `loop` runs its body at least once, so the first iteration
+            // reaches the invocation unless an earlier `break` or `continue`
+            // in the body can skip it. Nested loops count conservatively.
+            // `for` and `while` may run zero times and stay refused.
+            if body.syntax().descendants().any(|node| {
+                (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
+                    && node.text_range().start() < execution_start
+            }) {
                 return false;
             }
         } else if let Some(binding) = ast::LetStmt::cast(parent.clone()) {
