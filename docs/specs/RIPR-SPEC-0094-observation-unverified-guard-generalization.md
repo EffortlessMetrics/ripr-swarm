@@ -285,8 +285,8 @@ the owner. It may when its body invokes a macro other than the assertion and
 formatting macros, or when it calls the owner, a production function with a
 name path to the owner within the transitive-reach bound (RIPR-SPEC-0114), or
 a lower-case name with no indexed function (a std or trait method can dispatch
-into the owner). It also may when the owner's name path runs through a trait
-method Rust calls without naming it (`fmt` behind `format!`, `eq` behind `==`,
+into the owner). It also may when the owner is, or its name path runs through,
+a trait method Rust calls without naming it (`fmt` behind `format!`, `eq` behind `==`,
 `add`, `index`, `deref`, `next`, `drop` and the like), since such a call leaves
 no call fact. Only a test whose calls are all constructors or indexed
 functions with no name path to the owner is withheld. When no related test is

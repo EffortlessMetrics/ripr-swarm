@@ -321,6 +321,9 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     graph: &'g ReachGraph<'a>,
     owner_name: String,
     reaching: HashSet<&'a str>,
+    /// The owner is, or is reached from, a trait method the language calls
+    /// without naming it, so any test may run it.
+    implicit_dispatch: bool,
 }
 
 impl OwnerReach<'_, '_> {
@@ -332,15 +335,7 @@ impl OwnerReach<'_, '_> {
     /// indexed functions with no name path to the owner rule it out. Macro
     /// bodies are the caller's concern.
     pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact) -> bool {
-        // A trait method the language calls without naming it (`format!`
-        // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
-        // leaves no call fact, so a path to the owner through one means any
-        // test may run it.
-        if self
-            .reaching
-            .iter()
-            .any(|name| IMPLICIT_DISPATCH_METHODS.contains(name))
-        {
+        if self.implicit_dispatch {
             return true;
         }
         test.calls.iter().any(|call| {
@@ -514,10 +509,19 @@ impl<'a> TransitiveReachIndex<'a> {
     /// same-file test of one probe reuses the reverse walk (#6297).
     pub(in crate::analysis) fn owner_reach(&self, owner_name: &str) -> OwnerReach<'_, 'a> {
         let graph = self.graph();
+        let reaching = graph.names_reaching(owner_name);
+        // A trait method the language calls without naming it (`format!`
+        // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
+        // leaves no call fact, so an owner that is one, or is reached from
+        // one, may run under any test.
+        let implicit_dispatch = std::iter::once(owner_name)
+            .chain(reaching.iter().copied())
+            .any(|name| IMPLICIT_DISPATCH_METHODS.contains(&name));
         OwnerReach {
             graph,
             owner_name: owner_name.to_string(),
-            reaching: graph.names_reaching(owner_name),
+            reaching,
+            implicit_dispatch,
         }
     }
 
@@ -2194,6 +2198,17 @@ mod tests {
         assert!(
             display_reach
                 .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        // The changed arm sits inside `fmt` itself.
+        assert!(
+            display_reach
+                .owner_reach("fmt")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        assert!(
+            !display_reach
+                .owner_reach("from_str")
                 .test_may_reach(&make_test("t", Vec::new()))
         );
     }
