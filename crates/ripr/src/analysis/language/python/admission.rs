@@ -28,7 +28,8 @@
 //! test file at the repository root has no such directory, so its relative
 //! imports (`from . import checks`) are not caught (#6657). A global filled
 //! through a plain-name registering decorator (`@register` whose body
-//! appends to `HANDLERS`) is not tainted either (#6657). A
+//! appends to `HANDLERS`) is not tainted either, and a `conftest.py` may
+//! override a built-in fixture such as `tmp_path` (#6657). A
 //! `no_assertion` miss must account for the rest before it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
@@ -81,6 +82,8 @@ pub(super) struct PythonAdmissionContext {
     has_assertion_like_lifecycle: bool,
     /// The dotted directory of the file (see `TestScope::module_dir`).
     module_dir: String,
+    /// Class-base spellings known to be unittest's own test classes.
+    safe_bases: BTreeSet<String>,
 }
 
 impl PythonAdmissionContext {
@@ -93,6 +96,7 @@ impl PythonAdmissionContext {
             module_dir: module_dir.to_string(),
             ..Self::default()
         };
+        context.safe_bases = safe_base_spellings(imports);
         let mut lifecycle_bodies = Vec::new();
         context.collect(statements, &mut lifecycle_bodies);
         context.taint_module_bindings(statements, imports);
@@ -173,7 +177,7 @@ impl PythonAdmissionContext {
                 Stmt::ClassDef(class) => {
                     self.defined_names.insert(class.name.to_string());
                     let opaque_base = class.bases.iter().any(|base| {
-                        !expr_full_name(base).is_some_and(|name| SAFE_TEST_BASES.contains(&name.as_str()))
+                        !expr_full_name(base).is_some_and(|name| self.safe_bases.contains(&name))
                     });
                     // A class decorator can rewrite or wrap every test
                     // method, so its tests are never extraction-complete.
@@ -257,14 +261,28 @@ impl PythonAdmissionContext {
     }
 }
 
-/// Bases a test class may have without inheriting hooks RIPR cannot see.
-const SAFE_TEST_BASES: &[&str] = &[
-    "object",
-    "TestCase",
-    "unittest.TestCase",
-    "IsolatedAsyncioTestCase",
-    "unittest.IsolatedAsyncioTestCase",
-];
+/// unittest classes a test class may inherit without inheriting hooks RIPR
+/// cannot see. Only a spelling the module's imports resolve to these counts:
+/// a project's own `TestCase` can carry an asserting `setUp`.
+const SAFE_UNITTEST_BASES: &[&str] = &["TestCase", "IsolatedAsyncioTestCase"];
+
+/// The base spellings that resolve, through this module's imports, to a
+/// `SAFE_UNITTEST_BASES` class, plus `object`.
+fn safe_base_spellings(imports: &[PythonImport]) -> BTreeSet<String> {
+    let mut spellings = BTreeSet::from(["object".to_string()]);
+    for import in imports {
+        if import.source_module.is_empty() && import.imported == "unittest" {
+            for base in SAFE_UNITTEST_BASES {
+                spellings.insert(format!("{}.{base}", import.alias));
+            }
+        } else if import.source_module == "unittest"
+            && SAFE_UNITTEST_BASES.contains(&import.imported.as_str())
+        {
+            spellings.insert(import.alias.clone());
+        }
+    }
+    spellings
+}
 
 /// unittest, pytest xunit-style and nose setup/teardown hooks the runner
 /// calls around a test without the test naming them.
@@ -604,8 +622,10 @@ pub(super) fn assertion_admission(
     {
         return PythonAssertionAdmission::Unresolved;
     }
+    // A built-in fixture name the module redefines (`def tmp_path(): ...`)
+    // runs that fixture instead.
     let opaque_fixture = test.parameters.iter().any(|name| {
-        !PYTEST_BUILTIN_FIXTURES.contains(&name.as_str())
+        (!PYTEST_BUILTIN_FIXTURES.contains(&name.as_str()) || context.defined_names.contains(name))
             && !parametrize_argnames.is_some_and(|argnames| argnames.contains(name))
     });
     if opaque_fixture {
@@ -662,7 +682,9 @@ fn applies_implicit_mark(expr: &Expr) -> bool {
             matches!(attribute.attr.as_str(), "usefixtures" | "filterwarnings")
                 || applies_implicit_mark(&attribute.value)
         }
-        Expr::Name(name) => matches!(name.id.as_str(), "usefixtures" | "filterwarnings"),
+        // A bare name may be an alias bound to any mark
+        // (`mark = pytest.mark.usefixtures("db")`).
+        Expr::Name(_) => true,
         Expr::List(list) => list.elts.iter().any(applies_implicit_mark),
         Expr::Tuple(tuple) => tuple.elts.iter().any(applies_implicit_mark),
         // Anything else may compute marks RIPR cannot read.

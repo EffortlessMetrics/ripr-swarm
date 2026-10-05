@@ -3056,6 +3056,36 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "built-in fixture name overridden in the module",
+            "import pytest\n@pytest.fixture\ndef tmp_path():\n    assert apply_discount(20)\n    return 1\ndef test_x(tmp_path):\n    apply_discount(tmp_path)\n",
+            unresolved,
+        ),
+        (
+            "pytestmark through a module alias",
+            "import pytest\nmark = pytest.mark.usefixtures('checked_db')\npytestmark = mark\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "project TestCase imported from test support",
+            "from tests.base import TestCase\nclass TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "TestCase spelled bare without an import",
+            "class TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest TestCase imported by name",
+            "from unittest import TestCase\nclass TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest module imported under an alias",
+            "import unittest as ut\nclass TestX(ut.TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
             "class attribute that is a plain constant",
             "class TestX:\n    rate = 20\n    def test_x(self):\n        apply_discount(self.rate)\n",
             none,
