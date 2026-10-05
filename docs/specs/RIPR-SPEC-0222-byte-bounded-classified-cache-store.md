@@ -56,10 +56,22 @@ proving a universal RSS threshold.
   pre-commit failure restores it only when no newer single entry occupies
   the preferred path and the sharded manifest is unchanged since park
   (a leftover manifest from an earlier single-entry publish does not
-  block restore; a replaced or unreadable manifest does).
+  block restore; a replaced or unreadable manifest does). After its
+  manifest commits, the writer also removes any single entry at the
+  preferred path, so a competing writer that rolls back late cannot
+  restore an older single entry over the newer generation.
+- After a commit, the writer removes `g*/` generation directories the
+  current manifest does not reference once they are older than ten
+  minutes (a killed or superseded writer leaves them). The previous
+  manifest is integrity-validated before any of its files are deleted,
+  and only files under `g*/` are ever deleted.
 - If one classified seam cannot fit under the configured byte ceiling,
-  the store returns `skipped_oversized_record_index_{i}_ceiling_{n}` and
-  does not claim a populated cache. Analysis output stays usable.
+  the store returns `skipped_oversized_record_index_{i}_ceiling_{n}`
+  (`skipped_oversized_metadata_ceiling_{n}` when the metadata around the
+  records is what overflows) and does not claim a populated cache.
+  Analysis output stays usable, and one stderr line names the record,
+  its encoded size against the ceiling, and the
+  `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` value that restores warm runs.
 - Semantic digests, schema/analyzer identity, shard order, checksums,
   corruption handling, and warm-load reconstruction stay the current
   contracts. This spec does not bound cache *load* auxiliary memory.
