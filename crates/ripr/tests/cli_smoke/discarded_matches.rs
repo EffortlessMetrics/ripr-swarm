@@ -65,13 +65,11 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
         for (name, oracle, expected) in cases {
             for (variant, offset) in [("original", 1), ("wrong", 2)] {
                 let id = format!("{name}-{variant}");
-                let fixture = root.join(&id);
-                std::fs::create_dir_all(fixture.join("src")).map_err(|error| error.to_string())?;
-                std::fs::write(
-                    fixture.join("Cargo.toml"),
-                    "[package]\nname = \"discarded_matcher_control\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+                let fixture = std::path::PathBuf::from(
+                    "fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects",
                 )
-                .map_err(|error| error.to_string())?;
+                .join(&id);
+                let fixture_path = workspace_root().join(&fixture);
                 let source = format!(
                     "pub fn score(value: i32) -> i32 {{\n    value + {offset}\n}}\n\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn observes_score() {{\n        let value = super::score(1);\n        {oracle}\n    }}\n}}\n"
                 );
@@ -79,10 +77,19 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn score(value: i32) -> i32 {{\n-    value + {}\n+    value + {offset}\n }}\n",
                     offset - 1
                 );
-                std::fs::write(fixture.join("src/lib.rs"), &source)
-                    .map_err(|error| error.to_string())?;
-                let patch = fixture.join("change.patch");
-                std::fs::write(&patch, &diff).map_err(|error| error.to_string())?;
+                assert_eq!(
+                    std::fs::read_to_string(fixture_path.join("src/lib.rs"))
+                        .map_err(|error| error.to_string())?,
+                    source,
+                    "{id}: canonical input must retain the independent original/wrong stimulus"
+                );
+                let patch = fixture.join("diff.patch");
+                assert_eq!(
+                    std::fs::read_to_string(fixture_path.join("diff.patch"))
+                        .map_err(|error| error.to_string())?,
+                    diff,
+                    "{id}: canonical patch must describe its actual source"
+                );
                 let root_arg = fixture.to_string_lossy();
                 let patch_arg = patch.to_string_lossy();
                 let json = run(&[

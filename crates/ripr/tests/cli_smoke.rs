@@ -52,6 +52,7 @@ fn run_matcher_calibration_with_deadline(
 ) -> Result<Output, std::io::Error> {
     let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
     command
+        .current_dir(workspace_root())
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
