@@ -386,9 +386,12 @@ the rule; ripr still reports only what the static shape shows.
 12. **`assertAlmostEqual` pins a value.** A call statement whose last
     segment is `assertAlmostEqual` assigns `exact_value` / strong, as
     `pytest.approx` does (Decision 6). At its default seven places it
-    fails for any change of at least `1e-7` in the observed value. A
-    `places=` or `delta=` argument does not change the row, as
-    `pytest.approx` stays strong with any tolerance.
+    fails for any change of at least `1e-7` in the observed value. That
+    holds only for the default tolerance: with an explicit `places=` or
+    `delta=` (keyword or positional), the call is `relational_check` /
+    weak, because static evidence cannot tell whether the band excludes
+    the pre-change value. The corpus evidence covers the default form
+    only.
     `assertNotAlmostEqual` stays unrecorded.
 13. **The callable of an exception assertion is called.** In a call
     statement whose last segment is `assertRaises` or `assertRaisesRegex`,
@@ -473,7 +476,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    pattern.
 6. **`pytest.approx` and `len(x) == n`.** Adopted: unchanged,
    `exact_value` / strong; both pin a value, and the f-string gate covers
-   the length case it cannot see. Rejected: weaken them.
+   the length case it cannot see. Rejected: weaken them. Known limit: an
+   explicit `abs=` or `rel=` wide enough to accept the pre-change value
+   still credits; rule 12 treats an explicit `assertAlmostEqual`
+   tolerance as weak, and aligning `approx` with it is tracked in #6585
+   rather than changed here without a corpus case.
 7. **Unrecognized forms.** Adopted: `assertIs`, `assertIsNone`,
    `assertListEqual`, `pytest.warns`, an aliased `pt.raises` and an
    awaited mock assertion stay unrecorded (reach-only), because recording
@@ -551,7 +558,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `exposed` (unchanged).
 8. `self.assertAlmostEqual(parse('1'), 2.0)` only: `exact_value` /
    strong, `exposed` (today no assertion, reported `unknown`,
-   `weakly_exposed`; rule 12, #6603).
+   `weakly_exposed`; rule 12, #6603). With `delta=100` or `places=0`:
+   `relational_check` / weak, `weakly_exposed` (class unchanged).
 9. `m = parse('1')` then `m.assert_called_once_with(1)`:
    `mock_expectation` / medium, `weakly_exposed` (unchanged).
 10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
@@ -699,6 +707,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `assertRaises` callable, the message-only change of example 21, the
   unchanged `lambda` callable, and the reassigned-`exc`, inside-the-body
   and `is not None` negatives.
+  The message-only example 21 test asserts `direct` alignment through
+  the body call, so it cannot pass on a `KeyError` token match.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
   (#6597) score credited once rules 12 to 14 land. The corpus has no
