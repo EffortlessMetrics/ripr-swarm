@@ -53,8 +53,10 @@ seams — and therefore GapRecords from `--repo-exposure` — are not rendered f
 Python or TypeScript; those formats emit `python_diff_first` /
 `typescript_diff_first` and `seams: []`. A dirty worktree on the Rust route
 yields `blocked_stale` (`repo-exposure source or selected checkout has tracked
-worktree changes`). See [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md)
-and the `ripr swarm queue` contract in [OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md).
+worktree changes`). See [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md).
+The queue envelope and currentness rules are in
+[OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md); its abbreviated example uses the default
+`--language python` and is not a reachable assignable path.
 
 The other binary-native ledger route,
 `ripr reports gap-ledger --check-output ...`, is how Python and TypeScript diffs
