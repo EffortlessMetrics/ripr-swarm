@@ -11884,7 +11884,7 @@
           "silent"
         ]
       },
-      "reasoning": "Field-assignment activation: the test sets `manifest.version = CURRENT - 1` and then `CURRENT`, a same-file constant with a bounded offset. RIPR-SPEC-0001's field-assignment rule names this assignment form; its worked example is an `==` predicate, so this case extends the cell to a `<` boundary. Both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
+      "reasoning": "Field-assignment activation: the test sets `manifest.version = CURRENT - 1` and then `CURRENT`, a same-file constant with a bounded offset. RIPR-SPEC-0001's field-assignment rule names this assignment form; its worked example is an `==` predicate, so this case extends the cell to a `>` boundary. Both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
       "hard_case": "A comparison against a named constant reads infection_unknown in either operand order (with the constant on the left ripr sees no literal boundary; on the right it says it cannot see the constant's value), although RIPR-SPEC-0001's named-constant rule resolves `CURRENT` to 7; the field assignments `CURRENT - 1` and `CURRENT` never become activation evidence. A return_value probe on the line reads propagation_unknown (#6671).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
@@ -12259,19 +12259,19 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "if count >= 16 {",
+            "replacement": "if 16 <= count {",
             "outcome": "tests_failed",
             "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
             "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
           },
           {
-            "replacement": "if count == 16 {",
+            "replacement": "if 16 == count {",
             "outcome": "tests_failed",
             "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
             "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
           },
           {
-            "replacement": "if count < 16 {",
+            "replacement": "if 16 > count {",
             "outcome": "tests_failed",
             "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
             "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
@@ -12315,17 +12315,17 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "if count >= 64 {",
+            "replacement": "if 64 <= count {",
             "outcome": "tests_passed",
             "equivalence_review": "not equivalent: token_len of a 64-byte name is Err(TooLong) instead of Ok(64)"
           },
           {
-            "replacement": "if count == 64 {",
+            "replacement": "if 64 == count {",
             "outcome": "tests_passed",
             "equivalence_review": "not equivalent: token_len of a 64-byte name is Err(TooLong) instead of Ok(64)"
           },
           {
-            "replacement": "if count < 64 {",
+            "replacement": "if 64 > count {",
             "outcome": "tests_failed",
             "failing_test": "short_tokens_are_measured",
             "equivalence_review": "not equivalent: short_tokens_are_measured fails on it"
@@ -12339,7 +12339,7 @@
           "limited"
         ]
       },
-      "reasoning": "The same counter boundary (64) tested only with a 4-byte input, far below it. Only the `<` mutant, which rejects short input, fails. 1 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+      "reasoning": "The same counter boundary (64) tested only with a 4-byte input, far below it. Only the `64 > count` mutant, which rejects short input, fails. 1 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
@@ -12417,13 +12417,13 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "base & 0x80",
+            "replacement": "0x80 & base",
             "outcome": "tests_failed",
             "failing_test": "flagged_values_are_nonzero",
             "equivalence_review": "not equivalent: flagged_values_are_nonzero fails on it"
           },
           {
-            "replacement": "base ^ 0x80",
+            "replacement": "0x80 ^ base",
             "outcome": "tests_passed",
             "equivalence_review": "not equivalent: with_flag(0x80) is 0 instead of 0x80"
           }
