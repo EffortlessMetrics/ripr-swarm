@@ -28,6 +28,8 @@ std::thread_local! {
     static FAIL_AFTER_PARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static AFTER_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static LOCK_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Run `hook` once right after the next sharded manifest commit, standing in for a
@@ -111,14 +113,34 @@ pub(super) fn publish_classified_generation(
         return Err("classified seam cache encoded shard ceiling must be positive".to_string());
     }
     crate::analysis::cancellation::checkpoint()?;
-    match plan_publication(
+    let plan = plan_publication(
         key,
         seams,
         limit_info,
         lexical_fallback_files,
         record_limit,
         byte_ceiling,
-    )? {
+    )?;
+    if let PublicationPlan::SkipOversized {
+        index,
+        encoded_bytes,
+    } = plan
+    {
+        return Ok(oversized_skip_status(index, encoded_bytes, byte_ceiling));
+    }
+    // One writer per key from the first mutation through cleanup, so the
+    // stat-then-remove and rollback-restore windows cannot interleave.
+    let _publication_lock = match acquire_publication_lock(cache, key)? {
+        PublicationLock::Held(lock) => Some(lock),
+        PublicationLock::Unsupported => None,
+        PublicationLock::Busy => {
+            return Ok(CacheStoreStatus {
+                label: PUBLICATION_BUSY_LABEL.to_string(),
+                advisory: None,
+            });
+        }
+    };
+    match plan {
         PublicationPlan::SkipOversized {
             index,
             encoded_bytes,
@@ -135,6 +157,73 @@ pub(super) fn publish_classified_generation(
             record_limit,
             ranges,
         ),
+    }
+}
+
+const PUBLICATION_BUSY_LABEL: &str = "skipped_publication_busy";
+const PUBLICATION_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+const PUBLICATION_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+fn publication_lock_wait() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(wait) = LOCK_WAIT_OVERRIDE.with(std::cell::Cell::get) {
+        return wait;
+    }
+    PUBLICATION_LOCK_WAIT
+}
+
+/// Holds the advisory lock until dropped. The OS also releases it when the
+/// file closes or the process dies, so a crashed writer never leaves a stale lock.
+struct PublicationLockGuard(std::fs::File);
+
+impl Drop for PublicationLockGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+enum PublicationLock {
+    Held(PublicationLockGuard),
+    /// Another writer holds the key past the wait; skip rather than race it.
+    Busy,
+    /// The lock file or the filesystem cannot lock; publish as before.
+    Unsupported,
+}
+
+/// Take the per-key advisory publication lock in the sharded layer directory.
+/// Readers never lock. A cache that cannot lock (read-only mount, a
+/// filesystem without advisory locks) keeps the unlocked behavior, since
+/// cache writes are best effort. Cancellation is checked while waiting.
+fn acquire_publication_lock(
+    cache: &RepoSeamFactCache,
+    key: &RepoSeamCacheKey,
+) -> Result<PublicationLock, String> {
+    let stem = key.filename();
+    let name = format!("{}.lock", stem.trim_end_matches(".json"));
+    if std::fs::create_dir_all(&cache.sharded_dir).is_err() {
+        return Ok(PublicationLock::Unsupported);
+    }
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.sharded_dir.join(name))
+    else {
+        return Ok(PublicationLock::Unsupported);
+    };
+    let deadline = std::time::Instant::now() + publication_lock_wait();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(PublicationLock::Held(PublicationLockGuard(file))),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Ok(PublicationLock::Busy);
+                }
+                crate::analysis::cancellation::checkpoint()?;
+                std::thread::sleep(PUBLICATION_LOCK_POLL);
+            }
+            Err(std::fs::TryLockError::Error(_)) => return Ok(PublicationLock::Unsupported),
+        }
     }
 }
 
@@ -1709,6 +1798,46 @@ mod tests {
             "a restored older single entry must not survive a newer sharded commit"
         );
         round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_skips_while_another_writer_holds_the_key_lock() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("publication-lock", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        std::fs::create_dir_all(&cache.sharded_dir).map_err(|err| err.to_string())?;
+        let lock_path = cache
+            .sharded_dir
+            .join(format!("{}.lock", key.filename().trim_end_matches(".json")));
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|err| err.to_string())?;
+        holder
+            .try_lock()
+            .map_err(|err| format!("fixture must take the key lock: {err:?}"))?;
+        let busy = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_eq!(busy.label, PUBLICATION_BUSY_LABEL);
+        assert!(
+            busy.advisory.is_none(),
+            "another writer is publishing this key, so no next step is owed"
+        );
+        assert!(
+            !cache.sharded_manifest_path(&key).exists() && !cache.entry_path(&key).exists(),
+            "a skipped publication must not mutate the cache"
+        );
+        holder.unlock().map_err(|err| err.to_string())?;
+        // The lock file stays behind; an unlocked leftover must not block a writer.
+        assert!(lock_path.exists());
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
         ignore_remove_dir_all(&dir);
         Ok(())
     }
