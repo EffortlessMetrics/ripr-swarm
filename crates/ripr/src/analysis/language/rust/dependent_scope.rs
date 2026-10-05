@@ -61,6 +61,10 @@ use std::path::{Path, PathBuf};
 /// how many withheld files' bytes are held at once.
 const ADMISSION_BATCH_FILES: usize = 64;
 
+/// Source bytes after which an admission batch stops reading, so a run of
+/// large generated files holds at most this plus one file at once.
+const ADMISSION_BATCH_BYTES: usize = 8 * 1024 * 1024;
+
 /// Env override for the dependent scope. `auto` (also empty or unset)
 /// admits by name only when the whole reverse closure would exceed the
 /// narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`); `named` always admits by name; `full` never does (the
@@ -615,9 +619,17 @@ pub(super) fn admit_dependents(
     // recording and every order-dependent fold stay sequential, in input
     // order.
     let token = cancellation::current_token();
-    for chunk in dependent.chunks(ADMISSION_BATCH_FILES) {
-        let mut loaded = Vec::with_capacity(chunk.len());
-        for file in chunk {
+    let mut next = 0;
+    while next < dependent.len() {
+        let mut loaded = Vec::with_capacity(ADMISSION_BATCH_FILES);
+        let batch_start = next;
+        let mut batch_bytes = 0usize;
+        while next < dependent.len()
+            && next - batch_start < ADMISSION_BATCH_FILES
+            && batch_bytes < ADMISSION_BATCH_BYTES
+        {
+            let file = dependent[next];
+            next += 1;
             cancellation::checkpoint()?;
             // The bytes decide admission, so they bind the result exactly as
             // an indexed file's bytes do.
@@ -625,7 +637,8 @@ pub(super) fn admit_dependents(
             consumed.record(file, bytes.as_deref());
             // No content to index: the full selection skips it too.
             if let Some(bytes) = bytes {
-                loaded.push((*file, bytes));
+                batch_bytes = batch_bytes.saturating_add(bytes.len());
+                loaded.push((file, bytes));
             }
         }
         let scanned: Vec<Result<Option<FileTokens>, String>> = loaded
