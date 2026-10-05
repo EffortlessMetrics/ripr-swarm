@@ -29,7 +29,7 @@ Updated:
 ## Pending — error_path_operand_error_lexeme (3)
 
 Reason:
-RIPR-SPEC-0224: combined-tree refresh of the operand-lexeme fixture (#5255) after #5578 renamed the unconfirmed-observation wording; classification unchanged
+RIPR-SPEC-0224, #5508: align this fixture with the b2f2a2154 observation_unconfirmed sentence; blessed pre-reword, pins the retired miss sentence. formatting_only 1-line flip per surface; no verdict change.
 
 Command:
 `cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
