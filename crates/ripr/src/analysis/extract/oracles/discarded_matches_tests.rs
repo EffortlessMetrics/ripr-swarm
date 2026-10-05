@@ -254,6 +254,135 @@ fn observes_score() -> Result<(), ()> {
     }
     Ok(())
 }
+
+// SPEC0154 owns these assertion twins. The failure body's Err constructor
+// cannot turn a scalar value pin into an error-variant pin.
+struct TerminalMatcherTwin {
+    guard: &'static str,
+    assertion: &'static str,
+    guard_sibling: usize,
+    assertion_sibling: usize,
+    kind: OracleKind,
+    strength: OracleStrength,
+}
+
+const TERMINAL_MATCHER_TWINS: &[TerminalMatcherTwin] = &[
+    TerminalMatcherTwin {
+        guard: "if !matches!(value, 2) { return Err(()); }",
+        assertion: "assert!(matches!(value, 2));",
+        guard_sibling: 7,
+        assertion_sibling: 7,
+        kind: OracleKind::ExactValue,
+        strength: OracleStrength::Strong,
+    },
+    TerminalMatcherTwin {
+        guard: "if !matches!(\nvalue,\n2\n) {\nreturn Err(());\n}",
+        assertion: "assert!(matches!(\nvalue,\n2\n));",
+        guard_sibling: 12,
+        assertion_sibling: 10,
+        kind: OracleKind::ExactValue,
+        strength: OracleStrength::Strong,
+    },
+    TerminalMatcherTwin {
+        guard: "if !matches!(value, _) { return Err(()); }",
+        assertion: "assert!(matches!(value, _));",
+        guard_sibling: 7,
+        assertion_sibling: 7,
+        kind: OracleKind::RelationalCheck,
+        strength: OracleStrength::Weak,
+    },
+    TerminalMatcherTwin {
+        guard: "if !matches!(\nvalue,\n_\n) {\nreturn Err(());\n}",
+        assertion: "assert!(matches!(\nvalue,\n_\n));",
+        guard_sibling: 12,
+        assertion_sibling: 10,
+        kind: OracleKind::RelationalCheck,
+        strength: OracleStrength::Weak,
+    },
+];
+
+fn terminal_matcher_twin_source(statement: &str) -> String {
+    format!(
+        "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
+         #[test]\nfn observes_score() -> Result<(), ()> {{\n\
+         let value = score();\n{statement}\nassert_eq!(sibling(), 7);\nOk(())\n}}\n"
+    )
+}
+
+fn check_terminal_matcher_twins(parsed_route: bool) -> Result<(), String> {
+    for twin in TERMINAL_MATCHER_TWINS {
+        for (statement, sibling_line) in [
+            (twin.guard, twin.guard_sibling),
+            (twin.assertion, twin.assertion_sibling),
+        ] {
+            let source = terminal_matcher_twin_source(statement);
+            let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            let [test] = parsed.tests.as_slice() else {
+                return Err(format!("missing named control subject: {:?}", parsed.tests));
+            };
+            if test.name != "observes_score"
+                || test.file != Path::new("src/lib.rs")
+                || !test.calls.iter().any(|call| call.name == "score" && call.line == 5)
+            {
+                return Err(format!("control did not reach its real owner call: {test:?}"));
+            }
+            let lexical = extract_assertions(&source, 1);
+            let facts = if parsed_route { &test.assertions } else { &lexical };
+            let [matcher, sibling] = facts.as_slice() else {
+                return Err(format!(
+                    "guard/assert twin lost or invented evidence (parsed={parsed_route}): {statement}: {facts:?}"
+                ));
+            };
+            if matcher.line != 6 || matcher.kind != twin.kind || matcher.strength != twin.strength
+                || !matcher.observed_tokens.contains(&"value".to_string())
+                || sibling.line != sibling_line
+                || sibling.kind != OracleKind::ExactValue
+                || sibling.strength != OracleStrength::Strong
+                || !sibling.text.starts_with("assert_eq!(sibling()")
+            {
+                return Err(format!("guard/assert twin or sibling changed: {facts:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn lexical_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
+-> Result<(), String> {
+    check_terminal_matcher_twins(false)
+}
+
+#[test]
+fn parsed_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
+-> Result<(), String> {
+    check_terminal_matcher_twins(true)
+}
+
+#[test]
+fn opaque_and_unnegated_terminal_matcher_guards_do_not_gain_credit() -> Result<(), String> {
+    for statement in [
+        "if matches!(value, 2) { return Err(()); }",
+        "if matches!(\nvalue,\n2\n) {\nreturn Err(());\n}",
+        "if opaque(value) { return Err(()); }",
+    ] {
+        let source = terminal_matcher_twin_source(statement);
+        let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let [test] = parsed.tests.as_slice() else {
+            return Err("opaque control subject missing".to_string());
+        };
+        let lexical = extract_assertions(&source, 1);
+        for facts in [&lexical, &test.assertions] {
+            let [sibling] = facts.as_slice() else {
+                return Err(format!("opaque guard received credit: {statement}: {facts:?}"));
+            };
+            if !sibling.text.starts_with("assert_eq!(sibling()") {
+                return Err(format!("opaque guard displaced the live sibling: {sibling:?}"));
+            }
+        }
+    }
+    Ok(())
+}
 "#;
     let lexical = extract_assertions(source, 1);
     let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
