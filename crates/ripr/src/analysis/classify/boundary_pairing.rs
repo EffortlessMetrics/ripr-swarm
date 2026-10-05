@@ -113,10 +113,13 @@ fn assertion_observes_boundary_owner_call(
         return true;
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
-    // only when the assertion text names the owner once, inside an operand.
-    // The call fact keeps the original text so it matches extracted calls.
+    // only when the assertion text names the owner once, inside an operand,
+    // and no other owner call shares the line (`let got = gate(10);
+    // assert!(gate(50));`). The call fact keeps the original text so it
+    // matches extracted calls.
     owner_call_count(&assertion.text, &owner.name) == 1
         && owner_call_count(operands, &owner.name) == 1
+        && line_owner_call_count(test, assertion.line, &owner.name) <= 1
         && activation_marks_boundary_call(
             activation,
             &CallFact {
@@ -125,6 +128,23 @@ fn assertion_observes_boundary_owner_call(
                 text: assertion.text.clone(),
             },
         )
+}
+
+/// Owner calls the test's call facts record on one line, counting each
+/// distinct fact text once so per-line and per-call extraction agree.
+fn line_owner_call_count(test: &TestSummary, line: usize, name: &str) -> usize {
+    let mut texts = test
+        .calls
+        .iter()
+        .filter(|call| call.line == line && call.name == name)
+        .map(|call| call.text.as_str())
+        .collect::<Vec<_>>();
+    texts.sort_unstable();
+    texts.dedup();
+    texts
+        .into_iter()
+        .map(|text| owner_call_count(text, name).max(1))
+        .sum()
 }
 
 fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
@@ -778,6 +798,44 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "without the activation == fact, classify(\"word\") must not pair against final_label == \"alpha\""
+        );
+    }
+
+    #[test]
+    fn line_activation_does_not_pair_through_another_owner_call_on_the_line() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let line = "let got = gate(10); assert!(gate(50));";
+        let mixed = test_summary(
+            "mixed",
+            line,
+            vec![call("gate", line), call("gate", line)],
+            vec![exact("assert!(gate(50));")],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&mixed], &activation),
+            "a boundary activation from gate(10) must not pair through the far assert!(gate(50)) on its line"
+        );
+        let alone = test_summary(
+            "alone",
+            "assert!(gate(50));",
+            vec![call("gate", "assert!(gate(50));")],
+            vec![exact("assert!(gate(50));")],
+            &["50"],
+        );
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&alone], &activation),
+            "a line holding only the asserted owner call keeps the activation fallback"
         );
     }
 

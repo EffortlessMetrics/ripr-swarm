@@ -11158,6 +11158,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_pins_a_bool_owner_to_true_or_false",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_pins_nothing_on_a_non_bool_owner",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_assert_keeps_the_owner_binding_defeats",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::line_activation_does_not_pair_through_another_owner_call_on_the_line",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
