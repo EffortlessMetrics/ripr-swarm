@@ -15037,11 +15037,15 @@ Field contract:
   consistent with the structured workflow's `command_shell: "bash"`, and do
   not establish PowerShell recipe compatibility for themselves. Read the
   structured workflow for its shell contract before executing commands.
-  Explicit standalone per-seam CLI `agent packet` binds these `next` commands
-  to the selected repository root.
-  Its optional `next.analysis_outcome_command` writes the static outcome
+  Explicit standalone per-seam CLI `agent packet` and the repo-wide
+  `ripr pilot` packet (`agent-seam-packets.json`) bind these `next` commands
+  to the selected repository root, so even `--root .` prints an absolute
+  root and absolute redirects. Embedded per-record `verify_command` values
+  keep the portable `--root .` form (#3999).
+  Their optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
-  Portable bulk/check-format wrappers omit this additive field and retain
+  The `ripr check --format agent-seam-packets-json` wrapper omits this
+  additive field and retains
   their repository-local recipe; they are not a complete foreign-CWD receipt
   workflow. GapRecord and editor routes are unchanged. Static receipt
   completeness does not establish project-test execution.
@@ -15398,6 +15402,13 @@ target/ripr/pilot/pilot-summary.md
     "state": "not_detected",
     "routes": []
   },
+  "current_change": {
+    "state": "changed",
+    "base": "origin/main",
+    "reason": null,
+    "actionable_seams_in_change": 1,
+    "top_recommendation_in_change": true
+  },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
@@ -15493,6 +15504,32 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
   ]
 }
 ```
+
+`current_change` describes the current change: the base (resolved as `ripr
+check` resolves it) against the live working tree when it has uncommitted
+tracked changes, otherwise the committed `<base>...HEAD` diff. Untracked files
+are not part of it.
+Pilot ranks actionable seams whose span overlaps a changed new-side line of
+that diff ahead of the others, keeping the repo-wide order inside each group.
+`state` is `changed`, `no_change` (the diff loaded and is empty) or
+`unavailable` (the diff could not be loaded, for example outside a Git work
+tree; the ranking stays repo-wide and this is not evidence that nothing
+changed). `base` is the resolved base, or `null` when unavailable. `reason` is
+a short fixed phrase for an unavailable change (`not a Git work tree`, `no
+default base resolved`, `git is not on PATH`, `git timed out`, `git status
+failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
+carries a matching scope line: `change-first (Rust seams on lines changed since
+<base> rank first)` for `changed`, `whole repository` for `no_change`, and
+`whole repository (current change unavailable: <reason>)` for `unavailable`.
+The change-first scope and the change counts cover Rust seam ranking only. A
+Python preview repair card shown as the top recommendation is still selected
+from the committed diff against the base, not from uncommitted edits.
+`actionable_seams_in_change` and `top_recommendation_in_change` are `null`
+unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
+no seam is ranked. When it is `false`, the terminal and Markdown say the
+recommendation is elsewhere in the repo and name `ripr check --root <root>` for
+the change itself, adding `--worktree` when the diff came from the working tree
+(plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
 If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 `status: "partial"` and no ranked seams:

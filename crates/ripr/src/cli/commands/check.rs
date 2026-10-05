@@ -264,7 +264,7 @@ fn parse_git_timeout_from(
     Ok((secs > 0).then_some(timeout))
 }
 
-fn git_timeout_from_env(
+pub(super) fn git_timeout_from_env(
     explicit: bool,
     env_value: Result<String, std::env::VarError>,
 ) -> Result<Option<Option<std::time::Duration>>, String> {
