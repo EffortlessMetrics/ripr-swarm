@@ -61,7 +61,7 @@ fn agentic_bench_in(args: &[String], report_dir: &Path) -> Result<(), String> {
     finish_bench_run(&report, &benches, &json_display)
 }
 
-const USAGE: &str = "usage: cargo xtask agentic-bench [--bench <id>] [--fixtures <dir>]\n\nExit: 0 when every bench verifies ready; 1 when any bench fails verification (fixture_unverified, missing_manifest, invalid_manifest). The receipt is still written to target/ripr/reports/agentic-bench.{json,md}.";
+const USAGE: &str = "usage: cargo xtask agentic-bench [--bench <id>] [--fixtures <dir>]\n\nExit: 0 when every bench verifies ready; 1 when any bench fails verification (fixture_unverified, missing_manifest, invalid_manifest) or on usage errors (unknown bench, missing fixtures dir, malformed flag). On verification failure the receipt is still written to target/ripr/reports/agentic-bench.{json,md}; usage errors write none.";
 
 fn display_report_path(report_dir: &Path, file_name: &str) -> String {
     absolute_display(&report_dir.join(file_name))
@@ -134,12 +134,16 @@ fn discover_manifests(fixtures_dir: &Path, bench: Option<&str>) -> Result<Vec<Pa
     }
     if let Some(id) = bench {
         let manifest = fixtures_dir.join(id).join("manifest.json");
-        if !manifest.is_file() {
+        if !fixtures_dir.join(id).is_dir() {
             return Err(format!(
                 "unknown bench `{id}`: {} does not exist",
                 manifest.display()
             ));
         }
+        // A bench directory without its manifest is a verification
+        // outcome, not a discovery error: return it so a filtered run
+        // reports `missing_manifest` with a receipt, exactly like the
+        // unfiltered path, instead of leaving any prior receipt in place.
         return Ok(vec![manifest]);
     }
     let mut manifests = Vec::new();
@@ -288,7 +292,31 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 /// a relative input are avoided (#6595).
 fn absolute_display(path: &Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    absolute.to_string_lossy().replace('\\', "/")
+    display_normalized(absolute)
+}
+
+/// Symlink-resolved absolute rendering for the input root: a retargeted alias
+/// must not silently change which corpus a retained receipt describes (PR
+/// #6683 review). Falls back to the unresolved spelling when the path cannot
+/// be canonicalized (for example a removed root between discovery and
+/// reporting).
+fn resolved_root_display(path: &Path) -> String {
+    match fs::canonicalize(path) {
+        Ok(canonical) => display_normalized(canonical),
+        Err(_) => absolute_display(path),
+    }
+}
+
+fn display_normalized(absolute: PathBuf) -> String {
+    let text = absolute.to_string_lossy().to_string();
+    let text = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    };
+    text.replace('\\', "/")
 }
 
 #[derive(Clone, Debug)]
@@ -562,9 +590,13 @@ fn build_report(options: &Options, benches: &[BenchOutcome]) -> Value {
 
 /// Run identity mirroring the `bench-agent-surfaces` precedent (#6595): a
 /// receipt must be traceable to the source revision, verifier build, and
-/// time that produced the verdict, and pin the resolved input root. Each
-/// field degrades to `"unavailable"` rather than failing the verification
-/// run; identity collection must never mask a fixture verdict.
+/// time that produced the verdict, and pin the resolved input root.
+/// `source_sha` identifies the verifier's own source tree (the sibling's
+/// convention); the verified inputs are pinned per bench by
+/// `fixtures_verified` digests and `manifest_sha256`, with the input root
+/// named by `fixtures_dir_resolved`. Each field degrades to
+/// `"unavailable"` rather than failing the verification run; identity
+/// collection must never mask a fixture verdict.
 fn identity_overlay(options: &Options) -> Value {
     let binary = std::env::current_exe().ok();
     let binary_sha256 = binary
@@ -581,7 +613,7 @@ fn identity_overlay(options: &Options) -> Value {
             .map(|output| output.trim().to_string())
             .unwrap_or_else(|_| "unavailable".to_string()),
         "timestamp_unix_ms": unix_stamp(),
-        "fixtures_dir_resolved": absolute_display(&options.fixtures_dir),
+        "fixtures_dir_resolved": resolved_root_display(&options.fixtures_dir),
     })
 }
 
@@ -891,7 +923,11 @@ mod tests {
         let source_sha = identity["source_sha"]
             .as_str()
             .ok_or("identity.source_sha missing")?;
-        if source_sha.len() != 40 || !source_sha.chars().all(|char| char.is_ascii_hexdigit()) {
+        // Outside a git checkout the documented fallback is "unavailable";
+        // inside one it must be a real revision.
+        if source_sha != "unavailable"
+            && (source_sha.len() != 40 || !source_sha.chars().all(|char| char.is_ascii_hexdigit()))
+        {
             return Err(format!(
                 "identity.source_sha is not a git revision: {source_sha}"
             ));
@@ -1066,6 +1102,34 @@ mod tests {
             .ok_or("invalid_manifest must carry the surface detail")?;
         if !detail.contains("forbidden path") {
             return Err(format!("detail must name the forbidden path: {detail}"));
+        }
+        cleanup(&root)
+    }
+
+    /// PR #6683 review: `--bench` naming an existing bench directory whose
+    /// manifest was deleted is a `missing_manifest` verification outcome with
+    /// a receipt, not a discovery error that would leave a prior receipt in
+    /// place.
+    #[test]
+    fn filtered_missing_manifest_fails_with_a_receipt() -> Result<(), String> {
+        let root = unique_temp_root("filtered")?;
+        let fixtures = root.join("agentic");
+        let ghost = fixtures.join("ghost-bench");
+        fs::create_dir_all(&ghost).map_err(|err| format!("create ghost bench dir: {err}"))?;
+        let (result, report_dir) = run_command(&root, &fixtures, &["--bench", "ghost-bench"]);
+        let err = expect_err(result, "a filtered missing manifest")?;
+        if !err.contains("missing_manifest") {
+            return Err(format!("error must name the failure class: {err}"));
+        }
+        let receipt = read_receipt(&report_dir)?;
+        if receipt["status"].as_str() != Some("inconclusive") {
+            return Err(format!("expected inconclusive rollup, got {receipt}"));
+        }
+        if receipt["bench_count"].as_u64() != Some(1) {
+            return Err(format!("filtered denominator must stay one, got {receipt}"));
+        }
+        if receipt["benches"][0]["status"].as_str() != Some("missing_manifest") {
+            return Err(format!("expected missing_manifest bench, got {receipt}"));
         }
         cleanup(&root)
     }
