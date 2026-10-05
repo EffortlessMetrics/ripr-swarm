@@ -2302,7 +2302,13 @@ pub(in crate::analysis) fn free_function_call_text<'text>(
     text: &'text str,
     name: &str,
 ) -> Option<&'text str> {
-    let at = free_function_call_start_in(&mask_comments_and_strings(text), name)?;
+    // Argument readers parse `name(` literally, so only a call spelled that
+    // way yields a span: a spaced or turbofish free call followed by a
+    // same-line `Type::name(..)` must not lend it that call's arguments.
+    let masked = mask_comments_and_strings(text);
+    let at = masked.match_indices(name).map(|(at, _)| at).find(|&at| {
+        masked[at + name.len()..].starts_with('(') && is_free_function_call_at(&masked, at, name)
+    })?;
     text.get(at..)
 }
 
@@ -2377,8 +2383,20 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
     if name.is_empty() {
         return None;
     }
+    text.match_indices(name)
+        .map(|(at, _)| at)
+        .find(|&at| is_free_function_call_at(text, at, name))
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of already-masked
+/// `text` is a call that can reach a free function (see
+/// [`test_calls_free_function`]).
+pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
     let bytes = text.as_bytes();
-    text.match_indices(name).map(|(at, _)| at).find(|&at| {
+    if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
+        return false;
+    }
+    {
         let after = at + name.len();
         if !ident_boundary(bytes, at, after) || !call_paren_follows(text, after) {
             return false;
@@ -2403,7 +2421,7 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
             });
         }
         true
-    })
+    }
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -3074,6 +3092,17 @@ mod tests {
             Some("kb(3))")
         );
         assert_eq!(free_function_call_text("ByteSize::kb(2)", "kb"), None);
+        // A spaced or turbofish free call has no `kb(` span of its own; the
+        // later `ByteSize::kb(9)` must not supply one.
+        assert_eq!(
+            free_function_call_text("kb (1) + ByteSize::kb(9)", "kb"),
+            None
+        );
+        assert_eq!(free_function_call_text("kb::<u8>(1) + x.kb(9)", "kb"), None);
+        assert_eq!(
+            free_function_call_text("kb::<u8>(1) + kb(2)", "kb"),
+            Some("kb(2)")
+        );
 
         let mut owner = free_function("src/lib.rs", "kb");
         owner.impl_context = FunctionImplContext::Unknown;

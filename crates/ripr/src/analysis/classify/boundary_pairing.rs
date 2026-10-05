@@ -85,7 +85,7 @@ fn assertion_observes_boundary_owner_call(
     activation: &ActivationEvidence,
 ) -> bool {
     let subject = assertion_subject(&assertion.text);
-    if owner_call_argument_lists(&subject, &owner.name)
+    if owner_call_sites(&subject, owner)
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
     {
@@ -93,7 +93,7 @@ fn assertion_observes_boundary_owner_call(
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
     // only when the assertion text names the owner once.
-    owner_call_count(&assertion.text, &owner.name) == 1
+    owner_call_sites(&assertion.text, owner).len() == 1
         && activation_marks_boundary_call(
             activation,
             &CallFact {
@@ -176,18 +176,13 @@ fn owner_call_activates_boundary(
     if call.name != owner.name {
         return false;
     }
-    // A free owner is activated only by its own call site, never by a
-    // same-named `Type::name(..)` on the line (#6713).
-    let Some(owner_text) = super::owner_call_text(&call.text, owner) else {
-        return false;
-    };
-    if let Some(arguments) = call_arguments(owner_text, &call.name)
-        && argument_list_activates_boundary(probe, owner, test, &arguments)
+    let sites = owner_call_sites(&call.text, owner);
+    if let Some(arguments) = sites.first()
+        && argument_list_activates_boundary(probe, owner, test, arguments)
     {
         return true;
     }
-    owner_call_count(&call.text, &owner.name) == 1
-        && activation_marks_boundary_call(activation, call)
+    sites.len() == 1 && activation_marks_boundary_call(activation, call)
 }
 
 fn argument_list_activates_boundary(
@@ -247,7 +242,25 @@ fn assertion_subject(text: &str) -> String {
     text.to_string()
 }
 
-fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
+/// Argument lists of the calls in `text` that can be calls of `owner`. A
+/// module-level `fn` is called only by a bare or module-qualified spelling,
+/// never by a same-named `Type::name(..)` or `value.name(..)` (#6713).
+fn owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    let lists = owner_call_argument_lists(text, &owner.name);
+    if owner.impl_context != crate::analysis::facts::FunctionImplContext::Free {
+        return lists.into_iter().map(|(_, arguments)| arguments).collect();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    lists
+        .into_iter()
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, &owner.name))
+        .map(|(_, arguments)| arguments)
+        .collect()
+}
+
+/// Argument lists of every `name(` call in `text`, each with the byte offset
+/// where the call's name starts.
+fn owner_call_argument_lists(text: &str, name: &str) -> Vec<(usize, Vec<String>)> {
     let needle = format!("{name}(");
     let mut lists = Vec::new();
     let mut from = 0usize;
@@ -264,15 +277,11 @@ fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
             }
         }
         if let Some(arguments) = call_arguments(text.get(abs..).unwrap_or(""), name) {
-            lists.push(arguments);
+            lists.push((abs, arguments));
         }
         from = abs + needle.len();
     }
     lists
-}
-
-fn owner_call_count(text: &str, name: &str) -> usize {
-    owner_call_argument_lists(text, name).len()
 }
 
 fn contains_ident(text: &str, name: &str) -> bool {
@@ -410,6 +419,50 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "assert_eq!(gate(10), true) must pair"
+        );
+    }
+
+    /// #6713: `Gate::gate(10)` in the assertion is not the free `gate`;
+    /// the bare spelling on the same assertion is the control.
+    #[test]
+    fn same_named_type_path_call_does_not_pair_for_free_owner() {
+        let probe = predicate_probe("input >= 10");
+        let mut owner = gate_owner();
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        let type_path = test_summary(
+            "type_path_boundary",
+            "let _ = gate(1); assert_eq!(Gate::gate(10), true);",
+            vec![
+                call("gate", "let _ = gate(1);"),
+                call("gate", "assert_eq!(Gate::gate(10), true);"),
+            ],
+            vec![exact("assert_eq!(Gate::gate(10), true);")],
+            &["1", "10"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&type_path],
+                &ActivationEvidence::default(),
+            ),
+            "Gate::gate(10) must not pair for a free gate"
+        );
+        let bare = test_summary(
+            "bare_boundary",
+            "assert_eq!(Gate::gate(1), gate(10));",
+            vec![call("gate", "assert_eq!(Gate::gate(1), gate(10));")],
+            vec![exact("assert_eq!(Gate::gate(1), gate(10));")],
+            &["1", "10"],
+        );
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&bare],
+                &ActivationEvidence::default(),
+            ),
+            "the bare gate(10) beside Gate::gate(1) must pair"
         );
     }
 
@@ -753,6 +806,44 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "without the activation == fact, classify(\"word\") must not pair against final_label == \"alpha\""
+        );
+    }
+
+    /// #6713: a same-line receiver call `w.classify(..)` is not a second
+    /// call of a free `classify`, so the line still names the free owner
+    /// once and its activation `==` fact pairs. A non-free owner keeps
+    /// counting both calls and refuses the line-level fallback.
+    #[test]
+    fn free_owner_line_fallback_ignores_same_named_receiver_call() {
+        let probe = predicate_probe("final_label == \"alpha\"");
+        let line = "assert_eq!(classify(\"word\"), w.classify(\"x\"));";
+        let test = test_summary(
+            "word_label",
+            line,
+            vec![call("classify", line)],
+            vec![exact(line)],
+            &["word"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: format!("{line} | helper hop"),
+                value: "final_label == \"alpha\"".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let mut owner = gate_owner();
+        owner.name = "classify".to_string();
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+            "w.classify(..) is not a call of the free classify"
+        );
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Unknown;
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+            "an owner reachable through a receiver keeps both calls ambiguous"
         );
     }
 
