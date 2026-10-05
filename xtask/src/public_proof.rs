@@ -39,6 +39,9 @@ const CANONICAL_SOURCES: [(&str, &str); 3] = [
 
 const NULL: &Value = &Value::Null;
 
+/// Changed page lines shown when a receipt has drifted from its source.
+const PREVIEW_LINES: usize = 12;
+
 struct Options {
     check: bool,
     refresh_receipts: bool,
@@ -94,10 +97,79 @@ fn check_receipts(root: &Path) -> Result<(), String> {
     if drift.is_empty() {
         return Ok(());
     }
+    let preview = match refresh_preview(root) {
+        Ok(lines) if lines.is_empty() => {
+            "refreshing would not change the page text, only the receipts".to_string()
+        }
+        Ok(lines) => format!(
+            "refreshing would change the page like this ({}):\n{}",
+            if lines.len() > PREVIEW_LINES {
+                format!("first {PREVIEW_LINES} changed lines")
+            } else {
+                "all changed lines".to_string()
+            },
+            lines
+                .iter()
+                .take(PREVIEW_LINES)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+        // The drift is already the finding; a receipt the page cannot render
+        // from is reported by the render step itself.
+        Err(err) => format!("could not preview the refreshed page: {err}"),
+    };
     Err(format!(
-        "{}\nrun `cargo xtask public-proof --refresh-receipts`, then `cargo xtask public-proof`, and commit the result",
+        "{}\n{preview}\nrun `cargo xtask public-proof --refresh-receipts`, then `cargo xtask public-proof`, and commit the result",
         drift.join("\n")
     ))
+}
+
+/// Changed page lines, `- old` then `+ new`, were the receipts refreshed from
+/// their canonical sources. It renders in a scratch copy and writes nothing in
+/// the repository, so whoever bumps a scoreboard sees which published numbers
+/// move before committing.
+fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
+    let scratch =
+        std::env::temp_dir().join(format!("ripr-public-proof-preview-{}", std::process::id()));
+    let receipts = scratch.join(RECEIPTS);
+    fs::create_dir_all(&receipts)
+        .map_err(|err| format!("failed to create {}: {err}", receipts.display()))?;
+    let result = (|| {
+        let entries = fs::read_dir(root.join(RECEIPTS))
+            .map_err(|err| format!("failed to read {RECEIPTS}: {err}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("failed to read {RECEIPTS}: {err}"))?;
+            fs::copy(entry.path(), receipts.join(entry.file_name()))
+                .map_err(|err| format!("failed to copy {}: {err}", entry.path().display()))?;
+        }
+        for (receipt, source) in CANONICAL_SOURCES {
+            fs::write(receipts.join(receipt), read_bytes(&root.join(source))?)
+                .map_err(|err| format!("failed to write the {receipt} preview: {err}"))?;
+        }
+        let refreshed = render(&scratch)?;
+        let committed = fs::read_to_string(root.join(PAGE))
+            .map_err(|err| format!("failed to read {PAGE}: {err}"))?;
+        Ok(changed_lines(&committed, &refreshed))
+    })();
+    let _ = fs::remove_dir_all(&scratch);
+    result
+}
+
+/// Lines only in `old` (`- `) then lines only in `new` (`+ `), in page order.
+fn changed_lines(old: &str, new: &str) -> Vec<String> {
+    let old_set: std::collections::HashSet<&str> = old.lines().collect();
+    let new_set: std::collections::HashSet<&str> = new.lines().collect();
+    let removed = old
+        .lines()
+        .filter(|l| !new_set.contains(l) && !l.is_empty());
+    let added = new
+        .lines()
+        .filter(|l| !old_set.contains(l) && !l.is_empty());
+    removed
+        .map(|l| format!("- {l}"))
+        .chain(added.map(|l| format!("+ {l}")))
+        .collect()
 }
 
 /// Fails with the next step when the page no longer matches its receipts.
@@ -1092,21 +1164,45 @@ fn unmeasured_reason(metric: &Value) -> String {
     }
 }
 
-/// The repository with the worst sample for a metric, as `repo (value)`.
+/// The repositories whose instrument failed, then the worst measured sample, as
+/// `repo (value)`. A failed sample has no number, so it is named by status
+/// rather than dropped behind the worst repository that did measure.
 fn worst_sample(dx: &Value, id: &str) -> Option<String> {
     let metric = items(dx, "metrics")
         .iter()
         .find(|m| field(m, "id").as_str() == Some(id))?;
     let unit = text(metric, "unit");
     let lower = text(metric, "direction") != "higher_is_better";
-    items(metric, "samples")
+    let samples = items(metric, "samples");
+    let failed: Vec<String> = samples
         .iter()
+        .filter(|s| text(s, "status") == "failed")
+        .map(|s| {
+            let repo = text(s, "repo");
+            if repo.is_empty() {
+                "a repository".to_string()
+            } else {
+                repo
+            }
+        })
+        .collect();
+    let worst = samples
+        .iter()
+        .filter(|s| text(s, "status") != "failed")
         .filter_map(|s| Some((text(s, "repo"), field(s, "value").as_f64()?)))
         .reduce(|a, b| {
             let worse = if lower { b.1 > a.1 } else { b.1 < a.1 };
             if worse { b } else { a }
         })
-        .map(|(repo, value)| format!("{repo} at {}", fmt_value(value, &unit)))
+        .map(|(repo, value)| format!("{repo} at {}", fmt_value(value, &unit)));
+    match (failed.is_empty(), worst) {
+        (true, worst) => worst,
+        (false, None) => Some(format!("{} (instrument failed)", failed.join(", "))),
+        (false, Some(worst)) => Some(format!(
+            "{} (instrument failed); worst measured is {worst}",
+            failed.join(", ")
+        )),
+    }
 }
 
 fn family_label(key: &str) -> String {
@@ -2056,6 +2152,82 @@ mod tests {
         assert!(!meets(0.04, 0.8, false));
         assert!(meets(1.0, 2.0, true));
         assert!(!meets(3.0, 2.0, true));
+    }
+
+    #[test]
+    fn worst_sample_names_a_failed_instrument() -> Result<(), String> {
+        let dx = serde_json::json!({"metrics": [{
+            "id": "speed.cold_s", "unit": "s", "direction": "lower_is_better",
+            "samples": [
+                {"repo": "alpha", "status": "meets_target", "value": 3.0},
+                {"repo": "beta", "status": "failed", "value": null},
+                {"repo": "gamma", "status": "meets_target", "value": 9.0}
+            ]
+        }]});
+        let both = worst_sample(&dx, "speed.cold_s").ok_or("no sample line")?;
+        assert!(both.contains("beta (instrument failed)"), "{both}");
+        assert!(both.contains("worst measured is gamma"), "{both}");
+        let only_failed = serde_json::json!({"metrics": [{
+            "id": "speed.cold_s", "unit": "s", "direction": "lower_is_better",
+            "samples": [{"repo": "beta", "status": "failed", "value": null}]
+        }]});
+        let line = worst_sample(&only_failed, "speed.cold_s").ok_or("no sample line")?;
+        assert_eq!(line, "beta (instrument failed)");
+        Ok(())
+    }
+
+    #[test]
+    fn source_drift_previews_the_page_lines_that_would_change() -> Result<(), String> {
+        let real = workspace_root();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-public-proof-preview-test-{}",
+            std::process::id()
+        ));
+        let receipts = dir.join(RECEIPTS);
+        fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir.join("docs")).map_err(|e| e.to_string())?;
+        for entry in fs::read_dir(real.join(RECEIPTS)).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            fs::copy(entry.path(), receipts.join(entry.file_name())).map_err(|e| e.to_string())?;
+        }
+        fs::copy(real.join(PAGE), dir.join(PAGE)).map_err(|e| e.to_string())?;
+        for (receipt, source) in CANONICAL_SOURCES {
+            let target = dir.join(source);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(receipts.join(receipt), &target).map_err(|e| e.to_string())?;
+        }
+        // In sync: the check passes before any source moves.
+        check_receipts(&dir)?;
+        // Bump one bar's title in the dx source; a refresh must move that page line.
+        let source = dir.join("metrics/dx-scoreboard/baseline.json");
+        let mut dx = read_json(&source)?;
+        let mut old_title = String::new();
+        if let Some(metric) = dx
+            .get_mut("metrics")
+            .and_then(Value::as_array_mut)
+            .and_then(|metrics| metrics.first_mut())
+        {
+            old_title = text(metric, "title");
+            metric["title"] = Value::from("Renamed by the preview test");
+        }
+        fs::write(&source, serde_json::to_vec(&dx).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        let result = check_receipts(&dir);
+        let untouched = fs::read(receipts.join("dx-scoreboard.json")).map_err(|e| e.to_string())?;
+        let original =
+            fs::read(real.join(RECEIPTS).join("dx-scoreboard.json")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let err = result.err().ok_or("drift was not reported")?;
+        assert!(err.contains("refreshing would change the page"), "{err}");
+        assert!(
+            err.contains("+ ") && err.contains("Renamed by the preview test"),
+            "{err}"
+        );
+        assert!(err.contains("- ") && err.contains(&old_title), "{err}");
+        assert!(untouched == original, "the preview must not write receipts");
+        Ok(())
     }
 
     #[test]
