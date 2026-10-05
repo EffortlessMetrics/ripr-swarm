@@ -1341,8 +1341,10 @@ fn recovery_ref_quoting_accepts_adjacent_and_refspec_forms() {
     ));
     let refspec =
         format!("git fetch origin -- '+refs/heads/{hostile}:refs/remotes/origin/{hostile}'");
-    let Some(at) = refspec.find(hostile) else {
-        panic!("refspec must carry the branch: {refspec}");
+    let at = refspec.find(hostile);
+    assert!(at.is_some(), "refspec must carry the branch: {refspec}");
+    let Some(at) = at else {
+        return;
     };
     assert!(recovery_ref_occurrence_is_shell_quoted(
         &refspec,
@@ -1368,8 +1370,10 @@ fn odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted() {
     // Odd apostrophe before the ref plus a later quote: the discarded
     // `matches('\'').count() % 2` check would accept this.
     let odd = format!("don't fetch {hostile} 'later'");
-    let Some(at) = odd.find(hostile) else {
-        panic!("fixture must carry the ref: {odd}");
+    let at = odd.find(hostile);
+    assert!(at.is_some(), "fixture must carry the ref: {odd}");
+    let Some(at) = at else {
+        return;
     };
     assert_eq!(odd[..at].matches('\'').count() % 2, 1);
     assert!(odd[at + hostile.len()..].contains('\''));
@@ -1379,8 +1383,10 @@ fn odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted() {
     );
 
     let unterminated = format!("git fetch origin -- ' then {hostile}");
-    let Some(at) = unterminated.find(hostile) else {
-        panic!("fixture must carry the ref: {unterminated}");
+    let at = unterminated.find(hostile);
+    assert!(at.is_some(), "fixture must carry the ref: {unterminated}");
+    let Some(at) = at else {
+        return;
     };
     assert!(
         !recovery_ref_occurrence_is_shell_quoted(&unterminated, at, hostile.len()),
