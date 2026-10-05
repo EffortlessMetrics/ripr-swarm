@@ -1217,6 +1217,11 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
             violations.push(format!("case `{id}` has an empty `{field}`"));
         }
     }
+    if !case.truth.test_command.trim().is_empty()
+        && let Err(err) = super::verdict_corpus_relabel::test_command_args(&case.truth.test_command)
+    {
+        violations.push(format!("case `{id}` cannot be replayed: {err}"));
+    }
     if case.truth.method != "runtime_mutant_kill" {
         violations.push(format!(
             "case `{id}` truth method `{}` is not runtime_mutant_kill",

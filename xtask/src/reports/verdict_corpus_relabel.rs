@@ -10,7 +10,8 @@
 //!
 //! Authored subjects are stored whole and replay offline. Upstream subjects
 //! are excerpts, so they replay only from a full checkout at the pinned commit
-//! passed with `--checkouts`; this command never clones or fetches.
+//! passed with `--checkouts`; this command never clones or fetches, and runs
+//! cargo offline, so fetch a checkout's dependencies (`cargo fetch`) first.
 
 use super::verdict_corpus::{
     CORPUS_DIR, Case, Corpus, EditKind, MutantOutcome, Subject, SubjectOrigin, TruthState,
@@ -28,6 +29,7 @@ use std::time::Duration;
 const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v1";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
 const DEFAULT_SEED: &str = "ripr-verdict-corpus";
+const UNREPLAYABLE_CARGO_FLAGS: &[&str] = &["--manifest-path", "--target-dir", "--config"];
 const DEFAULT_REPEAT: usize = 2;
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
@@ -76,7 +78,12 @@ pub(crate) fn parse_args(args: &[String]) -> Result<RelabelArgs, String> {
                 parsed.sample = Some(usize::try_from(n).map_err(|err| err.to_string())?);
             }
             "--seed" => parsed.seed = value("--seed")?,
-            "--case" => parsed.cases.push(value("--case")?),
+            "--case" => {
+                let case = value("--case")?;
+                if !parsed.cases.contains(&case) {
+                    parsed.cases.push(case);
+                }
+            }
             "--checkouts" => parsed.checkouts = Some(PathBuf::from(value("--checkouts")?)),
             "--repeat" => {
                 let n = positive("--repeat", value("--repeat")?)?;
@@ -136,6 +143,19 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
         .any(|word| word.contains(['|', ';', '&', '>', '<', '`', '$']))
     {
         return Err(format!("test command `{command}` contains shell syntax"));
+    }
+    // Cargo options that move the build out of the run-owned tree or change
+    // how it is driven would let a replay test something else and still pass.
+    for word in rest.iter().take_while(|word| word.as_str() != "--") {
+        let flag = word.split('=').next().unwrap_or(word);
+        if UNREPLAYABLE_CARGO_FLAGS.contains(&flag)
+            || flag.starts_with("-Z")
+            || flag.starts_with("-C")
+        {
+            return Err(format!(
+                "test command `{command}` passes `{flag}`, which the replay does not allow"
+            ));
+        }
     }
     Ok(rest)
 }
@@ -230,9 +250,11 @@ pub(crate) fn apply_mutated_line(text: &str, line: usize, mutated: &str) -> Resu
         .checked_sub(1)
         .filter(|index| *index < lines.len())
         .ok_or_else(|| format!("anchor line {line} is past the end of the file"))?;
-    let original = lines[index];
+    let (original, carriage) = match lines[index].strip_suffix('\r') {
+        Some(body) => (body, "\r"),
+        None => (lines[index], ""),
+    };
     let indent = &original[..original.len() - original.trim_start().len()];
-    let carriage = if original.ends_with('\r') { "\r" } else { "" };
     let replaced = if mutated.is_empty() {
         carriage.to_string()
     } else {
@@ -288,7 +310,8 @@ pub(crate) fn mutant_drift(
     let Some(first) = observed.first() else {
         return vec![format!("case `{case_id}` {what}: no run was observed")];
     };
-    if observed.iter().any(|run| run.label() != first.label()) {
+    // Runs that fail in different tests disagree as much as a pass and a fail.
+    if observed.iter().any(|run| run != first) {
         let seen: Vec<&str> = observed.iter().map(RunOutcome::label).collect();
         drift.push(format!(
             "case `{case_id}` {what}: repeated runs disagree ({}); a flaky or timing-dependent test cannot carry a label",
@@ -370,6 +393,22 @@ impl Runner<'_> {
             ("CARGO_TERM_COLOR", "never"),
             ("RUSTUP_TOOLCHAIN", toolchain),
             ("RUSTUP_AUTO_INSTALL", "0"),
+            // Replays never reach the network: an upstream checkout whose
+            // dependencies are not in the cargo cache fails to build rather
+            // than downloading them.
+            ("CARGO_NET_OFFLINE", "true"),
+            // The caller's compiler settings must not reach the subject: a
+            // `-D warnings` turns a deleted statement into a build failure,
+            // a `--cfg` enables disabled tests, and `RUSTC` would bypass the
+            // labeled toolchain. Empty values are treated as unset.
+            ("RUSTC", "rustc"),
+            ("RUSTC_WRAPPER", ""),
+            ("RUSTC_WORKSPACE_WRAPPER", ""),
+            ("RUSTFLAGS", ""),
+            ("CARGO_ENCODED_RUSTFLAGS", ""),
+            ("CARGO_BUILD_RUSTFLAGS", ""),
+            ("RUSTDOCFLAGS", ""),
+            ("CARGO_ENCODED_RUSTDOCFLAGS", ""),
         ];
         let mut runs = Vec::with_capacity(self.args.repeat);
         for _ in 0..self.args.repeat {
@@ -482,6 +521,21 @@ fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<Pa
             subject.subject_id
         ));
     }
+    // Local edits to tracked files would replay a different subject.
+    let args = vec![
+        "-C".to_string(),
+        checkout.to_string_lossy().into_owned(),
+        "status".to_string(),
+        "--porcelain".to_string(),
+        "--untracked-files=no".to_string(),
+    ];
+    let dirty = run_output_owned("git", &args)?;
+    if !dirty.trim().is_empty() {
+        return Err(format!(
+            "{} has local changes to tracked files; reset it to the pinned commit {pinned}",
+            normalize_path(&checkout)
+        ));
+    }
     Ok(Some(checkout))
 }
 
@@ -510,6 +564,15 @@ fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
                 let link = fs::read_link(from.join(&child)).map_err(|err| {
                     format!("read link {}: {err}", normalize_path(&from.join(&child)))
                 })?;
+                // A link out of the checkout would let edits and mutants
+                // write through the copy into files the run does not own.
+                if !link_stays_inside(&rel, &link) {
+                    return Err(format!(
+                        "{} links outside the checkout ({}); refusing to replay it",
+                        normalize_path(&from.join(&child)),
+                        normalize_path(&link)
+                    ));
+                }
                 symlink(&link, &to.join(&child))?;
             } else {
                 fs::copy(from.join(&child), to.join(&child))
@@ -518,6 +581,27 @@ fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether a symlink at `<dir>/<name>` with target `link` resolves, lexically,
+/// to a path inside the copied root.
+pub(crate) fn link_stays_inside(dir: &Path, link: &Path) -> bool {
+    use std::path::Component;
+    let mut depth = dir.components().count();
+    for component in link.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    true
 }
 
 #[cfg(unix)]

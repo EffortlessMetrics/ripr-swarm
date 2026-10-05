@@ -74,6 +74,20 @@ fn test_command_args_accepts_only_plain_cargo_test() -> Result<(), String> {
     assert!(test_command_args("make test").err().is_some());
     assert!(test_command_args("cargo test; rm -rf /").err().is_some());
     assert!(test_command_args("cargo test | tee log").err().is_some());
+    for escape in [
+        "cargo test --manifest-path /elsewhere/Cargo.toml",
+        "cargo test --target-dir=/tmp/x",
+        "cargo test --config build.rustc-wrapper=w",
+        "cargo test -Zunstable-options",
+        "cargo test -C /elsewhere",
+    ] {
+        assert!(test_command_args(escape).err().is_some(), "{escape}");
+    }
+    // Arguments after `--` go to the test binary, not cargo.
+    assert_eq!(
+        test_command_args("cargo test -- --skip a -Z")?,
+        strings(&["test", "--", "--skip", "a", "-Z"])
+    );
     Ok(())
 }
 
@@ -146,6 +160,7 @@ fn apply_mutated_line_keeps_indent_and_line_numbers() -> Result<(), String> {
     assert_eq!(removed.lines().nth(2), Some(""));
     let crlf = "a\r\n  b\r\nc";
     assert_eq!(apply_mutated_line(crlf, 2, "d")?, "a\r\n  d\r\nc");
+    assert_eq!(apply_mutated_line("a\r\n\r\nc", 2, "x")?, "a\r\nx\r\nc");
     assert!(apply_mutated_line(text, 0, "x").err().is_some());
     assert!(apply_mutated_line(text, 99, "x").err().is_some());
     Ok(())
@@ -241,6 +256,23 @@ fn mutant_drift_names_each_way_a_label_can_be_wrong() {
         &[failing(&["tests::a"]), RunOutcome::TestsPassed],
     );
     assert!(drift.iter().any(|d| d.contains("repeated runs disagree")));
+    // Failing both times, but in different tests, is still a disagreement.
+    let drift = mutant_drift(
+        id,
+        "m",
+        MutantOutcome::TestsFailed,
+        Some("tests::a"),
+        &[failing(&["tests::a"]), failing(&["tests::a", "tests::b"])],
+    );
+    assert!(drift.iter().any(|d| d.contains("repeated runs disagree")));
+    let drift = mutant_drift(
+        id,
+        "m",
+        MutantOutcome::TestsFailed,
+        Some("tests::a"),
+        &[RunOutcome::TimedOut],
+    );
+    assert!(drift.iter().any(|d| d.contains("timed out")));
 }
 
 #[test]
@@ -304,4 +336,22 @@ fn labeled_toolchain_names_the_rustup_release() {
     );
     assert_eq!(labeled_toolchain("nightly"), None);
     assert_eq!(labeled_toolchain("rustc nightly-2026 (x)"), None);
+}
+
+#[test]
+fn link_stays_inside_refuses_links_that_leave_the_copy() {
+    assert!(link_stays_inside(
+        Path::new("crates/foo"),
+        Path::new("../../README.md")
+    ));
+    assert!(link_stays_inside(Path::new(""), Path::new("./src/lib.rs")));
+    assert!(!link_stays_inside(
+        Path::new("crates/foo"),
+        Path::new("../../../x")
+    ));
+    assert!(!link_stays_inside(Path::new(""), Path::new("../x")));
+    assert!(!link_stays_inside(
+        Path::new("src"),
+        Path::new("/etc/passwd")
+    ));
 }

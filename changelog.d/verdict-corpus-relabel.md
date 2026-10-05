@@ -7,5 +7,7 @@
   `--sample <n> --seed <s>` picks a deterministic subset. Every rewrite
   mutant now carries `mutated_line`, the exact anchor line it replays, and
   `failing_test` must be one test name. A full replay of all 104 cases
-  reproduced every label; the bytesize 1.3 cases now skip a quickcheck
-  property that fails on random inputs regardless of the edit.
+  reproduced every label; the bytesize master@66a3715 (2.7.0) cases now
+  skip a quickcheck property that fails on random inputs regardless of the
+  edit. Replays run cargo offline and refuse test commands or checkout
+  symlinks that would leave the run-owned tree.

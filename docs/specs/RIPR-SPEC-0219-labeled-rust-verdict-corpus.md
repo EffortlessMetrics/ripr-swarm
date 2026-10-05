@@ -172,11 +172,24 @@ differs from `expected/report.md`. It refuses an
   compile, times out, or equals the edited line, when repeated runs disagree,
   and when `rustc --version` differs from the labeled toolchain. Authored
   subjects replay offline. Upstream excerpts replay only from a full checkout
-  at the pinned commit under `--checkouts <dir>/<subject_id>`; without one
-  they are listed as not replayed, never counted as passing. `--sample`
-  picks a deterministic subset ordered by sha256 of the seed and case id, so
-  a scheduled run can rotate seeds through the corpus. It writes
+  at the pinned commit, with no local changes to tracked files, under
+  `--checkouts <dir>/<subject_id>`; without one they are listed as not
+  replayed, never counted as passing. Cargo runs with
+  `CARGO_NET_OFFLINE=true`, so a checkout's dependencies must already be in
+  the cargo cache (`cargo fetch`), and with the caller's `RUSTC`, wrapper,
+  and `RUSTFLAGS`-family variables cleared. A checkout symlink that resolves
+  outside the checkout is refused, and the test command may not pass
+  `--manifest-path`, `--target-dir`, `--config`, `-Z`, or `-C` before `--`;
+  `validate` refuses such a command too. `--sample` picks a deterministic
+  subset, for the same set of checkouts, ordered by sha256 of the seed and
+  case id, so a scheduled run can rotate seeds through the corpus. It writes
   `relabel.json` and never clones, fetches, or edits the corpus.
+  Known limits: failing-test names match by `::` suffix across all test
+  binaries; cargo stops at the first failing binary, so a labeled test in a
+  later binary reads as not failing (fail-closed); a doctest name contains
+  spaces and cannot be a `failing_test`; and the default `--work-dir` sits
+  under this repository's `target`, so this repository's `.cargo/config.toml`
+  applies to subject builds.
 
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
@@ -302,6 +315,8 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `observed_truth_follows_the_corpus_rule`
 - `toolchain_release_ignores_the_host_triple`
 - `declares_workspace_reads_only_a_workspace_table`
+- `labeled_toolchain_names_the_rustup_release`
+- `link_stays_inside_refuses_links_that_leave_the_copy`
 
 ## Implementation Mapping
 

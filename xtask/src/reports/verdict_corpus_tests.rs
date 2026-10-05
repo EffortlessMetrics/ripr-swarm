@@ -457,13 +457,19 @@ fn validator_requires_a_replayable_mutated_line_that_changes_the_anchor() -> Res
         listed.iter().any(|v| v.contains("is not one test name")),
         "{listed:#?}"
     );
-    let multi = tampered(|raw| {
-        raw["cases"][0]["truth"]["mutants"][0]["mutated_line"] = json!("if n > 100 {\n");
-    })?;
-    assert!(
-        multi.iter().any(|v| v.contains("must be one trimmed line")),
-        "{multi:#?}"
-    );
+    // Each half of the rule separately: an interior newline, and padding
+    // that would slip a no-op past the trimmed-anchor comparison.
+    for bad in ["if n > 100 {\nx", " if n > 99 {"] {
+        let shaped = tampered(|raw| {
+            raw["cases"][0]["truth"]["mutants"][0]["mutated_line"] = json!(bad);
+        })?;
+        assert!(
+            shaped
+                .iter()
+                .any(|v| v.contains("must be one trimmed line")),
+            "{bad:?}: {shaped:#?}"
+        );
+    }
     Ok(())
 }
 
