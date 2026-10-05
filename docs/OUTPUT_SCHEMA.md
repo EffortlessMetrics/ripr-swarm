@@ -117,6 +117,18 @@ appears verbatim in `readiness.missing_evidence` and `exact_blocker`, and
 prevents `next_action`. The statically selected target remains evidence,
 not edit authorization. No field shape or schema version changes.
 
+`next_action` is projected from the card's `canonical_next_action`
+(`canonical_next_action.v1`, #6304): `Some` exactly when the shared selector
+finds the offered route executable, so the reference and the decision cannot
+disagree. The canonical DTO carries the closed action class (see the
+`next_action_class` values list), the exact subject/currentness binding, the
+referenced command or a typed stop, and bounded subordinate alternatives.
+The semantic digest pins the decision's portable parts (schema, producer,
+class, command identity, stop kind, transition labels); displays, stop
+details, and alternative routes stay out like `next_action.display`. The
+human prose renders the same DTO's block, so both projections share one
+authority.
+
 The schema is additive within `repair_card.v1`: new fields arrive with
 `#[serde(default)]`; a breaking shape change mints a new version. The CLI
 projection is `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194,
@@ -2289,6 +2301,17 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`next_action_class` values:
+
+- `run_command`
+- `inspect_details`
+- `choose_item`
+- `choose_attempt`
+- `satisfy_prerequisite`
+- `retry_current_subject`
+- `terminal_no_action`
+- `unsupported_or_limited`
 
 ## Badge Output
 
@@ -13295,6 +13318,12 @@ JSON shape:
     "reason": "…",
     "command": "ripr agent repair --root . --attempt … --phase after"
   },
+  "canonical_next_action": {
+    "schema_version": "canonical_next_action.v1",
+    "producer": "repair_attempt_status",
+    "action_class": "satisfy_prerequisite",
+    "stop": {"kind": "provide_input", "…": "…"}
+  },
   "test_run": null,
   "claim_boundary": ["status is read-only: …"],
   "limitations": ["…"],
@@ -13342,6 +13371,14 @@ Field contract:
   (an invocation spelling like `--root .` becomes the bound absolute root),
   so a pasted command resumes the selected attempt from any working
   directory; the report's own `root` field keeps the invocation spelling.
+  The arm is selected by the report's `canonical_next_action`
+  (`canonical_next_action.v1`, #6304), which carries the closed action class
+  (see the `next_action_class` values list), the exact subject/currentness
+  binding, and the typed prerequisite or stop behind the arm; it is `null`
+  exactly when the producer state cannot bind a subject. Status commands are
+  recorded lines rather than `CommandSpec`s, so the canonical decision is
+  never executable here — terminal classes name their receipt details, and
+  limited states name their bound.
 - `claim_boundary`, `limitations`, and `non_claims` carry the read-only
   non-claim, the retained-evidence non-claim (a finished result does not
   establish the repair is correct or that any project test ran), the

@@ -1,0 +1,62 @@
+schema_version = "2.0"
+id = "ripr.slice.canonical-next-action.v1"
+generation = 1
+
+source_issue = "issue:6304"
+design_reference = "RIPR-SPEC-0234"
+change_class = "spec_or_contract_change"
+
+claim_boundary = """
+Projects one CanonicalNextActionV1 from current first-hour state through a
+single selector: closed eight-class vocabulary, exact subject/currentness
+binding, typed stops, and bounded alternatives. RepairCard next_action,
+RepairAttempt arm selection, and check line-family dispatch route through
+the decision; card prose and card/status JSON project the same DTO.
+"""
+
+non_goals = [
+  "repair lifecycle, store, grammar, or ranking changes",
+  "top-level command aliases",
+  "command execution or source edits",
+  "transport or protocol rewrites",
+  "doctor, pilot, and inventory renderer migration",
+  "release decisions",
+]
+
+return_conditions = [
+  "Return to root if a renderer mints a stronger action than the DTO decides.",
+  "Return to root if an executable action references anything but a producer-offered CommandSpec.",
+  "Return to root if subject, currentness, or root binding weakens to best-effort text.",
+  "Return to root if rendered check, status, or digest bytes change without a contract update.",
+]
+
+owned_seams = [
+  "seam:ripr:domain:canonical-next-action",
+  "seam:ripr:output:next-action-projection",
+]
+
+shared_seams = [
+  "seam:ripr:contract:repair-card-v1",
+  "seam:ripr:contract:agent-attempt-status",
+  "seam:ripr:output:check-triage",
+  "seam:ripr:contract:output-enums",
+]
+
+forbidden_seams = [
+  "seam:ripr:agent:command-runner",
+  "seam:ripr:agent:receipt-issuer",
+  "seam:ripr:repair:lifecycle",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0234"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

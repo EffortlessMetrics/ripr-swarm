@@ -420,6 +420,7 @@ pub(crate) fn assemble_repair_card(
         packet_eligible: eligibility.eligible(),
         edit_cage_refusal,
         next_command,
+        packet_route,
         allowed_files,
         forbidden_files,
         done_when,

@@ -12778,3 +12778,36 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+[[behavior]]
+id = "RIPR-SPEC-0234"
+name = "canonical next action"
+spec = "docs/specs/RIPR-SPEC-0234-canonical-next-action.md"
+tests = [
+  "crates/ripr/src/domain/next_action.rs::tests::control_1_disagreement_refuses_rather_than_choosing",
+  "crates/ripr/src/domain/next_action.rs::tests::control_10_each_gate_owns_its_negative",
+  "crates/ripr/src/domain/next_action.rs::tests::check_cases_map_to_their_closed_classes",
+  "crates/ripr/src/output/next_action.rs::tests::control_9_human_and_json_agree_from_one_dto",
+  "crates/ripr/src/output/next_action.rs::tests::control_8_stopped_renders_omit_command_strings",
+  "crates/ripr/src/app/repair_card.rs::tests::canonical_decision_and_reference_agree",
+  "crates/ripr/src/app/agent_status.rs::tests::canonical_decision_selects_the_status_arm",
+  "crates/ripr/src/output/human/triage.rs::tests::check_adapter_binds_the_ranked_winner_with_bounded_alternatives",
+  "crates/ripr/src/repair_card_digest.rs::tests::canonical_decision_moves_remint_the_digest",
+  "crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision",
+]
+code = [
+  "crates/ripr/src/domain/next_action.rs",
+  "crates/ripr/src/output/next_action.rs",
+  "crates/ripr/src/app/repair_card.rs",
+  "crates/ripr/src/app/agent_status.rs",
+  "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/repair_card_digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0234-canonical-next-action.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

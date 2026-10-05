@@ -15,6 +15,7 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
+mod next_action;
 mod probe;
 mod repair_card;
 mod summary;
@@ -80,6 +81,14 @@ pub(crate) use language::PERL_FACT_EXPORTER;
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+pub use next_action::{
+    CanonicalNextActionV1, NextActionAlternative, NextActionCheckCase, NextActionClass,
+    NextActionCommandRef, NextActionCurrentness, NextActionDiffSource, NextActionProducer,
+    NextActionStop, NextActionSubject, NextActionTransition,
+};
+pub(crate) use next_action::{
+    NextActionAttemptView, NextActionInput, current_command_platform, select_canonical_next_action,
+};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
