@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:908b0e30",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_transitive_reach_negative/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if amount >= fee {"
        },

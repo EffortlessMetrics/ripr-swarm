@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:09b3885a",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 62,
         "expression": "Ok(build_response(id.trim(), method)?)"
        },
@@ -277,7 +277,7 @@
         "id": "probe:src_lib.rs:return_value:4a5bf6b6",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 62,
         "expression": "Ok(build_response(id.trim(), method)?)"
        },

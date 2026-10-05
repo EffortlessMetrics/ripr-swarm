@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:63305cee",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if open {"
        },
@@ -67,7 +67,7 @@
         "id": "probe:src_lib.rs:predicate:5b99002c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "match band {"
        },
@@ -116,7 +116,7 @@
         "id": "probe:src_lib.rs:predicate:511faf7c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 20,
         "expression": "margin > value"
        },

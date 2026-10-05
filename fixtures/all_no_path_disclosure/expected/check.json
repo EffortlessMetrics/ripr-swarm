@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:908b0e30",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/all_no_path_disclosure/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if amount >= fee {"
        },

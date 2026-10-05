@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:static_unknown:17e03c34",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let y = x + 1;"
        },
@@ -67,7 +67,7 @@
         "id": "probe:src_lib.rs:static_unknown:8e9320f2",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "x + 1"
        },
@@ -116,7 +116,7 @@
         "id": "probe:src_lib.rs:static_unknown:20c6f50e",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "let z = y * 2;"
        },
@@ -165,7 +165,7 @@
         "id": "probe:src_lib.rs:return_value:93054610",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "z"
        },
@@ -214,7 +214,7 @@
         "id": "probe:src_lib.rs:predicate:431be027",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "x >= 0"
        },
@@ -262,7 +262,7 @@
         "id": "probe:src_lib.rs:predicate:e0b8a3fd",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/multi_hunk_removed_line_wrong_target/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "if x > 0 {"
        },

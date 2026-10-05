@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:f4ed635d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/scanner_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 16,
         "expression": "if final_state == \"text\" {"
        },
@@ -143,7 +143,7 @@
         "id": "probe:src_lib.rs:predicate:10d9563b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/scanner_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 38,
         "expression": "if final_state == \"text\" {"
        },
@@ -268,7 +268,7 @@
         "id": "probe:src_lib.rs:predicate:df1a9a22",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/scanner_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 64,
         "expression": "if final_state == \"text\" {"
        },
@@ -393,7 +393,7 @@
         "id": "probe:src_lib.rs:predicate:ab4a8a0d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/scanner_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 87,
         "expression": "if final_state == \"text\" {"
        },

@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:dda2cb0b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_two_uses/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if count > ceiling {"
        },
@@ -67,7 +67,7 @@
         "id": "probe:src_lib.rs:predicate:423794f2",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_two_uses/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "} else if ceiling != 50 {"
        },

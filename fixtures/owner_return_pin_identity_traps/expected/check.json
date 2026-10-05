@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:return_value:cfda9a46",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "input.rotate_left(3)"
        },
@@ -133,7 +133,7 @@
         "id": "probe:src_lib.rs:static_unknown:68a8a480",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "input"
        },
@@ -244,7 +244,7 @@
         "id": "probe:src_lib.rs:return_value:22c1d265",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "self.base() * 3"
        },
@@ -316,7 +316,7 @@
         "id": "probe:src_lib.rs:return_value:256c164c",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 50,
         "expression": "Ok(validate(x)? >> 1)"
        },
@@ -398,7 +398,7 @@
         "id": "probe:src_lib.rs:return_value:624e87c2",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 55,
         "expression": "x * 10"
        },
@@ -480,7 +480,7 @@
         "id": "probe:src_lib.rs:static_unknown:958a6a2b",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/owner_return_pin_identity_traps/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 55,
         "expression": "x * 5"
        },

@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:326a2e10",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/recursive_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "if final_label == \"other\" {"
        },
@@ -110,7 +110,7 @@
         "id": "probe:src_lib.rs:predicate:09d1d10a",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/recursive_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 31,
         "expression": "if final_label == \"other\" {"
        },
@@ -202,7 +202,7 @@
         "id": "probe:src_lib.rs:predicate:35db27fb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/recursive_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 51,
         "expression": "if final_label == \"other\" {"
        },
@@ -294,7 +294,7 @@
         "id": "probe:src_lib.rs:predicate:6f663a44",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/recursive_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 71,
         "expression": "if final_label == \"other\" {"
        },

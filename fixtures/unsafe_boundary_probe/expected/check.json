@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:field_construction:ca914e5b",
         "family": "field_construction",
         "delta": "value",
-        "file": "fixtures/unsafe_boundary_probe/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let mut total: u8 = 1;"
        },
@@ -77,7 +77,7 @@
         "id": "probe:src_lib.rs:static_unknown:bc6c559d",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/unsafe_boundary_probe/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "unsafe block"
        },
@@ -126,7 +126,7 @@
         "id": "probe:src_lib.rs:static_unknown:1cd58b38",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/unsafe_boundary_probe/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 16,
         "expression": "let value = unsafe { *pointer.add(0) };"
        },

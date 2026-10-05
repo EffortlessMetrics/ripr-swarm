@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:c2e7eb02",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "if final_label == \"beta\" {"
        },

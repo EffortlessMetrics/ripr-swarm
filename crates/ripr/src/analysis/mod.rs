@@ -501,6 +501,51 @@ fn push_stable_path_text(output: &mut String, text: &str) {
     }
 }
 
+/// The one renderer for a finding's file location across every surface
+/// (#5996): workspace-relative with the CLI `./` prefix when the location
+/// lives inside the analyzed root, its plain spelling otherwise — never the
+/// Windows verbatim `//?/` drive form, which external consumers cannot join
+/// against a workspace. A relative location passes through with stable
+/// separators, so a producer that already names the workspace (the CLI's
+/// `./src/main.rs`) keeps its exact rendering on every surface.
+pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
+    finding_location_text_with_platform(root, file, cfg!(windows))
+}
+
+/// The pure core of [`finding_location_text`]: the platform flag stands in
+/// for `cfg!(windows)` so the verbatim-prefix behavior is testable on every
+/// host, the same pure-over-platform pattern the human path renderer uses.
+pub(crate) fn finding_location_text_with_platform(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+) -> String {
+    let file = plain_drive_verbatim_path(file, windows);
+    let root = plain_drive_verbatim_path(root, windows);
+    let relative = file
+        .strip_prefix(&root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty());
+    match relative {
+        Some(relative) => format!("./{}", stable_path_text(relative)),
+        None => stable_path_text(&file),
+    }
+}
+
+/// Strip the Windows verbatim prefix from a drive-letter path
+/// (`\\?\F:\x` names the same file as `F:\x`). Other verbatim forms
+/// (`\\?\UNC\..`, `\\?\Volume{..}`) have no plain spelling, so they stay.
+fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
+    if !windows {
+        return path.to_path_buf();
+    }
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisMode {
     Instant,
@@ -959,6 +1004,67 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    /// #5996: one finding, one location string. The verbatim-root MCP form
+    /// and the absolute-root LSP form must both render as the CLI's
+    /// workspace-relative shape, and an already-relative CLI location must
+    /// keep its exact bytes.
+    #[test]
+    fn finding_location_text_renders_one_shape_for_every_root_spelling() {
+        let drive = "F:";
+        // MCP: a verbatim absolute root joined into every finding location.
+        let verbatim_root = PathBuf::from(format!(r"\\?\{drive}\repo"));
+        let verbatim_file = verbatim_root.join("src").join("main.rs");
+        assert_eq!(
+            finding_location_text_with_platform(&verbatim_root, &verbatim_file, true),
+            "./src/main.rs",
+            "the verbatim //?/ prefix must never reach a rendered location"
+        );
+        // LSP: a plain absolute root, same file bytes as the CLI form.
+        let absolute_root = PathBuf::from(format!(r"{drive}\repo"));
+        let absolute_file = absolute_root.join("src").join("main.rs");
+        assert_eq!(
+            finding_location_text_with_platform(&absolute_root, &absolute_file, true),
+            "./src/main.rs"
+        );
+        // CLI: the producer already joined the relative root; bytes stay.
+        assert_eq!(
+            finding_location_text_with_platform(Path::new("."), Path::new("./src/main.rs"), true),
+            "./src/main.rs"
+        );
+        // Outside the root renders plain absolute; other verbatim forms stay.
+        let outside = PathBuf::from(format!(r"{drive}\other\lib.rs"));
+        assert_eq!(
+            finding_location_text_with_platform(&absolute_root, &outside, true),
+            format!("{drive}/other/lib.rs")
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                &absolute_root,
+                Path::new(r"\\?\UNC\server\share\x.rs"),
+                true
+            ),
+            "//?/UNC/server/share/x.rs"
+        );
+        // Unix shapes are never verbatim-stripped: the prefix would be a
+        // filename character there.
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/src/main.rs"),
+                false
+            ),
+            "./src/main.rs"
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new(r"\\?\F:\repo\src\main.rs"),
+                false
+            ),
+            r"//?/F:/repo/src/main.rs"
         );
     }
 

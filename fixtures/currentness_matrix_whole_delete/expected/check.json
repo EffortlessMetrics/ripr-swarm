@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:b2a56519",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/currentness_matrix_whole_delete/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if amount > threshold { amount - 10 } else { amount }"
        },

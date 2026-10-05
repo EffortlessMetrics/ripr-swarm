@@ -18,7 +18,7 @@
         "id": "probe:crates_a_src_lib.rs:return_value:94e6eef7",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_dep_edge_cross_crate_positive/input/crates/a/src/lib.rs",
+        "file": "./crates/a/src/lib.rs",
         "line": 4,
         "expression": "points + SCORE_BONUS"
        },

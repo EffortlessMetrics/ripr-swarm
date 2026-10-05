@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:call_deletion:ed1574df",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/oracle_confirmation_mixed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "record_effect(rows)"
        },

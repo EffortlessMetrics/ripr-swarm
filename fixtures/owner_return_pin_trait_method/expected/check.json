@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:return_value:5e6d4294",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_trait_method/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 33,
         "expression": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))"
        },

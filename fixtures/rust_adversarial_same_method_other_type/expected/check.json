@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:return_value:c861ec7a",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 22,
         "expression": "(0, Some(self.remaining))"
        },
@@ -160,7 +160,7 @@
         "id": "probe:src_lib.rs:return_value:d114ce99",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 22,
         "expression": "(0, None)"
        },

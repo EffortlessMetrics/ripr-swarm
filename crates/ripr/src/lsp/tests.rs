@@ -2567,7 +2567,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
 
-    let context_packet = crate::output::json::render_context_packet(&finding, 5);
+    let context_packet = crate::output::json::render_context_packet(&finding, 5, Path::new("."));
     let context_packet: serde_json::Value =
         serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
     assert_eq!(context_packet["witness"], witness);
@@ -14049,11 +14049,22 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
             .iter()
             .map(|reason| reason.as_str().to_string())
             .collect();
-        let expected_context_packet = crate::domain::context_packet::ContextPacket::from_finding(
-            &expected_finding,
-            crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
-            expected_stop_reasons,
-        );
+        let mut expected_context_packet =
+            crate::domain::context_packet::ContextPacket::from_finding(
+                &expected_finding,
+                crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
+                expected_stop_reasons,
+                Path::new("/workspace"),
+            );
+        // #5994: the session analyzed the saved worktree (staged and
+        // unstaged tracked edits), so the packet's witness command replays
+        // that diff source with the session root — re-running it re-selects
+        // the finding the packet ships with, instead of exiting 2 with "no
+        // finding matched" against the committed default-branch diff.
+        if let Some(witness) = expected_context_packet.witness.as_mut() {
+            witness.explain_command =
+                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+        }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);
         let expected_packet: serde_json::Value = serde_json::from_str(&expected_json)

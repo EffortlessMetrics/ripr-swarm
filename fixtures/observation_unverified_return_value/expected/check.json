@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:return_value:63d1fd29",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/observation_unverified_return_value/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "base * 2"
        },

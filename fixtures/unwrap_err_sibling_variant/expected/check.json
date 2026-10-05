@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:c566a7f6",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/unwrap_err_sibling_variant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "return Err(CalcError::TooLarge);"
        },
@@ -111,7 +111,7 @@
         "id": "probe:src_lib.rs:return_value:e88897cd",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/unwrap_err_sibling_variant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "return Err(CalcError::TooLarge);"
        },

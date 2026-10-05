@@ -10,7 +10,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/guarded_result_match_owner_observation/input/src/lib.rs:46
+  File: ./src/lib.rs:46
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change, but the path from it to what the test checks is only partly traced
   Changed behavior: Ok(build_response(expected_id, trimmed.trim())?)

@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:call_deletion:934aa430",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/observation_verified_side_effect/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 17,
         "expression": "notifier.send(order_id)"
        },
@@ -99,7 +99,7 @@
         "id": "probe:src_lib.rs:side_effect:95da2a37",
         "family": "side_effect",
         "delta": "effect",
-        "file": "fixtures/observation_verified_side_effect/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 17,
         "expression": "notifier.send(order_id)"
        },

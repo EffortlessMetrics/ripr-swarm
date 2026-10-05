@@ -125,6 +125,13 @@ pub(crate) struct Snapshot {
     pub(crate) card_producers: Option<super::repair_card::SnapshotCardProducers>,
     pub(crate) budget: DiagnosticBudget,
     pub(crate) selection: DiagnosticBudgetResult,
+    /// The producer's RIPR-SPEC-0112 fact bound at commit time (#5995):
+    /// the analyzed committed default-branch diff ran while tracked source
+    /// or test files carried uncommitted edits, so those edits are outside
+    /// this snapshot's scope. `false` when the analysis saw a clean tracked
+    /// tree; the documents disclose the exclusion only when this is `true`,
+    /// so a dirty-tree `no_scope` is never readable as all-clear.
+    pub(crate) uncommitted_tracked_edits: bool,
 }
 
 impl Snapshot {
@@ -176,7 +183,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(GapItem::from_finding)
+            .map(|finding| GapItem::from_finding(finding, &output.root))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -220,6 +227,7 @@ impl Snapshot {
             card_producers: None,
             budget,
             selection,
+            uncommitted_tracked_edits: output.unanalyzed_working_tree,
         })
     }
 
@@ -540,6 +548,11 @@ impl WorkspaceSession {
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
+            "scope": self
+                .last_good
+                .as_ref()
+                .and_then(|snapshot| scope_disclosure(snapshot))
+                .unwrap_or(Value::Null),
             "freshness": {
                 "state": freshness_state(self),
                 "note": "the server does not watch the worktree; the snapshot is current as of its last completed ripr_refresh, a later failed attempt leaves it unverified for that attempt, so refresh again after edits",
@@ -600,6 +613,25 @@ impl Drop for InFlightAttempt {
     }
 }
 
+/// The typed scope disclosure for one committed snapshot (#5995), mirroring
+/// the LSP session's limits-note wording family: the refresh analyzes only
+/// the committed default-branch diff, so when tracked source or test files
+/// carried uncommitted edits at analysis time (RIPR-SPEC-0112's producer
+/// fact), those edits are outside every served document — a dirty-tree
+/// `no_scope` with zero findings must never read as all-clear. The note
+/// names the only in-repository route that analyzes the excluded edits;
+/// `ripr_refresh` takes no diff-source argument, so there is no in-protocol
+/// expansion to promise.
+fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    snapshot.uncommitted_tracked_edits.then(|| {
+        json!({
+            "analyzed": "committed default-branch diff",
+            "uncommitted_tracked_edits": "outside this analysis",
+            "note": "staged and unstaged tracked files are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+        })
+    })
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -623,6 +655,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
                 .unwrap_or(Value::Null),
         },
         "snapshot": snapshot,
+        "scope": session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| scope_disclosure(snapshot))
+            .unwrap_or(Value::Null),
         "last_known_good": session
             .last_good
             .as_ref()
@@ -1106,6 +1143,93 @@ mod tests {
         Ok(())
     }
 
+    /// #5995: the refresh analyzes only the committed default-branch diff.
+    /// On a dirty tracked file it reports `no_scope` with zero findings
+    /// while `ripr check --worktree` and an LSP session both report the
+    /// finding — so the refresh result and the workspace status must carry
+    /// the producer's unanalyzed-working-tree fact as a typed scope
+    /// disclosure naming the `--worktree` route, and must stay silent on a
+    /// clean tracked tree. Without it, `no_scope` reads as all-clear.
+    #[test]
+    fn dirty_tree_refresh_and_status_disclose_the_committed_diff_scope() -> Result<(), String> {
+        let mut dirty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        // The issue's shape verbatim: `no_scope` with every count zero.
+        dirty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        dirty.unanalyzed_working_tree = true;
+        let snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert!(
+            snapshot.uncommitted_tracked_edits,
+            "the producer fact must bind onto the snapshot"
+        );
+        let session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+
+        let refresh = refresh_document(&session);
+        if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!(
+                "refresh must disclose the analyzed scope: {refresh}"
+            ));
+        }
+        if refresh
+            .pointer("/scope/uncommitted_tracked_edits")
+            .and_then(Value::as_str)
+            != Some("outside this analysis")
+        {
+            return Err(format!(
+                "refresh must disclose the excluded edits: {refresh}"
+            ));
+        }
+        let note = refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("scope disclosure must name the repair route: {refresh}"))?;
+        if !note.contains("--worktree") {
+            return Err(format!(
+                "scope note must name `ripr check --worktree`: {note}"
+            ));
+        }
+
+        let status = session.session_document(&SessionProfile::built_in());
+        if status.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!("status must disclose the analyzed scope: {status}"));
+        }
+        if !status
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .is_some_and(|note| note.contains("--worktree"))
+        {
+            return Err(format!(
+                "status scope note must name the worktree route: {status}"
+            ));
+        }
+
+        // A clean tracked tree carries no exclusion to disclose.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        if !refresh_document(&clean)["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+        if !clean.session_document(&SessionProfile::built_in())["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_ignores_the_concrete_root() -> Result<(), String> {
         let first = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
@@ -1149,7 +1273,7 @@ mod tests {
             let mut original_items = snapshot
                 .findings
                 .iter()
-                .map(GapItem::from_finding)
+                .map(|finding| GapItem::from_finding(finding, Path::new(".")))
                 .collect::<Result<Vec<_>, _>>()?;
             for item in &mut original_items {
                 let bytes = serde_json::to_vec(&item.evidence_core).map_err(|e| e.to_string())?;

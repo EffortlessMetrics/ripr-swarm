@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:call_deletion:c13d820a",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/observation_verified_call_deletion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 15,
         "expression": "cache.insert(\"result_key\", result)"
        },
@@ -99,7 +99,7 @@
         "id": "probe:src_lib.rs:side_effect:4c5f48f0",
         "family": "side_effect",
         "delta": "effect",
-        "file": "fixtures/observation_verified_call_deletion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 15,
         "expression": "cache.insert(\"result_key\", result)"
        },

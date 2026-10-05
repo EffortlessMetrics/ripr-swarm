@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:7f019e84",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/snapshot_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if code <= 299 {"
        },

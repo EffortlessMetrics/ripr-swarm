@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:5c979117",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 45,
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
@@ -121,7 +121,7 @@
         "id": "probe:src_lib.rs:return_value:f573bd5d",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 45,
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
@@ -224,7 +224,7 @@
         "id": "probe:src_lib.rs:error_path:5c979117.2",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 48,
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
@@ -327,7 +327,7 @@
         "id": "probe:src_lib.rs:return_value:f573bd5d.2",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 48,
         "expression": "return Err(ParseSummaryError::MalformedSource)"
        },
@@ -430,7 +430,7 @@
         "id": "probe:src_lib.rs:error_path:edac60ec",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 56,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },
@@ -592,7 +592,7 @@
         "id": "probe:src_lib.rs:return_value:b87fa5c0",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 56,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },
@@ -742,7 +742,7 @@
         "id": "probe:src_lib.rs:error_path:51fc5156",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 67,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -857,7 +857,7 @@
         "id": "probe:src_lib.rs:return_value:588b0f56",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 67,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -972,7 +972,7 @@
         "id": "probe:src_lib.rs:error_path:ad27ed37",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 81,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },
@@ -1087,7 +1087,7 @@
         "id": "probe:src_lib.rs:return_value:1224f837",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 81,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },
@@ -1202,7 +1202,7 @@
         "id": "probe:src_lib.rs:error_path:e47d26a4",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 95,
         "expression": "try_length_summary(raw).map_err(Into::into)"
        },
@@ -1282,7 +1282,7 @@
         "id": "probe:src_lib.rs:return_value:b7c26672",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 95,
         "expression": "try_length_summary(raw).map_err(Into::into)"
        },
@@ -1362,7 +1362,7 @@
         "id": "probe:src_lib.rs:error_path:53c169fe",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 109,
         "expression": "try_glyph_summary(raw).map_err(|error| error.to_string().into())"
        },
@@ -1477,7 +1477,7 @@
         "id": "probe:src_lib.rs:return_value:262ac815",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 109,
         "expression": "try_glyph_summary(raw).map_err(|error| error.to_string().into())"
        },
@@ -1592,7 +1592,7 @@
         "id": "probe:src_lib.rs:error_path:c82815a4",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 123,
         "expression": "try_theme_summary(raw).map_err(Into::into)"
        },
@@ -1683,7 +1683,7 @@
         "id": "probe:src_lib.rs:return_value:4ccb1836",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 123,
         "expression": "try_theme_summary(raw).map_err(Into::into)"
        },

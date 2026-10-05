@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:5290fd4d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_equality_boundary/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "if end == start {"
        },

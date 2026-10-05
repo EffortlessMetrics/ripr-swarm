@@ -18,7 +18,7 @@
         "id": "probe:src_a.rs:predicate:668eac8e",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/plain_diff_multifile_boundary/input/src/a.rs",
+        "file": "./src/a.rs",
         "line": 6,
         "expression": "if x >= 0 {"
        },
@@ -66,7 +66,7 @@
         "id": "probe:src_a.rs:predicate:e4b32cd5",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/plain_diff_multifile_boundary/input/src/a.rs",
+        "file": "./src/a.rs",
         "line": 6,
         "expression": "if x > 0 {"
        },
@@ -114,7 +114,7 @@
         "id": "probe:src_b.rs:predicate:41d592e3",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/plain_diff_multifile_boundary/input/src/b.rs",
+        "file": "./src/b.rs",
         "line": 6,
         "expression": "if x >= 0 {"
        },
@@ -162,7 +162,7 @@
         "id": "probe:src_b.rs:predicate:9fc6214b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/plain_diff_multifile_boundary/input/src/b.rs",
+        "file": "./src/b.rs",
         "line": 6,
         "expression": "if x > 0 {"
        },

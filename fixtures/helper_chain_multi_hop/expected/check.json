@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:static_unknown:ea96a27d",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/helper_chain_multi_hop/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let head = input.chars().next().map_or('?', |c| c);"
        },

@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:ca3e18b4",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/tail_comparison_boundary/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "items >= 10"
        },
@@ -209,7 +209,7 @@
         "id": "probe:src_lib.rs:return_value:b8337f94",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/tail_comparison_boundary/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "items >= 10"
        },
@@ -390,7 +390,7 @@
         "id": "probe:src_lib.rs:predicate:17db21a1",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/tail_comparison_boundary/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 17,
         "expression": "items >= 5"
        },
@@ -513,7 +513,7 @@
         "id": "probe:src_lib.rs:return_value:04f99ee4",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/tail_comparison_boundary/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 17,
         "expression": "items >= 5"
        },

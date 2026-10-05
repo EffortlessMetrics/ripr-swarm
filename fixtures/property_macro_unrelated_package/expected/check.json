@@ -18,7 +18,7 @@
         "id": "probe:crates_a_src_lib.rs:predicate:bdf7ae04",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/property_macro_unrelated_package/input/crates/a/src/lib.rs",
+        "file": "./crates/a/src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },

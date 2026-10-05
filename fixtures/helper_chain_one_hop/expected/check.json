@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:ac178c7f",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/helper_chain_one_hop/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "c == ' '"
        },

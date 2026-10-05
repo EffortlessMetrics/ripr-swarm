@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:return_value:519eff0d",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/wildcard_oracle_guarded_original/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "value + 1"
        },

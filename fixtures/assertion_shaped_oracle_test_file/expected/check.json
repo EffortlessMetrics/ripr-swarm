@@ -18,7 +18,7 @@
         "id": "probe:src_fragment_checks.rs:predicate:41d9e03a",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/assertion_shaped_oracle_test_file/input/src/fragment_checks.rs",
+        "file": "./src/fragment_checks.rs",
         "line": 8,
         "expression": "fragment.crate_root.is_none()"
        },

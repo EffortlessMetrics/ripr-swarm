@@ -50,7 +50,6 @@ use crate::config::{
     is_detectable_python_source_name, is_python_excluded_dir_everywhere,
     python_project_marker_name, python_source_dir_marker_name,
 };
-use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
 use crate::output::agent_seam_packets::{
@@ -4581,13 +4580,12 @@ impl Backend {
             .map(|finding| {
                 serde_json::json!({
                     "finding_id": finding.id,
-                    "file": display_path(
-                        finding
-                            .probe
-                            .location
-                            .file
-                            .strip_prefix(&snapshot.root)
-                            .unwrap_or(&finding.probe.location.file),
+                    // The shared finding-location owner (#5996): the same
+                    // workspace-relative string the check/context/MCP
+                    // surfaces emit for this finding.
+                    "file": crate::analysis::finding_location_text(
+                        &snapshot.root,
+                        &finding.probe.location.file,
                     ),
                     "line": finding.probe.location.line,
                     "class": finding.class.as_str(),
@@ -4630,13 +4628,12 @@ impl Backend {
             .map(|finding| {
                 serde_json::json!({
                     "finding_id": finding.id,
-                    "file": display_path(
-                        finding
-                            .probe
-                            .location
-                            .file
-                            .strip_prefix(&snapshot.root)
-                            .unwrap_or(&finding.probe.location.file),
+                    // The shared finding-location owner (#5996): the same
+                    // workspace-relative string the check/context/MCP
+                    // surfaces emit for this finding.
+                    "file": crate::analysis::finding_location_text(
+                        &snapshot.root,
+                        &finding.probe.location.file,
                     ),
                     "line": finding.probe.location.line,
                     "class": finding.class.as_str(),
@@ -5915,13 +5912,22 @@ impl Backend {
             .analysis_config()
             .map(|config| config.repo_config().reports().max_related_tests())
             .unwrap_or(crate::config::DEFAULT_CONTEXT_RELATED_TESTS);
-        let stop_reasons = finding
-            .effective_stop_reasons()
-            .iter()
-            .map(|reason| reason.as_str().to_string())
-            .collect();
-        let packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons);
-        let rendered = crate::output::json::render_context_packet_dto(&packet);
+        // #5994: this session's evidence came from the saved-worktree
+        // analysis (staged and unstaged tracked edits), so the packet's
+        // witness command must replay that diff source — the same override
+        // the CLI context route applies (#4909). Without it the packet ships
+        // a command that cannot see its own finding.
+        let explain_command = self.analysis_config().map(|config| {
+            let input = config.check_input(&snapshot.root);
+            crate::app::finding_navigation_with_worktree(&input, None, false, true)
+                .explain_command(&finding.id)
+        });
+        let rendered = crate::output::json::render_context_packet_with_explain_command(
+            finding,
+            max_related_tests,
+            explain_command,
+            &snapshot.root,
+        );
         serde_json::from_str(&rendered).ok()
     }
 
@@ -10906,6 +10912,47 @@ mod list_actionable_items_tests {
     use crate::lsp::state::RefreshMetadata;
     use tower_lsp_server::LspService;
     use tower_lsp_server::ls_types::{Diagnostic, Uri};
+
+    /// #5994: a worktree-diff session's `ripr.collectContext` must ship an
+    /// explain command that re-selects its own finding. The LSP analyzes
+    /// staged and unstaged tracked edits, so the witness command carries
+    /// `--worktree` with the session root — the same diff-source-aware
+    /// override the CLI context route applies (#4909). The previously
+    /// hardcoded domain command (`ripr explain --root . <id>`) exited 2 with
+    /// "no finding matched" because the committed default-branch diff never
+    /// saw the finding.
+    #[test]
+    fn collect_context_packet_witness_command_replays_the_worktree_session() -> Result<(), String> {
+        let harness = handler_harness()?;
+        let mut snapshot = snapshot_with_selection(None);
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.probe.location.file = PathBuf::from("/workspace/src/main.rs");
+        snapshot.findings = vec![finding];
+        install_snapshot(&harness, snapshot)?;
+
+        let args_value = serde_json::json!({ "finding_id": "probe:pricing:88:predicate" });
+        let packet = harness
+            .runtime
+            .block_on(
+                harness
+                    .service
+                    .inner()
+                    .collect_context_packet(&[args_value]),
+            )
+            .ok_or_else(|| "expected context packet for the session finding".to_string())?;
+
+        let command = packet["witness"]["explain_command"]
+            .as_str()
+            .ok_or_else(|| format!("packet must embed a witness command: {packet}"))?;
+        assert_eq!(
+            command, "ripr explain --root /workspace --worktree probe:pricing:88:predicate",
+            "the packet's own command must replay the session's worktree diff source"
+        );
+        // The packet location renders through the shared finding-location
+        // owner (#5996): the same string the check/context/MCP surfaces emit.
+        assert_eq!(packet["probe"]["file"], "./src/main.rs");
+        Ok(())
+    }
 
     struct HandlerHarness {
         service: LspService<Backend>,

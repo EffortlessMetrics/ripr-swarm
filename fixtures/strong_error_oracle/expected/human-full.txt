@@ -7,7 +7,7 @@ Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-INFO fixtures/strong_error_oracle/input/src/lib.rs:7
+INFO ./src/lib.rs:7
   id: probe:src_lib.rs:error_path:99b06ce7
 
 Changed
@@ -36,7 +36,7 @@ Drill in:
   ripr explain --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
   ripr context --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 
-INFO fixtures/strong_error_oracle/input/src/lib.rs:7
+INFO ./src/lib.rs:7
   id: probe:src_lib.rs:return_value:e21dcccc
 
 Changed
