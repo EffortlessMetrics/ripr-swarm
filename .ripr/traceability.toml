@@ -12483,6 +12483,7 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
 ]
 fixtures = [
   "fixtures/work_portfolio",

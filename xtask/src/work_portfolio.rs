@@ -1034,7 +1034,7 @@ fn build_observations(
             state: format!("{:?}", source.state).to_ascii_lowercase(),
             freshness: value,
             observed_at: source.observed_at.clone(),
-            partial: source.state != WorkCapturedSourceStateV1::Observed,
+            partial: value != WorkSourceFreshnessV1::Current,
             note: source.note.clone(),
         });
     }
@@ -1078,6 +1078,12 @@ fn classify_candidate(
             "no transition: the issue is complete and stays visible in the portfolio".to_string(),
         );
     }
+    if has_claim_collision {
+        return (
+            WorkCandidateKindV1::Blocked,
+            "root arbitrates the colliding durable claims on the issue and records the decision before any build resumes".to_string(),
+        );
+    }
     if let Some(pr) = open_prs.first() {
         if pr.review_state == "changes_requested" || pr.unresolved_review_findings > 0 {
             return (
@@ -1115,12 +1121,6 @@ fn classify_candidate(
                 "verify the merged change from PR #{} against current main head {} before closeout",
                 merged_prs[0].number, current_main
             ),
-        );
-    }
-    if has_claim_collision {
-        return (
-            WorkCandidateKindV1::Blocked,
-            "root arbitrates the colliding durable claims on the issue and records the decision before any build resumes".to_string(),
         );
     }
     if !issue.blocked_by.is_empty() {
@@ -1890,28 +1890,38 @@ pub(crate) fn compile_work_portfolio(
         membership.dedup();
     }
 
-    // Lanes.
-    let mut lanes: Vec<WorkLaneV1> = Vec::new();
+    // Lanes: one row per distinct lane, with membership gathered across
+    // every portfolio issue in the lane (an owner claim may belong to any
+    // member, not just the first issue encountered).
+    let mut lane_members: BTreeMap<String, Vec<u64>> = BTreeMap::new();
     for issue in issues {
         if !portfolio_issue_numbers.contains(&issue.number) {
             continue;
         }
-        let lane = lane_name(issues, &campaign_map, issue.number);
-        if lanes.iter().any(|entry| entry.lane == lane) {
-            continue;
-        }
+        lane_members
+            .entry(lane_name(issues, &campaign_map, issue.number))
+            .or_default()
+            .push(issue.number);
+    }
+    let mut lanes: Vec<WorkLaneV1> = Vec::new();
+    for (lane, members) in lane_members {
         let owner = active_claims
             .iter()
             .find(|claim| {
-                claim.issue == Some(issue.number)
-                    || issue_branch_matches(issues, claim, issue.number)
+                match claim.issue {
+                    Some(number) => members.contains(&number),
+                    None => false,
+                } || members
+                    .iter()
+                    .any(|member| issue_branch_matches(issues, claim, *member))
             })
             .map(|claim| claim.id.clone());
         let state = if !context.fresh(WorkCapturedSourceKindV1::LocalState)
             || !context.fresh(WorkCapturedSourceKindV1::GithubClaims)
         {
             WorkLaneStateV1::Unknown
-        } else if claim_collision_lanes.contains(&lane) || branch_collision_lanes.contains(&lane) {
+        } else if claim_collision_lanes.contains(&lane) || branch_collision_lanes.contains(&lane)
+        {
             WorkLaneStateV1::Conflicting
         } else if owner.is_some() {
             WorkLaneStateV1::Occupied
@@ -1927,7 +1937,7 @@ pub(crate) fn compile_work_portfolio(
                 ) && edge
                     .subjects
                     .iter()
-                    .any(|subject| subject.contains(&format!("issue:{}", issue.number)))
+                    .any(|subject| members.iter().any(|member| subject.contains(&format!("issue:{member}"))))
             })
             .map(|edge| edge.id.clone());
         lanes.push(WorkLaneV1 {
@@ -2138,12 +2148,15 @@ pub(crate) fn compile_work_portfolio(
                     ));
                 }
             }
+            let mut campaign_issues = campaign.issues.clone();
+            campaign_issues.sort_unstable();
+            campaign_issues.dedup();
             campaign_rows.push(WorkCampaignV1 {
                 id: campaign.id.clone(),
                 title: campaign.title.clone(),
                 state: campaign.state.clone(),
                 surfaces,
-                issues: campaign.issues.clone(),
+                issues: campaign_issues,
                 candidates: count,
                 note: campaign.note.clone(),
             });
@@ -2293,14 +2306,22 @@ fn lane_name(
     }
 }
 
+/// Match a claim's branch to an issue by exact path segments, never
+/// substrings: `feat/work-9101` matches issue 9101, but `feat/19101-cleanup`
+/// must not (the number appears only inside an unrelated segment).
 fn issue_branch_matches(
     issues: &[WorkCapturedIssueV1],
     claim: &WorkCapturedClaimV1,
     issue: u64,
 ) -> bool {
-    issues
-        .iter()
-        .any(|entry| entry.number == issue && claim.branch.contains(&entry.number.to_string()))
+    let needle = issue.to_string();
+    issues.iter().any(|entry| {
+        entry.number == issue
+            && claim
+                .branch
+                .split(['-', '/', '_'])
+                .any(|segment| segment == needle)
+    })
 }
 
 /// Confidence reasons for one candidate, named and honest. `partial:` and
@@ -2413,6 +2434,7 @@ pub(crate) fn build_candidates_view(
     campaign: Option<&str>,
     surface: Option<&str>,
     limit: usize,
+    captured: Option<&str>,
 ) -> Result<WorkCandidatesViewV1, String> {
     if let Some(campaign) = campaign {
         if !snapshot.campaigns.iter().any(|row| row.id == campaign) {
@@ -2452,6 +2474,9 @@ pub(crate) fn build_candidates_view(
     let mut retrieval_commands = Vec::new();
     if omitted > 0 {
         let mut command = "cargo xtask work candidates".to_string();
+        if let Some(captured) = captured {
+            command.push_str(&format!(" --captured {captured}"));
+        }
         if let Some(campaign) = campaign {
             command.push_str(&format!(" --campaign {campaign}"));
         }
@@ -2873,7 +2898,14 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
         }
     }
     let snapshot = load_and_compile(&dir)?;
-    let view = build_candidates_view(&snapshot, campaign.as_deref(), surface.as_deref(), limit)?;
+    let captured_explicit = args.iter().any(|arg| arg == "--captured");
+    let view = build_candidates_view(
+        &snapshot,
+        campaign.as_deref(),
+        surface.as_deref(),
+        limit,
+        captured_explicit.then_some(dir.as_str()),
+    )?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-candidates.json", &json_body)?;
     crate::write_report("work-candidates.md", &work_candidates_markdown(&view))?;
@@ -2988,8 +3020,32 @@ pub(crate) fn load_work_portfolio_provenance(
                 corpus.name
             ));
         }
+        reject_unsafe_provenance_path("corpus name", &corpus.name)?;
+        for file in &corpus.files {
+            reject_unsafe_provenance_path("file path", &file.path)?;
+        }
     }
     Ok(provenance)
+}
+
+/// Fail closed on provenance names/paths that could escape the corpus root:
+/// absolute paths, `..` components, empty segments or empty strings.
+fn reject_unsafe_provenance_path(kind: &str, value: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if value.trim().is_empty() || path.is_absolute() {
+        return Err(format!("work portfolio provenance {kind} `{value}` is not a relative path"));
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            _ => {
+                return Err(format!(
+                    "work portfolio provenance {kind} `{value}` contains a forbidden component"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn digest_matches(recorded: &str, bytes: &[u8]) -> bool {
@@ -3617,6 +3673,7 @@ mod tests {
                 campaign,
                 surface,
                 full.len(),
+                None,
             )?;
             if view.counts.total != expected_total as u64 {
                 return Err(format!(
@@ -3650,7 +3707,7 @@ mod tests {
                 }
             }
         }
-        let Err(_error) = build_candidates_view(&snapshot, Some("campaign-nope"), None, 10) else {
+        let Err(_error) = build_candidates_view(&snapshot, Some("campaign-nope"), None, 10, None) else {
             return Err("unknown campaign must fail closed".to_string());
         };
         Ok(())
@@ -3820,7 +3877,7 @@ mod tests {
     #[test]
     fn work_portfolio_bounded_wave_retrievable_without_reading_every_body() -> Result<(), String> {
         let snapshot = committed()?;
-        let view = build_candidates_view(&snapshot, None, None, DEFAULT_CANDIDATE_LIMIT)?;
+        let view = build_candidates_view(&snapshot, None, None, DEFAULT_CANDIDATE_LIMIT, None)?;
         if view.counts.total != 12 || view.counts.selected != 10 || view.counts.omitted != 2 {
             return Err(format!(
                 "bounded view counts {:?}, expected total=12 selected=10 omitted=2",
@@ -3840,7 +3897,7 @@ mod tests {
                 view.retrieval_commands
             ));
         }
-        let full = build_candidates_view(&snapshot, None, None, 25)?;
+        let full = build_candidates_view(&snapshot, None, None, 25, None)?;
         if full.counts.selected != 12 || full.counts.omitted != 0 {
             return Err("the larger limit must retrieve the complete set".to_string());
         }
@@ -3882,7 +3939,7 @@ mod tests {
         // The complete candidate stays visible and the editor campaign's
         // eligible work is not pushed out of the bounded default wave by the
         // blocked/complete rows.
-        let view = build_candidates_view(&snapshot, None, None, DEFAULT_CANDIDATE_LIMIT)?;
+        let view = build_candidates_view(&snapshot, None, None, DEFAULT_CANDIDATE_LIMIT, None)?;
         let ids: Vec<String> = view
             .candidates
             .iter()
@@ -4015,6 +4072,7 @@ mod tests {
             None,
             None,
             3,
+            None,
         )?);
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
@@ -4046,6 +4104,45 @@ mod tests {
         let Err(_error) = run_work_command_for_test(&["candidates", "--limit", "nope"]) else {
             return Err("a non-numeric limit must fail closed".to_string());
         };
+        Ok(())
+    }
+
+    /// Provenance corpus names and file paths must stay relative to the
+    /// corpus root: absolute paths and `..` components fail closed before
+    /// the validator ever joins them onto the workspace.
+    #[test]
+    fn work_portfolio_provenance_rejects_path_traversal() -> Result<(), String> {
+        let sha = "0".repeat(64);
+        let template = format!(
+            r#"{{
+            "schema_version": "work_portfolio_provenance.v1",
+            "repository": "EffortlessMetrics/ripr-swarm",
+            "captured_at": "2026-10-05T12:00:00Z",
+            "capture_method": "test",
+            "corpora": [
+                {{
+                    "name": "##NAME##",
+                    "files": [
+                        {{ "path": "##PATH##", "sha256": "{sha}" }}
+                    ]
+                }}
+            ]
+        }}"#
+        );
+        for (name, path) in [
+            ("../escape", "campaigns.json"),
+            ("corpus", "/abs/campaigns.json"),
+            ("corpus", "sub/../../campaigns.json"),
+        ] {
+            let body = template
+                .replace("##NAME##", name)
+                .replace("##PATH##", path);
+            if load_work_portfolio_provenance(&body).is_ok() {
+                return Err(format!(
+                    "provenance with name `{name}` and path `{path}` must fail closed"
+                ));
+            }
+        }
         Ok(())
     }
 

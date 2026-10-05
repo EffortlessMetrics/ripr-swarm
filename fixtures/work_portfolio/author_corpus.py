@@ -11,12 +11,12 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
-REPO = HERE.parent.parent
 
 CAPTURED_AT = "2026-10-05T12:00:00Z"
 OBSERVED_AT = "2026-10-05T12:00:00Z"
 STALE_AT = "2026-09-01T00:00:00Z"
-MAIN_SHA = "7cb64d60c9a2f1e34b5d8a67c0e1f2a3b4c5d6e7f"
+# The exact base main SHA this corpus was captured against (40 hex chars).
+MAIN_SHA = "7cb64d60c9dd0dda59586e6b72dcdf150296a26f"
 REPOSITORY = "EffortlessMetrics/ripr-swarm"
 WIN_ROOT = "C:\\code\\ripr-swarm"
 UNIX_ROOT = "/c/code/ripr-swarm"

@@ -607,7 +607,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "publish-dry-run",
         "issue-intake --issue <number>",
         "work portfolio [--captured <dir>] [--json]",
-        "work candidates [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+        "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
         "work explain --candidate <id> [--captured <dir>] [--json]",
     ]
 }
@@ -2217,7 +2217,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Compiles immutable captured inputs into the read-only deterministic multi-campaign work-portfolio snapshot (#1704, RIPR-SPEC-0233); selects no work, synthesizes no default campaign, and mutates no GitHub, branch, worktree, claim, spec, campaign or source state.",
         ),
         command_entry(
-            "work candidates [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+            "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
             "report_only",
             "target/ripr/reports/work-candidates.{json,md}",
             false,

@@ -55,8 +55,8 @@ selection.
 ## Behavior
 
 `cargo xtask work portfolio [--captured <dir>] [--json]`,
-`cargo xtask work candidates [--campaign <id>] [--surface <id>] [--limit <n>]
-[--json]` and `cargo xtask work explain --candidate <id> [--json]` compile a
+`cargo xtask work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>]
+[--json]` and `cargo xtask work explain --candidate <id> [--captured <dir>] [--json]` compile a
 versioned `WorkPortfolioSnapshotV1` DTO from the captured-input directory
 (default `fixtures/work_portfolio/corpus`) and render it. All three commands
 derive from one compilation: `portfolio` renders the whole snapshot,
