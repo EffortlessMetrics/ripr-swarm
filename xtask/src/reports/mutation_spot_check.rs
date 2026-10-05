@@ -399,7 +399,8 @@ fn spot_check_repo(
         } else {
             Some(options.mutants_args.get(name).cloned().unwrap_or_default())
         },
-        mutant_set_sha256: mutant_set_sha256(&mutant_records),
+        mutant_set_sha256: mutant_set_sha256(&mutant_records)
+            .map_err(|err| format!("`{name}`: {err}"))?,
         cargo_mutants_version: outcomes
             .get("cargo_mutants_version")
             .and_then(Value::as_str)
@@ -688,20 +689,30 @@ struct Record {
 /// the rates are computed over, and it reflects selection arguments
 /// (`--re`, `--exclude`, `--workspace`) even when a supplied run did not
 /// record them, so the scoreboard keys comparability on it.
-fn mutant_set_sha256(mutants: &Value) -> String {
-    let mut names = mutants
+///
+/// A nameless entry would leave the digest short of the real set, so it is
+/// refused rather than skipped.
+fn mutant_set_sha256(mutants: &Value) -> Result<String, String> {
+    let entries = mutants
         .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|mutant| mutant.get("name")?.as_str())
-        .collect::<Vec<_>>();
+        .ok_or("mutants.json is not an array of mutants")?;
+    let mut names = entries
+        .iter()
+        .enumerate()
+        .map(|(index, mutant)| {
+            mutant
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("mutants.json entry {} has no string `name`", index + 1))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     names.sort_unstable();
     let mut digest = Sha256::new();
     for name in names {
         digest.update(name.as_bytes());
         digest.update(b"\n");
     }
-    format!("{:x}", digest.finalize())
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn mutant_genres(mutants: &Value) -> BTreeMap<String, String> {
@@ -1515,13 +1526,21 @@ mod tests {
     }
 
     #[test]
-    fn mutant_set_digest_ignores_order_and_tracks_membership() {
+    fn mutant_set_digest_ignores_order_and_tracks_membership() -> Result<(), String> {
         let a = json!({"name": "src/a.rs:1:1: replace > with <", "genre": "BinaryOperator"});
         let b = json!({"name": "src/b.rs:2:2: replace f -> bool with true", "genre": "FnValue"});
-        let forward = mutant_set_sha256(&json!([a.clone(), b.clone()]));
-        assert_eq!(forward, mutant_set_sha256(&json!([b.clone(), a.clone()])));
-        assert_ne!(forward, mutant_set_sha256(&json!([a])));
+        let forward = mutant_set_sha256(&json!([a.clone(), b.clone()]))?;
+        assert_eq!(forward, mutant_set_sha256(&json!([b.clone(), a.clone()]))?);
+        assert_ne!(forward, mutant_set_sha256(&json!([a.clone()]))?);
         assert_eq!(forward.len(), 64);
+        // A nameless mutant or a non-array file cannot yield a digest of the
+        // real set.
+        assert!(
+            mutant_set_sha256(&json!([a, {"genre": "FnValue"}]))
+                .is_err_and(|err| err.contains("entry 2 has no string `name`"))
+        );
+        assert!(mutant_set_sha256(&json!({})).is_err_and(|err| err.contains("not an array")));
+        Ok(())
     }
 
     #[test]
