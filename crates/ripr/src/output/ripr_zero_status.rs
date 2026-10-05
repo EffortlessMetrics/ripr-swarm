@@ -619,6 +619,47 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             ..DeltaParse::default()
         };
     }
+    // Present-but-malformed run-state disclosures fail closed (#6770
+    // review): a corrupt qualifier must never read as a complete
+    // denominator. Absence (or explicit null) is fine — complete runs
+    // carry no envelope — but a present envelope must hold the shape the
+    // shared predicates read. A future producer adding shapes extends both
+    // the predicates and this gate together.
+    let mut malformed_disclosures = Vec::new();
+    if let Some(outcome) = value.get("analysis_outcome")
+        && !outcome.is_null()
+        && !outcome.is_object()
+    {
+        malformed_disclosures.push("analysis_outcome");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && !scope.is_null()
+        && !scope.is_object()
+    {
+        malformed_disclosures.push("analysis_scope");
+    }
+    if let Some(limitations) = value.get("run_limitations")
+        && !limitations.is_null()
+        && !limitations.is_array()
+    {
+        malformed_disclosures.push("run_limitations");
+    }
+    if let Some(status) = value.get("current_gate_status")
+        && !status.is_null()
+        && !status.is_string()
+    {
+        malformed_disclosures.push("current_gate_status");
+    }
+    if !malformed_disclosures.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has malformed run-state disclosures ({}); a corrupt disclosure qualifier is not evidence of zero debt",
+                malformed_disclosures.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
     // Every count above validated as a real usize, so these reads are exact.
     let still_present = usize_path(&value, &["delta", "still_present"]);
     let resolved = usize_path(&value, &["delta", "resolved"]);
@@ -691,6 +732,16 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
         warnings.push(format!(
             "required baseline debt delta input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
             incomplete_analysis_outcome_kind(&value)
+        ));
+    }
+    // A failed current evaluation has no decisions (#6257 review): the delta
+    // propagates the gate status verbatim, and a config_error current is
+    // never a denominator, mirroring the gate-reader Z5 arm. Without this,
+    // a delta-only invocation would read the empty counts as all-clear.
+    if string_field(value.get("current_gate_status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} reports current gate status config_error; a failed evaluation can never yield achieved"
         ));
     }
     // Counts and items must reconcile (#5251 Z3): the check below
@@ -2332,6 +2383,61 @@ mod tests {
         assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
         assert!(rendered.contains("malformed counts"), "{rendered}");
         assert!(rendered.contains("still_present"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_run_state_disclosure() -> Result<(), String>
+    {
+        // Present-but-malformed run-state disclosures fail closed (#6770
+        // review): a corrupt qualifier is never a complete denominator, even
+        // when the counts themselves validate. Explicit null stays absent.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": "garbage",
+          "analysis_scope": null,
+          "run_limitations": {},
+          "current_gate_status": 42
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_outcome"), "{rendered}");
+        assert!(rendered.contains("run_limitations"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("analysis_scope"), "{rendered}");
         assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
         Ok(())
     }
