@@ -125,18 +125,39 @@ fn keep_last_good_receipt(repo: &Path) -> String {
     }
     // The shared guarded writer: regular-file destinations only, replaced
     // atomically, so a planted link cannot redirect the copy.
+    let expected = ripr_plus_receipt_markdown(&value);
+    let canonical_md = match fs::read(repo.join(RIPR_PLUS_MD)) {
+        Ok(markdown) => Some(markdown),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            return format!(
+                " The previous receipt (status `{status}`) could not be kept (failed to read {RIPR_PLUS_MD}: {err}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+            );
+        }
+    };
+    let matching = canonical_md
+        .as_deref()
+        .is_some_and(|markdown| markdown == expected.as_bytes());
+    // Drop leftover last-good Markdown before replacing JSON so a newer JSON
+    // cannot sit beside another run's Markdown if a later copy fails (#6698).
+    if let Err(err) = clear_last_good_markdown_file(repo) {
+        return format!(
+            " The previous receipt (status `{status}`) could not be kept ({err}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+        );
+    }
     let json_result = write_parented_file(
         &repo.join(RIPR_PLUS_LAST_GOOD_JSON),
         RIPR_PLUS_LAST_GOOD_JSON,
         previous,
     );
-    // Markdown is kept only beside JSON this call actually saved. Copying a
-    // matching canonical `.md` after a failed JSON write can pair it with a
-    // leftover last-good JSON from another run.
-    let markdown_result = if json_result.is_ok() {
-        keep_matching_last_good_markdown(repo, &value)
-    } else {
-        Ok(false)
+    let markdown_result = match (json_result.is_ok(), matching, canonical_md) {
+        (true, true, Some(markdown)) => write_parented_file(
+            &repo.join(RIPR_PLUS_LAST_GOOD_MD),
+            RIPR_PLUS_LAST_GOOD_MD,
+            markdown,
+        )
+        .map(|()| true),
+        _ => Ok(false),
     };
     match (json_result, markdown_result) {
         (Ok(()), Ok(markdown_kept)) => {
@@ -179,33 +200,17 @@ fn keep_last_good_receipt(repo: &Path) -> String {
     }
 }
 
-/// Keep last-good Markdown only when it is the projection of this JSON.
-/// Presence is not enough: a later run can write JSON and then fail to write
-/// Markdown, leaving an earlier run's `.md` beside a newer `.json` (#6698).
-/// `Ok(true)` when that matching Markdown was copied.
-fn keep_matching_last_good_markdown(repo: &Path, receipt: &Value) -> Result<bool, String> {
-    let expected = ripr_plus_receipt_markdown(receipt);
-    match fs::read(repo.join(RIPR_PLUS_MD)) {
-        Ok(markdown) if markdown == expected.as_bytes() => write_parented_file(
-            &repo.join(RIPR_PLUS_LAST_GOOD_MD),
-            RIPR_PLUS_LAST_GOOD_MD,
-            markdown,
-        )
-        .map(|()| true),
-        Ok(_) => drop_stale_last_good_markdown(repo),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            drop_stale_last_good_markdown(repo)
-        }
-        Err(err) => Err(format!("failed to read {RIPR_PLUS_MD}: {err}")),
-    }
-}
-
-fn drop_stale_last_good_markdown(repo: &Path) -> Result<bool, String> {
+/// Removes a leftover last-good Markdown *file* so a newer JSON cannot sit
+/// beside another run's Markdown. A missing path or a non-file at the path
+/// (the partial-copy tests plant a directory) is not a leftover file.
+fn clear_last_good_markdown_file(repo: &Path) -> Result<(), String> {
     match fs::remove_file(repo.join(RIPR_PLUS_LAST_GOOD_MD)) {
-        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(format!(
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::IsADirectory => Ok(()),
+        Err(err) => Err(format!(
             "failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}"
         )),
-        _ => Ok(false),
     }
 }
 
@@ -1442,17 +1447,16 @@ mod tests {
         fs::create_dir_all(repo.join(RIPR_PLUS_LAST_GOOD_JSON))
             .map_err(|err| format!("block saved json: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
-        let leftover = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let leftover_exists = repo.join(RIPR_PLUS_LAST_GOOD_MD).exists();
         let _ = fs::remove_dir_all(&repo);
         assert!(kept.contains("could not be kept"), "{kept}");
         assert!(
             !kept.contains("ripr-plus.last-good.md"),
             "Markdown must not be named as kept when JSON was not saved: {kept}"
         );
-        assert_eq!(
-            leftover.map_err(|err| err.to_string())?,
-            "leftover run-a markdown",
-            "leftover last-good Markdown must not be replaced when JSON was not saved"
+        assert!(
+            !leftover_exists,
+            "leftover last-good Markdown must be cleared before a JSON copy is attempted"
         );
         Ok(())
     }
