@@ -1191,6 +1191,7 @@ tests = [
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_llm_work_loop_review_summary_fixture_pins_missing_artifact",
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_llm_work_loop_review_summary_fixture_pins_stale_artifact",
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_llm_work_loop_review_summary_fixtures_pin_path_arguments",
+  "crates/ripr/src/app/agent_review_summary/root_tests.rs::review_summary_commands_retain_literal_unix_root_and_redirect",
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_review_summary_reports_missing_receipt_with_next_command",
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_review_summary_fails_closed_on_incomplete_analysis_outcome",
   "crates/ripr/src/app/agent_review_summary.rs::tests::agent_review_summary_rejects_malformed_analysis_outcome",
@@ -1224,7 +1225,8 @@ fixtures = [
   "fixtures/boundary_gap/expected/llm-work-loop/stale-artifact/review-summary.json",
   "fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt",
   "fixtures/boundary_gap/expected/llm-work-loop/path-with-spaces/review-summary.json",
-  "fixtures/boundary_gap/expected/llm-work-loop/windows-separators/review-summary.json"
+  "fixtures/boundary_gap/expected/llm-work-loop/windows-separators/review-summary.json",
+  "fixtures/boundary_gap/expected/llm-work-loop/unix-literal-backslash/review-summary.json"
 ]
 code = [
   "crates/ripr/src/agent/loop_commands.rs",
@@ -1265,7 +1267,8 @@ outputs = [
   "fixtures/boundary_gap/expected/llm-work-loop/stale-artifact/review-summary.json",
   "fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt",
   "fixtures/boundary_gap/expected/llm-work-loop/path-with-spaces/review-summary.json",
-  "fixtures/boundary_gap/expected/llm-work-loop/windows-separators/review-summary.json"
+  "fixtures/boundary_gap/expected/llm-work-loop/windows-separators/review-summary.json",
+  "fixtures/boundary_gap/expected/llm-work-loop/unix-literal-backslash/review-summary.json"
 ]
 metrics = [
   "agent_loop_status_available",
