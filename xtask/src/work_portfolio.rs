@@ -1050,7 +1050,10 @@ fn next_transition_for_open_pr(pr: &WorkCapturedPullRequestV1) -> String {
 /// never produces a duplicate build candidate. `merge_ready` additionally
 /// requires fresh PR evidence and no unresolved claim collision, so stale
 /// approvals and unarbitrated claims can never present as mergeable.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "classifier needs every captured evidence slice to decide the candidate kind"
+)]
 fn classify_candidate(
     issue: &WorkCapturedIssueV1,
     open_prs: &[&WorkCapturedPullRequestV1],
@@ -1833,14 +1836,12 @@ pub(crate) fn compile_work_portfolio(
                     .to_string(),
         });
         for claim in &colliding {
-            if let Some(issue) = claim.issue {
-                if portfolio_issue_numbers.contains(&issue) {
-                    candidate_edge_membership
-                        .entry(format!("candidate:issue:{issue}"))
-                        .or_default()
-                        .push(edge_id.clone());
-                    claim_collision_lanes.insert(lane_name(issues, &campaign_map, issue));
-                }
+            if let Some(issue) = claim.issue && portfolio_issue_numbers.contains(&issue) {
+                candidate_edge_membership
+                    .entry(format!("candidate:issue:{issue}"))
+                    .or_default()
+                    .push(edge_id.clone());
+                claim_collision_lanes.insert(lane_name(issues, &campaign_map, issue));
             }
         }
     }
@@ -2364,9 +2365,7 @@ fn captured_inputs_list(captured: &WorkCapturedDirV1) -> Vec<String> {
             state,
             Some(WorkCapturedSourceStateV1::Observed | WorkCapturedSourceStateV1::Stale)
         ) {
-            if let Some(file_name) = kind.file_name() {
-                present.push(file_name.to_string());
-            }
+            present.extend(kind.file_name().map(str::to_string));
         }
     }
     present.sort();
@@ -2472,13 +2471,13 @@ fn confidence_reasons_for(
         reasons.push("partial: the cargo-allow graph is not observed; requirement and duplicate-family evidence is weakened".to_string());
     }
     for edge_id in edge_ids {
-        if let Some(edge) = edges.iter().find(|edge| edge.id == edge_id) {
-            if matches!(
+        if let Some(edge) = edges.iter().find(|edge| edge.id == edge_id)
+            && matches!(
                 edge.kind,
                 WorkConflictEdgeKindV1::ClaimCollision | WorkConflictEdgeKindV1::BranchCollision
-            ) {
-                reasons.push(format!("partial: unresolved collision `{}`", edge.id));
-            }
+            )
+        {
+            reasons.push(format!("partial: unresolved collision `{}`", edge.id));
         }
     }
     reasons.sort();
@@ -2546,21 +2545,21 @@ pub(crate) fn build_candidates_view(
     limit: usize,
     captured: Option<&str>,
 ) -> Result<WorkCandidatesViewV1, String> {
-    if let Some(campaign) = campaign {
-        if !snapshot.campaigns.iter().any(|row| row.id == campaign) {
-            return Err(format!(
-                "unknown campaign `{campaign}`; known campaigns: {:?}",
-                known_campaign_ids(snapshot)
-            ));
-        }
+    if let Some(campaign) = campaign
+        && !snapshot.campaigns.iter().any(|row| row.id == campaign)
+    {
+        return Err(format!(
+            "unknown campaign `{campaign}`; known campaigns: {:?}",
+            known_campaign_ids(snapshot)
+        ));
     }
-    if let Some(surface) = surface {
-        if !known_surface_ids(snapshot).iter().any(|id| id == surface) {
-            return Err(format!(
-                "unknown surface `{surface}`; known surfaces: {:?}",
-                known_surface_ids(snapshot)
-            ));
-        }
+    if let Some(surface) = surface
+        && !known_surface_ids(snapshot).iter().any(|id| id == surface)
+    {
+        return Err(format!(
+            "unknown surface `{surface}`; known surfaces: {:?}",
+            known_surface_ids(snapshot)
+        ));
     }
     let filtered: Vec<WorkCandidateV1> = snapshot
         .candidates
@@ -3469,10 +3468,10 @@ mod tests {
         candidate_by_issue(snapshot, issue)
     }
 
-    fn factor<'a>(
-        candidate: &'a WorkCandidateV1,
+    fn factor(
+        candidate: &WorkCandidateV1,
         kind: WorkRankingFactorKindV1,
-    ) -> Result<&'a WorkRankingFactorV1, String> {
+    ) -> Result<&WorkRankingFactorV1, String> {
         candidate
             .ranking_factors
             .iter()
@@ -3833,14 +3832,14 @@ mod tests {
         let snapshot = committed()?;
         let full = snapshot.candidates.clone();
         for (campaign, surface, expected_total) in [
-            (Some("campaign-rust-repair"), None, 9),
-            (Some("campaign-editor-ux"), None, 2),
-            (None, Some("surface-rust-cli"), 9),
-            (Some("campaign-rust-repair"), Some("surface-rust-cli"), 9),
-            (Some("campaign-infra-hardening"), None, 0),
+            (Some("campaign-rust-repair"), None, 9_u64),
+            (Some("campaign-editor-ux"), None, 2_u64),
+            (None, Some("surface-rust-cli"), 9_u64),
+            (Some("campaign-rust-repair"), Some("surface-rust-cli"), 9_u64),
+            (Some("campaign-infra-hardening"), None, 0_u64),
         ] {
             let view = build_candidates_view(&snapshot, campaign, surface, full.len(), None)?;
-            if view.counts.total != expected_total as u64 {
+            if view.counts.total != expected_total {
                 return Err(format!(
                     "filter campaign={campaign:?} surface={surface:?} total {}, expected {expected_total}",
                     view.counts.total
