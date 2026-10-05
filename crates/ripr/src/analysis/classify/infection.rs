@@ -8,6 +8,7 @@ pub(in crate::analysis) fn infection_evidence(
     probe: &Probe,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
+    unresolved_call_inputs: &[String],
 ) -> StageEvidence {
     match probe.family {
         ProbeFamily::Predicate => {
@@ -74,6 +75,19 @@ pub(in crate::analysis) fn infection_evidence(
                     format!(
                         "Detected test input literal matching changed boundary: {}",
                         boundary_input_literals.join(", ")
+                    ),
+                )
+            } else if !unresolved_call_inputs.is_empty() {
+                // RIPR-SPEC-0032 (#6615): an owner input built by a call
+                // expression (`surcharge(big_order())`) may sit on the
+                // boundary; ripr does not evaluate the callee, so it must
+                // not read the absence of a boundary literal as a gap.
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Boundary input comes from a call expression [{}]; ripr cannot see its value statically, so activation/infection is unknown",
+                        unresolved_call_inputs.join(", ")
                     ),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
@@ -169,7 +183,7 @@ mod tests {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&["10"]);
         let activation = activation_with(&[("value = 10", ValueContext::FunctionArgument)]);
-        let evidence = infection_evidence(&probe, &[&test], &activation);
+        let evidence = infection_evidence(&probe, &[&test], &activation, &[]);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -183,7 +197,7 @@ mod tests {
         let probe = probe(ProbeFamily::Predicate, "ratio < 4E-2");
         let test = test_with_literals(&["4e-2"]);
         let activation = activation_with(&[("ratio = 4e-2", ValueContext::FunctionArgument)]);
-        let evidence = infection_evidence(&probe, &[&test], &activation);
+        let evidence = infection_evidence(&probe, &[&test], &activation, &[]);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -196,7 +210,7 @@ mod tests {
     fn predicate_infection_names_an_unmatched_constant_boundary() {
         let constant = probe(ProbeFamily::Predicate, "amount >= DISCOUNT_THRESHOLD");
         let test = test_with_literals(&["10000"]);
-        let evidence = infection_evidence(&constant, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&constant, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Unknown);
         assert!(
@@ -209,7 +223,7 @@ mod tests {
 
         let parameter = probe(ProbeFamily::Predicate, "amount >= threshold");
         assert_eq!(
-            infection_evidence(&parameter, &[&test], &ActivationEvidence::default()).summary,
+            infection_evidence(&parameter, &[&test], &ActivationEvidence::default(), &[]).summary,
             "Predicate changed, but no literal boundary was visible in the changed expression"
         );
     }
@@ -222,12 +236,65 @@ mod tests {
         let probe = probe(ProbeFamily::Predicate, "weight_grams > 2_000");
         let test = test_with_literals(&["2000"]);
         let activation = activation_with(&[("2000", ValueContext::AssertionArgument)]);
-        let evidence = infection_evidence(&probe, &[&test], &activation);
+        let evidence = infection_evidence(&probe, &[&test], &activation, &[]);
 
         assert_eq!(evidence.state, StageState::Weak);
         assert_eq!(
             evidence.summary,
             "Related tests contain the changed boundary literal [2000] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected"
+        );
+    }
+
+    #[test]
+    fn predicate_infection_abstains_when_the_boundary_input_is_a_call_expression() {
+        // #6615 / RIPR-SPEC-0032: `surcharge(big_order())` and
+        // `surcharge(small_order())` feed the boundary through helper calls;
+        // the only test literals are expected values, so the absence of a
+        // boundary literal is activation unknown, not a weak gap.
+        let probe = probe(ProbeFamily::Predicate, "amount > 999");
+        let test = test_with_literals(&["25", "0"]);
+        let activation = activation_with(&[
+            ("25", ValueContext::AssertionArgument),
+            ("0", ValueContext::AssertionArgument),
+        ]);
+        let unresolved = vec![
+            "amount = big_order()".to_string(),
+            "amount = small_order()".to_string(),
+        ];
+
+        let evidence = infection_evidence(&probe, &[&test], &activation, &unresolved);
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert_eq!(
+            evidence.summary,
+            "Boundary input comes from a call expression [amount = big_order(), amount = small_order()]; ripr cannot see its value statically, so activation/infection is unknown"
+        );
+
+        // Discriminating negative: the same tests without the call-expression
+        // input stay a weak (actionable) infection.
+        assert_eq!(
+            infection_evidence(&probe, &[&test], &activation, &[]).state,
+            StageState::Weak
+        );
+
+        // A visible literal input on one side keeps the equality-boundary
+        // gap even when another input is a call expression.
+        let mut one_sided = activation_with(&[("amount = 5000", ValueContext::FunctionArgument)]);
+        one_sided
+            .missing_discriminators
+            .push(MissingDiscriminatorFact {
+                value: "amount == 999".to_string(),
+                reason: "missing equality".to_string(),
+                flow_sink: None,
+            });
+        assert_eq!(
+            infection_evidence(&probe, &[&test], &one_sided, &unresolved).state,
+            StageState::Weak
+        );
+        // A matching literal input still credits activation.
+        let at_boundary = activation_with(&[("amount = 999", ValueContext::FunctionArgument)]);
+        assert_eq!(
+            infection_evidence(&probe, &[&test], &at_boundary, &unresolved).state,
+            StageState::Yes
         );
     }
 
@@ -241,7 +308,7 @@ mod tests {
             ("400", ValueContext::AssertionArgument),
             ("weight_grams = 2_000", ValueContext::FunctionArgument),
         ]);
-        let evidence = infection_evidence(&probe, &[&test], &activation);
+        let evidence = infection_evidence(&probe, &[&test], &activation, &[]);
 
         assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
@@ -256,14 +323,14 @@ mod tests {
         let test = test_with_literals(&["10", "11"]);
         let table = activation_with(&[("10", ValueContext::TableRow)]);
         assert_eq!(
-            infection_evidence(&probe, &[&test], &table).state,
+            infection_evidence(&probe, &[&test], &table, &[]).state,
             StageState::Yes
         );
 
         // A non-input context (an enum variant) never counts as an input.
         let enum_only = activation_with(&[("10", ValueContext::EnumVariant)]);
         assert_eq!(
-            infection_evidence(&probe, &[&test], &enum_only).state,
+            infection_evidence(&probe, &[&test], &enum_only, &[]).state,
             StageState::Weak
         );
     }
@@ -272,7 +339,7 @@ mod tests {
     fn predicate_infection_reports_opaque_fixture_when_literals_are_missing() {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&[]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
@@ -284,7 +351,7 @@ mod tests {
     #[test]
     fn non_predicate_infection_without_related_tests_is_unknown() {
         let probe = probe(ProbeFamily::ReturnValue, "value + 1");
-        let evidence = infection_evidence(&probe, &[], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
@@ -297,7 +364,7 @@ mod tests {
     fn wildcard_discard_is_infection_unknown_even_with_related_tests() {
         let probe = probe(ProbeFamily::SideEffect, "let _ = compute_fee(amount)");
         let test = test_with_literals(&["42"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
@@ -310,7 +377,7 @@ mod tests {
     fn typed_wildcard_discard_is_infection_unknown() {
         let probe = probe(ProbeFamily::ReturnValue, "let _: u32 = helper(x)");
         let test = test_with_literals(&["1"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
@@ -332,7 +399,8 @@ mod tests {
         ] {
             let probe = probe(ProbeFamily::ReturnValue, expression);
             let test = test_with_literals(&["1"]);
-            let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+            let evidence =
+                infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
             assert_eq!(
                 evidence.state,
                 StageState::Unknown,
@@ -346,7 +414,7 @@ mod tests {
         // `let _name = ...` is a named binding that could be used — must stay Yes
         let probe = probe(ProbeFamily::ReturnValue, "let _result = helper(a)");
         let test = test_with_literals(&["1"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Yes);
     }
@@ -356,7 +424,7 @@ mod tests {
         // Control: `let result = helper(a); result + 1` (value read into return) must stay Yes
         let probe = probe(ProbeFamily::ReturnValue, "result + 1");
         let test = test_with_literals(&["1"]);
-        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default(), &[]);
 
         assert_eq!(evidence.state, StageState::Yes);
     }
