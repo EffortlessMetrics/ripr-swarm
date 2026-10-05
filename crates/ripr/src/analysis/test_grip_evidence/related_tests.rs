@@ -1,5 +1,7 @@
 use super::*;
-use crate::analysis::classify::{impl_self_type_name, method_call_resolves_to_impl_type};
+use crate::analysis::classify::{
+    impl_self_type_name, method_call_resolves_to_impl_type, module_stem,
+};
 use std::sync::Arc;
 
 pub(super) mod context;
@@ -64,7 +66,9 @@ impl OwnerContext {
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
         let owner_file = owner_fn.map(|f| f.file.as_path());
-        let file_stem = owner_file.map(normalized_file_stem).unwrap_or_default();
+        // Module identity, as in the finding-level relation (#5395):
+        // `serialize/mod.rs` is `serialize`, and a crate root has none.
+        let file_stem = owner_file.and_then(module_stem).unwrap_or_default();
         let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
@@ -635,10 +639,9 @@ pub(super) fn assertion_targets_seam(test: &TestSummary, tokens: &[String]) -> b
 
 #[cfg(test)]
 pub(super) fn same_test_file(test_file: &Path, owner_stem: &str) -> bool {
-    let stem = normalized_file_stem(test_file);
-    if stem.is_empty() {
+    let Some(stem) = module_stem(test_file) else {
         return false;
-    }
+    };
     if stem == owner_stem {
         return true;
     }
@@ -889,6 +892,9 @@ pub(super) fn normalize_path(path: &Path) -> String {
 /// Non-UTF-8 paths fail closed: lossy replacement characters could
 /// collapse distinct file names into one stem and fabricate a
 /// same-test-file relation (the #3545 `cross_host_stem` guard).
+/// Production association keys on [`module_stem`] (#5395); this raw stem
+/// stays for the cross-host and non-UTF-8 regression tests.
+#[cfg(test)]
 pub(super) fn normalized_file_stem(path: &Path) -> String {
     let Some(text) = path.to_str() else {
         return String::new();

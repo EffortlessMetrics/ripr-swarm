@@ -1662,24 +1662,27 @@ fn strip_comments_and_strings(source: &str) -> String {
     out
 }
 
-/// Return whether `test_file` is the canonical companion test file for
-/// `probe_file`.  This intentionally mirrors the stronger test-grip
-/// authority: only the source stem itself and its `_test`/`_tests` variants
-/// count as file identity.  Paths are compared by stem, so host-specific
-/// separators do not affect the result.
+/// Return whether `test_file` is the changed file itself or its canonical
+/// companion test file. Companions compare Rust module identity
+/// ([`module_stem`]): the module's own name and its `_test`/`_tests`
+/// variants. The test-grip relation (`test_grip_evidence/related_tests.rs`)
+/// keys `SameTestFile` on the same module identity.
 fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
     // Inline tests in the changed file are its own tests, whatever the file is
     // called. Under `--root` the probe path carries the root prefix while test
-    // paths are root-relative, so one path ending the other on a segment
-    // boundary is the same file.
-    let probe_path = normalize_path(probe_file);
-    let test_path = normalize_path(test_file);
-    let ends_with_path = |long: &str, short: &str| {
-        long.strip_suffix(short)
-            .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('/'))
+    // paths are root-relative, so the probe path ending with the test path on
+    // a segment boundary is the same file. Only that direction: a root-relative
+    // probe `src/lib.rs` must not claim a member crate's `crates/a/src/lib.rs`.
+    // Non-UTF-8 paths fail closed (#3545): lossy conversion could fake a match.
+    let (Some(probe_text), Some(test_text)) = (probe_file.to_str(), test_file.to_str()) else {
+        return false;
     };
+    let probe_path = normalize_path(Path::new(probe_text));
+    let test_path = normalize_path(Path::new(test_text));
     if !test_path.is_empty()
-        && (ends_with_path(&probe_path, &test_path) || ends_with_path(&test_path, &probe_path))
+        && probe_path
+            .strip_suffix(test_path.as_str())
+            .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('/'))
     {
         return true;
     }
@@ -1699,7 +1702,7 @@ fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
 /// takes the name of its directory and a crate root (`lib.rs`, `main.rs`)
 /// names no module (#5395). `None` when no module identity exists, including
 /// non-UTF-8 paths, which fail closed like [`cross_host_stem`].
-fn module_stem(path: &Path) -> Option<String> {
+pub(in crate::analysis) fn module_stem(path: &Path) -> Option<String> {
     let stem = cross_host_stem(path)?;
     match stem.as_str() {
         "" | "lib" | "main" => None,
@@ -4199,6 +4202,15 @@ fn crate_c_score_test() {
             "html5ever/src/serialize/mod.rs",
             "html5ever/src/serialize/mod.rs"
         ));
+        // Under `--root` the probe carries the root prefix; test paths do not.
+        // The suffix must end on a path-segment boundary.
+        assert!(same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
+        assert!(!same("fixtures/x/input/src/lib.rs", "b/src/lib.rs"));
+        assert!(!same("fixtures/x/input/xsrc/lib.rs", "src/lib.rs"));
+        assert!(!same("crates/xa/src/lib.rs", "a/src/lib.rs"));
+        // A root-relative probe never claims a member crate's crate root.
+        assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(!same("src/main.rs", "crates/x/src/main.rs"));
     }
 
     #[test]

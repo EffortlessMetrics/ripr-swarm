@@ -422,8 +422,7 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                let stem = normalized_file_stem(&test.file);
-                if !stem.is_empty() {
+                if let Some(stem) = crate::analysis::classify::module_stem(&test.file) {
                     tests_by_file_stem.entry(stem).or_default().push(test_index);
                 }
                 for token in import_affinity_tokens(&code_lines) {

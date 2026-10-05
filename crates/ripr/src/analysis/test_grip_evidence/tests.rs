@@ -11289,6 +11289,8 @@ fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed()
     let second = Path::new(OsStr::from_bytes(b"tests/pricing_\xfe.rs"));
     assert_eq!(normalized_file_stem(first), "");
     assert_eq!(normalized_file_stem(second), "");
+    assert_eq!(crate::analysis::classify::module_stem(first), None);
+    assert_eq!(crate::analysis::classify::module_stem(second), None);
 }
 
 // -- helper coverage ---------------------------------------------
@@ -11455,6 +11457,18 @@ fn same_test_file_accepts_stem_match_and_test_suffixes() {
     assert!(same_test_file(Path::new("tests/foo_tests.rs"), "foo"));
     assert!(!same_test_file(Path::new("tests/bar.rs"), "foo"));
     assert!(!same_test_file(Path::new(""), "foo"));
+    // Module identity (#5395): `mod.rs` is its directory's module and a crate
+    // root names none, so a bare `mod`/`lib` stem never pairs.
+    assert!(same_test_file(
+        Path::new("src/serialize/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("src/tokenizer/mod.rs"), "mod"));
+    assert!(!same_test_file(
+        Path::new("src/tokenizer/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("crates/b/src/lib.rs"), "lib"));
 }
 
 #[test]
