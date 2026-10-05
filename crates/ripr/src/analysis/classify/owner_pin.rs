@@ -222,8 +222,8 @@ impl OwnerPinSyntax {
             return true;
         }
         // A generated test is not in the file's text: the same admission
-        // runs over its invocation's expansion, matched by name, body and
-        // assertion text in the expansion's own coordinates.
+        // runs over its invocation's expansion, matched by name, attributes,
+        // body and assertion text in the expansion's own coordinates.
         let mut generated = self.generated.borrow_mut();
         generated
             .entry(test.file.clone())
@@ -236,7 +236,11 @@ impl OwnerPinSyntax {
                 invocation
                     .tests
                     .iter()
-                    .filter(|local| local.name == test.name && local.body == test.body)
+                    .filter(|local| {
+                        local.name == test.name
+                            && local.attrs == test.attrs
+                            && local.body == test.body
+                    })
                     .map(move |local| (invocation, local))
             })
             .any(|(invocation, local)| {
