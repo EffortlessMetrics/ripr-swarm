@@ -1014,11 +1014,12 @@ The evidence-first fields are additive in schema `0.2`:
   `miss` is a controlled `related_test_miss` value; `why` is one short
   sentence for people. Both are omitted when the analyzer established no
   miss, for example for an `exposed` finding's catching test. The
-  assertion-level values (`no_assertion`, `assertion_not_observing`,
-  `assertion_not_credited`) can appear under any class; the class-level values
-  (`no_call_path`, `weak_assertion`, `missing_input`,
-  `missing_exact_assertion`, `observation_unconfirmed`) appear only under
-  `no_static_path`, `weakly_exposed` and `reachable_unrevealed`. `no_call_path`: linked by name or file location only, no
+  per-test values (`no_call_path` on a name-only row, `no_assertion`,
+  `assertion_not_observing`, `assertion_not_credited`) can appear under any
+  class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,
+  `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`)
+  appear only under `weakly_exposed` and `reachable_unrevealed`, and
+  `no_call_path` is also set for every row under `no_static_path`. `no_call_path`: linked by name or file location only, no
   call to the changed code. `no_assertion`: the test has no assertion ripr
   recognizes. `assertion_not_observing`: the test asserts, but none of its
   assertions observe the changed value; `oracle` then carries the first
