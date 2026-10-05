@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9145dfd..da7f83a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -29,6 +29,7 @@ pub fn handling_fee(weight: u32) -> u32 {
+     let mut fee = 20;
+     if weight > 500 {
+         fee += 5;
++    } else {
+         fee += 1;
+     }
+     fee

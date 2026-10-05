@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 217.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 72/203 | 0.3547 |
-| False actionable (of discriminated) | 66/106 | 0.6226 |
-| False exposed (of not fully discriminated) | 6/97 | 0.0619 |
-| False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 73/203 | 0.3596 |
-| Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
-| Findings with a contradiction | 2/278 | 0.0072 |
+| False verdicts (all cases) | 78/217 | 0.3594 |
+| False actionable (of discriminated) | 72/116 | 0.6207 |
+| False exposed (of not fully discriminated) | 6/101 | 0.0594 |
+| False silent (of not fully discriminated) | 0/101 | 0.0000 |
+| Ideal verdict | 76/217 | 0.3502 |
+| Abstained (limited or silent where acceptable) | 63/217 | 0.2903 |
+| Findings with a contradiction | 2/297 | 0.0067 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 62/169 | 56/86 | 6/83 | 0/83 | 68/169 | 39/169 |
+| authored | 183 | 68/183 | 62/96 | 6/87 | 0/87 | 71/183 | 44/183 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -224,6 +224,20 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-flow-else-tested` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-flow-else-untested` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-flow-field-direct` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-flow-field-opaque` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
+| `grid-flow-opaque-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-bindings-shadowed` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-bindings-reassigned` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-bindings-computed-arg` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-results-routed-match` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `grid-results-swallowed-err` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `grid-bits-length-pinned` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-bits-length-loose` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-bits-shift-pinned` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-bits-or-loose` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 

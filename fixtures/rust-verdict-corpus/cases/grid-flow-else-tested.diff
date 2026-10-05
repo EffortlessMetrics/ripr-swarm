@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9145dfd..5ad918d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -20,6 +20,7 @@ pub fn shipping_fee(weight: u32) -> u32 {
+     let mut fee = 100;
+     if weight > 1_000 {
+         fee += 50;
++    } else {
+         fee += 10;
+     }
+     fee

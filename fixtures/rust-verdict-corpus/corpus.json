@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.8",
+  "corpus_version": "2026-10-05.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -1579,6 +1579,74 @@
         {
           "path": "src/lib.rs",
           "sha256": "4bf58840e12a3b961725f3e1b899bb4ada19e5fc5da625feb9b5c42a86e30825"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-grid-bindings",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "96408092e8ad4abb832cdd206c96c0d994ea8b4b0c02d8b502e383ecda504c35"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7de7ef8e24019cd2d89fddf2fcad4a89cee07ac3bfe00ac1b469fa70d4103c4e"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-grid-bits",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "bbf91440ad6f97c8ec84702064a9ac46ac49dde7edbd37ea5d332e5118497511"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "6c56b833d50e2c5d55012712cdf0e1abae8f9874dd73d3982c3f74822b819c8b"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-grid-flow",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "8c29020c2c414d0e0da7051caeb738fb0a1d3ab0bf9c58111aa8d8591a691699"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "4a228d6d82914ba9332c2971af8b3b8202540248d8c75aff8abf90aaf5836020"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-grid-results",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "e333dc7b5d34ffc533a1857246914508eef0c5883e340a08bd9002eba6fccda2"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "85211a246e3c9fbf6b1e6c06f2f4ce5ce54e6a71432c81e88f9136cf7e4b5de6"
         }
       ]
     }
@@ -9263,7 +9331,7 @@
           "limited"
         ]
       },
-      "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0197, RIPR-SPEC-0001, RIPR-SPEC-0231.",
+      "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0001, RIPR-SPEC-0231.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -11282,7 +11350,7 @@
         ]
       },
       "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0197.",
-      "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328).",
+      "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -11380,7 +11448,7 @@
         ]
       },
       "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0197, RIPR-SPEC-0231.",
-      "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+      "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -11686,6 +11754,691 @@
       "reasoning": "Grid cell: closure in an iterator adaptor (pattern destructured; mutants change the closure's operator) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0231.",
       "labeling_observation": {
         "ripr_commit": "1273096",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-flow-else-tested",
+      "subject_id": "authored-grid-flow",
+      "diff": "cases/grid-flow-else-tested.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 23
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "predicate",
+      "test_shape": "exact_pin_assert",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "} else {",
+            "outcome": "tests_failed",
+            "failing_test": "heavy_parcels_pay_the_surcharge",
+            "equivalence_review": "the edit itself: shipping_fee(2_000) is 150 instead of 160"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Structural edit: a lone `} else {` inserted between two existing statements moves `fee += 10` into a new else branch. RIPR-SPEC-0001 keeps a probe on such a line because it moves existing code between branches. The exact pin shipping_fee(2_000) == 160 fails on the edit. The edit fails cargo test. Spec cells: RIPR-SPEC-0001.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-flow-else-untested",
+      "subject_id": "authored-grid-flow",
+      "diff": "cases/grid-flow-else-untested.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 32
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "predicate",
+      "test_shape": "unit_test_relational_assert",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "} else {",
+            "outcome": "tests_passed",
+            "equivalence_review": "the edit itself: handling_fee(600) is 25 instead of 26; the test only checks > 20"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Structural edit: a lone `} else {` moves `fee += 1` into a new else branch. RIPR-SPEC-0001 keeps a probe on the line. The only test checks handling_fee(600) > 20, which holds either way (26 before, 25 after), so the move goes unnoticed. The edit passes cargo test. Spec cells: RIPR-SPEC-0001.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-flow-field-direct",
+      "subject_id": "authored-grid-flow",
+      "diff": "cases/grid-flow-field-direct.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "field_assignment_activation_const",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "CURRENT >= manifest.version",
+            "outcome": "tests_failed",
+            "failing_test": "manifests_older_than_current_are_stale",
+            "equivalence_review": "not equivalent: manifests_older_than_current_are_stale fails on it"
+          },
+          {
+            "replacement": "CURRENT < manifest.version",
+            "outcome": "tests_failed",
+            "failing_test": "manifests_older_than_current_are_stale",
+            "equivalence_review": "not equivalent: manifests_older_than_current_are_stale fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Field-assignment activation: the test sets `manifest.version = CURRENT - 1` and then `CURRENT`, a same-file constant with a bounded offset. RIPR-SPEC-0001's field-assignment rule names this assignment form; its worked example is an `==` predicate, so this case extends the cell to a `<` boundary. Both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
+      "hard_case": "A comparison against a named constant shows ripr no literal boundary, so it reads infection_unknown whichever side the constant is on; the field assignments `CURRENT - 1` and `CURRENT` never become activation evidence.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "infection_unknown",
+          "propagation_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-flow-field-opaque",
+      "subject_id": "authored-grid-flow",
+      "diff": "cases/grid-flow-field-opaque.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 16
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "field_assignment_activation_opaque",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "CURRENT - 2 >= manifest.version",
+            "outcome": "tests_failed",
+            "failing_test": "old_manifests_need_upgrade",
+            "equivalence_review": "not equivalent: old_manifests_need_upgrade fails on it"
+          },
+          {
+            "replacement": "CURRENT - 2 < manifest.version",
+            "outcome": "tests_failed",
+            "failing_test": "old_manifests_need_upgrade",
+            "equivalence_review": "not equivalent: old_manifests_need_upgrade fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Field-assignment activation through an opaque right-hand side: the test sets `manifest.version = lookup(4)` and `lookup(5)`. RIPR-SPEC-0001 forbids crediting opaque assignments and asks for `field_assignment_value_unresolved`; at runtime both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
+      "hard_case": "ripr takes the boundary of `CURRENT - 2 > manifest.version` to be the literal 2, so the opaque lookup() assignments read as a missing boundary input (weakly_exposed) instead of RIPR-SPEC-0001's field_assignment_value_unresolved stop.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "exposed",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-flow-opaque-guard",
+      "subject_id": "authored-grid-flow",
+      "diff": "cases/grid-flow-opaque-guard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 38
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "test_returns_err_on_mismatch",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "String::new()",
+            "outcome": "tests_failed",
+            "failing_test": "label_starts_with_v",
+            "equivalence_review": "not equivalent: label_starts_with_v fails on it"
+          },
+          {
+            "replacement": "\"xyzzy\".into()",
+            "outcome": "tests_failed",
+            "failing_test": "label_starts_with_v",
+            "equivalence_review": "not equivalent: label_starts_with_v fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Return value observed only through a test-body Err-return guard `if !text.starts_with('v') { return Err(..) }`. RIPR-SPEC-0154 gives the guard the oracle of its twin `assert!(text.starts_with('v'))`. Both cargo-mutants replacements lose the leading v and fail the guard. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0154.",
+      "hard_case": "RIPR-SPEC-0154 parity gives the guard its twin's oracle, assert!(text.starts_with('v')), which grades weak; cargo-mutants' two replacements both lose the v, so the weak oracle still kills every listed mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bindings-shadowed",
+      "subject_id": "authored-grid-bindings",
+      "diff": "cases/grid-bindings-shadowed.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 5
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "changed_binding_shadowed_before_comparison",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "let quota = 101;",
+            "outcome": "tests_failed",
+            "failing_test": "quota_is_two_hundred",
+            "equivalence_review": "not equivalent: quota_is_two_hundred fails on it"
+          },
+          {
+            "replacement": "let quota = 99;",
+            "outcome": "tests_failed",
+            "failing_test": "quota_is_two_hundred",
+            "equivalence_review": "not equivalent: quota_is_two_hundred fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Changed binding reaches the comparison only through a shadow (`let quota = quota * 2;`). RIPR-SPEC-0157 lists shadowing as a fail-closed blocker for the binding-to-predicate relation. The pins at 200 and 201 catch both mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0157.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bindings-reassigned",
+      "subject_id": "authored-grid-bindings",
+      "diff": "cases/grid-bindings-reassigned.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "changed_binding_reassigned_before_comparison",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "let mut budget = 101;",
+            "outcome": "tests_failed",
+            "failing_test": "budget_is_one_hundred_twenty",
+            "equivalence_review": "not equivalent: budget_is_one_hundred_twenty fails on it"
+          },
+          {
+            "replacement": "let mut budget = 99;",
+            "outcome": "tests_failed",
+            "failing_test": "budget_is_one_hundred_twenty",
+            "equivalence_review": "not equivalent: budget_is_one_hundred_twenty fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Changed binding reaches the comparison only after a reassignment (`budget += 20;`). RIPR-SPEC-0157 lists reassignment as a fail-closed blocker. The pins at 120 and 121 catch both mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0157.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bindings-computed-arg",
+      "subject_id": "authored-grid-bindings",
+      "diff": "cases/grid-bindings-computed-arg.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 17
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "helper_reached_with_computed_args",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "10 < qty",
+            "outcome": "tests_failed",
+            "failing_test": "ten_items_earn_the_bulk_discount",
+            "equivalence_review": "not equivalent: ten_items_earn_the_bulk_discount fails on it"
+          },
+          {
+            "replacement": "10 > qty",
+            "outcome": "tests_failed",
+            "failing_test": "ten_items_earn_the_bulk_discount",
+            "equivalence_review": "not equivalent: ten_items_earn_the_bulk_discount fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Boundary inside a private helper reached through order_discount; the test passes computed arguments (`base + 1`, `base`). RIPR-SPEC-0159 names a computed argument as an edge that stops value transfer. The pins at 10 and 9 catch both mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0159.",
+      "hard_case": "ripr never relates the test to the private is_bulk through order_discount (reach weak: no test calls is_bulk), so RIPR-SPEC-0159's named computed-argument stop is never reached and the boundary reads weakly_exposed.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-results-routed-match",
+      "subject_id": "authored-grid-results",
+      "diff": "cases/grid-results-routed-match.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 15
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_path",
+      "test_shape": "guarded_result_match_pin",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(PayError::Limit);",
+            "outcome": "tests_failed",
+            "failing_test": "overdraw_routes_to_insufficient",
+            "equivalence_review": "not equivalent: overdraw_routes_to_insufficient fails on it"
+          },
+          {
+            "replacement": "return Ok(0);",
+            "outcome": "tests_failed",
+            "failing_test": "overdraw_routes_to_insufficient",
+            "equivalence_review": "not equivalent: overdraw_routes_to_insufficient fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Error return observed through a guarded Result match: the Ok arm panics and the Err arm assert_eqs the variant, the routing form RIPR-SPEC-0175 recognizes. Both mutants (wrong variant, Ok) fail the test. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175.",
+      "hard_case": "The Err arm's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1), so the routing form RIPR-SPEC-0175 recognizes reads reachable_unrevealed.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-results-swallowed-err",
+      "subject_id": "authored-grid-results",
+      "diff": "cases/grid-results-swallowed-err.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 25
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_path",
+      "test_shape": "swallowed_err_arm_match",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(PayError::Limit);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: refund(10, 20) is Err(Limit) instead of Err(Insufficient); the empty Err arm accepts both"
+          },
+          {
+            "replacement": "return Ok(0);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: refund(10, 20) is Ok(0) instead of Err; the Ok arm's assert_eq!(left, 0) passes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Error return observed only through a match whose Err arm is empty. RIPR-SPEC-0175 says an arm that returns normally swallows the error and must not be credited. Neither mutant fails: the Err arm accepts any variant and Ok(0) satisfies the Ok arm's assert_eq. 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bits-length-pinned",
+      "subject_id": "authored-grid-bits",
+      "diff": "cases/grid-bits-length-pinned.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 15
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "input_length_boundary_pinned",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if count >= 16 {",
+            "outcome": "tests_failed",
+            "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+            "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+          },
+          {
+            "replacement": "if count == 16 {",
+            "outcome": "tests_failed",
+            "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+            "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+          },
+          {
+            "replacement": "if count < 16 {",
+            "outcome": "tests_failed",
+            "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+            "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Boundary on a counter that grows once per input byte (chunk-size parsing): the boundary value 16 is never a literal in the test; it is the length of `[b'f'; 16]` and `[b'f'; 17]`. One test pins both sides exactly. All three mutants fail. 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+      "hard_case": "The boundary input is the length of `[b'f'; 16]`, not a literal, so ripr asks for a `count == 16` input that the test already supplies.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bits-length-loose",
+      "subject_id": "authored-grid-bits",
+      "diff": "cases/grid-bits-length-loose.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 28
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "input_length_below_boundary_only",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if count >= 64 {",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: token_len of a 64-byte name is Err(TooLong) instead of Ok(64)"
+          },
+          {
+            "replacement": "if count == 64 {",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: token_len of a 64-byte name is Err(TooLong) instead of Ok(64)"
+          },
+          {
+            "replacement": "if count < 64 {",
+            "outcome": "tests_failed",
+            "failing_test": "short_tokens_are_measured",
+            "equivalence_review": "not equivalent: short_tokens_are_measured fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The same counter boundary (64) tested only with a 4-byte input, far below it. Only the `<` mutant, which rejects short input, fails. 1 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bits-shift-pinned",
+      "subject_id": "authored-grid-bits",
+      "diff": "cases/grid-bits-shift-pinned.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 36
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "exact_pin_assert",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(u16::from(hi) << 8) & u16::from(lo)",
+            "outcome": "tests_failed",
+            "failing_test": "pack_puts_hi_first",
+            "equivalence_review": "not equivalent: pack_puts_hi_first fails on it"
+          },
+          {
+            "replacement": "(u16::from(hi) >> 8) | u16::from(lo)",
+            "outcome": "tests_failed",
+            "failing_test": "pack_puts_hi_first",
+            "equivalence_review": "not equivalent: pack_puts_hi_first fails on it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Bitwise arithmetic: `(hi << 8) | lo` with operands swapped; mutants replace `|` with `&` and `<<` with `>>`, as cargo-mutants does. The `^` replacement is omitted because the two operands never share a bit, so it is equivalent. The exact pin pack(0x12, 0x34) == 0x1234 fails on both. 2 of 2 listed mutants fail cargo test. No RIPR spec defines a bitwise-operator cell.",
+      "hard_case": "The exact pin of the packed value reads as unconfirmed observation: ripr cannot tell that assert_eq!(pack(..), 0x1234) observes the bitwise expression.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "grid-bits-or-loose",
+      "subject_id": "authored-grid-bits",
+      "diff": "cases/grid-bits-or-loose.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 40
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "unit_test_relational_assert",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base & 0x80",
+            "outcome": "tests_failed",
+            "failing_test": "flagged_values_are_nonzero",
+            "equivalence_review": "not equivalent: flagged_values_are_nonzero fails on it"
+          },
+          {
+            "replacement": "base ^ 0x80",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: with_flag(0x80) is 0 instead of 0x80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Bitwise `base | 0x80` with operands swapped, checked only by with_flag(1) > 0. The `&` mutant returns 0 and fails; the `^` mutant returns 0x81 and passes. 1 of 2 listed mutants fail cargo test. No RIPR spec defines a bitwise-operator cell.",
+      "labeling_observation": {
+        "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
