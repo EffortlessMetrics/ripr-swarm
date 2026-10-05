@@ -413,6 +413,15 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
         "corpus shrank to {}",
         corpus.cases.len()
     );
+    // Every runnable RIPR-SPEC-0233 acceptance example keeps a case; 9 and 10
+    // are left out by `fixtures/python-verdict-corpus/SPEC.md`.
+    for example in (1..=33).filter(|n| ![9, 10].contains(n)) {
+        let prefix = format!("py-spec0233-ex{example:02}-");
+        assert!(
+            corpus.cases.iter().any(|c| c.case_id.starts_with(&prefix)),
+            "no case for RIPR-SPEC-0233 example {example}"
+        );
+    }
     // Every test library the corpus exists to cover keeps cases in both
     // error directions: discriminated cases measure false actionable, the
     // rest measure false exposed and false silent. A library whose subject
