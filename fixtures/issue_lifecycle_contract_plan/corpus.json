@@ -43,7 +43,13 @@
      "where effective-feature derivation lives: contract parse time versus producer receipt time"
     ],
     "root_disposition": "qualified_spec_required",
-    "contract_state": "amended"
+    "contract_state": "amended",
+    "root": {
+     "role": "contract_root",
+     "config_identity": "root-config-6225-distribution-build-contract-v1",
+     "result_identity": "root-result-6225-distribution-build-contract-v1",
+     "carries_acceptance": true
+    }
    },
    "planning": {
     "shape_decision": "one_pr",

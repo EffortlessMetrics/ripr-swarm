@@ -8,9 +8,11 @@
 //! evidence (source-of-truth identity, spec-required rationale, draft spec
 //! identity, author role/config/result identity, independent adversary result
 //! with inspected scope, missing failure/limited findings or bounded
-//! `none_found`, preserved open decisions, the root disposition in the closed
+//! `none_found`, the root role/config/result identity as the acceptance
+//! authority, preserved open decisions, the root disposition in the closed
 //! RIPR-SPEC-0218 vocabulary and the accepted/amended/rejected/provisional
-//! contract state). Both rows retain the planning evidence (one-PR versus
+//! contract state, the latter frozen into the embedded attempt's contract
+//! decision). Both rows retain the planning evidence (one-PR versus
 //! campaign decision, work-item identities with dependency edges, acceptance
 //! rows covered or explicitly omitted, edit cages and semantic conflict
 //! resources, proof commands with denominators, stop conditions, non-goals,
@@ -117,6 +119,11 @@ pub(crate) struct IssueLifecycleContractCaseEvidenceV1 {
     pub draft_spec_identity: String,
     pub author: IssueLifecycleContractRoleResultV1,
     pub adversary: IssueLifecycleContractAdversaryResultV1,
+    /// The root role result: the acceptance authority itself. Like the author
+    /// and adversary results it is a typed identity, so a corpus in which the
+    /// root reuses the author's result — or no root actor ran at all — fails
+    /// closed instead of passing as three distinct fixture identities.
+    pub root: IssueLifecycleContractRoleResultV1,
     pub open_decisions: Vec<String>,
     pub root_disposition: IssueLifecycleDispositionV1,
     pub contract_state: IssueLifecycleContractStateV1,
@@ -268,6 +275,8 @@ pub(crate) fn load_issue_lifecycle_contract_plan_corpus(
     }
     let mut categories = BTreeSet::new();
     let mut issues = BTreeSet::new();
+    let mut observation_keys = BTreeSet::new();
+    let mut lifecycle_ids = BTreeSet::new();
     for row in &corpus.rows {
         if !categories.insert(row.category.clone()) {
             return Err(format!(
@@ -279,6 +288,22 @@ pub(crate) fn load_issue_lifecycle_contract_plan_corpus(
             return Err(format!(
                 "issue lifecycle contract plan corpus duplicates issue `{}`",
                 row.snapshot.issue_ref
+            ));
+        }
+        // Aliased observation keys would collapse both rows into conflicting
+        // duplicates at scorecard construction and emit zero real lifecycles
+        // while this command still exited successfully; reject the alias at
+        // load so a deduplicated lifecycle can never disappear silently.
+        if !observation_keys.insert(row.attempt.observation_key.clone()) {
+            return Err(format!(
+                "issue lifecycle contract plan corpus duplicates observation key `{}`",
+                row.attempt.observation_key
+            ));
+        }
+        if !lifecycle_ids.insert(row.attempt.lifecycle_id.clone()) {
+            return Err(format!(
+                "issue lifecycle contract plan corpus duplicates lifecycle id `{}`",
+                row.attempt.lifecycle_id
             ));
         }
         if row.attempt.synthetic {
@@ -389,11 +414,27 @@ fn identity_matches(identity: &str, scheme: &str, computed_hex: &str) -> bool {
     identity == format!("{scheme}:sha256:{computed_hex}")
 }
 
+/// Normalize the frozen attempt's root contract state string into the closed
+/// contract-state vocabulary; an unknown value is a rejection reason, never a
+/// silent parse drop.
+fn normalized_contract_state(
+    raw: &Option<String>,
+) -> Result<Option<IssueLifecycleContractStateV1>, String> {
+    match raw {
+        None => Ok(None),
+        Some(value) => serde_json::from_value(serde_json::Value::String(value.clone()))
+            .map(Some)
+            .map_err(|_| format!("`{value}` is not a closed contract state")),
+    }
+}
+
 /// Fail-closed snapshot binding: recompute the snapshot and comment digests
 /// from the committed bytes and reject any drift. A row whose snapshot file
-/// is missing or altered can never be counted. Timeline surfaces are
-/// optional; retrieval-step byte claims for the three capture commands are
-/// bound to the committed file sizes.
+/// is missing or altered can never be counted. Real rows must capture the
+/// full issue/comments/timeline triple, the embedded attempt must name the
+/// verified snapshot identities, the issue payload must agree with the named
+/// GitHub issue, and retrieval-step byte claims for the three capture
+/// commands are bound to the committed file sizes.
 pub(crate) fn verify_contract_plan_row_snapshot(
     row: &IssueLifecycleContractPlanRowV1,
     root: &Path,
@@ -414,6 +455,28 @@ pub(crate) fn verify_contract_plan_row_snapshot(
             row.id
         ));
     }
+    // The embedded attempt must name the exact snapshot this verification
+    // authenticates; swapping the embedded issue identities and recomputing
+    // the row digests must not leave a packet naming one issue while the
+    // scorecard counts an attempt bound to another.
+    if row.attempt.issue.issue_ref != row.snapshot.issue_ref {
+        return Err(format!(
+            "contract plan row `{}` embedded attempt names issue `{}` but the row snapshot names `{}`",
+            row.id, row.attempt.issue.issue_ref, row.snapshot.issue_ref
+        ));
+    }
+    if row.attempt.issue.snapshot_id != row.snapshot.issue_snapshot_id {
+        return Err(format!(
+            "contract plan row `{}` embedded attempt issue digest disagrees with the verified snapshot digest",
+            row.id
+        ));
+    }
+    if row.attempt.issue.comments_ref != row.snapshot.comments_snapshot_id {
+        return Err(format!(
+            "contract plan row `{}` embedded attempt comments digest disagrees with the verified comments digest",
+            row.id
+        ));
+    }
     let snapshot_body = fs::read(root.join(snapshot_path)).map_err(|error| {
         format!(
             "contract plan row `{}` snapshot {} is unreadable: {error}",
@@ -431,6 +494,7 @@ pub(crate) fn verify_contract_plan_row_snapshot(
             row.id, row.snapshot.issue_snapshot_id
         ));
     }
+    verify_issue_payload_binding(row, &snapshot_body)?;
     let comments_body = fs::read(root.join(comments_path)).map_err(|error| {
         format!(
             "contract plan row `{}` comments {} are unreadable: {error}",
@@ -448,40 +512,104 @@ pub(crate) fn verify_contract_plan_row_snapshot(
             row.id, row.snapshot.comments_snapshot_id
         ));
     }
-    let timeline_body = match &row.snapshot.timeline_path {
-        Some(timeline_path) => Some(fs::read(root.join(timeline_path)).map_err(|error| {
+    // A real row must capture the issue/comments/timeline triple: deleting the
+    // timeline surface fails closed instead of skipping one third of the
+    // snapshot evidence. (Synthetic control rows never enter this verifier.)
+    let timeline_path = row
+        .snapshot
+        .timeline_path
+        .as_ref()
+        .ok_or_else(|| {
             format!(
-                "contract plan row `{}` timeline {} is unreadable: {error}",
-                row.id, timeline_path
-            )
-        })?),
-        None => None,
-    };
-    if let Some(timeline_body) = &timeline_body {
-        let computed = crate::blind_journey::sha256_hex(timeline_body);
-        let recorded = row
-            .snapshot
-            .timeline_snapshot_id
-            .as_deref()
-            .ok_or_else(|| format!("contract plan row `{}` timeline records no digest", row.id))?;
-        if !identity_matches(recorded, "gh-issue-timeline", &computed) {
-            return Err(format!(
-                "contract plan row `{}` timeline digest drifted: recorded `{recorded}`, recomputed `gh-issue-timeline:sha256:{computed}`",
+                "contract plan row `{}` has no timeline path; a real row must capture the issue/comments/timeline triple",
                 row.id
-            ));
-        }
+            )
+        })?;
+    let timeline_body = fs::read(root.join(timeline_path)).map_err(|error| {
+        format!(
+            "contract plan row `{}` timeline {} is unreadable: {error}",
+            row.id, timeline_path
+        )
+    })?;
+    let computed = crate::blind_journey::sha256_hex(&timeline_body);
+    let recorded = row
+        .snapshot
+        .timeline_snapshot_id
+        .as_deref()
+        .ok_or_else(|| format!("contract plan row `{}` timeline records no digest", row.id))?;
+    if !identity_matches(recorded, "gh-issue-timeline", &computed) {
+        return Err(format!(
+            "contract plan row `{}` timeline digest drifted: recorded `{recorded}`, recomputed `gh-issue-timeline:sha256:{computed}`",
+            row.id
+        ));
     }
     verify_retrieval_step_bytes(row, "issue", snapshot_body.len())?;
     verify_retrieval_step_bytes(row, "comments", comments_body.len())?;
-    if let Some(timeline_body) = &timeline_body {
-        verify_retrieval_step_bytes(row, "timeline", timeline_body.len())?;
+    verify_retrieval_step_bytes(row, "timeline", timeline_body.len())?;
+    Ok(())
+}
+
+/// Bind the committed issue snapshot bytes to the named GitHub issue: the
+/// payload's number and repository must agree with `issue_number`/`issue_ref`,
+/// so digest agreement cannot pass while the bytes came from another issue.
+fn verify_issue_payload_binding(
+    row: &IssueLifecycleContractPlanRowV1,
+    snapshot_body: &[u8],
+) -> Result<(), String> {
+    let payload: serde_json::Value = serde_json::from_slice(snapshot_body).map_err(|error| {
+        format!(
+            "contract plan row `{}` issue snapshot is not a GitHub issue payload: {error}",
+            row.id
+        )
+    })?;
+    let number = payload
+        .get("number")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            format!(
+                "contract plan row `{}` issue snapshot payload records no issue number",
+                row.id
+            )
+        })?;
+    if number != row.snapshot.issue_number {
+        return Err(format!(
+            "contract plan row `{}` names issue {} but its snapshot payload is issue {number}",
+            row.id, row.snapshot.issue_number
+        ));
+    }
+    let repository = payload
+        .get("repository_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "contract plan row `{}` issue snapshot payload records no repository_url",
+                row.id
+            )
+        })?;
+    let expected_repository = row
+        .snapshot
+        .issue_ref
+        .split_once('#')
+        .map(|(repository, _)| format!("https://api.github.com/repos/{repository}"))
+        .ok_or_else(|| {
+            format!(
+                "contract plan row `{}` issue ref `{}` is not an `owner/repo#number` reference",
+                row.id, row.snapshot.issue_ref
+            )
+        })?;
+    if repository != expected_repository {
+        return Err(format!(
+            "contract plan row `{}` issue ref `{}` disagrees with the snapshot repository `{repository}`",
+            row.id, row.snapshot.issue_ref
+        ));
     }
     Ok(())
 }
 
 /// Bind recorded retrieval-step byte claims to the committed snapshot bytes:
-/// a step that names one of the three capture commands must carry a measured
-/// byte count equal to the committed file it produced. A fabricated or stale
+/// exactly one step must name the capture command for each present snapshot
+/// surface, and it must carry a measured byte count equal to the committed
+/// file it produced. A missing step, a `NotMeasured` step or a fabricated
 /// count fails closed.
 fn verify_retrieval_step_bytes(
     row: &IssueLifecycleContractPlanRowV1,
@@ -494,16 +622,34 @@ fn verify_retrieval_step_bytes(
         "timeline" => format!("/issues/{}/timeline", row.snapshot.issue_number),
         other => return Err(format!("unknown retrieval surface `{other}`")),
     };
-    for step in &row.retrieval_steps {
-        if !step.command.ends_with(&suffix) {
-            continue;
-        }
-        if let crate::issue_lifecycle_intake::IssueLifecycleIntakeBytesV1::Measured(bytes) =
-            step.bytes
-            && bytes as usize != committed_len
-        {
+    let mut matching = row
+        .retrieval_steps
+        .iter()
+        .filter(|step| step.command.ends_with(&suffix));
+    let step = matching.next().ok_or_else(|| {
+        format!(
+            "contract plan row `{}` records no retrieval step for surface `{surface}`; the captured bytes must be measured evidence, not a missing step",
+            row.id
+        )
+    })?;
+    if matching.next().is_some() {
+        return Err(format!(
+            "contract plan row `{}` records duplicate retrieval steps for surface `{surface}`",
+            row.id
+        ));
+    }
+    match step.bytes {
+        crate::issue_lifecycle_intake::IssueLifecycleIntakeBytesV1::Measured(bytes)
+            if bytes as usize == committed_len => {}
+        crate::issue_lifecycle_intake::IssueLifecycleIntakeBytesV1::Measured(bytes) => {
             return Err(format!(
                 "contract plan row `{}` retrieval step `{}` claims {bytes} bytes, committed bytes measure {committed_len}",
+                row.id, step.command
+            ));
+        }
+        crate::issue_lifecycle_intake::IssueLifecycleIntakeBytesV1::NotMeasured => {
+            return Err(format!(
+                "contract plan row `{}` retrieval step `{}` for surface `{surface}` is not measured; fail-closed capture evidence requires the committed byte count",
                 row.id, step.command
             ));
         }
@@ -514,8 +660,9 @@ fn verify_retrieval_step_bytes(
 /// One deterministic packet projection: everything a cold-start root needs
 /// to reconstruct the contract/plan decision from the committed corpus alone,
 /// with no chat, no live GitHub read and no selection signal. The projection
-/// retains the draft identity, the distinct author/adversary result
-/// identities, the inspected scope, the shape rationale, the edit cages, the
+/// retains the source-of-truth identity, the spec-required rationale, the
+/// draft identity, the distinct author/adversary/root result identities, the
+/// inspected scope, the shape rationale, the edit cages, the
 /// conflict resources, the non-goals and the row limitations alongside the
 /// decisions themselves; snapshot-only signals (title, labels, age) never
 /// enter it.
@@ -529,9 +676,12 @@ pub(crate) struct IssueLifecycleContractPlanProjectionV1 {
     pub current_main: String,
     pub contract_state: Option<IssueLifecycleContractStateV1>,
     pub root_disposition: Option<IssueLifecycleDispositionV1>,
+    pub source_of_truth: Option<String>,
+    pub spec_required_rationale: Option<String>,
     pub draft_spec_identity: Option<String>,
     pub author_result_identity: Option<String>,
     pub adversary_result_identity: Option<String>,
+    pub root_result_identity: Option<String>,
     pub adversary_inspected_scope: Option<String>,
     pub open_decisions: Vec<String>,
     pub adversary_findings: Vec<String>,
@@ -580,6 +730,14 @@ pub(crate) fn build_contract_plan_projection(
             .contract
             .as_ref()
             .map(|contract| contract.root_disposition),
+        source_of_truth: row
+            .contract
+            .as_ref()
+            .map(|contract| contract.source_of_truth.clone()),
+        spec_required_rationale: row
+            .contract
+            .as_ref()
+            .map(|contract| contract.spec_required_rationale.clone()),
         draft_spec_identity: row
             .contract
             .as_ref()
@@ -592,6 +750,10 @@ pub(crate) fn build_contract_plan_projection(
             .contract
             .as_ref()
             .map(|contract| contract.adversary.result_identity.clone()),
+        root_result_identity: row
+            .contract
+            .as_ref()
+            .map(|contract| contract.root.result_identity.clone()),
         adversary_inspected_scope: row
             .contract
             .as_ref()
@@ -675,11 +837,48 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
                     row.id
                 ));
             }
+            if contract.source_of_truth.trim().is_empty() {
+                failures.push(format!(
+                    "row `{}` contract records no source-of-truth identity; the retained contract authority must name what governs the row",
+                    row.id
+                ));
+            }
+            if contract.spec_required_rationale.trim().is_empty() {
+                failures.push(format!(
+                    "row `{}` contract records no spec-required rationale; the retained authority must justify why a spec is required",
+                    row.id
+                ));
+            }
+            if row.attempt.contract_decision.decision_rationale.trim().is_empty() {
+                failures.push(format!(
+                    "row `{}` embedded attempt records no contract decision rationale; the frozen decision must justify the root contract state",
+                    row.id
+                ));
+            }
             if contract.root_disposition != row.attempt.disposition {
                 failures.push(format!(
                     "row `{}` contract root disposition {:?} disagrees with the attempt disposition {:?}",
                     row.id, contract.root_disposition, row.attempt.disposition
                 ));
+            }
+            // State binding: the frozen attempt's root contract state is the
+            // outer contract state; mutating the committed state from amended
+            // to rejected without re-freezing the attempt fails closed instead
+            // of emitting a packet that contradicts the scorecard attempt.
+            match normalized_contract_state(&row.attempt.contract_decision.root_disposition) {
+                Ok(Some(state)) if state == contract.contract_state => {}
+                Ok(Some(state)) => failures.push(format!(
+                    "row `{}` contract state {:?} disagrees with the embedded attempt root contract state {:?}",
+                    row.id, contract.contract_state, state
+                )),
+                Ok(None) => failures.push(format!(
+                    "row `{}` embeds no root contract state; the frozen attempt must record the root's state decision",
+                    row.id
+                )),
+                Err(reason) => failures.push(format!(
+                    "row `{}` embedded attempt records an unknown root contract state: {reason}",
+                    row.id
+                )),
             }
             if contract.author.carries_acceptance {
                 failures.push(format!(
@@ -693,12 +892,42 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
                     row.id
                 ));
             }
+            if contract.root.role.trim().is_empty()
+                || contract.root.config_identity.trim().is_empty()
+                || contract.root.result_identity.trim().is_empty()
+            {
+                failures.push(format!(
+                    "row `{}` root role/config/result identity must be complete; a corpus with no root actor cannot claim an independent root decision",
+                    row.id
+                ));
+            }
+            if contract.root.result_identity == contract.author.result_identity
+                || contract.root.result_identity == contract.adversary.result_identity
+                || contract.author.result_identity == contract.adversary.result_identity
+            {
+                failures.push(format!(
+                    "row `{}` author, adversary and root results must be pairwise distinct identities",
+                    row.id
+                ));
+            }
+            if !contract.root.carries_acceptance {
+                failures.push(format!(
+                    "row `{}` root result must carry the acceptance state; the root disposition is the only acceptance authority",
+                    row.id
+                ));
+            }
             if contract.author.role.trim().is_empty()
                 || contract.author.config_identity.trim().is_empty()
                 || contract.author.result_identity.trim().is_empty()
             {
                 failures.push(format!(
                     "row `{}` author role/config/result identity must be complete",
+                    row.id
+                ));
+            }
+            if contract.adversary.result_identity.trim().is_empty() {
+                failures.push(format!(
+                    "row `{}` adversary records no result identity",
                     row.id
                 ));
             }
@@ -738,6 +967,9 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
                     row.attempt.disposition,
                     IssueLifecycleDispositionV1::Completed
                         | IssueLifecycleDispositionV1::QualifiedOnePr
+                        | IssueLifecycleDispositionV1::PartiallyLanded
+                        | IssueLifecycleDispositionV1::VerificationFailed
+                        | IssueLifecycleDispositionV1::MergedPendingCloseout
                 ) {
                     failures.push(format!(
                         "row `{}` binds open decisions but claims an implementation-ready disposition {:?}",
@@ -762,6 +994,12 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
             if row.attempt.contract_decision.spec_required {
                 failures.push(format!(
                     "row `{}` narrow bug must not require a spec",
+                    row.id
+                ));
+            }
+            if row.attempt.contract_decision.root_disposition.is_some() {
+                failures.push(format!(
+                    "row `{}` narrow bug must not record a root contract state; no contract decision exists",
                     row.id
                 ));
             }
@@ -900,6 +1138,42 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
             ));
         }
     }
+    // Completeness law: a counted row carries a bounded plan; clearing a
+    // mandatory section vacates the claim that the plan bounds the work, and
+    // acceptance must be covered or explicitly omitted with reasons.
+    if row.planning.shape_rationale.trim().is_empty() {
+        failures.push(format!(
+            "row `{}` plan records no shape rationale; the shape decision must be justified on the record",
+            row.id
+        ));
+    }
+    if row.planning.portfolio_placement.trim().is_empty() {
+        failures.push(format!(
+            "row `{}` plan records no portfolio placement; the row must name its portfolio lane without writing a selection file",
+            row.id
+        ));
+    }
+    for (section, emptied) in [
+        ("work items", row.planning.work_items.is_empty()),
+        ("edit cages", row.planning.edit_cages.is_empty()),
+        ("semantic conflict resources", row.planning.conflict_resources.is_empty()),
+        ("proof commands", row.planning.proof_commands.is_empty()),
+        ("stop conditions", row.planning.stop_conditions.is_empty()),
+        ("non-goals", row.planning.non_goals.is_empty()),
+    ] {
+        if emptied {
+            failures.push(format!(
+                "row `{}` plan clears its mandatory {section}; an emptied plan cannot bound the work",
+                row.id
+            ));
+        }
+    }
+    if row.planning.acceptance_covered.is_empty() && row.planning.acceptance_omitted.is_empty() {
+        failures.push(format!(
+            "row `{}` plan covers no acceptance row and omits none; acceptance must be covered or explicitly omitted with reasons",
+            row.id
+        ));
+    }
     failures
 }
 
@@ -915,12 +1189,178 @@ pub(crate) fn assess_contract_plan_corpus(
     failures
 }
 
+/// Every named mechanics control binds one decision-boundary law, and the row
+/// carrying that name must demonstrate that law's discriminating behavior:
+/// dispatching every control through the same generic row assessor would let
+/// a corpus attach all ten required control names to copies of an unrelated
+/// clean row and still pass. Each closed control name selects its own
+/// behavior-specific expectation here.
+fn control_expectation_failures(control: &IssueLifecycleContractPlanControlRowV1) -> Vec<String> {
+    let mut failures = Vec::new();
+    let row = &control.row;
+    let post_implementation = |disposition: IssueLifecycleDispositionV1| {
+        matches!(
+            disposition,
+            IssueLifecycleDispositionV1::Completed
+                | IssueLifecycleDispositionV1::QualifiedOnePr
+                | IssueLifecycleDispositionV1::PartiallyLanded
+                | IssueLifecycleDispositionV1::VerificationFailed
+                | IssueLifecycleDispositionV1::MergedPendingCloseout
+        )
+    };
+    match control.control.as_str() {
+        "adversary_catches_missing_failure_state_or_bounded_none_found" => {
+            if row.contract.is_none() {
+                failures.push(format!(
+                    "control `{}` must carry contract evidence so the adversary result exists",
+                    control.id
+                ));
+            }
+        }
+        "author_cannot_accept_own_contract" => {
+            let contract = row.contract.as_ref();
+            if contract.is_none_or(|contract| {
+                contract.author.carries_acceptance || contract.author.role != "contract_author"
+            }) {
+                failures.push(format!(
+                    "control `{}` must keep the author free of acceptance with role contract_author",
+                    control.id
+                ));
+            }
+        }
+        "unresolved_decision_blocks_implementation" => {
+            let contract = row.contract.as_ref();
+            if contract.is_none_or(|contract| contract.open_decisions.is_empty())
+                || row.planning.stop_conditions.is_empty()
+                || post_implementation(row.attempt.disposition)
+            {
+                failures.push(format!(
+                    "control `{}` must preserve an open decision, bind stop conditions and stay clear of implementation-ready dispositions",
+                    control.id
+                ));
+            }
+        }
+        "narrow_bug_gets_no_unnecessary_spec" => {
+            let artifacts = &row.attempt.contract_artifacts;
+            if row.category != "narrow_accepted_contract_bug"
+                || row.contract.is_some()
+                || row.attempt.contract_decision.spec_required
+                || row.attempt.disposition != IssueLifecycleDispositionV1::QualifiedOnePr
+                || row.planning.shape_decision != IssueLifecyclePlanShapeV1::OnePr
+                || artifacts.proposal.is_some()
+                || artifacts.spec.is_some()
+                || artifacts.adr.is_some()
+                || artifacts.challenge.is_some()
+                || !artifacts.amendments.is_empty()
+                || artifacts.acceptance.is_some()
+            {
+                failures.push(format!(
+                    "control `{}` must route a narrow accepted-contract bug directly to one PR with no contract evidence and no contract artifacts",
+                    control.id
+                ));
+            }
+        }
+        "campaign_rejected_when_one_vertical_slice_suffices" => {
+            if row.planning.shape_decision != IssueLifecyclePlanShapeV1::OnePr
+                || !row.planning.shape_rationale.contains("rejected")
+            {
+                failures.push(format!(
+                    "control `{}` must land on one_pr with the campaign rejection on the record",
+                    control.id
+                ));
+            }
+        }
+        "one_pr_rejected_when_acceptance_cannot_be_covered_coherently" => {
+            if row.planning.shape_decision != IssueLifecyclePlanShapeV1::Campaign
+                || !row.planning.shape_rationale.contains("rejected")
+            {
+                failures.push(format!(
+                    "control `{}` must land on campaign with the one-PR rejection on the record",
+                    control.id
+                ));
+            }
+        }
+        "specs_contain_behavior_not_execution_queues" => {
+            if row
+                .contract
+                .as_ref()
+                .is_none_or(|contract| contract.draft_spec_identity.trim().is_empty())
+            {
+                failures.push(format!(
+                    "control `{}` must carry a behavior draft identity, never an execution queue",
+                    control.id
+                ));
+            }
+        }
+        "plans_contain_work_order_not_new_behavior_authority" => {
+            if row.category != "contract_required"
+                || row.planning.work_items.is_empty()
+                || row.planning.stop_conditions.is_empty()
+            {
+                failures.push(format!(
+                    "control `{}` must exercise the plan law on a spec-required plan carrying work items and stop conditions, never behavior authority",
+                    control.id
+                ));
+            }
+        }
+        "no_tracked_selection_or_current_work_file_changed" => {
+            if row.category != "contract_required"
+                || row.planning.portfolio_placement.trim().is_empty()
+            {
+                failures.push(format!(
+                    "control `{}` must record a portfolio placement label on a spec-required plan without touching a tracked selection or current-work file",
+                    control.id
+                ));
+            }
+        }
+        "cold_start_root_reconstructs_decisions_from_artifacts" => {
+            if row.contract.is_none() {
+                failures.push(format!(
+                    "control `{}` must carry the full contract evidence a cold-start root reconstructs from",
+                    control.id
+                ));
+            }
+        }
+        other => failures.push(format!(
+            "control `{}` names unknown control `{other}`",
+            control.id
+        )),
+    }
+    failures
+}
+
 pub(crate) fn assess_contract_plan_control_corpus(
     corpus: &IssueLifecycleContractPlanControlCorpusV1,
 ) -> Vec<String> {
     let mut failures = Vec::new();
     for control in &corpus.rows {
         failures.extend(assess_contract_plan_row(&control.row));
+        failures.extend(control_expectation_failures(control));
+    }
+    // The adversary control covers both branches: one row where the adversary
+    // returns concrete findings and one where it returns a bounded none_found.
+    let adversary_rows = corpus
+        .rows
+        .iter()
+        .filter(|control| {
+            control.control == "adversary_catches_missing_failure_state_or_bounded_none_found"
+        })
+        .collect::<Vec<_>>();
+    let findings_branch = adversary_rows.iter().any(|control| {
+        control.row.contract.as_ref().is_some_and(|contract| {
+            !contract.adversary.findings.is_empty() && !contract.adversary.none_found
+        })
+    });
+    let none_found_branch = adversary_rows.iter().any(|control| {
+        control.row.contract.as_ref().is_some_and(|contract| {
+            contract.adversary.findings.is_empty() && contract.adversary.none_found
+        })
+    });
+    if !findings_branch || !none_found_branch {
+        failures.push(
+            "control corpus must exercise both the findings and the bounded none_found branches of adversary_catches_missing_failure_state_or_bounded_none_found"
+                .to_string(),
+        );
     }
     failures
 }
@@ -1001,6 +1441,33 @@ pub(crate) fn check_provenance_against_corpus(
             return Err(format!(
                 "contract plan row `{}` category `{}` disagrees with its provenance category `{entry}`",
                 row.id, row.category
+            ));
+        }
+        // Currentness binding: every duplicated capture-time field must agree
+        // with the authoritative corpus values, so a row cannot pass while its
+        // emitted projection claims a different main or capture instant.
+        if row.current_main != corpus.base_main {
+            return Err(format!(
+                "contract plan row `{}` current main `{}` disagrees with the corpus base main `{}`",
+                row.id, row.current_main, corpus.base_main
+            ));
+        }
+        if row.snapshot.captured_at != corpus.captured_at {
+            return Err(format!(
+                "contract plan row `{}` snapshot captured at `{}` disagrees with the corpus captured at `{}`",
+                row.id, row.snapshot.captured_at, corpus.captured_at
+            ));
+        }
+        if row.attempt.context.current_main != corpus.base_main {
+            return Err(format!(
+                "contract plan row `{}` embedded attempt context main `{}` disagrees with the corpus base main `{}`",
+                row.id, row.attempt.context.current_main, corpus.base_main
+            ));
+        }
+        if row.attempt.execution_refs.current_main != corpus.base_main {
+            return Err(format!(
+                "contract plan row `{}` embedded attempt execution main `{}` disagrees with the corpus base main `{}`",
+                row.id, row.attempt.execution_refs.current_main, corpus.base_main
             ));
         }
     }
@@ -1827,6 +2294,498 @@ mod tests {
             .ok_or_else(|| "a captured_at mismatch must fail closed".to_string())?;
         if !error.contains("captured at") {
             return Err(format!("unexpected provenance error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_root_result_identity_must_be_distinct_and_complete(
+    ) -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let mut aliased = row_by_category(&corpus, "contract_required")?.clone();
+        let contract = aliased
+            .contract
+            .as_mut()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?;
+        contract.root.result_identity = contract.author.result_identity.clone();
+        let failures = assess_contract_plan_row(&aliased);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("pairwise distinct identities"))
+        {
+            return Err(format!(
+                "a root result aliased to the author result must fail the law, got {failures:?}"
+            ));
+        }
+        let mut emptied = row_by_category(&corpus, "contract_required")?.clone();
+        let contract = emptied
+            .contract
+            .as_mut()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?;
+        contract.root.result_identity.clear();
+        let failures = assess_contract_plan_row(&emptied);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("root role/config/result identity must be complete"))
+        {
+            return Err(format!(
+                "an emptied root result identity must fail the law, got {failures:?}"
+            ));
+        }
+        let projection =
+            build_contract_plan_projection(row_by_category(&corpus, "contract_required")?);
+        if projection
+            .root_result_identity
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return Err("the projection must retain the root result identity".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_contract_state_bound_to_embedded_attempt() -> Result<(), String>
+    {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let row = row_by_category(&corpus, "contract_required")?;
+        // Mutating only the outer committed state must fail.
+        let mut outer = row.clone();
+        outer
+            .contract
+            .as_mut()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?
+            .contract_state = IssueLifecycleContractStateV1::Rejected;
+        let failures = assess_contract_plan_row(&outer);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("disagrees with the embedded attempt root contract state"))
+        {
+            return Err(format!(
+                "an outer contract state drift must fail the law, got {failures:?}"
+            ));
+        }
+        // Drifting the frozen attempt state must fail too.
+        let mut inner = row.clone();
+        inner.attempt.contract_decision.root_disposition = Some("rejected".to_string());
+        let failures = assess_contract_plan_row(&inner);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("disagrees with the embedded attempt root contract state"))
+        {
+            return Err(format!(
+                "an embedded attempt state drift must fail the law, got {failures:?}"
+            ));
+        }
+        // An unknown state string must fail closed, never parse silently.
+        let mut unknown = row.clone();
+        unknown.attempt.contract_decision.root_disposition = Some("spec-accepted".to_string());
+        let failures = assess_contract_plan_row(&unknown);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("unknown root contract state"))
+        {
+            return Err(format!(
+                "an unknown embedded contract state must fail the law, got {failures:?}"
+            ));
+        }
+        // A narrow bug must not record a root contract state at all.
+        let mut narrow = row_by_category(&corpus, "narrow_accepted_contract_bug")?.clone();
+        narrow.attempt.contract_decision.root_disposition = Some("accepted".to_string());
+        let failures = assess_contract_plan_row(&narrow);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("must not record a root contract state"))
+        {
+            return Err(format!(
+                "a narrow bug recording a root contract state must fail the law, got {failures:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_control_names_bound_to_named_behavior() -> Result<(), String>
+    {
+        let (_corpus, controls, _provenance) = load_committed()?;
+        let narrow_clean = control_by_id(&controls, "control_narrow_bug_gets_no_spec")?.clone();
+        let contract_clean =
+            control_by_id(&controls, "control_author_cannot_accept_own_contract")?.clone();
+        // Attaching every control name to copies of an unrelated narrow clean
+        // row must fail for every name except the narrow-bug law itself.
+        let mut faked = controls.clone();
+        for control in faked.rows.iter_mut() {
+            let mut replacement = narrow_clean.clone();
+            replacement.id = control.id.clone();
+            replacement.control = control.control.clone();
+            replacement.scenario = control.scenario.clone();
+            *control = replacement;
+        }
+        let failures = assess_contract_plan_control_corpus(&faked);
+        for control in &controls.rows {
+            if control.control == "narrow_bug_gets_no_unnecessary_spec" {
+                continue;
+            }
+            if !failures.iter().any(|failure| failure.contains(&control.id)) {
+                return Err(format!(
+                    "faking control `{}` with an unrelated clean row must fail, got {failures:?}",
+                    control.id
+                ));
+            }
+        }
+        // The narrow-bug law itself rejects an unrelated contract-shaped row.
+        let mut faked = controls.clone();
+        for control in faked.rows.iter_mut() {
+            if control.control == "narrow_bug_gets_no_unnecessary_spec" {
+                let mut replacement = contract_clean.clone();
+                replacement.id = control.id.clone();
+                replacement.control = control.control.clone();
+                replacement.scenario = control.scenario.clone();
+                *control = replacement;
+            }
+        }
+        let failures = assess_contract_plan_control_corpus(&faked);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("control_narrow_bug_gets_no_spec"))
+        {
+            return Err(format!(
+                "faking the narrow-bug control with a contract row must fail, got {failures:?}"
+            ));
+        }
+        // A corpus that only exercises the findings branch of the adversary
+        // control must fail the both-branches requirement.
+        let mut findings_only = controls.clone();
+        findings_only
+            .rows
+            .retain(|control| control.id != "control_adversary_bounded_none_found");
+        let failures = assess_contract_plan_control_corpus(&findings_only);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("bounded none_found branches"))
+        {
+            return Err(format!(
+                "dropping the bounded none_found branch must fail, got {failures:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_unmeasured_or_missing_retrieval_step_fails_closed(
+    ) -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let mut not_measured = corpus.rows[0].clone();
+        not_measured.retrieval_steps[0].bytes = IssueLifecycleIntakeBytesV1::NotMeasured;
+        let error = verify_contract_plan_row_snapshot(&not_measured, &contract_plan_root())
+            .err()
+            .ok_or_else(|| "a NotMeasured retrieval step must fail closed".to_string())?;
+        if !error.contains("is not measured") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        let mut missing = corpus.rows[0].clone();
+        missing.retrieval_steps.remove(0);
+        let error = verify_contract_plan_row_snapshot(&missing, &contract_plan_root())
+            .err()
+            .ok_or_else(|| "a missing retrieval step must fail closed".to_string())?;
+        if !error.contains("records no retrieval step") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_row_currentness_bound_to_capture_provenance()
+    -> Result<(), String> {
+        let (corpus, _controls, provenance) = load_committed()?;
+        check_provenance_against_corpus(&corpus, &provenance)?;
+        let drifted_main = "f1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d5e";
+        let mut drifted = corpus.clone();
+        drifted.rows[0].current_main = drifted_main.to_string();
+        let error = check_provenance_against_corpus(&drifted, &provenance)
+            .err()
+            .ok_or_else(|| "a drifted row current main must fail closed".to_string())?;
+        if !error.contains("current main") {
+            return Err(format!("unexpected provenance error: {error}"));
+        }
+        let mut drifted = corpus.clone();
+        drifted.rows[0].snapshot.captured_at = "2026-01-01T00:00:00Z".to_string();
+        let error = check_provenance_against_corpus(&drifted, &provenance)
+            .err()
+            .ok_or_else(|| "a drifted row captured_at must fail closed".to_string())?;
+        if !error.contains("captured at") {
+            return Err(format!("unexpected provenance error: {error}"));
+        }
+        let mut drifted = corpus.clone();
+        drifted.rows[0].attempt.context.current_main = drifted_main.to_string();
+        let error = check_provenance_against_corpus(&drifted, &provenance)
+            .err()
+            .ok_or_else(|| "a drifted attempt context main must fail closed".to_string())?;
+        if !error.contains("context main") {
+            return Err(format!("unexpected provenance error: {error}"));
+        }
+        let mut drifted = corpus.clone();
+        drifted.rows[0].attempt.execution_refs.current_main = drifted_main.to_string();
+        let error = check_provenance_against_corpus(&drifted, &provenance)
+            .err()
+            .ok_or_else(|| "a drifted attempt execution main must fail closed".to_string())?;
+        if !error.contains("execution main") {
+            return Err(format!("unexpected provenance error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_embedded_attempt_bound_to_verified_snapshot()
+    -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let contract_row = row_by_category(&corpus, "contract_required")?;
+        let narrow_row = row_by_category(&corpus, "narrow_accepted_contract_bug")?;
+        let mut swapped = contract_row.clone();
+        swapped.attempt.issue = narrow_row.attempt.issue.clone();
+        swapped.attempt.row_digest =
+            crate::issue_lifecycle_attempt::issue_lifecycle_row_digest(&swapped.attempt)?;
+        let error = verify_contract_plan_row_snapshot(&swapped, &contract_plan_root())
+            .err()
+            .ok_or_else(|| {
+                "an embedded attempt bound to another issue must fail closed".to_string()
+            })?;
+        if !error.contains("names issue") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_open_decisions_block_post_implementation_states()
+    -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let row = row_by_category(&corpus, "contract_required")?;
+        for disposition in [
+            IssueLifecycleDispositionV1::PartiallyLanded,
+            IssueLifecycleDispositionV1::VerificationFailed,
+            IssueLifecycleDispositionV1::MergedPendingCloseout,
+            IssueLifecycleDispositionV1::Completed,
+        ] {
+            let mut mutated = row.clone();
+            mutated.attempt.disposition = disposition;
+            let failures = assess_contract_plan_row(&mutated);
+            if !failures
+                .iter()
+                .any(|failure| failure.contains("claims an implementation-ready disposition"))
+            {
+                return Err(format!(
+                    "open decisions with disposition {disposition:?} must fail the law, got {failures:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_emptied_plan_sections_fail_closed() -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let row = row_by_category(&corpus, "narrow_accepted_contract_bug")?.clone();
+        let mutations: [(&str, fn(&mut IssueLifecycleContractPlanRowV1)); 9] = [
+            ("work items", |row| row.planning.work_items.clear()),
+            ("edit cages", |row| row.planning.edit_cages.clear()),
+            (
+                "semantic conflict resources",
+                |row| row.planning.conflict_resources.clear(),
+            ),
+            ("proof commands", |row| row.planning.proof_commands.clear()),
+            ("stop conditions", |row| row.planning.stop_conditions.clear()),
+            ("non-goals", |row| row.planning.non_goals.clear()),
+            ("acceptance", |row| row.planning.acceptance_covered.clear()),
+            ("shape rationale", |row| row.planning.shape_rationale.clear()),
+            (
+                "portfolio placement",
+                |row| row.planning.portfolio_placement.clear(),
+            ),
+        ];
+        let expected = |section: &str| match section {
+            "acceptance" => "covers no acceptance row".to_string(),
+            "shape rationale" => "records no shape rationale".to_string(),
+            "portfolio placement" => "records no portfolio placement".to_string(),
+            other => format!("clears its mandatory {other}"),
+        };
+        for (section, mutate) in mutations {
+            let mut mutated = row.clone();
+            mutate(&mut mutated);
+            let failures = assess_contract_plan_row(&mutated);
+            let needle = expected(section);
+            if !failures.iter().any(|failure| failure.contains(&needle)) {
+                return Err(format!(
+                    "emptying the plan {section} must fail the law, got {failures:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_duplicate_observation_key_rejected() -> Result<(), String> {
+        let path = contract_plan_root().join("corpus.json");
+        let body = fs::read_to_string(&path)
+            .map_err(|error| format!("read committed corpus: {error}"))?;
+        let mut value: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|error| format!("parse committed corpus: {error}"))?;
+        let rows = value
+            .get_mut("rows")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| "committed corpus carries no rows array".to_string())?;
+        if rows.len() < 2 {
+            return Err("the committed corpus must carry two rows".to_string());
+        }
+        let alias = rows[0]
+            .pointer("/attempt/observation_key")
+            .cloned()
+            .ok_or_else(|| "the first row carries no observation key".to_string())?;
+        let attempt_slot = rows[1]
+            .pointer_mut("/attempt/observation_key")
+            .ok_or_else(|| "the second row carries no observation key".to_string())?;
+        *attempt_slot = alias;
+        // Recompute the aliased row digest so only the load-time shape law can
+        // reject the alias.
+        let mut attempt: IssueLifecycleAttemptV1 = serde_json::from_value(
+            rows[1]
+                .get("attempt")
+                .cloned()
+                .ok_or_else(|| "the second row carries no attempt".to_string())?,
+        )
+        .map_err(|error| format!("parse the aliased attempt: {error}"))?;
+        attempt.row_digest =
+            crate::issue_lifecycle_attempt::issue_lifecycle_row_digest(&attempt)?;
+        rows[1]["attempt"] = serde_json::to_value(&attempt)
+            .map_err(|error| format!("serialize the aliased attempt: {error}"))?;
+        let mutated = serde_json::to_string(&value)
+            .map_err(|error| format!("serialize the aliased corpus: {error}"))?;
+        let error = load_issue_lifecycle_contract_plan_corpus(&mutated)
+            .err()
+            .ok_or_else(|| "an aliased observation key must fail closed".to_string())?;
+        if !error.contains("duplicates observation key") {
+            return Err(format!("unexpected corpus error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_real_row_timeline_snapshot_required() -> Result<(), String>
+    {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let mut no_path = corpus.rows[0].clone();
+        no_path.snapshot.timeline_path = None;
+        let error = verify_contract_plan_row_snapshot(&no_path, &contract_plan_root())
+            .err()
+            .ok_or_else(|| "a real row without a timeline path must fail closed".to_string())?;
+        if !error.contains("no timeline path") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        let mut no_digest = corpus.rows[0].clone();
+        no_digest.snapshot.timeline_snapshot_id = None;
+        let error = verify_contract_plan_row_snapshot(&no_digest, &contract_plan_root())
+            .err()
+            .ok_or_else(|| "a real row without a timeline digest must fail closed".to_string())?;
+        if !error.contains("records no digest") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_snapshot_bytes_bound_to_named_issue() -> Result<(), String>
+    {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let row_6225 = corpus
+            .rows
+            .iter()
+            .find(|row| row.snapshot.issue_number == 6225)
+            .ok_or_else(|| "missing the issue 6225 row".to_string())?;
+        // Point the 6225 row at 6180's committed bytes and update the
+        // recorded digest, so only the payload binding can reject the swap.
+        let mut swapped = row_6225.clone();
+        swapped.snapshot.snapshot_path = Some("snapshots/issue-6180.json".to_string());
+        let bytes = fs::read(contract_plan_root().join("snapshots/issue-6180.json"))
+            .map_err(|error| format!("read the swapped snapshot: {error}"))?;
+        swapped.snapshot.issue_snapshot_id = format!(
+            "gh-issue-snapshot:sha256:{}",
+            crate::blind_journey::sha256_hex(&bytes)
+        );
+        let error = verify_contract_plan_row_snapshot(&swapped, &contract_plan_root())
+            .err()
+            .ok_or_else(|| "snapshot bytes from another issue must fail closed".to_string())?;
+        if !error.contains("names issue 6225 but its snapshot payload is issue 6180") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_contract_plan_pilot_contract_authority_and_rationale_enforced()
+    -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let row = row_by_category(&corpus, "contract_required")?;
+        let contract = row
+            .contract
+            .as_ref()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?;
+        if contract.source_of_truth.trim().is_empty() {
+            return Err("the committed contract must retain its source of truth".to_string());
+        }
+        let projection = build_contract_plan_projection(row);
+        if projection.source_of_truth.as_deref() != Some(contract.source_of_truth.as_str()) {
+            return Err("the projection must retain the source-of-truth identity".to_string());
+        }
+        if projection.spec_required_rationale.as_deref()
+            != Some(contract.spec_required_rationale.as_str())
+        {
+            return Err("the projection must retain the spec-required rationale".to_string());
+        }
+        let mut cleared = row.clone();
+        cleared
+            .contract
+            .as_mut()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?
+            .source_of_truth
+            .clear();
+        let failures = assess_contract_plan_row(&cleared);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("records no source-of-truth identity"))
+        {
+            return Err(format!(
+                "a cleared source of truth must fail the law, got {failures:?}"
+            ));
+        }
+        let mut drifted = row.clone();
+        drifted
+            .contract
+            .as_mut()
+            .ok_or_else(|| "the contract case must carry contract evidence".to_string())?
+            .spec_required_rationale = "unrelated text".to_string();
+        let failures = assess_contract_plan_row(&drifted);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("records no spec-required rationale"))
+        {
+            return Err(format!(
+                "a cleared spec-required rationale must fail the law, got {failures:?}"
+            ));
+        }
+        let mut no_decision_rationale = row.clone();
+        no_decision_rationale
+            .attempt
+            .contract_decision
+            .decision_rationale
+            .clear();
+        let failures = assess_contract_plan_row(&no_decision_rationale);
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("records no contract decision rationale"))
+        {
+            return Err(format!(
+                "an emptied embedded decision rationale must fail the law, got {failures:?}"
+            ));
         }
         Ok(())
     }

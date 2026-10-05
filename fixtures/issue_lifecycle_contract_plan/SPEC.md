@@ -52,8 +52,10 @@ work-order-versus-authority laws.
   (issue #6225) records the source-of-truth identity, the spec-required
   rationale, the draft spec identity, the author role/config/result
   identity (carrying no acceptance state), the independent adversary
-  result with inspected scope and two missing failure/limited findings, the
-  three preserved open decisions, the root disposition
+  result with inspected scope and two missing failure/limited findings,
+  the root role/config/result identity (carrying the acceptance state as
+  the acceptance authority), the three preserved open decisions, the root
+  disposition
   (`qualified_spec_required`) and the amended contract state; the narrow
   case (issue #6180) records no contract evidence at all.
 - The author result never carries an acceptance state; only the root

@@ -40,7 +40,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-adversary_catches_missing_failure_state-v1",
+      "result_identity": "root-result-adversary_catches_missing_failure_state-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -223,7 +229,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "accepted"
+     "contract_state": "accepted",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-adversary_bounded_none_found-v1",
+      "result_identity": "root-result-adversary_bounded_none_found-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -408,7 +420,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-author_cannot_accept_own_contract-v1",
+      "result_identity": "root-result-author_cannot_accept_own_contract-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -595,7 +613,13 @@
       "synthetic open product decision: pick A or record a stop"
      ],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "provisional"
+     "contract_state": "provisional",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-unresolved_decision_blocks_implementation-v1",
+      "result_identity": "root-result-unresolved_decision_blocks_implementation-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -944,7 +968,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-campaign_rejected_when_slice_suffices-v1",
+      "result_identity": "root-result-campaign_rejected_when_slice_suffices-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -1129,7 +1159,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-one_pr_rejected_when_incoherent-v1",
+      "result_identity": "root-result-one_pr_rejected_when_incoherent-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "campaign",
@@ -1323,7 +1359,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-spec_contains_behavior_not_queue-v1",
+      "result_identity": "root-result-spec_contains_behavior_not_queue-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -1508,7 +1550,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-plan_contains_work_order_not_behavior_authority-v1",
+      "result_identity": "root-result-plan_contains_work_order_not_behavior_authority-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -1693,7 +1741,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-no_tracked_selection_file_changed-v1",
+      "result_identity": "root-result-no_tracked_selection_file_changed-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
@@ -1878,7 +1932,13 @@
      },
      "open_decisions": [],
      "root_disposition": "qualified_spec_required",
-     "contract_state": "amended"
+     "contract_state": "amended",
+     "root": {
+      "role": "contract_root",
+      "config_identity": "root-config-cold_start_reconstruction-v1",
+      "result_identity": "root-result-cold_start_reconstruction-v1",
+      "carries_acceptance": true
+     }
     },
     "planning": {
      "shape_decision": "one_pr",
