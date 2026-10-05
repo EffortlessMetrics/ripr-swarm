@@ -504,12 +504,15 @@ impl Runner<'_> {
             ("CARGO_NET_OFFLINE", "true"),
             // The caller's compiler settings must not reach the subject: a
             // `-D warnings` turns a deleted statement into a build failure,
-            // a `--cfg` enables disabled tests, and `RUSTC` would bypass the
-            // labeled toolchain. An empty wrapper disables it; an empty
+            // a `--cfg` enables disabled tests, and `RUSTC` or `RUSTDOC`
+            // would bypass the labeled toolchain (rustdoc builds and runs the
+            // doctests). An empty wrapper disables it; an empty
             // RUSTFLAGS-family value overrides every config-file rustflags,
             // so a subject's own `.cargo/config.toml` rustflags are ignored
             // too. An empty RUSTC_BOOTSTRAP keeps the toolchain stable.
             ("RUSTC", "rustc"),
+            ("RUSTDOC", "rustdoc"),
+            ("CARGO_BUILD_RUSTDOC", "rustdoc"),
             ("RUSTC_WRAPPER", ""),
             ("RUSTC_WORKSPACE_WRAPPER", ""),
             ("RUSTFLAGS", ""),

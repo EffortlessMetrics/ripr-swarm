@@ -185,9 +185,11 @@ differs from `expected/report.md`. It refuses an
   and so is a submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
   so a checkout's dependencies must already be in the cargo cache (`cargo
   fetch`); the command adds no network access of its own, but a subject's
-  build scripts and tests run unsandboxed. The caller's `RUSTC`, wrappers,
-  `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables are cleared, and the
-  empty `RUSTFLAGS` family also overrides config-file rustflags. The test
+  build scripts and tests run unsandboxed. `RUSTC` and `RUSTDOC` point at
+  the rustup proxies, so doctests also run on the labeled toolchain; the
+  caller's wrappers, `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables are
+  cleared, and the empty `RUSTFLAGS` family also overrides config-file
+  rustflags. The test
   command may not pass `--manifest-path`, `--target-dir`, `--config`,
   `--no-run`, or a short flag bundling `-Z` or `-C` before `--`, nor
   `--list`, `--format`, or `--quiet` to the test binary; `validate` refuses
