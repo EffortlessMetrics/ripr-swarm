@@ -244,6 +244,17 @@ implies but does not spell out:
 - a qualified input whose type is neither `Self` nor the scrutinee's type
   is unresolved, and an owner name that is not unique in a complete
   workspace establishes nothing.
+- a bare variant input (`LowerCase`) is unresolved when the test's file
+  imports that name from a path whose type segment is not the scrutinee's
+  type, renames an import to it, or glob-imports another type's variants
+  (`use other::OtherRule::*`);
+- a bare lowercase pattern (`target =>`) is a binding only when the owner's
+  file declares no `const` or `static` of that name, imports no item by
+  that name, and has no glob import of a module, since Rust compares a
+  pattern that names a constant by value;
+- only an `assert_eq!` operand confirms a selected arm: an `assert_ne!`
+  passes for many arm results (`assert_ne!(reason(None), 2)` holds whether
+  the arm yields 0 or 1).
 
 ## Required Evidence
 

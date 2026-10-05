@@ -1552,6 +1552,57 @@ fn file_use_statements(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// One imported item of a `use` declaration: its full path with
+/// whitespace removed (`a::b::C`, `a::E::*`) and the `as` rename, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UsePath {
+    pub(super) path: String,
+    pub(super) alias: Option<String>,
+}
+
+/// Every `use` declaration of `source` flattened into one path per item,
+/// with brace lists expanded (`use a::{b, c::*};` -> `a::b`, `a::c::*`).
+pub(super) fn flattened_use_paths(source: &str) -> Vec<UsePath> {
+    let mut out = Vec::new();
+    for statement in file_use_statements(source) {
+        if let Some(rest) = statement.trim_start().strip_prefix("use") {
+            flatten_use_items("", rest, &mut out);
+        }
+    }
+    out
+}
+
+fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
+    for item in split_top_level_commas(items) {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item.find('{') {
+            None => {
+                let words = item.split_whitespace().collect::<Vec<_>>();
+                let (path, alias) = match words.iter().position(|word| *word == "as") {
+                    Some(at) => (
+                        words[..at].concat(),
+                        words.get(at + 1).map(|w| w.to_string()),
+                    ),
+                    None => (words.concat(), None),
+                };
+                out.push(UsePath {
+                    path: format!("{prefix}{path}"),
+                    alias,
+                });
+            }
+            Some(open) => {
+                if let Some(close) = matching_brace_close(item, open) {
+                    let head = item[..open].split_whitespace().collect::<String>();
+                    flatten_use_items(&format!("{prefix}{head}"), &item[open + 1..close], out);
+                }
+            }
+        }
+    }
+}
+
 /// #3731 review (F11, F22): whether the related test's file imports the
 /// owner callee's bare name FROM A FOREIGN PATH — a `use` binding whose
 /// first path segment is neither `crate`/`self`/`super` nor one of the

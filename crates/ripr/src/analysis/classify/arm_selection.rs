@@ -26,8 +26,8 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::activation::function_parameters;
 use super::reveal::{
-    assertion_comparison_operands, find_fat_arrow, lex_strings, matching_parenthesis,
-    split_top_level_arguments, string_span_ranges,
+    UsePath, assertion_comparison_operands, find_fat_arrow, flattened_use_paths, lex_strings,
+    matching_parenthesis, split_top_level_arguments, string_span_ranges,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::Probe;
@@ -79,6 +79,12 @@ pub(in crate::analysis) struct ArmSelector {
     /// be a same-named function outside the index, so it is not read as an
     /// owner call.
     local_roots: Vec<String>,
+    owner_file: std::path::PathBuf,
+    /// The flattened `use` paths of each related test's file, once
+    /// `in_workspace` attaches them. A bare variant input (`LowerCase`)
+    /// names the scrutinee's variant only when no import in the test's
+    /// file binds that name from another enum.
+    test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,8 +112,12 @@ enum PatternHead {
         name: String,
         irrefutable: bool,
     },
-    /// `_` or a bare binding (`other`, `ref v`): matches every input.
+    /// `_`: matches every input.
     CatchAll,
+    /// A bare lowercase name (`other`, `ref v`): a binding that matches
+    /// every input, unless the name resolves to a constant, which
+    /// `in_workspace` checks against the owner's file.
+    Binding(String),
     Opaque,
 }
 
@@ -229,12 +239,43 @@ impl ArmSelector {
             reached,
             changed_from,
             local_roots,
+            owner_file: owner.file.clone(),
+            test_imports: None,
         })
     }
 
-    /// Admits each workspace package, in manifest and crate-identifier
-    /// form, as a path root of a free owner call.
-    pub(in crate::analysis) fn with_workspace_packages(
+    /// Reads the workspace around the owner and its related tests:
+    /// - each workspace package, in manifest and crate-identifier form,
+    ///   becomes a path root of a free owner call;
+    /// - a binding pattern whose name the owner's file may resolve to a
+    ///   constant (a `const`/`static` of that name, an import binding it,
+    ///   or a glob import of a module) becomes unreadable, since Rust
+    ///   compares such a pattern by value;
+    /// - each related test file's imports are kept for bare variant inputs.
+    pub(in crate::analysis) fn in_workspace<'a>(
+        mut self,
+        index: &crate::analysis::rust_index::RustIndex,
+        test_files: impl IntoIterator<Item = &'a std::path::Path>,
+    ) -> Self {
+        self = self.with_workspace_packages(&index.package_names);
+        let owner_source = index
+            .files()
+            .get(&self.owner_file)
+            .map(|facts| facts.source.clone());
+        self.demote_constant_bindings(owner_source.as_deref());
+        let mut imports = std::collections::BTreeMap::new();
+        for file in test_files {
+            if let Some(facts) = index.files().get(file) {
+                imports
+                    .entry(file.to_path_buf())
+                    .or_insert_with(|| flattened_use_paths(&facts.source));
+            }
+        }
+        self.test_imports = Some(imports);
+        self
+    }
+
+    fn with_workspace_packages(
         mut self,
         package_names: &std::collections::BTreeSet<String>,
     ) -> Self {
@@ -243,6 +284,58 @@ impl ArmSelector {
             self.local_roots.push(name.replace('-', "_"));
         }
         self
+    }
+
+    fn demote_constant_bindings(&mut self, owner_source: Option<&str>) {
+        let resolves =
+            |name: &str| owner_source.is_none_or(|source| may_name_constant(source, name));
+        let demote = |heads: &mut Vec<PatternHead>| {
+            for head in heads.iter_mut() {
+                if let PatternHead::Binding(name) = head
+                    && resolves(name)
+                {
+                    *head = PatternHead::Opaque;
+                }
+            }
+        };
+        demote(&mut self.alternatives);
+        self.earlier.iter_mut().flatten().for_each(demote);
+        if let Some(Some(original)) = &mut self.changed_from {
+            demote(original);
+        }
+    }
+
+    /// Whether a bare variant input (`LowerCase`, no `::`) may name another
+    /// enum's variant in this test's file: an import binds the name from a
+    /// path whose type segment is not the scrutinee's type, renames an
+    /// item to it, or glob-imports another type's variants. A file whose
+    /// imports were not read is ambiguous.
+    fn bare_input_ambiguous(&self, test: &TestSummary, input: &str) -> bool {
+        let Some(test_imports) = &self.test_imports else {
+            return false;
+        };
+        if input_qualifier(input).is_some() {
+            return false;
+        }
+        let PatternHead::Variant { name, .. } = input_head(input) else {
+            return false;
+        };
+        let Some(paths) = test_imports.get(&test.file) else {
+            return true;
+        };
+        let scrutinee_type = self.scrutinee_type.as_deref();
+        paths.iter().any(|import| {
+            let mut segments = import.path.rsplit("::");
+            let last = segments.next().unwrap_or("");
+            let parent = segments.next();
+            match &import.alias {
+                Some(alias) => *alias == name,
+                None if last == "*" => {
+                    parent.is_some_and(is_variant_name) && parent != scrutinee_type
+                }
+                None => last == name && (scrutinee_type.is_none() || parent != scrutinee_type),
+            }
+        })
     }
 
     /// The scrutinee as the owner's `match` names it (`x`, `self`).
@@ -255,10 +348,16 @@ impl ArmSelector {
         &self.pattern_text
     }
 
-    /// Whether either compared operand of an `assert_eq!`/`assert_ne!` is
-    /// exactly a direct owner call whose scrutinee input selects this arm.
+    /// Whether either compared operand of an `assert_eq!` is exactly a
+    /// direct owner call whose scrutinee input selects this arm.
     /// Diagnostic arguments and every other assertion shape never select.
+    /// An `assert_ne!` never does: `assert_ne!(reason(None), 2)` passes
+    /// whether the arm yields 0 or 1, so selecting the arm shows nothing.
     pub(in crate::analysis) fn assertion_selects(&self, assertion_text: &str) -> bool {
+        let masked = mask_comments_and_strings(assertion_text);
+        if !whole_word_offsets(&masked, "assert_ne").is_empty() {
+            return false;
+        }
         let Some(operands) = assertion_comparison_operands(assertion_text) else {
             return false;
         };
@@ -305,6 +404,9 @@ impl ArmSelector {
             }
             for call in calls {
                 let input = self.call_input(&call)?;
+                if self.bare_input_ambiguous(test, input) {
+                    return None;
+                }
                 inputs.push(input.to_string());
                 selection = combine(selection, self.judge(input));
             }
@@ -442,9 +544,10 @@ fn judge_alternative(alternative: &PatternHead, input: &PatternHead) -> ArmSelec
                 ArmSelection::Unknown
             }
         }
-        (PatternHead::CatchAll, PatternHead::Literal(_) | PatternHead::Variant { .. }) => {
-            ArmSelection::Selects
-        }
+        (
+            PatternHead::CatchAll | PatternHead::Binding(_),
+            PatternHead::Literal(_) | PatternHead::Variant { .. },
+        ) => ArmSelection::Selects,
         _ => ArmSelection::Unknown,
     }
 }
@@ -535,8 +638,12 @@ fn pattern_head(alternative: &str) -> PatternHead {
     if let Some(literal) = literal_value(alternative) {
         return PatternHead::Literal(literal);
     }
-    if is_catch_all(alternative) {
-        return PatternHead::CatchAll;
+    if let Some(binding) = catch_all_binding(alternative) {
+        return if binding == "_" {
+            PatternHead::CatchAll
+        } else {
+            PatternHead::Binding(binding.to_string())
+        };
     }
     match variant_parts(alternative) {
         Some((name, payload)) => PatternHead::Variant {
@@ -547,19 +654,44 @@ fn pattern_head(alternative: &str) -> PatternHead {
     }
 }
 
-/// `_`, or a bare lowercase binding with an optional `ref`/`mut`. A
-/// binding with an `@` subpattern, a path or a literal is not one.
-fn is_catch_all(alternative: &str) -> bool {
+/// `_`, or a bare lowercase binding with an optional `ref`/`mut`, as its
+/// name. A binding with an `@` subpattern, a path or a literal is not one.
+fn catch_all_binding(alternative: &str) -> Option<&str> {
     let binding = alternative.trim();
     let binding = binding
         .strip_prefix("ref ")
         .or_else(|| binding.strip_prefix("mut "))
         .unwrap_or(binding)
         .trim();
-    binding == "_"
+    (binding == "_"
         || is_identifier(binding)
             && binding.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
-            && !matches!(binding, "true" | "false" | "self")
+            && !matches!(binding, "true" | "false" | "self"))
+    .then_some(binding)
+}
+
+/// Whether a lowercase pattern name may resolve to a constant in the
+/// owner's file: a `const`/`static` item of that name, an import that
+/// binds it, or a glob import of a module (`use consts::*`), which may
+/// bring in any name. A glob of an enum's variants (`use Rule::*`) does
+/// not count: Rust variants are CamelCase.
+fn may_name_constant(source: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        let before = masked[..offset].trim_end();
+        let before = before.strip_suffix("mut").map_or(before, str::trim_end);
+        before.ends_with("const") || before.ends_with("static")
+    });
+    declared
+        || flattened_use_paths(source).iter().any(|import| {
+            let mut segments = import.path.rsplit("::");
+            let last = segments.next().unwrap_or("");
+            match &import.alias {
+                Some(alias) => alias == name,
+                None if last == "*" => !segments.next().is_some_and(is_variant_name),
+                None => last == name,
+            }
+        })
 }
 
 /// The same reading applied to a call's input expression. A variant input
@@ -1333,6 +1465,107 @@ mod tests {
         assert!(
             !selector.assertion_selects("assert_eq!(rule().apply_to_variant(original), lower);")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn an_inequality_never_selects() -> Result<(), String> {
+        let selector = reason_selector()?;
+        assert!(selector.assertion_selects("assert_eq!(reason(None), 0);"));
+        // `None => 0` changed to `None => 1` passes `!= 2` either way.
+        assert!(!selector.assertion_selects("assert_ne!(reason(None), 2);"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_bare_variant_imported_from_another_enum_is_not_read() -> Result<(), String> {
+        let body = "pub fn apply_to_variant(self, variant: &str) -> String {\n    match self {\n        None | PascalCase => variant.to_owned(),\n        LowerCase => str::to_ascii_lowercase(variant),\n        UpperCase => variant.to_ascii_uppercase(),\n    }\n}\n";
+        let mut apply = owner(body, "apply_to_variant");
+        apply.impl_context = crate::analysis::facts::FunctionImplContext::Impl {
+            self_type: "RenameRule".to_string(),
+        };
+        let mut selector = ArmSelector::establish(
+            &arm_probe("LowerCase => str::to_ascii_lowercase(variant),", 4),
+            &apply,
+        )
+        .ok_or_else(|| "premise: the arm reads its scrutinee from self".to_string())?;
+        let test = test_with(
+            "fn t() {\n    assert_eq!(LowerCase.apply_to_variant(original), lower);\n}\n",
+        );
+        let with_imports = |selector: &mut ArmSelector, source: &str| {
+            selector.test_imports = Some(
+                [(test.file.clone(), flattened_use_paths(source))]
+                    .into_iter()
+                    .collect(),
+            );
+        };
+        with_imports(&mut selector, "use crate::RenameRule::*;\nuse super::*;\n");
+        assert_eq!(
+            selector
+                .observed_inputs(&test)
+                .map(|observed| observed.selection),
+            Some(ArmSelection::Selects)
+        );
+        with_imports(
+            &mut selector,
+            "use crate::{RenameRule::{LowerCase, UpperCase}};\n",
+        );
+        assert_eq!(
+            selector
+                .observed_inputs(&test)
+                .map(|observed| observed.selection),
+            Some(ArmSelection::Selects)
+        );
+        for foreign in [
+            "use other_crate::OtherRule::LowerCase;\n",
+            "use other_crate::{OtherRule::{LowerCase}};\n",
+            "use other_crate::OtherRule::*;\n",
+            "use crate::RenameRule::UpperCase as LowerCase;\n",
+        ] {
+            with_imports(&mut selector, foreign);
+            assert_eq!(selector.observed_inputs(&test), None, "{foreign}");
+        }
+        // A test file whose imports were not read is ambiguous.
+        selector.test_imports = Some(Default::default());
+        assert_eq!(selector.observed_inputs(&test), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding()
+    -> Result<(), String> {
+        let body = "pub fn pick(n: u8) -> u8 {\n    match n {\n        target => 10,\n    }\n}\n";
+        let selector = ArmSelector::establish(&arm_probe("target => 10,", 3), &owner(body, "pick"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from n".to_string())?;
+        let test = test_with("fn t() {\n    assert_eq!(pick(2), 10);\n}\n");
+        let judged = |source: Option<&str>| {
+            let mut selector = selector.clone();
+            selector.demote_constant_bindings(source);
+            selector
+                .observed_inputs(&test)
+                .map(|observed| observed.selection)
+        };
+        assert_eq!(judged(Some(body)), Some(ArmSelection::Selects));
+        for constant in [
+            "const target: u8 = 1;\n",
+            "static target: u8 = 1;\n",
+            "use crate::limits::target;\n",
+            "use crate::limits::*;\n",
+        ] {
+            let source = format!("{constant}{body}");
+            assert_eq!(
+                judged(Some(&source)),
+                Some(ArmSelection::Unknown),
+                "{constant}"
+            );
+        }
+        // An enum glob brings in CamelCase variants only.
+        assert_eq!(
+            judged(Some(&format!("use Rule::*;\n{body}"))),
+            Some(ArmSelection::Selects)
+        );
+        // An owner file that was not read may declare anything.
+        assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())
     }
 

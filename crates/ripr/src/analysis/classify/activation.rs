@@ -1017,7 +1017,7 @@ fn missing_match_arm_discriminator(
         return None;
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
-        .with_workspace_packages(&index.package_names);
+        .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
     // Built once per probe: the helper walk below looks names up for every
     // related test.
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
