@@ -214,7 +214,7 @@ pub(crate) fn render_pilot_summary_md(
     if withheld > 0 {
         out.push_str(&format!(
             "- Withheld: {} ({WITHHELD_REASON}; listed in `{}`)\n",
-            seam_count_label(withheld),
+            withheld_count_label(withheld, context.seam_limit),
             display_path(&context.artifacts.repo_exposure_md)
         ));
     }
@@ -242,7 +242,7 @@ pub(crate) fn render_pilot_summary_md(
         } else if withheld > 0 {
             out.push_str(&format!(
                 "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
-                seam_count_label(withheld),
+                withheld_count_label(withheld, context.seam_limit),
                 display_path(&context.artifacts.repo_exposure_md)
             ));
         } else {
@@ -418,7 +418,7 @@ pub(crate) fn render_pilot_summary_md(
         // #5497: with every seam withheld there is no gap to test, so the
         // snapshot pair would only measure an edit nobody was asked to make.
         (None, None) if top.is_empty() && withheld > 0 => {
-            out.push_str(WITHHELD_ONLY_NEXT);
+            out.push_str(&withheld_only_next(context.seam_limit));
             out.push('\n');
             return out;
         }
@@ -498,11 +498,19 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    // #5497: the terminal is where most users read the empty ranking, so it
+    // states the seam limit too; a gap past the cut was never classified.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "  seam limit: ranked the first {} of {} seams\n",
+            limit.analyzed, limit.total
+        ));
+    }
     let withheld = withheld_static_limitations(classified);
     if withheld > 0 {
         out.push_str(&format!(
             "  withheld: {} ({WITHHELD_REASON})\n",
-            seam_count_label(withheld)
+            withheld_count_label(withheld, context.seam_limit)
         ));
     }
     out.push('\n');
@@ -591,7 +599,7 @@ pub(crate) fn render_pilot_terminal(
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
             "  none ranked: {} {WITHHELD_ONLY_VERDICT}\n  inspect: {}\n\n",
-            seam_count_label(withheld),
+            withheld_count_label(withheld, context.seam_limit),
             display_path(&context.artifacts.repo_exposure_md)
         ));
         false
@@ -694,7 +702,7 @@ pub(crate) fn render_pilot_terminal(
         return out;
     }
     if top.is_empty() && withheld > 0 {
-        out.push_str(WITHHELD_ONLY_NEXT);
+        out.push_str(&withheld_only_next(context.seam_limit));
         out.push('\n');
         return out;
     }
@@ -741,8 +749,35 @@ const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence
 /// pair to compare.
 const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
 
+/// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
+/// classified: those may hold gaps, so "no gap to test" would claim an
+/// absence the run did not establish, and raising the limit is the step.
+fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> String {
+    match seam_limit {
+        Some(limit) => format!(
+            "No gap ranked among the {} seams pilot analyzed, but the seam limit left {} of {} seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. Each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.",
+            limit.analyzed,
+            limit.total.saturating_sub(limit.analyzed),
+            limit.total
+        ),
+        None => WITHHELD_ONLY_NEXT.to_string(),
+    }
+}
+
 fn seam_count_label(count: usize) -> String {
     format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+}
+
+/// Withheld seams counted over the kept seams only are a lower bound once a
+/// seam limit cut the list (#6602).
+fn withheld_count_label(
+    count: usize,
+    seam_limit: Option<&crate::analysis::SeamLimitInfo>,
+) -> String {
+    match seam_limit {
+        Some(_) => format!("at least {}", seam_count_label(count)),
+        None => seam_count_label(count),
+    }
 }
 
 /// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.

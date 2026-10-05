@@ -391,7 +391,15 @@ after phase applies) and selects `next_command` in this order:
    (`next.repair_command: null`) selects nothing and warns
    `pilot_found_no_repair_target`: rerunning pilot would rank the same seam
    again, so the warning names the hand step (a test in the seam's own
-   crate) instead. Likewise a complete pilot summary that ranked no seam,
+   crate) instead. A complete pilot summary that ranked no seam because it
+   withheld every seam as a static limitation (`opaque` or `*_unknown`,
+   `withheld_static_limitations_total` > 0) and recorded no repair start
+   selects nothing and warns
+   `pilot_withheld_static_limitations_no_repair_target`, naming the repo
+   exposure report where each withheld seam names its unresolved stage
+   (#5497). When that run's repo exposure report says a seam limit applied,
+   the warning names raising the limit and rerunning pilot instead, since
+   seams past the cut may hold gaps. Likewise a complete pilot summary that ranked no seam,
    recorded no repair card (`python_first_use` absent, `null`, or status
    `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
    this fact), routed the code to `ripr check` (`language_routes.state:

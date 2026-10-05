@@ -608,6 +608,37 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{md}"
     );
     assert!(!md.contains("Withheld"), "{md}");
+
+    // A seam limit cut seams pilot never classified: they may hold gaps, so
+    // the withheld count is a lower bound and "No gap to test" would claim an
+    // absence the run did not establish.
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let mut limited = pilot_context(&artifacts);
+    limited.seam_limit = Some(&limit);
+    let expected_next = "No gap ranked among the 2 seams pilot analyzed, but the seam limit left 7 of 9 seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot.";
+    let md = render_pilot_summary_md(&entries, limited);
+    assert!(
+        md.contains("None ranked: at least 2 seams were withheld"),
+        "{md}"
+    );
+    assert!(md.contains("- Withheld: at least 2 seams ("), "{md}");
+    assert!(md.contains(expected_next), "{md}");
+    assert!(!md.contains("No gap to test:"), "{md}");
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains("  seam limit: ranked the first 2 of 9 seams\n"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("  withheld: at least 2 seams ("),
+        "{terminal}"
+    );
+    assert!(terminal.contains(expected_next), "{terminal}");
+    assert!(!terminal.contains("No gap to test:"), "{terminal}");
 }
 
 #[test]

@@ -13075,14 +13075,21 @@ Field contract:
   also when status cannot choose honestly: an unreadable attempt manifest,
   several current awaiting attempts, several open seams, an unreadable
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
+  a complete pilot summary that ranked no seam because it withheld every
+  seam as a static limitation (`withheld_static_limitations_total` > 0),
   or a complete pilot summary that ranked no seam, recorded no repair card
   (`python_first_use` absent, `null`, or status `no_python_findings` or
   `no_repair_cards`) and routed the code to `ripr check`
   (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
-  `pilot_found_no_repair_target`, `pilot_routed_to_check_no_repair_target`)
-  then names the choices. The last names the recorded check command and the
+  `pilot_found_no_repair_target`,
+  `pilot_withheld_static_limitations_no_repair_target`,
+  `pilot_routed_to_check_no_repair_target`) then names the choices. The
+  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  reads the count as "at least N" and names raising the seam limits and
+  rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
@@ -15413,7 +15420,12 @@ Field contract:
   it could not establish, so the seam is a static limitation, not a gap. They
   stay in `repo-exposure.json` with their evidence. `pilot-summary.md` and the
   terminal disclose the count; when it is nonzero and nothing ranked, both say
-  the empty ranking is not a clean result. `null` for partial summaries.
+  the empty ranking is not a clean result. After a seam limit cut the
+  classified seams, the count covers the kept seams only: Markdown and the
+  terminal read it as "at least N", the terminal also names the limit, and
+  the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
+  cut seams were never classified. `null` for partial summaries.
 - `top_actionable_seams[]` — ranked seams using class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
   withheld, see above), with evidence tie-breakers for missing discriminator, related
