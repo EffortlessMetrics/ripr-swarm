@@ -62,6 +62,14 @@ proving a universal RSS threshold.
   began, so a competing writer that rolls back late cannot restore an
   older single entry over the newer generation. A single entry a later
   writer published is newer and stays.
+  There is no per-key cross-process lock, so a stat-then-remove window
+  remains: a late rollback that restores an older single entry after the
+  post-commit check, followed by termination before its own re-check, can
+  leave a stale classified result for that key until the next publish.
+  The cost is a stale cache result, never a corrupt one (#5350).
+  Generation directories are swept only after a successful sharded commit,
+  so writers terminated before any commit leave directories until a later
+  commit for that key.
 - After a commit, the writer removes `g*/` generation directories the
   current manifest does not reference once they are older than one
   hour (a terminated or superseded writer leaves them). The previous
