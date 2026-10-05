@@ -134,11 +134,26 @@ fn discover_manifests(fixtures_dir: &Path, bench: Option<&str>) -> Result<Vec<Pa
     }
     if let Some(id) = bench {
         let manifest = fixtures_dir.join(id).join("manifest.json");
-        if !fixtures_dir.join(id).is_dir() {
-            return Err(format!(
-                "unknown bench `{id}`: {} does not exist",
-                manifest.display()
-            ));
+        // Only expected absence is a usage-level "unknown bench"; an
+        // inspection failure (permissions, symlink loop) must not wear that
+        // label (PR #6683 review).
+        match fs::metadata(fixtures_dir.join(id)) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "unknown bench `{id}`: {} does not exist",
+                    manifest.display()
+                ));
+            }
+            Err(err) => {
+                return Err(format!("inspect bench directory `{id}`: {err}"));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "unknown bench `{id}`: {} does not exist",
+                    manifest.display()
+                ));
+            }
         }
         // A bench directory without its manifest is a verification
         // outcome, not a discovery error: return it so a filtered run
