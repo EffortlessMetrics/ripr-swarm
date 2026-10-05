@@ -42,6 +42,13 @@ trimmed expression text appears among the file's added lines. Repo-mode
 findings are `candidate_current` by construction. Preview-language findings
 are `unresolved_subject` until their producers resolve currentness.
 
+Perl fact-packet findings (#6586) resolve from what ripr observed, not from
+producer claims: a finding is `candidate_current` only when its source file
+is on disk under the analysis root (so ingestion verified the packet's
+digest against it) and the diff adds a line inside the packet change's
+range. A fixture-only packet, or a change the diff does not add a line to,
+stays `unresolved_subject`.
+
 In this slice the disposition is informational for consumers and the
 probe's recorded location coordinate is unchanged: a removed-only probe
 keeps the projected new-side coordinate that the new-file index, the flow
@@ -89,7 +96,11 @@ slice.
 
 `crates/ripr/src/analysis/probes/diff.rs` `source_currentness_tests` pin
 the deleted-tail, moved-expression, added-seam, unresolved, and
-coordinate-stability shapes plus the content-addressed-id guard. The
+coordinate-stability shapes plus the content-addressed-id guard.
+`crates/ripr/src/analysis/language/perl/tests.rs`
+`perl_finding_is_candidate_current_only_for_an_observed_changed_line` pins
+the Perl rule: only an on-disk source with an added line inside the change
+is `candidate_current`. The
 re-blessed golden corpus (176 fixtures) carries the field on every
 finding with no other behavioral delta.
 

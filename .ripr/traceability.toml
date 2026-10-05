@@ -9357,6 +9357,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::moved_expression_resolves_moved_or_renamed",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::added_probe_keeps_new_side_line_and_resolves_candidate_current",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_is_candidate_current_only_for_an_observed_changed_line",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9366,6 +9367,7 @@ code = [
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/output/json/report.rs",
 ]
 outputs = [

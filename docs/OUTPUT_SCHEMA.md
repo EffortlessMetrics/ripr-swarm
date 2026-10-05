@@ -1110,7 +1110,10 @@ The evidence-first fields are additive in schema `0.2`:
     the backward-compatibility value when reading artifacts written before
     the field existed.
   For Rust diff findings the disposition is resolved from the diff evidence
-  that seeded the probe; repo-mode findings are `candidate_current` by
+  that seeded the probe. A Perl fact-packet finding is `candidate_current`
+  only when its source is on disk under the root (its digest verified at
+  ingestion) and the diff adds a line inside the packet change's range;
+  otherwise it stays `unresolved_subject` (#6586); repo-mode findings are `candidate_current` by
   construction (they seed from the current tree). In this slice the field is
   informational for consumers: gate and actionability policy follow in the
   #3212 projection slice.

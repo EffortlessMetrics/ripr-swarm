@@ -190,7 +190,7 @@ impl LanguageAdapter for PerlAdapter {
         &self,
         options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
-        _changed_files: &[ChangedFile],
+        changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
         // Read the packet from the configured path. When absent, return empty
         // (the pipeline's non-abort contract records this as `unavailable`).
@@ -207,7 +207,9 @@ impl LanguageAdapter for PerlAdapter {
         let packet = self.consume_fact_packet(&packet_text, options)?;
 
         // C2: convert the packet into Findings.
-        let findings = packet_to_findings(&packet);
+        let findings = packet_to_findings_with_currentness(&packet, |file, change| {
+            perl_change_currentness(&options.root, changed_files, file, change)
+        });
         let changed_files = packet
             .changes
             .iter()
@@ -371,6 +373,43 @@ fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::Or
 }
 
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
+    packet_to_findings_with_currentness(packet, |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    })
+}
+
+/// #6586: a Perl change is candidate-current only when the consumer observed
+/// it: the file is on disk under the analysis root (so ingestion verified
+/// its digest against the packet) and the diff adds a line inside the
+/// change's range. Anything else, including fixture-only packets and changes
+/// the diff does not touch, stays the explicit unknown.
+fn perl_change_currentness(
+    root: &std::path::Path,
+    changed_files: &[ChangedFile],
+    file: &FileFact,
+    change: &ChangeFact,
+) -> crate::domain::SourceCurrentness {
+    use crate::domain::SourceCurrentness;
+    if !root.join(&file.path).is_file() {
+        return SourceCurrentness::UnresolvedSubject;
+    }
+    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
+    let added_in_range = changed_files
+        .iter()
+        .filter(|changed| changed.path == std::path::Path::new(&file.path))
+        .flat_map(|changed| &changed.added_lines)
+        .any(|added| lines.contains(&added.line));
+    if added_in_range {
+        SourceCurrentness::CandidateCurrent
+    } else {
+        SourceCurrentness::UnresolvedSubject
+    }
+}
+
+fn packet_to_findings_with_currentness(
+    packet: &PerlFactPacket,
+    currentness: impl Fn(&FileFact, &ChangeFact) -> crate::domain::SourceCurrentness,
+) -> Vec<crate::domain::Finding> {
     use crate::domain::{
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
         FindingCanonicalGap, LanguageId as DomainLanguageId, LanguageStatus,
@@ -754,10 +793,9 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            // Source currentness is resolved by the producer that observed the diff
-            // evidence; this constructor has none, so the disposition stays the
-            // explicit unknown (#3280).
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            // #6586: resolved by the caller from the observed diff; without one
+            // the disposition stays the explicit unknown (#3280).
+            source_currentness: currentness(file, change),
         });
     }
 
