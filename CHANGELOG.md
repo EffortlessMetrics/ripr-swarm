@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- CI: ub-review selects RIPR's companion configuration and Rust repository
+  identity, and requests resolved-candidate receipts under the same PR-specific
+  artifact name used for upload. Review remains advisory; artifact retrieval
+  requires the existing token's Actions access and exact-revision reuse checks
+  still apply (#6337).
+
 - MCP wire names unified on `canonical_id` (same spelling the evidence
   documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
   `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
@@ -18,6 +24,12 @@ are scoped or reviewed.
   `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
   `resources/templates/list` adapt automatically; in-flight callers passing `gap_id`
   get `invalid params` (#5209).
+- Probe-shape kinds are a closed 8-variant enum instead of one `String`
+  per shape (about 0.5M small allocations on a mid-sized workspace).
+  The wire spelling is unchanged, so cache payloads, goldens, and
+  machine output are byte-identical; unknown kind strings now fail at
+  the decode boundary and the entry takes the corrupt-entry quarantine
+  path (#5415).
 ### Added
 
 - Bounded repair states its inline-test boundary as permanent scope:
@@ -49,6 +61,40 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr swarm ingest` no longer fails the packet's forbidden-edit guard open
+  on path spellings. `SRC/PRICING.py`, absolute or verbatim `\\?\` paths
+  under the root, symlinked-root spellings, drive-relative forms, and
+  `..` segments canonicalize before the comparison — directly named absolute
+  or drive-prefixed entries resolve against the filesystem when they exist,
+  root-relative entries that name an existing file resolve against the
+  selected root (so a symlinked spelling anchors to the file it writes
+  through), and everything else matches lexically case-insensitively — so a
+  forbidden production edit can no longer classify `closed`/`resolved`.
+  Entries that do not resolve inside the root surface as
+  `evidence.edited_files_outside_root` instead of passing silently
+  (#5984). The OUTPUT_SCHEMA ingest example now shows the pinned
+  `forbidden_edit` reason token the binary emits instead of prose (#5986).
+- `ripr swarm queue` no longer emits a runnable refresh route a check-output
+  gap ledger cannot replay. The route carries the typed
+  `refresh_replayable: false` state with an empty `refresh_commands` array —
+  check output records no `--diff` scope, so the old command silently
+  rebuilt the ledger at a different scope inside Git and truncated the
+  recorded check output through its own redirect outside Git — and the
+  blocked reason names the manual rerun-with-same-`--diff` route.
+  `refresh_replayable` is `true` only for producer-validated repo-exposure
+  sources; records and unidentified kinds keep their repo-exposure recovery
+  commands but no longer advertise them as a replay (#5985).
+- Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
+  JSON through the same product importer as `ripr calibrate cargo-mutants`.
+  A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
+  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
+  is no longer read as all-unknown (#5374).
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
 - Repair attempts preserve literal Unix backslashes in the canonical root
   stored by the before producer. Newly published manifests reopen in the
   selected repository while authentic copies in another root remain refused
@@ -161,6 +207,12 @@ are scoped or reviewed.
   toolchain step) instead of a bare `cargo: command not found`. When ripr was
   never installed, the advisory summary says so and points at that step's log
   instead of rendering nothing.
+- `ripr zero status` no longer reports `achieved` from a content-free or
+  partial baseline debt delta. Missing or partial counts, items that
+  contradict zero counts, and partial-scope, findings-bounded, or otherwise
+  incomplete producer runs now report `unknown` (or keep `not_yet` when
+  visible debt remains) with the reason carried in warnings, and a failed
+  gate decision blocks every readiness promotion (#5251).
 
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
@@ -253,6 +305,17 @@ are scoped or reviewed.
   this verdict" section: each examined test with the assertion it was judged
   by, what a test would need to change the verdict, and what each stop reason
   means (#5356). No verdict changes.
+- MCP: transport protocol errors (oversize frame, undecodable request) now
+  carry an explicit `"id": null` per JSON-RPC instead of omitting the id;
+  `ripr_workspace_status` goes through the shared response bound with a
+  typed `result_too_large` refusal; the writer backstop admits
+  exactly-at-bound frames like the semantic layers; the refresh
+  limitations text no longer claims a cancelled attempt is never
+  committed; and superseded-attempt tombstones are capped so long
+  sessions stay bounded (#5254 items 2, 3, 4, 5, 7).
+- LSP: `ripr lsp` exits 2 when the `exit` notification arrives without a
+  prior `shutdown` request, per LSP §exit. `shutdown` then `exit` still
+  exits 0, as do stdin EOF and malformed-frame termination (#5249).
 
 - `ripr explain` and `ripr context` explain `file:line` syntax after a malformed
   location misses and retain the scoped listing command for recovery. Finding
