@@ -118,7 +118,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(shape.start_line, &canonical_text, changed),
+                    removed_before(shape.start_line, &canonical_text, changed),
                     Some(canonical_text.clone()),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
@@ -131,7 +131,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     added,
                     shape.family,
-                    nearby_removed_line(added.new_side_line, text, changed),
+                    removed_before(added.new_side_line, text, changed),
                     Some(text.to_string()),
                 )));
             }
@@ -156,7 +156,7 @@ pub(crate) fn probes_for_file_with_relations(
                 &build_context,
                 added,
                 family,
-                nearby_removed_line(added.new_side_line, text, changed),
+                removed_before(added.new_side_line, text, changed),
                 Some(text.to_string()),
             )));
         }
@@ -819,6 +819,18 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
     removed
         .get(added_new_side_line.checked_sub(run_start)?)
         .map(|line| line.text.trim().to_string())
+}
+
+/// A probe's `before` text: the positional counterpart when the replacement
+/// block pairs one, so it names the same old line that shape selection
+/// compared against, else the nearest token-sharing removed line.
+fn removed_before(
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+) -> Option<String> {
+    replaced_line_counterpart(added_new_side_line, changed)
+        .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
 }
 
 fn nearby_removed_line(

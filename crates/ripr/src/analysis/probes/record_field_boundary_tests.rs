@@ -281,5 +281,14 @@ fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), 
         vec!["b: 4", "b: 2"],
         "{probes:?}"
     );
+    let befores = added_side
+        .iter()
+        .map(|probe| probe.before.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        befores,
+        vec![Some("Id { a: 0, b: 2 },"), Some("Id { a: 1, b: 3 },")],
+        "{probes:?}"
+    );
     Ok(())
 }
