@@ -146,9 +146,10 @@ fn check_registered_terminal_matcher_guard_twins(
             assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
             assert!(subject.start_line > 0 && subject.end_line >= subject.start_line);
             let tests = index.tests();
-            let [test] = tests.as_slice() else {
+            if tests.len() != 1 {
                 return Err("terminal matcher control must contain exactly one TestFact".into());
-            };
+            }
+            let test = tests.first().ok_or("terminal matcher TestFact missing")?;
             assert_eq!(test.name, subject.name);
             assert_eq!(test.file, subject.file);
             let line_shift = usize::from(helper_callback);
@@ -238,9 +239,10 @@ fn registered_terminal_matcher_controls_reject_discarded_opaque_and_inert_inputs
             assert_eq!(subject.registration_id, "mimic-suite");
             assert_eq!(subject.name, "observes_score");
             let tests = index.tests();
-            let [test] = tests.as_slice() else {
+            if tests.len() != 1 {
                 return Err("negative control TestFact missing".into());
-            };
+            }
+            let test = tests.first().ok_or("negative control TestFact missing")?;
             for calls in [&subject.calls, &test.calls] {
                 assert!(calls.iter().any(|call| call.name == "score"));
             }

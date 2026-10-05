@@ -254,6 +254,22 @@ fn observes_score() -> Result<(), ()> {
     }
     Ok(())
 }
+"#;
+    let lexical = extract_assertions(source, 1);
+    let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    let [test] = parsed.tests.as_slice() else {
+        return Err("terminal Err guard must contain one parsed test".to_string());
+    };
+    for facts in [&lexical, &test.assertions] {
+        let [fact] = facts.as_slice() else {
+            return Err(format!("expected one terminal Err guard: {facts:?}"));
+        };
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!("consumed matcher Err guard changed: {fact:?}"));
+        }
+    }
+    Ok(())
+}
 
 // SPEC0154 owns these assertion twins. The failure body's Err constructor
 // cannot turn a scalar value pin into an error-variant pin.
@@ -322,18 +338,29 @@ fn check_terminal_matcher_twins(parsed_route: bool) -> Result<(), String> {
             };
             if test.name != "observes_score"
                 || test.file != Path::new("src/lib.rs")
-                || !test.calls.iter().any(|call| call.name == "score" && call.line == 5)
+                || !test
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "score" && call.line == 5)
             {
-                return Err(format!("control did not reach its real owner call: {test:?}"));
+                return Err(format!(
+                    "control did not reach its real owner call: {test:?}"
+                ));
             }
             let lexical = extract_assertions(&source, 1);
-            let facts = if parsed_route { &test.assertions } else { &lexical };
+            let facts = if parsed_route {
+                &test.assertions
+            } else {
+                &lexical
+            };
             let [matcher, sibling] = facts.as_slice() else {
                 return Err(format!(
                     "guard/assert twin lost or invented evidence (parsed={parsed_route}): {statement}: {facts:?}"
                 ));
             };
-            if matcher.line != 6 || matcher.kind != twin.kind || matcher.strength != twin.strength
+            if matcher.line != 6
+                || matcher.kind != twin.kind
+                || matcher.strength != twin.strength
                 || !matcher.observed_tokens.contains(&"value".to_string())
                 || sibling.line != sibling_line
                 || sibling.kind != OracleKind::ExactValue
@@ -374,27 +401,15 @@ fn opaque_and_unnegated_terminal_matcher_guards_do_not_gain_credit() -> Result<(
         let lexical = extract_assertions(&source, 1);
         for facts in [&lexical, &test.assertions] {
             let [sibling] = facts.as_slice() else {
-                return Err(format!("opaque guard received credit: {statement}: {facts:?}"));
+                return Err(format!(
+                    "opaque guard received credit: {statement}: {facts:?}"
+                ));
             };
             if !sibling.text.starts_with("assert_eq!(sibling()") {
-                return Err(format!("opaque guard displaced the live sibling: {sibling:?}"));
+                return Err(format!(
+                    "opaque guard displaced the live sibling: {sibling:?}"
+                ));
             }
-        }
-    }
-    Ok(())
-}
-"#;
-    let lexical = extract_assertions(source, 1);
-    let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
-    let [test] = parsed.tests.as_slice() else {
-        return Err("terminal Err guard must contain one parsed test".to_string());
-    };
-    for facts in [&lexical, &test.assertions] {
-        let [fact] = facts.as_slice() else {
-            return Err(format!("expected one terminal Err guard: {facts:?}"));
-        };
-        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
-            return Err(format!("consumed matcher Err guard changed: {fact:?}"));
         }
     }
     Ok(())
