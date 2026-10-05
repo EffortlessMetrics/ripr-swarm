@@ -1,6 +1,6 @@
 {
   "schema_version": "work_local_state.v1",
-  "root": "C:\\code\\ripr-swarm",
+  "root": "\\\\builds\\ripr-swarm",
   "branches": [
     {
       "name": "main"
@@ -29,22 +29,22 @@
   ],
   "worktrees": [
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9107-b"
+      "path": "\\\\builds\\ripr-swarm\\wt-9107-b"
     },
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9108"
+      "path": "\\\\builds\\ripr-swarm\\wt-9108"
     },
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9102"
+      "path": "\\\\builds\\ripr-swarm\\wt-9102"
     },
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9101"
+      "path": "\\\\builds\\ripr-swarm\\wt-9101"
     },
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9103"
+      "path": "\\\\builds\\ripr-swarm\\wt-9103"
     },
     {
-      "path": "C:\\code\\ripr-swarm\\wt-9107-a"
+      "path": "\\\\builds\\ripr-swarm\\wt-9107-a"
     }
   ]
 }

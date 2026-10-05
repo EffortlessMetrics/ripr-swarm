@@ -18,8 +18,12 @@ STALE_AT = "2026-09-01T00:00:00Z"
 # The exact base main SHA this corpus was captured against (40 hex chars).
 MAIN_SHA = "7cb64d60c9dd0dda59586e6b72dcdf150296a26f"
 REPOSITORY = "EffortlessMetrics/ripr-swarm"
-WIN_ROOT = "C:\\code\\ripr-swarm"
-UNIX_ROOT = "/c/code/ripr-swarm"
+# The canonical captured checkout roots. The Windows root deliberately uses a
+# synthetic UNC spelling (not a local drive letter) so the committed corpus
+# never records one machine's absolute paths; the unix variant is the same
+# checkout mounted through a POSIX-style path.
+WIN_ROOT = "\\\\builds\\ripr-swarm"
+UNIX_ROOT = "/builds/ripr-swarm"
 
 
 def wt(root, name):
