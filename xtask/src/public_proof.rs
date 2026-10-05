@@ -493,7 +493,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
     let first_receipt = |value: f64, basis: &str| -> Option<Derived> {
         Some(Derived {
             value: Some(value),
-            trend: "first receipt".to_string(),
+            trend: format!("first receipt ({basis})"),
             basis: basis.to_string(),
         })
     };
@@ -511,7 +511,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 "agreement_rate",
                 "mutation-spot-check",
             )?,
-            "mutation spot check",
+            &scored_basis(&r.mutation, "claims_discriminator", "strongly_gripped")?,
         ),
         "trust.gap_claim_agreement" => first_receipt(
             req_f64(
@@ -522,7 +522,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 "agreement_rate",
                 "mutation-spot-check",
             )?,
-            "mutation spot check",
+            &scored_basis(&r.mutation, "claims_no_discriminator", "ungripped")?,
         ),
         "trust.mutation_join_coverage" => {
             let (precise, mutants) = mutation_join_totals(&r.mutation)?;
@@ -554,6 +554,35 @@ fn mutation_join_totals(mutation: &Value) -> Result<(f64, f64), String> {
         mutants += req_f64(field(repo, "calibration_metrics"), "mutants_total", ctx)?;
     }
     Ok((precise, mutants))
+}
+
+/// Basis text for an agreement bar: how many seam-precise mutants of the
+/// grip class the rate actually scored, so an excluded outcome is visible.
+fn scored_basis(mutation: &Value, family: &str, grip_class: &str) -> Result<String, String> {
+    let scored = req_f64(
+        field(field(mutation, "scored_families"), family),
+        "mutants_scored",
+        "mutation-spot-check family",
+    )?;
+    let class = field(
+        field(
+            field(mutation, "outcomes_by_pairing_and_grip_class"),
+            "seam_precise",
+        ),
+        grip_class,
+    );
+    let Some(counts) = class.as_object() else {
+        return Err(format!(
+            "mutation-spot-check is missing seam_precise outcomes for {grip_class}"
+        ));
+    };
+    let total: f64 = counts.values().filter_map(Value::as_f64).sum();
+    Ok(format!(
+        "mutation spot check, {} of {} seam-precise `{grip_class}` mutants scored; {} unscored",
+        num(scored),
+        num(total),
+        num(total - scored)
+    ))
 }
 
 /// Mutants that enter an agreement rate, summed over the scored families.
@@ -1425,9 +1454,14 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
             .and_then(|m| field(m, "value").as_f64())
             .map_or_else(|| "n/a".to_string(), num)
     };
+    let fix_success = metrics
+        .iter()
+        .find(|m| text(m, "id") == "agent.fix_success_rate" && text(m, "repo").is_empty())
+        .and_then(|m| field(m, "value").as_f64())
+        .map_or_else(|| "n/a".to_string(), percent);
     page.line(format!(
         "Across the runs: fix success {}, stale re-check cycles {}, white-box tests written only to satisfy ripr {}.",
-        overall("agent.fix_success_rate"),
+        fix_success,
         overall("agent.stale_recheck_cycles"),
         overall("agent.white_box_tests_to_satisfy_ripr"),
     ));
@@ -1678,7 +1712,27 @@ mod tests {
         if let Some(object) = broken.as_object_mut() {
             object.remove("scored_families");
         }
-        assert!(mutation_scored_total(&broken).is_err());
+        assert!(mutation_scored_total(&broken).is_err_and(|e| e.contains("scored_families")));
+        Ok(())
+    }
+
+    #[test]
+    fn agreement_bars_show_their_scored_denominator() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let basis = scored_basis(
+            &receipts.mutation,
+            "claims_discriminator",
+            "strongly_gripped",
+        )?;
+        assert!(basis.contains("scored;"), "{basis}");
+        assert!(basis.contains("unscored"), "{basis}");
+        assert!(
+            scored_basis(&receipts.mutation, "claims_discriminator", "no_such_class")
+                .is_err_and(|e| e.contains("no_such_class"))
+        );
+        let mut page = Page(String::new());
+        agent_section(&mut page, &receipts.agent)?;
+        assert!(page.0.contains("fix success 100.0%"), "{}", page.0);
         Ok(())
     }
 

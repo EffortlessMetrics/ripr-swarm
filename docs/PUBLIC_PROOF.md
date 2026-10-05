@@ -34,10 +34,10 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on the hand-checked verdict corpus | **35.6%** | <= 5.0% | below the bar | first receipt |
-| Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt |
-| Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt |
-| Trust | Real mutants that join a ripr seam precisely enough to score | **10.0%** | >= 50.0% | below the bar | first receipt |
+| Trust | Wrong verdicts on the hand-checked verdict corpus | **35.6%** | <= 5.0% | below the bar | first receipt (verdict corpus) |
+| Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
+| Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
+| Trust | Real mutants that join a ripr seam precisely enough to score | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
 | Trust | False actionable rate on the Rust judged behavior panel | not measured | <= 0.0% | not measured | no earlier measurement |
 | Pasted commands | Printed commands that break or run injected code under a hostile repo path | 0 commands | <= 0 commands | meets the bar | unchanged since a7a089e (0 commands) |
 | Pasted commands | Printed commands that drop the selected repository root | 0 commands | <= 0 commands | meets the bar | unchanged since a7a089e (0 commands) |
@@ -303,7 +303,7 @@ One agent per crate was given a real test gap and only ripr's own help output, a
 | humantime | 3 | 21 | 22 | 2 |
 | semver | 3 | 20 | 21 | 1 |
 
-Across the runs: fix success 1, stale re-check cycles 3, white-box tests written only to satisfy ripr 1.
+Across the runs: fix success 100.0%, stale re-check cycles 3, white-box tests written only to satisfy ripr 1.
 
 ## The corpus behind the numbers
 
