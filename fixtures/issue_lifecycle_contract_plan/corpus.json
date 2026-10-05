@@ -20,7 +20,7 @@
    "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
    "contract": {
     "source_of_truth": "policy/distribution.toml schema 1.0 + crates/ripr/Cargo.toml [features].default + xtask/src/policy/distribution/contract.rs",
-    "spec_required_rationale": "the issue migrates a versioned public schema with deny_unknown_fields and redefines how three conflated feature facts are represented; that is a schema/architecture decision that must exist as a draft spec, survive an independent adversary challenge, and receive a root disposition before implementation",
+    "spec_required_rationale": "issue #6225 changes the versioned public policy schema (policy/distribution.toml schema 1.0 with deny_unknown_fields) and splits three conflated facts (crate available features, release payload selection, ordinary cargo-install defaults); a versioned schema migration plus the owning typed contract must be drafted and independently challenged before any implementation",
     "draft_spec_identity": "RIPR-SPEC-draft-distribution-build-contract-v2",
     "author": {
      "role": "contract_author",
@@ -85,15 +85,15 @@
      }
     ],
     "acceptance_covered": [
-     "one versioned typed contract separately represents crate defaults, release build selection and ordinary Cargo-install features",
-     "effective selected features are derived and compared with actual compiler-artifact evidence",
-     "existing current-default release behavior remains accepted",
-     "non-default selection no longer requires a false Cargo-default claim",
-     "distribution policy, unit and negative tests plus check-release-targets pass",
-     "docs explain the distinction without making a Go or support-tier claim"
+     "issue #6225: one versioned typed contract separately represents crate defaults, release build selection and ordinary Cargo-install features",
+     "issue #6225: effective selected features are derived and compared with actual compiler-artifact evidence",
+     "issue #6225: existing current-default release behavior remains accepted",
+     "issue #6225: non-default selection no longer requires a false Cargo-default claim",
+     "issue #6225: distribution policy, unit and negative tests plus check-release-targets pass",
+     "issue #6225: docs explain the distinction without making a Go or support-tier claim"
     ],
     "acceptance_omitted": [
-     "archive, wheel and npm builders consume the same typed selection: owned by follow-on consumer issues in campaign EffortlessMetrics/ripr-swarm#5519; this plan only exposes the typed selection state"
+     "issue #6225: archive, wheel and npm builders consume the same typed selection: owned by follow-on consumer issues in campaign EffortlessMetrics/ripr-swarm#5519; this plan only exposes the typed selection state"
     ],
     "edit_cages": [
      "policy/distribution.toml",
@@ -253,12 +253,12 @@
       "wi-6225-release-producer-binding->wi-6225-schema-v2"
      ],
      "acceptance_coverage": [
-      "one versioned typed contract separately represents crate defaults, release build selection and ordinary Cargo-install features",
-      "effective selected features are derived and compared with actual compiler-artifact evidence",
-      "existing current-default release behavior remains accepted",
-      "non-default selection no longer requires a false Cargo-default claim",
-      "distribution policy, unit and negative tests plus check-release-targets pass",
-      "docs explain the distinction without making a Go or support-tier claim"
+      "issue #6225: one versioned typed contract separately represents crate defaults, release build selection and ordinary Cargo-install features",
+      "issue #6225: effective selected features are derived and compared with actual compiler-artifact evidence",
+      "issue #6225: existing current-default release behavior remains accepted",
+      "issue #6225: non-default selection no longer requires a false Cargo-default claim",
+      "issue #6225: distribution policy, unit and negative tests plus check-release-targets pass",
+      "issue #6225: docs explain the distinction without making a Go or support-tier claim"
      ]
     },
     "claim_events": [],
@@ -296,7 +296,7 @@
      "claims no Go or support-tier selection (issue non-goal)",
      "claims no field-name finality: exact schema field names stay with the implementation"
     ],
-    "row_digest": "44b1b6399adde6706cb7a2be79d7e7a074e8c439d078f25c13c5c206289e8ab8"
+    "row_digest": "32b8d29cc6a3402c967d0d421c1d673115dc7326b1a83149648eb960d0b97ea5"
    }
   },
   {
@@ -337,9 +337,9 @@
      }
     ],
     "acceptance_covered": [
-     "ripr check --help names exactly one README badge path (repo ledger) with no competing for-README label on the diff-scoped group",
-     "chooser pin extended or accompanied by a negative needle so the old label cannot return silently",
-     "docs/CONFIGURATION.md and docs/BADGE_ADOPTION.md badge contracts still agree with the rendered labels"
+     "issue #6180: ripr check --help names exactly one README badge path (repo ledger) with no competing for-README label on the diff-scoped group",
+     "issue #6180: chooser pin extended or accompanied by a negative needle so the old label cannot return silently",
+     "issue #6180: docs/CONFIGURATION.md and docs/BADGE_ADOPTION.md badge contracts still agree with the rendered labels"
     ],
     "acceptance_omitted": [],
     "edit_cages": [
@@ -487,9 +487,9 @@
       "wi-6180-sync-docs-badge-contracts->wi-6180-rename-badge-group-label"
      ],
      "acceptance_coverage": [
-      "ripr check --help names exactly one README badge path (repo ledger) with no competing for-README label on the diff-scoped group",
-      "chooser pin extended or accompanied by a negative needle so the old label cannot return silently",
-      "docs/CONFIGURATION.md and docs/BADGE_ADOPTION.md badge contracts still agree with the rendered labels"
+      "issue #6180: ripr check --help names exactly one README badge path (repo ledger) with no competing for-README label on the diff-scoped group",
+      "issue #6180: chooser pin extended or accompanied by a negative needle so the old label cannot return silently",
+      "issue #6180: docs/CONFIGURATION.md and docs/BADGE_ADOPTION.md badge contracts still agree with the rendered labels"
      ]
     },
     "claim_events": [],
@@ -526,7 +526,7 @@
      "claims no format, analysis or output-content change (issue scope)",
      "claims no verdict on other check help groups"
     ],
-    "row_digest": "7a9423f4da7d49889cfe0e0471240b9a5cea9bc402ed67d403282cd0e25c9214"
+    "row_digest": "4576a8ac2fe278115c03c660ff8cf24e822539997aaa8392b5cd2c4d08b4ea13"
    }
   }
  ]

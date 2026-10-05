@@ -22,7 +22,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -80,7 +80,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_adversary_catches_missing_failure_state"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -213,7 +215,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -402,7 +404,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -460,7 +462,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_author_cannot_accept_own_contract"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -593,7 +597,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale with an unresolved decision preserved",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -950,7 +954,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1008,7 +1012,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_campaign_rejected_when_slice_suffices"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -1141,7 +1147,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1205,7 +1211,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_one_pr_rejected_when_incoherent"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -1341,7 +1349,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1399,7 +1407,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_spec_contains_behavior_not_queue"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -1532,7 +1542,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1590,7 +1600,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_plan_contains_work_order_not_behavior_authority"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -1723,7 +1735,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1781,7 +1793,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label-only",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_no_tracked_selection_file_changed"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],
@@ -1914,7 +1928,7 @@
     "current_main": "c23c6ba24eb719f1ad3990e6d921a6888b69607e",
     "contract": {
      "source_of_truth": "synthetic source of truth",
-     "spec_required_rationale": "synthetic spec-required rationale",
+     "spec_required_rationale": "synthetic decision rationale",
      "draft_spec_identity": "RIPR-SPEC-draft-synthetic-control",
      "author": {
       "role": "contract_author",
@@ -1972,7 +1986,9 @@
       "synthetic non-goal"
      ],
      "portfolio_placement": "synthetic-portfolio-label",
-     "root_corrections": [],
+     "root_corrections": [
+      "control root correction: restated the root disposition after the adversary pass for control_cold_start_reconstruction"
+     ],
      "re_splits": []
     },
     "retrieval_steps": [],

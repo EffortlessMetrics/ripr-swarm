@@ -2197,16 +2197,12 @@ pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
                         "issue lifecycle contract plan control corpus assessment failed: {failure}"
                     ));
                 }
-                for control in &controls.rows {
-                    let assessment = crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(
-                        &control.row.attempt,
-                    );
-                    if !assessment.counted {
-                        violations.push(format!(
-                            "issue lifecycle contract plan control `{}` was rejected by the RIPR-SPEC-0218 counting law: {:?}",
-                            control.id, assessment.reasons
-                        ));
-                    }
+                for failure in
+                    contract_plan::assess_control_rows_against_counting_law(&controls)
+                {
+                    violations.push(format!(
+                        "issue lifecycle contract plan counting law failed: {failure}"
+                    ));
                 }
             }
             Err(error) => {
