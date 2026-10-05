@@ -96,15 +96,19 @@ impl Fixture {
             .map_err(|error| format!("result is not UTF-8: {error}"))?;
         // The result is JSON, so mask the fixture path as the serializer
         // spells it (escaped backslashes on Windows, escaped quotes or
-        // control characters anywhere), then any raw spelling.
+        // control characters anywhere), then the portable forward-slash
+        // spelling normalized emitters use (`root` and other `display_path`
+        // fields), then any raw spelling.
         let base = self.base.display().to_string();
         let escaped = serde_json::to_string(&base).map_err(|error| error.to_string())?;
         let escaped = escaped
             .strip_prefix('"')
             .and_then(|inner| inner.strip_suffix('"'))
             .unwrap_or(&escaped);
+        let portable = base.replace('\\', "/");
         Ok(text
             .replace(escaped, "<fixture>")
+            .replace(&portable, "<fixture>")
             .replace(&base, "<fixture>")
             .into_bytes())
     }
