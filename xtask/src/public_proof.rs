@@ -336,6 +336,8 @@ enum Status {
     Meets,
     Below,
     NotMeasured,
+    /// The producer recorded an instrument failure for this metric.
+    Failed,
 }
 
 impl Status {
@@ -344,6 +346,7 @@ impl Status {
             Self::Meets => "meets the bar",
             Self::Below => "below the bar",
             Self::NotMeasured => "not measured",
+            Self::Failed => "instrument failed",
         }
     }
 }
@@ -616,7 +619,9 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         let mut value = field(metric, "value").as_f64();
         let mut trend = "no earlier measurement".to_string();
         let mut basis = text(metric, "source");
+        let mut is_derived = false;
         if let Some(derived) = derived(&id, r)? {
+            is_derived = true;
             value = derived.value;
             trend = derived.trend;
             basis = derived.basis;
@@ -645,14 +650,24 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
                 )
             };
         }
-        let status = match value {
+        let mut status = match value {
             Some(v) if meets(v, target, lower_is_better) => Status::Meets,
             Some(_) => Status::Below,
             None => Status::NotMeasured,
         };
-        if status == Status::NotMeasured {
+        // The producer's own status outranks a number recomputed from its worst
+        // successful sample: a failed instrument or an incomplete measurement
+        // can leave a value that happens to meet the target.
+        if !is_derived {
+            match text(metric, "status").as_str() {
+                "failed" => status = Status::Failed,
+                "below_target" if status == Status::Meets => status = Status::Below,
+                _ => {}
+            }
+        }
+        if status == Status::NotMeasured || status == Status::Failed {
             basis = text(metric, "reason");
-            if text(metric, "status") == "failed" {
+            if status == Status::Failed {
                 basis = format!("instrument failed: {basis}");
             }
         }
@@ -830,20 +845,30 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
         .iter()
         .filter(|b| b.status == Status::NotMeasured)
         .count();
+    let failed = bars.iter().filter(|b| b.status == Status::Failed).count();
+    let failed_note = if failed == 0 {
+        String::new()
+    } else {
+        format!(", has {failed} whose instrument failed")
+    };
     page.line("## Scoreboard");
     page.blank();
     page.line(format!(
-        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements."
+        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}{failed_note}. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements."
     ));
     page.blank();
     let rows: Vec<Vec<String>> = bars.iter().map(bar_row).collect();
     page.table(&["Board", "Bar", "Now", "Target", "Status", "Trend"], &rows);
     let unmeasured_rows: Vec<&Bar> = bars
         .iter()
-        .filter(|b| b.status == Status::NotMeasured)
+        .filter(|b| matches!(b.status, Status::NotMeasured | Status::Failed))
         .collect();
     if !unmeasured_rows.is_empty() {
-        page.line("Not measured, and why:");
+        page.line(if failed == 0 {
+            "Not measured, and why:"
+        } else {
+            "Not measured or failed, and why:"
+        });
         page.blank();
         for bar in unmeasured_rows {
             page.line(format!("- `{}`: {}", bar.id, bar.basis));
@@ -1744,6 +1769,34 @@ mod tests {
         let mut page = Page(String::new());
         agent_section(&mut page, &receipts.agent)?;
         assert!(page.0.contains("fix success 100.0%"), "{}", page.0);
+        Ok(())
+    }
+
+    #[test]
+    fn producer_status_outranks_a_recomputed_number() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = "paste.unsafe_commands";
+        let status_of = |receipts: &Receipts| -> Result<Status, String> {
+            bars(receipts)?
+                .into_iter()
+                .find(|bar| bar.id == id)
+                .map(|bar| bar.status)
+                .ok_or_else(|| format!("no bar {id}"))
+        };
+        assert!(status_of(&receipts)? == Status::Meets);
+        let set_status = |receipts: &mut Receipts, status: &str| {
+            if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+                for metric in metrics {
+                    if metric.get("id").and_then(Value::as_str) == Some(id) {
+                        metric["status"] = Value::from(status);
+                    }
+                }
+            }
+        };
+        set_status(&mut receipts, "failed");
+        assert!(status_of(&receipts)? == Status::Failed);
+        set_status(&mut receipts, "below_target");
+        assert!(status_of(&receipts)? == Status::Below);
         Ok(())
     }
 
