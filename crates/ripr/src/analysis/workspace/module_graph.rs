@@ -824,9 +824,14 @@ impl PackageWalk {
             }
             stack_top
         };
+        // Reads ahead share `MAX_WALK_FILES` with expanded scans, so a walk
+        // that queues many siblings it never expands still parses at most
+        // that many files.
+        let room = MAX_WALK_FILES.saturating_sub(self.scans.len() + self.read_ahead.len());
+        let limit = READ_AHEAD_FILES.min(room.max(1));
         let mut batch = vec![file.to_path_buf()];
         for queued in pending {
-            if batch.len() >= READ_AHEAD_FILES {
+            if batch.len() >= limit {
                 break;
             }
             if !batch.contains(queued) {
