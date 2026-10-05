@@ -6102,12 +6102,14 @@ quickcheck! {
     /// deduplicated) and wall time. This is the profile the interning gate
     /// requires: it pins the duplication ratio as a fact about the code
     /// and fixture. The volumes cover generator inputs only, not every
-    /// retained string (per-test owner strings, derived index clones), so
-    /// the reported ratio is an upper bound on retained duplication: the
-    /// uncounted strings are per-test-distinct, which can only lower the
-    /// true ratio. The go/no-go judgment lives on #1924 with the measured
-    /// numbers; this test asserts measurement validity (completion, exact
-    /// counts, consistency), not a gate threshold.
+    /// retained string: each summary keeps its own body/name/file copy,
+    /// `CallFact.text` repeats the generator body, and the candidate
+    /// index holds derived clones alongside per-test-distinct owner
+    /// strings, so the reported ratio is an input-only ratio, not a
+    /// bound on retained duplication in either direction. The go/no-go
+    /// judgment lives on #1924 with the measured numbers; this test
+    /// asserts measurement validity (completion, exact counts,
+    /// consistency), not a gate threshold.
     #[test]
     fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
         use std::collections::HashSet;
@@ -6191,10 +6193,11 @@ quickcheck! {
         }
         let elapsed = started.elapsed();
 
-        // Generator-input volumes only. Summaries additionally retain
-        // per-test-distinct owner strings and the candidate index holds
-        // derived clones, so these totals bound rather than equal the
-        // retained string volume (see the upper-bound note above).
+        // Generator-input volumes only. Summaries retain their own
+        // body/name/file copies, `CallFact.text` repeats each generator
+        // body, and the candidate index holds derived clones alongside
+        // per-test-distinct owner strings, so these totals describe the
+        // inputs, not the retained string volume (see the note above).
         let mut total_bytes: usize = 0;
         let mut unique: HashSet<&str> = HashSet::new();
         for part in files.iter().chain(names.iter()).chain(bodies.iter()) {
