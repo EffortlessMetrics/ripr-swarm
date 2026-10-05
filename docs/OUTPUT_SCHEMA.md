@@ -1012,8 +1012,9 @@ The evidence-first fields are additive in schema `0.2`:
 - `related_tests[].miss` and `related_tests[].why` — (optional, additive,
   #5344) why this test would not notice the changed behavior being wrong.
   `miss` is a controlled `related_test_miss` value; `why` is one short
-  sentence for people. Both are omitted when the analyzer established no
-  miss, for example for an `exposed` finding's catching test. The
+  sentence for people. Both are omitted when the analyzer recorded no
+  reason, for example for an `exposed` finding's catching test. A populated
+  `observation_unconfirmed` is an unknown, not an established miss. The
   per-test values (`no_call_path` on a name-only row, `no_assertion`,
   `assertion_not_observing`, `assertion_not_credited`) can appear under any
   class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,

@@ -51,8 +51,9 @@ related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has n
 
 `ripr explain` repeats the list under "Why this verdict". In JSON the same
 facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
-(the sentence). Both are omitted when ripr established no miss, for example for
-the test that catches an `exposed` change. The reason does not change the
+(the sentence). Both are omitted when ripr recorded no reason, for example for
+the test that catches an `exposed` change. A populated `observation_unconfirmed`
+is an unknown, not an established miss. The reason does not change the
 finding's class. Use it to choose a follow-up from the table below. Rust findings carry it today. Python and TypeScript findings do not yet, and
 Perl findings carry only `observation_unconfirmed`, on a narrow set of
 weakly exposed rows. `no_call_path`,
