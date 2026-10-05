@@ -163,6 +163,21 @@ impl ArmSelector {
         let changed_from = match (&probe.before, &probe.after) {
             (Some(before), Some(_)) => match arm_pattern_text(before) {
                 Some(original) if same_pattern(&original, &pattern_text) => None,
+                // Reordered alternatives (`"CA" | "MX"` to `"MX" | "CA"`)
+                // take exactly the same inputs, so the arm reads as one whose
+                // pattern did not change.
+                Some(original)
+                    if top_level_alternatives(&original).is_some_and(|original| {
+                        let original = original.into_iter().map(pattern_head).collect::<Vec<_>>();
+                        original.len() == alternatives.len()
+                            && original.iter().all(|head| {
+                                *head != PatternHead::Opaque && alternatives.contains(head)
+                            })
+                            && alternatives.iter().all(|head| original.contains(head))
+                    }) =>
+                {
+                    None
+                }
                 // The diff pairs an added line with the first adjacent
                 // removed line that shares any token, and a qualified enum
                 // name is shared by every arm in a multi-line hunk. The
@@ -1884,6 +1899,19 @@ mod tests {
         let selector = ArmSelector::establish(&body_only, &owner(body, "kind"))
             .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
         assert!(selector.assertion_selects("assert_eq!(kind(Kind::Beta), 2);"));
+        // Reordered alternatives take the same inputs: the arm keeps
+        // selection credit, and a partial overlap still does not.
+        let zones = "pub fn shipping_zone(country: &str) -> u32 {\n    match country {\n        \"US\" => 1,\n        \"MX\" | \"CA\" => 2,\n        _ => 3,\n    }\n}\n";
+        let mut reordered = arm_probe("\"MX\" | \"CA\" => 2,", 4);
+        reordered.before = Some("\"CA\" | \"MX\" => 2,".to_string());
+        let selector = ArmSelector::establish(&reordered, &owner(zones, "shipping_zone"))
+            .ok_or_else(|| "premise: the reordered arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(shipping_zone(\"CA\"), 2);"));
+        let mut narrowed = arm_probe("\"MX\" | \"CA\" => 2,", 4);
+        narrowed.before = Some("\"CA\" | \"MX\" | \"US\" => 2,".to_string());
+        let selector = ArmSelector::establish(&narrowed, &owner(zones, "shipping_zone"))
+            .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(shipping_zone(\"CA\"), 2);"));
         // A removed-line probe whose arm no longer stands on that line
         // establishes nothing.
         let mut removed = arm_probe("Kind::Delta => 2,", 4);

@@ -208,6 +208,8 @@ Implemented:
   arm that provably matches means the input selects another arm;
 - a changed pattern earns no selection credit, and names the arm only when
   neither the original nor the changed pattern selects any observed input.
+  A pattern whose alternatives were only reordered (`"CA" | "MX"` to
+  `"MX" | "CA"`) takes the same inputs and reads as unchanged.
   A changed arm's original is the adjacent removed arm with the same
   pattern, else the first adjacent removed line sharing a token. A
   qualified enum name is such a token for every arm of a multi-line hunk,
