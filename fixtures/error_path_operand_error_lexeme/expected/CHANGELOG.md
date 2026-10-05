@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (3)
+
+Reason:
+RIPR-SPEC-0224, #5508: observation_unconfirmed wording changed in #5578 after #5255 added this fixture (#6665)
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
