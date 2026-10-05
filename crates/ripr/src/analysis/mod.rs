@@ -532,9 +532,10 @@ pub(crate) fn finding_location_text_with_platform(
     }
 }
 
-/// Strip the Windows verbatim prefix from a drive-letter path
-/// (`\\?\F:\x` names the same file as `F:\x`). Other verbatim forms
-/// (`\\?\UNC\..`, `\\?\Volume{..}`) have no plain spelling, so they stay.
+/// Strip the Windows verbatim prefix from a drive-letter path: the verbatim
+/// spelling and the plain drive spelling name the same file, and every other
+/// surface renders the plain one. Other verbatim forms (`\\?\UNC\..`,
+/// `\\?\Volume{..}`) have no plain spelling, so they stay.
 fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
     if !windows {
         return path.to_path_buf();
