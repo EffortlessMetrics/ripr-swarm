@@ -794,7 +794,7 @@ fn lane_measurement<'a>(id: &str, r: &'a Receipts) -> Option<(&'a Value, &'a Lan
         if let Some(metric) = items(&lane.value, "metrics")
             .iter()
             .find(|metric| text(metric, "id") == id)
-            && field(metric, "value").as_f64().is_some()
+            && (field(metric, "value").as_f64().is_some() || text(metric, "status") == "failed")
         {
             return Some((metric, lane));
         }
@@ -2014,13 +2014,11 @@ fn reproduce(page: &mut Page) {
 }
 
 fn lane_revision(receipt: &Value) -> String {
-    let version = text(receipt, "analyzer_version");
-    if !version.is_empty() {
-        return short_version(&version);
-    }
-    let rev = text(field(receipt, "gate"), "baseline_revision");
+    let rev = text(receipt, "revision");
     if rev.is_empty() {
         "revision not recorded".to_string()
+    } else if rev == "unavailable" {
+        "revision unavailable".to_string()
     } else {
         short(&rev, 7)
     }
@@ -2050,12 +2048,12 @@ fn scoreboard_summary(
         .iter()
         .any(|bar| bar.basis.starts_with("metrics/dx-scoreboard/"));
     let mut line = format!(
-        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}{failed_note}. Bold values miss their bar. A trend names the earlier receipt it compares against."
+        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}{failed_note}. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares."
     );
     if cross {
-        line.push_str(" An earlier receipt on another runner class is disclosed and is not a first measurement.");
+        line.push_str(" A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements.");
     }
-    line.push_str(" Rows with no earlier receipt are first measurements.");
+    line.push_str(" Rows with no earlier measurement are first measurements.");
     if from_lane {
         line.push_str(" Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.");
     }
@@ -2641,7 +2639,7 @@ mod tests {
         scoreboard(&mut page, &all);
         assert!(
             page.0
-                .contains("An earlier receipt on another runner class is disclosed"),
+                .contains("A cross-class trend shows the earlier runner class"),
             "{}",
             page.0
         );
@@ -2797,6 +2795,95 @@ mod tests {
         assert_eq!(bar.basis, CORPUS_FAST_BASELINE);
         assert!(bar.value.is_some());
         Ok(())
+    }
+
+    #[test]
+    fn lane_revision_uses_the_receipt_revision_not_the_comparison_baseline() {
+        let receipt = serde_json::json!({
+            "revision": "10e56371911a4e6ef8020fbcd7e5f2692fc9b7f1",
+            "gate": {"baseline_revision": "adf4e6303d53a9b0cd5ec7d1c29d71996b02c8db"}
+        });
+        assert_eq!(lane_revision(&receipt), "10e5637");
+        assert_eq!(
+            lane_revision(&serde_json::json!({"revision": "unavailable"})),
+            "revision unavailable"
+        );
+        assert_eq!(
+            lane_revision(&serde_json::json!({})),
+            "revision not recorded"
+        );
+    }
+
+    #[test]
+    fn receipts_table_names_lane_revisions() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let mut page = Page(String::new());
+        header(&mut page, &receipts)?;
+        assert!(
+            page.0.contains("10e5637"),
+            "corpus lane revision missing: {}",
+            page.0
+        );
+        assert!(
+            page.0.contains("4f81060"),
+            "ranking lane revision missing: {}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_lane_instrument_stays_visible() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.corpus_lane = Some(LaneReceipt {
+            path: CORPUS_FULL_BASELINE.to_string(),
+            value: serde_json::json!({
+                "metrics": [{
+                    "id": "corpus.check_ms",
+                    "board": "corpus",
+                    "unit": "ms",
+                    "target": 5000.0,
+                    "direction": "lower_is_better",
+                    "status": "failed",
+                    "value": null,
+                    "reason": "clone failed",
+                    "title": "Diff-scoped check"
+                }]
+            }),
+        });
+        let bar = bar_named(&receipts, "corpus.check_ms")?;
+        assert!(bar.status == Status::Failed);
+        assert!(
+            bar.basis.contains("instrument failed: clone failed"),
+            "basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoreboard_header_does_not_claim_cross_class_trends_compare() {
+        let summary = scoreboard_summary(
+            1,
+            0,
+            1,
+            0,
+            String::new(),
+            &[Bar {
+                id: "speed.cold_pilot_ms".to_string(),
+                board: "Speed and memory".to_string(),
+                title: "cold".to_string(),
+                value: Some(1.0),
+                unit: "s".to_string(),
+                target: 1.0,
+                lower_is_better: true,
+                status: Status::Below,
+                trend: "earlier receipt on another runner class `local` (was 2 s)".to_string(),
+                basis: String::new(),
+            }],
+        );
+        assert!(summary.contains("does not compare measurements"));
+        assert!(!summary.contains("A trend names the earlier receipt it compares against"));
     }
 
     #[test]
