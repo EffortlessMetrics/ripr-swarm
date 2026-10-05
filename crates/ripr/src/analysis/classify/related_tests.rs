@@ -2106,13 +2106,20 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
 fn initializer_type_head(expr: &str) -> Option<&str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
-        ([.., ty, call], Some(b'(')) => (is_constructor_name(call)
-            || call.starts_with(|c: char| c.is_ascii_uppercase()))
-        .then_some(*ty),
+        ([.., ty, call], Some(b'(')) => {
+            (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
+        }
         ([last], Some(b'(')) | ([.., last], Some(b'{')) => Some(last),
         ([.., ty, _assoc], _) => Some(ty),
         _ => None,
     }
+}
+
+/// CamelCase final segment (`Circle`), read as an enum tuple variant.
+/// SCREAMING_CASE (`Site::FACTORY()`, a const fn pointer) fails closed.
+fn is_variant_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name.bytes().any(|b| b.is_ascii_lowercase())
 }
 
 fn is_constructor_name(name: &str) -> bool {
@@ -2235,66 +2242,73 @@ fn receiver_expr_resolves_to_type(
 /// parenthesised inner expression such as `(Site::new().cache())` or
 /// `(Site::new(), 1)` is not read by its head alone.
 fn bracketed_expr_has_type(
-    text: &str,
-    end: usize,
+    mut text: &str,
+    mut end: usize,
     impl_type: &str,
     body_for_lets: &str,
-    whole: bool,
+    mut whole: bool,
 ) -> bool {
-    let bytes = text.as_bytes();
-    let mut close = end;
-    while close > 0 && bytes[close - 1].is_ascii_whitespace() {
-        close -= 1;
-    }
-    let Some(close) = close.checked_sub(1) else {
-        return false;
-    };
-    let (open_byte, close_byte) = match bytes[close] {
-        b')' => (b'(', b')'),
-        b'}' => (b'{', b'}'),
-        _ => return false,
-    };
-    let Some(open) = matching_open(bytes, close, open_byte, close_byte) else {
-        return false;
-    };
-    let mut path_end = open;
-    if open_byte == b'{' {
-        while path_end > 0 && bytes[path_end - 1].is_ascii_whitespace() {
-            path_end -= 1;
+    // Iterative so deeply nested parentheses in hostile input cannot
+    // exhaust the stack.
+    loop {
+        let bytes = text.as_bytes();
+        let mut close = end;
+        while close > 0 && bytes[close - 1].is_ascii_whitespace() {
+            close -= 1;
         }
-    }
-    let start = path_start(bytes, path_end);
-    let mut before = start;
-    while before > 0 && bytes[before - 1].is_ascii_whitespace() {
-        before -= 1;
-    }
-    if whole && before > 0 {
-        return false;
-    }
-    if start == path_end {
-        // A bare `( .. )` is a parenthesised expression only when nothing
-        // callable precedes it: `f(..)`, `m::<T>(..)`, `mac!(..)`, `x[0](..)`
-        // and `(f)(..)` are calls whose result type is unknown.
-        let callable_before = before > 0
-            && (is_ident_byte(bytes[before - 1])
-                || matches!(bytes[before - 1], b'>' | b'!' | b')' | b']' | b'?')
-                || !bytes[before - 1].is_ascii());
-        if open_byte != b'(' || callable_before {
+        let Some(close) = close.checked_sub(1) else {
+            return false;
+        };
+        let (open_byte, close_byte) = match bytes[close] {
+            b')' => (b'(', b')'),
+            b'}' => (b'{', b'}'),
+            _ => return false,
+        };
+        let Some(open) = matching_open(bytes, close, open_byte, close_byte) else {
+            return false;
+        };
+        let mut path_end = open;
+        if open_byte == b'{' {
+            while path_end > 0 && bytes[path_end - 1].is_ascii_whitespace() {
+                path_end -= 1;
+            }
+        }
+        let start = path_start(bytes, path_end);
+        let mut before = start;
+        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+            before -= 1;
+        }
+        if whole && before > 0 {
             return false;
         }
-        let inner = text[open + 1..close].trim();
-        let inner = inner.strip_prefix('&').map_or(inner, str::trim_start);
-        let inner = inner.strip_prefix("mut ").map_or(inner, str::trim_start);
-        if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
-            return inner == impl_type
-                || let_binding_mentions_type(body_for_lets, inner, impl_type);
+        if start == path_end {
+            // A bare `( .. )` is a parenthesised expression only when nothing
+            // callable precedes it: `f(..)`, `m::<T>(..)`, `mac!(..)`, `x[0](..)`
+            // and `(f)(..)` are calls whose result type is unknown.
+            let callable_before = before > 0
+                && (is_ident_byte(bytes[before - 1])
+                    || matches!(bytes[before - 1], b'>' | b'!' | b')' | b']' | b'?')
+                    || !bytes[before - 1].is_ascii());
+            if open_byte != b'(' || callable_before {
+                return false;
+            }
+            let inner = text[open + 1..close].trim();
+            let inner = inner.strip_prefix('&').map_or(inner, str::trim_start);
+            let inner = inner.strip_prefix("mut ").map_or(inner, str::trim_start);
+            if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
+                return inner == impl_type
+                    || let_binding_mentions_type(body_for_lets, inner, impl_type);
+            }
+            text = inner;
+            end = inner.len();
+            whole = true;
+            continue;
         }
-        return bracketed_expr_has_type(inner, inner.len(), impl_type, body_for_lets, true);
+        if before > 0 && bytes[before - 1] == b'.' {
+            return false;
+        }
+        return initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type);
     }
-    if before > 0 && bytes[before - 1] == b'.' {
-        return false;
-    }
-    initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type)
 }
 
 /// Start of the `a::B::<T>::c` path ending at `end`, walking back over
@@ -5365,6 +5379,7 @@ let r = try_parse_summary(\"x\");",
             ("x = (Site::new()); (Site::default()).build();", true),
             ("if cond { Site::new() } else { other() }.build();", false),
             ("match v { _ => Site::new() }.build();", false),
+            ("(Site::FACTORY()).build();", false),
         ];
         for (body, expected) in cases {
             let summary = test("tests/site.rs", "t", body);
@@ -5374,6 +5389,24 @@ let r = try_parse_summary(\"x\");",
                 "{body}"
             );
         }
+    }
+
+    // (#6605 review) Nesting depth is bounded by input, not the stack: the
+    // recursive form overflowed a 2 MiB debug stack near 10_000 levels.
+    #[test]
+    fn deeply_nested_parenthesised_receiver_does_not_overflow_the_stack() {
+        let depth = 12_000;
+        let body = format!(
+            "{}Site::new(){}.build();",
+            "(".repeat(depth),
+            ")".repeat(depth)
+        );
+        let summary = test("tests/site.rs", "t", &body);
+        let handle = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || method_call_resolves_to_impl_type(&summary, "build", "Site"));
+        let resolved = handle.ok().and_then(|h| h.join().ok());
+        assert_eq!(resolved, Some(true));
     }
 
     // (#5481 review) A binding's type is its annotation or initializer head;
@@ -5402,6 +5435,7 @@ let r = try_parse_summary(\"x\");",
             ("let x = Shape::Circle(1.0)", Some("Shape")),
             // Known limit: prefixes are a convention, not a return type.
             ("let x = Site::with_cache()", Some("Site")),
+            ("let x = Site::FACTORY()", None),
             ("let x = |s: Site| s", None),
         ];
         for (stmt, expected) in cases {
