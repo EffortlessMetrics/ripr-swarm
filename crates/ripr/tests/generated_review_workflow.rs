@@ -1302,13 +1302,11 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
 /// as `don't` do not open a quote. Once open, POSIX single quotes close on
 /// the next `'`, even when a word character follows (`'a'{ref}` is quoted
 /// `a` concatenated with an unquoted ref). A closer followed by `; then`
-/// remains a closer.
+/// remains a closer. Adjacent `'token'` wrapping is the same walk: the
+/// opener sits after whitespace, so quote-state already accepts it. Quotes
+/// merely touching both ends of a token (`'a'{ref}''`) are not enough.
 fn recovery_ref_occurrence_is_shell_quoted(text: &str, at: usize, len: usize) -> bool {
-    let after = at + len;
-    let adjacent = at > 0
-        && text[..at].ends_with('\'')
-        && text.get(after..).is_some_and(|rest| rest.starts_with('\''));
-    adjacent || inside_closed_single_quoted_argument(text, at, after)
+    inside_closed_single_quoted_argument(text, at, at + len)
 }
 
 fn inside_closed_single_quoted_argument(text: &str, start: usize, end: usize) -> bool {
@@ -1417,6 +1415,20 @@ fn odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted() {
     assert!(
         !recovery_ref_occurrence_is_shell_quoted(&glued, at, hostile.len()),
         "unquoted ref glued to a closed quote must fail: {glued}"
+    );
+
+    // Quotes touching both ends are not enough: `'a'{ref}''` still has the
+    // ref unquoted after `'a'` closes. An adjacent-quote shortcut would
+    // accept this.
+    let glued_empty = format!("git fetch origin -- 'a'{hostile}''");
+    let at = glued_empty.find(hostile);
+    assert!(at.is_some(), "fixture must carry the ref: {glued_empty}");
+    let Some(at) = at else {
+        return;
+    };
+    assert!(
+        !recovery_ref_occurrence_is_shell_quoted(&glued_empty, at, hostile.len()),
+        "unquoted ref between a closer and an empty quote must fail: {glued_empty}"
     );
 }
 
