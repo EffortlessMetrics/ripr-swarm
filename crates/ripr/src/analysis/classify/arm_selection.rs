@@ -361,6 +361,14 @@ impl ArmSelector {
         let Some(operands) = assertion_comparison_operands(assertion_text) else {
             return false;
         };
+        // An expected side that names the owner (`assert_eq!(reason(None),
+        // (reason(None)))`) moves with the arm, so the comparison may hold
+        // whatever the arm yields.
+        if operands.iter().all(|operand| {
+            !whole_word_offsets(&mask_comments_and_strings(operand), &self.owner).is_empty()
+        }) {
+            return false;
+        }
         operands.iter().any(|operand| {
             let operand = operand.trim();
             owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
@@ -1504,6 +1512,9 @@ mod tests {
         assert!(selector.assertion_selects("assert_eq!(reason(None), 0);"));
         // `None => 0` changed to `None => 1` passes `!= 2` either way.
         assert!(!selector.assertion_selects("assert_ne!(reason(None), 2);"));
+        // Both sides run the arm, so the comparison holds whatever it yields.
+        assert!(!selector.assertion_selects("assert_eq!(reason(None), (reason(None)));"));
+        assert!(!selector.assertion_selects("assert_eq!(reason(None), reason(None) + 0);"));
         Ok(())
     }
 
