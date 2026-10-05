@@ -1,9 +1,9 @@
 use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
 use super::gate::{
-    GATE_STATUS_CONFIG_ERROR, discloses_incomplete_analysis_outcome,
-    discloses_limited_findings_bound, discloses_limited_partial_scope,
-    incomplete_analysis_outcome_kind,
+    GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings, discloses_blocked_producer_outcome,
+    discloses_incomplete_analysis_outcome, discloses_limited_findings_bound,
+    discloses_limited_partial_scope, incomplete_analysis_outcome_kind,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -799,6 +799,17 @@ fn parse_gap_ledger(path: Option<&str>, text: Option<Result<String, String>>) ->
                 "optional gap decision ledger input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
                 incomplete_analysis_outcome_kind(&ledger_value)
             ));
+        }
+        if discloses_blocked_producer_outcome(&ledger_value) {
+            partial_denominator = true;
+            warnings.push(format!(
+                "optional gap decision ledger input {path} discloses a blocked producer run; a blocked denominator can never yield achieved"
+            ));
+            for producer_warning in blocked_producer_warnings(&ledger_value) {
+                warnings.push(format!(
+                    "optional gap decision ledger input {path} producer warning: {producer_warning}"
+                ));
+            }
         }
     }
     GapLedgerParse {
@@ -2542,6 +2553,113 @@ mod tests {
         assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
         assert!(
             rendered.contains("gap decision ledger input gap-ledger.json discloses"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_rejects_a_blocked_gap_ledger_with_producer_warnings() -> Result<(), String>
+    {
+        // A `status: "blocked"` ledger with producer warnings is a failed
+        // producer, never a complete zero denominator: an otherwise clean
+        // delta must report unknown and preserve the warnings (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": ["parse ledger-source.json failed: invalid JSON: expected value at line 1 column 1"]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains(
+                "gap decision ledger input gap-ledger.json discloses a blocked producer run"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("producer warning: parse ledger-source.json failed"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_accepts_a_warning_free_blocked_gap_ledger_as_zero() -> Result<(), String> {
+        // The producer also reports `status: "blocked"` for a genuinely
+        // empty zero-gap ledger; with no warnings that stays a complete zero
+        // denominator and a clean delta still reports achieved.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        assert!(
+            rendered.contains("\"target_source\": \"gap_decision_ledger\""),
             "{rendered}"
         );
         Ok(())
