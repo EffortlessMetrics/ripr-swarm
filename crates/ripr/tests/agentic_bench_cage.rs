@@ -3,8 +3,10 @@
 //! The harness runs `ripr agent repair --phase before/after` through the
 //! worktree-built binary, the B1 pattern. `crates/ripr/src/edit_cage` stays
 //! `pub(crate)`; this suite never names it and never reimplements production
-//! matching, digest, or capture. Oracles are CLI exit, stderr/stdout, and
-//! the attempt manifest the command already wrote.
+//! matching, digest, or capture. Oracles are CLI exit, stderr/stdout, the
+//! attempt manifest the command already wrote, the typed attempt-status
+//! document, and byte-identity of a retained attempt record across a
+//! superseding finish.
 
 use serde_json::Value;
 use std::fs;
@@ -328,20 +330,98 @@ fn start_before_after(
 }
 
 fn run_after(journey: &Journey) -> Result<Output, String> {
+    run_after_attempt(&journey.root, &journey.root_arg, &journey.attempt_id)
+}
+
+fn run_after_attempt(root: &Path, root_arg: &str, attempt_id: &str) -> Result<Output, String> {
     run_ripr(
-        &journey.root,
+        root,
         &[
             "agent",
             "repair",
             "--json",
             "--root",
-            &journey.root_arg,
+            root_arg,
             "--attempt",
-            &journey.attempt_id,
+            attempt_id,
             "--phase",
             "after",
         ],
     )
+}
+
+/// Runs a before phase against an already-prepared fixture root and returns
+/// the minted attempt id. The supersession-bytes case needs two attempts on
+/// one root; `start_before` always builds a fresh root.
+fn run_before_phase(root: &Path, root_arg: &str, seam_id: &str) -> Result<String, String> {
+    let output = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg,
+            "--seam-id",
+            seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "agent repair --phase before failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let document = parse_stdout_json(&output)?;
+    let attempt_id = document
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!("before-phase stdout is missing repair_attempt.attempt_id:\n{document}")
+        })?
+        .to_owned();
+    if attempt_id.is_empty() {
+        return Err("before-phase published an empty attempt id".to_string());
+    }
+    Ok(attempt_id)
+}
+
+/// Reads the typed attempt-status document for one exact attempt. The oracle
+/// binds production's versioned `agent_attempt_status` shape; it computes no
+/// state machine of its own.
+fn run_attempt_status(root: &Path, root_arg: &str, attempt_id: &str) -> Result<Value, String> {
+    let output = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--json",
+            "--root",
+            root_arg,
+            "--attempt",
+            attempt_id,
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "agent status --attempt failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    parse_stdout_json(&output)
+}
+
+fn json_str<'a>(value: &'a Value, pointer: &str, label: &str) -> Result<&'a str, String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{label} carries no {pointer}:\n{value}"))
 }
 
 fn run_receipt(journey: &Journey) -> Result<Output, String> {
@@ -429,6 +509,34 @@ fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
             "out-of-surface edit verdict is {status}, want violated"
         ));
     }
+    // #6286: pin the exact violation the production cage records, not just
+    // the `violated` status. The labels come from production; the oracle pins
+    // only their spelling and location.
+    let manifest = attempt_manifest(&journey.root, &journey.attempt_id)?;
+    if json_str(&manifest, "/state", "failed attempt manifest")? != "failed" {
+        return Err(format!(
+            "out-of-surface attempt must record state failed:\n{manifest}"
+        ));
+    }
+    let violations = manifest
+        .pointer("/after/verdict/violations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("failed attempt manifest carries no violations:\n{manifest}"))?;
+    if !violations.iter().any(|violation| {
+        violation.pointer("/path").and_then(Value::as_str) == Some("src/lib.rs")
+            && violation.pointer("/kind").and_then(Value::as_str) == Some("forbidden_path")
+    }) {
+        return Err(format!(
+            "violations must name src/lib.rs as forbidden_path: {violations:?}"
+        ));
+    }
+    if violations.iter().any(|violation| {
+        violation.pointer("/path").and_then(Value::as_str) == Some("tests/pricing.rs")
+    }) {
+        return Err(format!(
+            "the selected test target must not be a violation: {violations:?}"
+        ));
+    }
     let joined = combined_output(&after);
     if !joined.contains("src/lib.rs") {
         return Err(format!(
@@ -463,7 +571,249 @@ fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
         }
     }
     assert_no_receipt_written(&journey.root, &journey.attempt_id, "out-of-surface edit")?;
+    // #6286: the typed CLI surface for the refusal. Production's versioned
+    // attempt-status document reports the failed state and the one recovery
+    // step; the after phase itself exits 2 (only pre-verify named refusals
+    // are exit-3 typed), so this document is the typed refusal the oracle
+    // binds.
+    let attempt_status = run_attempt_status(&journey.root, &journey.root_arg, &journey.attempt_id)?;
+    if json_str(&attempt_status, "/kind", "attempt status")? != "agent_attempt_status" {
+        return Err(format!(
+            "attempt status must be the typed agent_attempt_status document:\n{attempt_status}"
+        ));
+    }
+    if json_str(&attempt_status, "/attempt/state", "attempt status")? != "failed" {
+        return Err(format!(
+            "attempt status must report the failed state:\n{attempt_status}"
+        ));
+    }
+    if json_str(&attempt_status, "/next_action/step", "attempt status")? != "repair_attempt_before"
+    {
+        return Err(format!(
+            "attempt status must route recovery through a fresh before phase:\n{attempt_status}"
+        ));
+    }
+    let command = json_str(&attempt_status, "/next_action/command", "attempt status")?;
+    if !command.contains("--phase before") || !command.contains(journey.seam_id.as_str()) {
+        return Err(format!(
+            "attempt status recovery command must name the before phase for seam {}:\n{attempt_status}",
+            journey.seam_id
+        ));
+    }
     Ok(())
+}
+
+/// A dirty production premise refuses the before phase itself (#5262). The
+/// loop pins the repository at its before phase, so an uncommitted
+/// production change used to pass the edit cage silently and only refuse the
+/// receipt after the whole attempt was consumed. Now the before phase names
+/// the paths and the commit-first recovery, and no attempt or workflow
+/// artifact exists. The boundary is production content, not worktree
+/// cleanliness: a dirty focused test file inside the allowed surface still
+/// starts and completes the loop, because the loop expects the test edit.
+#[test]
+fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_runs()
+-> Result<(), String> {
+    let root = unique_temp_workspace("agentic-b6-dirty-premise");
+    fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    let _owned = Fixture(root.clone());
+    init_fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+
+    // Uncommitted production change before the loop starts.
+    edit_out_of_surface(&root)?;
+    let seam_id = discover_seam_id(&root, &root_arg)?;
+    let before = run_ripr(
+        &root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit_code(&before, 2, "dirty-premise before-phase")?;
+    let text = combined_output(&before);
+    for fragment in [
+        "repair attempt cannot start",
+        "src/lib.rs",
+        "to recover:",
+        "git commit -- src/lib.rs",
+        "No workflow was prepared and no repair attempt was started.",
+    ] {
+        if !text.contains(fragment) {
+            return Err(format!(
+                "dirty-premise refusal must name `{fragment}`:\n{text}"
+            ));
+        }
+    }
+    let attempts = root.join("target/ripr/repair-attempts");
+    let published = if attempts.is_dir() {
+        fs::read_dir(&attempts)
+            .map_err(|error| format!("read {}: {error}", attempts.display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("repair-attempt-")
+            })
+            .count()
+    } else {
+        0
+    };
+    if published != 0 {
+        return Err(format!(
+            "a dirty-premise refusal published {published} attempt directories"
+        ));
+    }
+    if root.join("target/ripr/workflow").exists() {
+        return Err("a dirty-premise refusal wrote workflow artifacts".to_string());
+    }
+
+    // The recovery the refusal names: commit the production change, and the
+    // same seam starts.
+    fixture_git_ok(&root, &["add", "src/lib.rs"])
+        .map_err(|error| format!("git add src/lib.rs: {error}"))?;
+    fixture_git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-qm",
+            "committed production premise",
+        ],
+    )
+    .map_err(|error| format!("git commit src/lib.rs: {error}"))?;
+    let committed = run_ripr(
+        &root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    if !committed.status.success() {
+        return Err(format!(
+            "before phase must start once the production premise is committed:\n{}",
+            combined_output(&committed)
+        ));
+    }
+    let attempt_id = parse_stdout_json(&committed)?
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "committed-premise before-phase stdout is missing repair_attempt.attempt_id:\n{}",
+                String::from_utf8_lossy(&committed.stdout)
+            )
+        })?;
+
+    // Boundary control on the same loop: a dirty focused test file inside
+    // the allowed surface does not refuse the before phase. The dirty edit
+    // adds an unrelated passing test so the seam's gap still exists and the
+    // packet still renders (a gap-closing test would make the seam
+    // strongly_gripped and refuse a fresh before phase at the packet gate,
+    // which is the gap rule, not the premise rule). The loop starts, and
+    // closing the gap mid-loop completes the after phase compliantly.
+    append_test_fn(
+        &root,
+        "unrelated_smoke_still_passes",
+        "assert_eq!(discounted_total(10, 100), 10);",
+    )?;
+    let dirty_test_before = run_ripr(
+        &root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    if !dirty_test_before.status.success() {
+        return Err(format!(
+            "a dirty focused test file must not refuse the before phase:\n{}",
+            combined_output(&dirty_test_before)
+        ));
+    }
+    let test_attempt_id = parse_stdout_json(&dirty_test_before)?
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "dirty-test before-phase stdout is missing repair_attempt.attempt_id:\n{}",
+                String::from_utf8_lossy(&dirty_test_before.stdout)
+            )
+        })?;
+    // The mid-loop edit closes the gap with the equality test. It must not
+    // duplicate an existing fn name: repeated `add_in_surface_test` appends
+    // the same fn twice and would fail compilation instead of proving the
+    // boundary.
+    append_test_fn(
+        &root,
+        "equality_boundary_discounts_closes_the_gap",
+        "assert_eq!(discounted_total(100, 100), 90);",
+    )?;
+    let after = run_ripr(
+        &root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &test_attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    if !after.status.success() {
+        return Err(format!(
+            "the loop must complete when only the allowed test surface was dirty and edited:\n{}",
+            combined_output(&after)
+        ));
+    }
+    let status = verdict_status(&root, &test_attempt_id)?;
+    if status != "compliant" {
+        return Err(format!(
+            "dirty-test-premise loop verdict is {status}, want compliant"
+        ));
+    }
+    if attempt_id.is_empty() {
+        return Err("committed-premise attempt id was empty".to_string());
+    }
+    Ok(())
+}
+
+/// Appends one distinct `#[test]` fn to the fixture's focused test file.
+fn append_test_fn(root: &Path, name: &str, body: &str) -> Result<(), String> {
+    let path = root.join("tests/pricing.rs");
+    let mut tests =
+        fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    tests.push_str(&format!("#[test]\nfn {name}() {{\n    {body}\n}}\n"));
+    fs::write(&path, tests).map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 /// Production reread: a finished attempt's receipt must not replay after the
@@ -528,6 +878,125 @@ fn b6_superseded_snapshot_never_replays_a_stale_verdict() -> Result<(), String> 
     Ok(())
 }
 
+/// A superseding finish never replays the first attempt's verdict (#6286).
+/// Two attempts finish against one fixture: the second finish replaces the
+/// one-slot workflow receipt with its own verdict binding, while the first
+/// attempt's record stays byte-identical and its retained receipt keeps
+/// binding its own attempt. The oracle reads production's own manifests and
+/// receipts and computes no digests of its own.
+#[test]
+fn b6_superseding_finish_keeps_first_attempt_byte_identical() -> Result<(), String> {
+    let (journey_a, _owned) = start_before("agentic-b6-supersession-bytes")?;
+    let attempt_b = run_before_phase(&journey_a.root, &journey_a.root_arg, &journey_a.seam_id)?;
+    if journey_a.attempt_id == attempt_b {
+        return Err("the two before phases minted the same attempt id".to_string());
+    }
+    append_test_fn(
+        &journey_a.root,
+        "equality_boundary_discounts",
+        "assert_eq!(discounted_total(100, 100), 90);",
+    )?;
+    let after_a = run_after(&journey_a)?;
+    if !after_a.status.success() {
+        return Err(format!(
+            "first after phase failed:\n{}",
+            combined_output(&after_a)
+        ));
+    }
+    let manifest_a = attempt_manifest(&journey_a.root, &journey_a.attempt_id)?;
+    if json_str(&manifest_a, "/state", "first attempt manifest")? != "ready_to_finish" {
+        return Err(format!(
+            "first attempt must finish ready_to_finish:\n{manifest_a}"
+        ));
+    }
+    let manifest_path_a = attempt_dir(&journey_a.root, &journey_a.attempt_id).join("attempt.json");
+    let manifest_a_bytes = fs::read(&manifest_path_a)
+        .map_err(|error| format!("read {}: {error}", manifest_path_a.display()))?;
+    let first_receipt = read_json(&compatibility_receipt_path(&journey_a.root))?;
+    if json_str(
+        &first_receipt,
+        "/repair_attempt/attempt_id",
+        "first receipt",
+    )? != journey_a.attempt_id.as_str()
+    {
+        return Err(format!(
+            "the workflow receipt must bind the first finished attempt:\n{first_receipt}"
+        ));
+    }
+
+    append_test_fn(
+        &journey_a.root,
+        "equality_boundary_second_case",
+        "assert_eq!(discounted_total(50, 50), 40);",
+    )?;
+    let after_b = run_after_attempt(&journey_a.root, &journey_a.root_arg, &attempt_b)?;
+    if !after_b.status.success() {
+        return Err(format!(
+            "second after phase failed:\n{}",
+            combined_output(&after_b)
+        ));
+    }
+    let manifest_b = attempt_manifest(&journey_a.root, &attempt_b)?;
+    if json_str(&manifest_b, "/state", "second attempt manifest")? != "ready_to_finish" {
+        return Err(format!(
+            "second attempt must finish ready_to_finish:\n{manifest_b}"
+        ));
+    }
+
+    // The superseding finish replaces the projection with its own verdict
+    // binding; it must not replay the first attempt's verdict or touch the
+    // first attempt's record.
+    let superseded = read_json(&compatibility_receipt_path(&journey_a.root))?;
+    if json_str(
+        &superseded,
+        "/repair_attempt/attempt_id",
+        "superseded receipt",
+    )? != attempt_b.as_str()
+    {
+        return Err(format!(
+            "the workflow receipt must bind the superseding attempt:\n{superseded}"
+        ));
+    }
+    let bound_delta = json_str(
+        &superseded,
+        "/repair_attempt/delta_sha256",
+        "superseded receipt",
+    )?;
+    let verdict_delta = json_str(
+        &manifest_b,
+        "/after/delta_sha256",
+        "second attempt manifest",
+    )?;
+    if bound_delta != verdict_delta {
+        return Err(format!(
+            "the superseding receipt must bind attempt B's own verdict digest, not a replay: receipt {bound_delta}, manifest {verdict_delta}"
+        ));
+    }
+    if fs::read(&manifest_path_a)
+        .map_err(|error| format!("reread {}: {error}", manifest_path_a.display()))?
+        != manifest_a_bytes
+    {
+        return Err(
+            "the superseding finish must not rewrite the first attempt's record".to_string(),
+        );
+    }
+    let retained_a = read_json(&attempt_local_receipt_path(
+        &journey_a.root,
+        &journey_a.attempt_id,
+    ))?;
+    if json_str(
+        &retained_a,
+        "/repair_attempt/attempt_id",
+        "retained first receipt",
+    )? != journey_a.attempt_id.as_str()
+    {
+        return Err(format!(
+            "the first attempt's retained receipt must keep binding its own attempt:\n{retained_a}"
+        ));
+    }
+    Ok(())
+}
+
 /// Over-budget capture fails closed: a file one byte over the production
 /// per-file bound is planted before `--phase before` so both snapshots see
 /// `WorktreeIdentity::Other`. Production `evaluate_edit_cage` then records
@@ -567,6 +1036,22 @@ fn b6_invalid_packet_and_manifest_are_rejected_before_any_receipt() -> Result<()
         &packet_journey.attempt_id,
         "invalid packet",
     )?;
+    // #6286: the binding fails before the durable finish: the attempt stays
+    // awaiting its edit with no recorded verdict.
+    let retained = attempt_manifest(&packet_journey.root, &packet_journey.attempt_id)?;
+    if json_str(&retained, "/state", "packet-corrupted manifest")? != "awaiting_edit" {
+        return Err(format!(
+            "a packet rejected before the finish must leave the attempt awaiting_edit:\n{retained}"
+        ));
+    }
+    if retained
+        .pointer("/after")
+        .is_some_and(|after| !after.is_null())
+    {
+        return Err(format!(
+            "a packet rejected before the finish must record no after verdict:\n{retained}"
+        ));
+    }
 
     let (manifest_journey, _manifest_owned) = start_before("agentic-b6-invalid-manifest")?;
     let manifest_path =

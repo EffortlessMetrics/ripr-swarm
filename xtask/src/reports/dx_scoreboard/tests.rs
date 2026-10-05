@@ -482,7 +482,7 @@ fn first_run_receipt(with_install: bool) -> Value {
 fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(), String> {
     let config = parse_config(&MINIMAL.replace(
         "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
     ))?;
     let samples = parse_ingest(&first_run_receipt(true), &config)?;
     let find = |metric: &str, repo: Option<&str>| {
@@ -500,6 +500,10 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Incomplete(130.0))
     );
     assert_eq!(
+        find("first_run.install_seconds", None),
+        Some(SampleOutcome::Value(128.0))
+    );
+    assert_eq!(
         find("first_run.friction_events", None),
         Some(SampleOutcome::Value(2.0))
     );
@@ -508,13 +512,75 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Value(1.0))
     );
 
+    // An install step with no duration must not pass as a faster install.
+    let mut partial = first_run_receipt(true);
+    if let Some(setup) = partial["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_extra", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&partial, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(128.0))
+    );
+
     // Without a timed install the journey metric stays unmeasured.
     let samples = parse_ingest(&first_run_receipt(false), &config)?;
     assert!(
         !samples
             .iter()
-            .any(|s| s.metric == "first_run.time_to_first_useful_result_s")
+            .any(|s| s.metric == "first_run.time_to_first_useful_result_s"
+                || s.metric == "first_run.install_seconds")
     );
+
+    // An install step with no duration at all is an incomplete sample, not a
+    // missing one, so a previously timed install cannot drop out unnoticed.
+    let mut untimed = first_run_receipt(false);
+    if let Some(setup) = untimed["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_published", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&untimed, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(0.0))
+    );
+
+    // A failed install writes no cases; its timing still becomes an
+    // incomplete install sample and no case-dependent metric appears.
+    let failed = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "ripr 0.11.0",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 101, "friction": []}],
+        "cases": [],
+    });
+    let samples = parse_ingest(&failed, &config)?;
+    assert_eq!(samples.len(), 1);
+    assert_eq!(
+        samples
+            .first()
+            .map(|s| (s.metric.as_str(), s.outcome.clone())),
+        Some(("first_run.install_seconds", SampleOutcome::Incomplete(20.0)))
+    );
+
+    // A receipt with an install step but no `cases` array is malformed, not
+    // an install-failed walk.
+    let no_cases = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "r",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 0, "friction": []}],
+    });
+    let rejected = parse_ingest(&no_cases, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("cases array")));
+
+    // No install step and no cases is still rejected.
+    let empty = json!({"schema_version": "first_run.v1", "ripr": "r", "setup": [], "cases": []});
+    let rejected = parse_ingest(&empty, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("non-empty cases")));
     Ok(())
 }
 
@@ -710,6 +776,11 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     let first = &get("first_run.time_to_first_useful_result_s")[0];
     assert_eq!(first["value"], json!(52.5));
     assert_eq!(first["completed"], json!(true));
+    // The install alone is its own row, so a slower compile regresses it even
+    // when the walk after it stays fast.
+    let install = &get("first_run.install_seconds")[0];
+    assert_eq!(install["value"], json!(40.0));
+    assert_eq!(install["completed"], json!(true));
     assert!(
         parse_ingest_text("{\"schema\":\"other\"}\nnot json")
             .is_err_and(|err| err.contains("line 1"))
@@ -929,6 +1000,40 @@ fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
         ))
         .is_err_and(|e| e.contains("no case rows"))
     );
+    // A failed install writes only setup rows; its timing still lands as an
+    // incomplete install sample, and no per-case metric appears.
+    let failed_install_text = [
+        row(
+            r#""ripr":"r","case":"_setup","step":"install_published","metric":"secs","value":20.0"#,
+        ),
+        row(r#""ripr":"r","case":"_setup","step":"install_published","metric":"exit","value":101"#),
+    ]
+    .join("\n");
+    let install_rows = convert(failed_install_text.clone()).map(|input| {
+        input["metrics"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r["id"].as_str() == Some("first_run.install_seconds"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    });
+    let measured_nothing = convert(failed_install_text.clone()).map(|input| {
+        input["metrics"].as_array().is_some_and(|rows| {
+            rows.iter().all(|r| {
+                !matches!(
+                    r["id"].as_str(),
+                    Some("first_run.friction_events" | "first_run.unknown_verdicts")
+                )
+            })
+        })
+    });
+    assert_eq!(measured_nothing, Ok(true));
+    assert!(install_rows.is_ok_and(|rows| rows.len() == 1
+        && rows[0]["value"] == json!(20.0)
+        && rows[0]["completed"] == json!(false)));
     // A step cut off before its exit row counts as failed.
     let cut = [
         row(r#""case":"a","step":"check","metric":"exit","value":0"#),
@@ -1640,5 +1745,251 @@ fn an_analyzed_smoke_row_without_a_duration_is_refused() -> Result<(), String> {
         "repos": [{"id": "c", "status": "diff_scope_oversized"}],
     });
     rust_corpus_smoke_to_input(&closed)?;
+    Ok(())
+}
+
+#[test]
+fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() -> Result<(), String>
+{
+    let cut = |picks: u64, confirmed: u64, refuted: u64, distinct: u64| {
+        json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": refuted,
+            "unscored": picks - confirmed - refuted,
+            "precision": confirmed as f64 / (confirmed + refuted) as f64,
+            "scored_share": (confirmed + refuted) as f64 / picks as f64,
+            "distinct_functions": distinct,
+            "distinct_function_share": distinct as f64 / picks as f64,
+        })
+    };
+    let receipt = json!({
+        "schema_version": "ripr-pilot-ranking-v1",
+        "corpus_version": "2026-10-04.1",
+        "status": "complete",
+        "repos_total": 5,
+        "unavailable_repos": 0,
+        "pooled": {"top5": cut(25, 8, 12, 20), "top10": cut(50, 13, 22, 40)},
+    });
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(&receipt, &config)?;
+    let value = |id: &str| {
+        samples
+            .iter()
+            .find(|sample| sample.metric == id)
+            .map(|sample| sample.outcome.clone())
+    };
+    assert_eq!(
+        value("ranking.pilot_precision_top5"),
+        Some(SampleOutcome::Value(0.4))
+    );
+    assert_eq!(
+        value("ranking.pilot_precision_top10"),
+        Some(SampleOutcome::Value(13.0 / 35.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_scored_share_top10"),
+        Some(SampleOutcome::Value(0.7))
+    );
+    assert_eq!(
+        value("ranking.pilot_distinct_function_share_top10"),
+        Some(SampleOutcome::Value(0.8))
+    );
+    assert_eq!(
+        value("ranking.pilot_picks_top10"),
+        Some(SampleOutcome::Value(50.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_refuted_top10"),
+        Some(SampleOutcome::Value(22.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_confirmed_top5"),
+        Some(SampleOutcome::Value(8.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_refuted_top5"),
+        Some(SampleOutcome::Value(12.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_confirmed_top10"),
+        Some(SampleOutcome::Value(13.0))
+    );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.repo.as_deref() == Some("pilot-ranking corpus 2026-10-04.1"))
+    );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.detail.contains("over 5 of 5 repositories"))
+    );
+    assert!(samples.iter().any(|sample| sample.metric
+        == "ranking.pilot_distinct_function_share_top10"
+        && sample.detail.contains("40 distinct functions in 50 picks")));
+
+    // Each precision row shows its own cut's tier split, and a split that
+    // does not account for exactly the cut's judged picks is refused.
+    let mut tiered = receipt.clone();
+    tiered["pooled"]["top5"]["by_tier"] = json!({
+        "seam": {"confirmed": 1, "refuted": 1},
+        "line": {"confirmed": 5, "refuted": 4},
+        "owner": {"confirmed": 2, "refuted": 7},
+    });
+    let samples = parse_ingest(&tiered, &config)?;
+    assert!(samples.iter().any(|sample| {
+        sample.metric == "ranking.pilot_precision_top5"
+            && sample
+                .detail
+                .contains("(by tier: seam 1/2, line 5/9, owner 2/9)")
+    }));
+    tiered["pooled"]["top5"]["by_tier"]["owner"]["refuted"] = json!(8);
+    assert!(parse_ingest(&tiered, &config).is_err_and(|err| err.contains("judges 21 picks")));
+
+    // A crate that could not be fetched or scored changes the population, so
+    // every row is incomplete instead of a rate the gate compares as like for
+    // like.
+    let mut lost = receipt.clone();
+    lost["status"] = json!("incomplete");
+    lost["unavailable_repos"] = json!(1);
+    let samples = parse_ingest(&lost, &config)?;
+    assert_eq!(samples.len(), 9);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Incomplete(_))),
+    );
+
+    // Nothing scored is no precision, not a perfect or zero one.
+    let mut unscored = receipt.clone();
+    unscored["pooled"]["top5"] = json!({
+        "picks": 25, "confirmed": 0, "refuted": 0, "unscored": 25,
+        "precision": null, "scored_share": 0.0,
+        "distinct_functions": 20, "distinct_function_share": 0.8,
+    });
+    let samples = parse_ingest(&unscored, &config)?;
+    assert!(
+        samples
+            .iter()
+            .any(|sample| sample.metric == "ranking.pilot_precision_top5"
+                && matches!(sample.outcome, SampleOutcome::Incomplete(_)))
+    );
+
+    let mut malformed = receipt.clone();
+    malformed["pooled"]["top10"]["precision"] = json!(1.5);
+    assert!(parse_ingest(&malformed, &config).is_err_and(|err| err.contains("its counts give")));
+    // In range but not what the counts say: 13 confirmed of 35 is not 1.0.
+    let mut inconsistent = receipt.clone();
+    inconsistent["pooled"]["top10"]["precision"] = json!(1.0);
+    assert!(parse_ingest(&inconsistent, &config).is_err_and(|err| err.contains("its counts give")));
+    let mut hidden = receipt.clone();
+    hidden["pooled"]["top10"]["precision"] = Value::Null;
+    assert!(parse_ingest(&hidden, &config).is_err_and(|err| err.contains("its counts give")));
+    let mut overcounted = receipt;
+    overcounted["pooled"]["top10"]["confirmed"] = json!(40);
+    assert!(parse_ingest(&overcounted, &config).is_err_and(|err| err.contains("more confirmed")));
+    Ok(())
+}
+
+/// The committed floors must fail a single pick moving the wrong way, even
+/// in the tightest case where every top-10 pick is judged (one flip moves
+/// precision by exactly 0.02), and any lost pick.
+#[test]
+fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String> {
+    let receipt_on = |corpus: &str, picks: u64, confirmed: u64, scored: u64| {
+        let cut = json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": scored - confirmed,
+            "unscored": picks - scored,
+            "precision": confirmed as f64 / scored as f64,
+            "scored_share": scored as f64 / picks as f64,
+            "distinct_functions": picks,
+            "distinct_function_share": 1.0,
+        });
+        json!({
+            "schema_version": "ripr-pilot-ranking-v1",
+            "corpus_version": corpus,
+            "status": "complete",
+            "repos_total": 5,
+            "unavailable_repos": 0,
+            "pooled": {"top5": cut.clone(), "top10": cut},
+        })
+    };
+    let receipt =
+        |picks: u64, confirmed: u64, scored: u64| receipt_on("test", picks, confirmed, scored);
+    let config = load_config(&committed_config())?;
+    let boards = vec!["ranking".to_string()];
+    let report = |value: &Value, baseline: Option<&Value>| -> Result<Value, String> {
+        let samples = parse_ingest(value, &config)?;
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("r"),
+            baseline,
+            true,
+        ))
+    };
+    let regressed = |report: &Value| {
+        report["gate"]["regressions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["metric"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    // 3 -> 2 confirmed of 50 judged: the case a 0.02 floor let through.
+    let baseline = report(&receipt(50, 3, 50), None)?;
+    assert!(regressed(&report(&receipt(50, 3, 50), Some(&baseline))?).is_empty());
+    let flipped = regressed(&report(&receipt(50, 2, 50), Some(&baseline))?);
+    assert!(
+        flipped.contains(&"ranking.pilot_precision_top10".to_string()),
+        "{flipped:?}"
+    );
+    let lost = regressed(&report(&receipt(49, 3, 49), Some(&baseline))?);
+    assert!(
+        lost.contains(&"ranking.pilot_picks_top10".to_string()),
+        "{lost:?}"
+    );
+
+    // An unscored pick turning refuted moves precision by less than one
+    // pick's step (13/35 to 13/36); the refuted count still fails it.
+    let base = report(&receipt(50, 13, 35), None)?;
+    let worse = regressed(&report(&receipt(50, 13, 36), Some(&base))?);
+    assert!(
+        !worse.contains(&"ranking.pilot_precision_top10".to_string())
+            && worse.contains(&"ranking.pilot_refuted_top10".to_string()),
+        "{worse:?}"
+    );
+
+    // A baseline from another answer key is reported uncompared, never
+    // compared as the same population.
+    // The run is worse on every axis, so any compared row would regress.
+    let other = report(&receipt_on("other", 50, 3, 50), None)?;
+    let crossed = report(&receipt(40, 1, 40), Some(&other))?;
+    assert!(regressed(&crossed).is_empty(), "{}", crossed["gate"]);
+    let uncompared: std::collections::BTreeSet<&str> = crossed["gate"]["uncompared"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["metric"].as_str())
+        .filter(|metric| metric.starts_with("ranking."))
+        .collect();
+    assert_eq!(uncompared.len(), 9, "{}", crossed["gate"]);
+    Ok(())
+}
+
+#[test]
+fn the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!("dx-step-summary-{}", std::process::id()));
+    fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let summary = root.join("summary.md");
+    fs::write(&summary, "earlier step\n").map_err(|err| err.to_string())?;
+    append_step_summary(&summary, "# DX scoreboard\n")?;
+    let text = fs::read_to_string(&summary).map_err(|err| err.to_string())?;
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(text, "earlier step\n# DX scoreboard\n");
     Ok(())
 }

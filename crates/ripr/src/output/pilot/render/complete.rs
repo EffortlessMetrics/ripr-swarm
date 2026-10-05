@@ -13,7 +13,7 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
 };
-use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
+use crate::output::pilot::ranking::{actionable_in_owner, actionable_total, top_actionable_seams};
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
     PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -186,10 +186,25 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
-    out.push_str(&format!(
-        "- Actionable seams: {} total, showing up to {}\n\n",
-        actionable_total, context.max_seams
-    ));
+    // #6602: a seam limit cut the classified list before ranking, so every
+    // Rust seam count below covers only the seams that were kept, and the
+    // actionable count is a lower bound.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "- Seam limit reached: ranked the first {} of {} seams; Rust seam counts below cover those only\n",
+            limit.analyzed, limit.total
+        ));
+        out.push_str(&format!(
+            "- Actionable seams: at least {}, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    } else {
+        out.push_str(&format!(
+            "- Actionable seams: {} total, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    }
+    out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
     if top.is_empty() {
@@ -244,6 +259,27 @@ pub(crate) fn render_pilot_summary_md(
                 entry.seam.kind().as_str()
             ));
             out.push_str(&format!("   - Owner: `{}`\n", entry.seam.owner()));
+            // Ranking spreads the list across owners (#5770); say once, on
+            // the owner's first pick, what else it stands for, so the owner's
+            // other seams stay visible.
+            let same_owner = |shown: &&ClassifiedSeam| -> bool {
+                shown.seam.file() == entry.seam.file() && shown.seam.owner() == entry.seam.owner()
+            };
+            let first_of_owner = top.iter().position(same_owner) == Some(idx);
+            let unlisted = actionable_in_owner(classified, entry)
+                .saturating_sub(top.iter().filter(|shown| same_owner(shown)).count());
+            if first_of_owner && unlisted > 0 {
+                out.push_str(&format!(
+                    "   - Also in this function: {}{} more actionable {} not listed here\n",
+                    if context.seam_limit.is_some() {
+                        "at least "
+                    } else {
+                        ""
+                    },
+                    unlisted,
+                    if unlisted == 1 { "seam" } else { "seams" }
+                ));
+            }
             out.push_str(&format!("   - Why: {}\n", why_line(entry)));
             out.push_str(&format!(
                 "   - Related test present: {}\n",
