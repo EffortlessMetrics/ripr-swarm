@@ -285,37 +285,49 @@ fn is_functools_memoization_name(name: &str) -> bool {
     matches!(name, "lru_cache" | "cache" | "cached_property")
 }
 
-fn functools_alias_is_imported_from_elsewhere(imports: &[PythonImport]) -> bool {
+fn import_binds_stdlib_functools_module(import: &PythonImport) -> bool {
+    import.imported == "functools" && import.source_module.is_empty()
+}
+
+/// `import wrappers as functools` / `from helpers import functools` rebound
+/// the name; a plain `import functools` did not.
+fn receiver_is_rebound_from_non_stdlib_functools(imports: &[PythonImport], receiver: &str) -> bool {
     imports
         .iter()
-        .any(|import| import.alias == "functools" && !import.source_module.is_empty())
+        .any(|import| import.alias == receiver && !import_binds_stdlib_functools_module(import))
 }
 
 /// Bare `@lru_cache` / `@cache` / `@cached_property` only when the name is
-/// bound from `functools`. A same-named local decorator stays limited.
-/// `@functools.lru_cache` is the stdlib qualified spelling unless `functools`
-/// is imported from another module. `import functools as ft` then
-/// `@ft.lru_cache` is the same binding. Call arguments are already dropped
-/// by `expr_full_name`.
+/// bound from `functools` and not also bound from another module. A
+/// same-named local decorator stays limited. `@functools.lru_cache` is the
+/// stdlib qualified spelling unless `functools` is rebound (`import wrappers
+/// as functools` or `from helpers import functools`). `import functools as
+/// ft` then `@ft.lru_cache` is the same binding unless `ft` is also rebound.
+/// Call arguments are already dropped by `expr_full_name`.
 fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
     if let Some((receiver, method)) = decorator.rsplit_once('.') {
         if !is_functools_memoization_name(method) {
             return false;
         }
+        if receiver_is_rebound_from_non_stdlib_functools(imports, receiver) {
+            return false;
+        }
         if receiver == "functools" {
-            return !functools_alias_is_imported_from_elsewhere(imports);
+            return true;
         }
         return imports.iter().any(|import| {
-            import.imported == "functools"
-                && import.alias == receiver
-                && import.source_module.is_empty()
+            import_binds_stdlib_functools_module(import) && import.alias == receiver
         });
     }
-    imports.iter().any(|import| {
+    let from_functools = imports.iter().any(|import| {
         import.source_module == "functools"
             && is_functools_memoization_name(import.imported.as_str())
             && import.alias == decorator
-    })
+    });
+    let competing_alias = imports
+        .iter()
+        .any(|import| import.alias == decorator && import.source_module != "functools");
+    from_functools && !competing_alias
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
@@ -786,5 +798,63 @@ mod tests {
             }],
         );
         assert_eq!(decorator_limit(&owner), None);
+    }
+
+    #[test]
+    fn functools_aliased_from_another_module_stays_limited() {
+        let owner = owner_with(
+            &["functools.cache"],
+            vec![PythonImport {
+                imported: "wrappers".to_string(),
+                alias: "functools".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
+    }
+
+    #[test]
+    fn competing_bare_cache_import_stays_limited() {
+        let owner = owner_with(
+            &["cache"],
+            vec![
+                PythonImport {
+                    imported: "cache".to_string(),
+                    alias: "cache".to_string(),
+                    source_module: "wrappers".to_string(),
+                },
+                from_functools("cache"),
+            ],
+        );
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
+    }
+
+    #[test]
+    fn competing_module_alias_stays_limited() {
+        let owner = owner_with(
+            &["ft.lru_cache"],
+            vec![
+                PythonImport {
+                    imported: "wrappers".to_string(),
+                    alias: "ft".to_string(),
+                    source_module: String::new(),
+                },
+                PythonImport {
+                    imported: "functools".to_string(),
+                    alias: "ft".to_string(),
+                    source_module: String::new(),
+                },
+            ],
+        );
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
     }
 }
