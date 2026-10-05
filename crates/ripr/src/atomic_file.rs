@@ -72,8 +72,10 @@ fn sweep_stale_temp_files_once(dir: &Path) {
 /// than `grace` before `now`. A younger file may belong to a writer in
 /// another process, and anything else (other names, directories, symlinks)
 /// is not ours to delete. Best effort: failures are ignored because a
-/// stranded temporary file costs only disk space. Returns how many files
-/// were removed.
+/// stranded temporary file costs only disk space. A writer stalled for longer
+/// than `grace` can lose its temporary file; its rename then fails and that
+/// cache write is skipped, never published wrong. Returns how many files were
+/// removed.
 pub(crate) fn sweep_stale_temp_files(
     dir: &Path,
     now: std::time::SystemTime,
