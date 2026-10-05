@@ -99,14 +99,14 @@ summary. It should:
 The command surface is:
 
 ```text
-ripr zero status \
-  --baseline .ripr/gate-baseline.json \
-  --delta target/ripr/reports/baseline-debt-delta.json \
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-  --gate target/ripr/reports/gate-decision.json \
-  --pr-guidance target/ripr/review/comments.json \
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
-  --out target/ripr/reports/ripr-zero-status.json \
+ripr zero status \\
+  --baseline .ripr/gate-baseline.json \\
+  --delta target/ripr/reports/baseline-debt-delta.json \\
+  --gap-ledger target/ripr/reports/gap-decision-ledger.json \\
+  --gate target/ripr/reports/gate-decision.json \\
+  --pr-guidance target/ripr/review/comments.json \\
+  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \\
+  --out target/ripr/reports/ripr-zero-status.json \\
   --out-md target/ripr/reports/ripr-zero-status.md
 ```
 
@@ -166,12 +166,14 @@ Baseline review status values:
 
 - `current` - metadata exists and the review window has not expired.
 - `stale` - `review_after` is in the past. `unix_ms:<millis>` deadlines compare
-  in milliseconds; `YYYY-MM-DD` and RFC3339 calendar deadlines compare against
-  the UTC run date taken from `generated_at`.
+  in milliseconds; `YYYY-MM-DD` dates and RFC3339 datetimes compare against
+  the UTC run date taken from `generated_at`. RFC3339 values with a numeric
+  offset are converted to UTC before that day comparison.
 - `missing_metadata` - owner, reason, created_at, or review_after is absent.
 - `unknown` - the report cannot parse enough metadata to classify the entry,
   including a present `review_after` that cannot be compared with
-  `generated_at`. An incomparable deadline is not `current`.
+  `generated_at` (malformed timestamps, impossible Gregorian dates, or a `T`
+  suffix that is not RFC3339). An incomparable deadline is not `current`.
 
 ## JSON Shape
 
@@ -422,7 +424,7 @@ The report must include:
 - warnings for stale metadata, missing metadata, missing inputs, unsupported
   schemas, ambiguous identities, and unavailable trends;
 - limits text that states RIPR 0 is not perfect tests, 100 percent coverage, or
-  runtime mutation adequacy.
+  runtime adequacy.
 
 The report must not hide acknowledged, suppressed, stale, invalid, or
 missing-input entries.
