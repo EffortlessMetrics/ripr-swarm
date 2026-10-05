@@ -21857,7 +21857,7 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
     })
 }
 
-/// #5927: hover splits related-test rows the way human output does. A
+/// #5927: hover shares human output's label and reason for related-test rows. A
 /// matched row that still misses keeps its oracle kind and strength and adds
 /// the reason; only an unmatched row uses the `misses ...; checked` form.
 #[test]
