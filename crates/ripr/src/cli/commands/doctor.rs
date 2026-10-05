@@ -1571,12 +1571,17 @@ fn report_cache_status(root: &Path) {
         println!("- Cache location: {}", output::path::human_path(&cache_dir));
     }
     println!("- Cache size: {size_display} (run `ripr cache status` for details)");
+    // A missing root already fails `root_directory`; probing would walk up
+    // past it and test an unrelated ancestor.
+    if !relocated && !root.is_dir() {
+        return;
+    }
     if let Some(reason) = cache_unwritable_reason(&cache_dir) {
         // The cache is optional, so this does not fail doctor; it only
         // explains why every run will recompute instead of reusing facts.
         println!(
             "! Cache not writable: {reason}; results stay correct but every run recomputes. \
-Point RIPR_CACHE_DIR at a writable directory or free space there."
+Point RIPR_CACHE_DIR at a writable directory."
         );
     }
 }
@@ -1592,15 +1597,16 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
     // and a read-only base whose entry directories already exist and accept
     // writes does not stop caching.
     let mut probed: Vec<(PathBuf, bool)> = Vec::new();
-    for target in &analysis::seam_cache::production_entry_dirs(cache_dir) {
+    for (target, makes_subdirs) in &analysis::seam_cache::production_entry_dirs(cache_dir) {
         let probe_dir = match nearest_existing_dir(target) {
             Ok(Some(dir)) => dir,
             Ok(None) => continue,
             Err(reason) => return Some(reason),
         };
-        // A missing entry directory is created by the producer first, and an
-        // ACL (Windows) can allow adding files but deny adding directories.
-        let needs_dir = probe_dir != *target;
+        // A missing entry directory is created by the producer first, and a
+        // sharded cache creates generation subdirectories in it; an ACL
+        // (Windows) can allow adding files but deny adding directories.
+        let needs_dir = *makes_subdirs || probe_dir != *target;
         if probed
             .iter()
             .any(|(dir, dir_probed)| *dir == probe_dir && (*dir_probed || !needs_dir))

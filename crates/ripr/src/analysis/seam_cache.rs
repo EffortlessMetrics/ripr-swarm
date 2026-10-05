@@ -120,16 +120,21 @@ fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
 }
 
 /// The directories production caches write entries into, under an already
-/// resolved cache `base`. `ripr doctor` probes these for writability, so
-/// they must match each cache's `at` constructor; a test pins that.
-pub(crate) fn production_entry_dirs(base: &Path) -> Vec<PathBuf> {
+/// resolved cache `base`, each with whether publishing there also creates
+/// subdirectories (sharded generations do). `ripr doctor` probes these for
+/// writability, so they must match each cache's `at` constructor; a test
+/// pins that.
+pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     let classified = |family: ClassifiedCacheFamily, schema_version: &str| {
         let (layer, sharded_layer) = family.layers();
         [
-            base.join(layer.name()).join(schema_version),
-            base.join(sharded_layer.name())
-                .join(schema_version)
-                .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+            (base.join(layer.name()).join(schema_version), false),
+            (
+                base.join(sharded_layer.name())
+                    .join(schema_version)
+                    .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+                true,
+            ),
         ]
     };
     let mut dirs = Vec::new();
@@ -141,14 +146,16 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<PathBuf> {
         ClassifiedCacheFamily::CompactClassifiedSeams,
         COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
     ));
-    dirs.push(
+    dirs.push((
         base.join(CacheLayer::CorpusFingerprint.name())
             .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
-    );
-    dirs.push(
+        false,
+    ));
+    dirs.push((
         base.join(CacheLayer::FileFacts.name())
             .join(FILE_FACT_CACHE_SCHEMA_VERSION),
-    );
+        false,
+    ));
     dirs
 }
 
@@ -8016,13 +8023,14 @@ mod generation_transition_tests {
         let root = Path::new("/ws");
         let full = RepoSeamFactCache::at(root);
         let compact = RepoSeamFactCache::at_compact_classified(root);
+        // Only the sharded caches publish generation subdirectories.
         let constructed = vec![
-            full.dir,
-            full.sharded_dir,
-            compact.dir,
-            compact.sharded_dir,
-            RepoCorpusFingerprintCache::at(root).dir,
-            RepoFileFactCache::at(root).dir,
+            (full.dir, false),
+            (full.sharded_dir, true),
+            (compact.dir, false),
+            (compact.sharded_dir, true),
+            (RepoCorpusFingerprintCache::at(root).dir, false),
+            (RepoFileFactCache::at(root).dir, false),
         ];
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), constructed);
     }

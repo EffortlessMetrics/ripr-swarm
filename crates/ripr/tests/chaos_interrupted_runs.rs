@@ -5,6 +5,10 @@
 //!
 //! Every scenario compares against one cold reference run on the same
 //! fixture, so a drift in result bytes, not just a crash, fails the test.
+//!
+//! The fixture's `ripr check` writes only the file-facts cache layer; the
+//! seam, compact-classified, fingerprint and sharded layers are not
+//! exercised here (#6663 tracks widening this).
 
 use std::fs;
 use std::path::{Path, PathBuf};
