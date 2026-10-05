@@ -1837,8 +1837,8 @@ impl RepoFileFactCache {
     /// actually missed, so an entry repaired or removed mid-build is judged as
     /// it is then. The full-decode inventory this replaced re-hashed every
     /// entry in the directory on one miss: on ripr-swarm (~4,500 entries) a
-    /// single committed edit cost `index_cached_parse` 13.5 s with it and
-    /// 2.1 s with the header read.
+    /// single committed edit cost `ripr check`'s `index_cached_parse` 5.5 s
+    /// with it and 2.4 s with the header read.
     pub(crate) fn known_file_paths(&self) -> KnownFilePaths {
         let identity = crate::build_identity::cache_identity();
         let mut candidates: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
