@@ -2106,6 +2106,13 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
 fn initializer_type_head(expr: &str) -> Option<&str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
+        // `m::Site(1)` / `crate::m::Site(1)`: a CamelCase call after a module
+        // segment is a tuple struct, not a variant of the module.
+        ([.., module, call], Some(b'('))
+            if is_variant_name(call) && module.starts_with(|c: char| c.is_ascii_lowercase()) =>
+        {
+            Some(call)
+        }
         ([.., ty, call], Some(b'(')) => {
             (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
         }
@@ -2207,6 +2214,14 @@ fn text_resolves_method_to_type(
     while let Some(relative) = text[search..].find(method) {
         let at = search + relative;
         let after = at + method.len();
+        // A binding is read only from `let`s before this call, so a later
+        // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
+        // line has no position in the body, so it does not consult `let`s.
+        let body_for_lets = if whole_body {
+            body_for_lets.get(..at).unwrap_or("")
+        } else {
+            ""
+        };
         if ident_boundary(bytes, at, after) && skip_ws_if_paren(text, after) {
             if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
                 if ident_ending_at(text, at - 2).is_some_and(|ty| ty == impl_type) {
@@ -5451,6 +5466,21 @@ let r = try_parse_summary(\"x\");",
             ("$return (Site::new()).build();", false),
             ("$break 'a (Site::new()).build();", false),
             ("$ return (Site::new()).build();", false),
+            (
+                "let s = Cache::new(); (s).build(); let s = Site::new();",
+                false,
+            ),
+            (
+                "let s = Cache::new(); s.build(); let s = Site::new();",
+                false,
+            ),
+            (
+                "let s = Cache::new(); let s = Site::new(); s.build();",
+                true,
+            ),
+            ("m::Site(1).build();", true),
+            ("crate::m::Site(1).build();", true),
+            ("m::Cache(1).build();", false),
             ("$ /* c */ return (Site::new()).build();", false),
             ("loop { break $ break (Site::new()).build(); }", false),
             ("'outer: loop { break 'outer (Site::new()).build(); }", true),

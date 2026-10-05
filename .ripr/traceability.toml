@@ -8016,6 +8016,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/mod.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/domain/classification.rs",
