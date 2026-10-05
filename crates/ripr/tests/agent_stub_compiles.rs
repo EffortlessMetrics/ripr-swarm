@@ -692,8 +692,14 @@ fn scratch_refuses_to_adopt_a_preexisting_directory() -> Result<(), String> {
     let parent = unused_scratch_probe("exclusive");
     let _cleanup = RemovePath(parent.clone());
     let first = Scratch::create(&parent, "scratch")?;
-    let error =
-        Scratch::create(&parent, "scratch").expect_err("must not adopt a preexisting scratch");
+    let error = match Scratch::create(&parent, "scratch") {
+        Ok(unexpected) => {
+            let path = unexpected.directory.display().to_string();
+            unexpected.cleanup()?;
+            return Err(format!("must not adopt a preexisting scratch at {path}"));
+        }
+        Err(error) => error,
+    };
     assert!(
         error.contains(&first.directory.display().to_string()),
         "exclusive-create error must name the path, got {error}"
@@ -711,7 +717,16 @@ fn scratch_names_the_path_when_the_temp_parent_is_a_file() -> Result<(), String>
     std::fs::write(&parent, b"not a directory").map_err(|error| {
         io_error_at("write file standing in for scratch parent", &parent, error)
     })?;
-    let error = Scratch::create(&parent, "scratch").expect_err("a file cannot be a scratch parent");
+    let error = match Scratch::create(&parent, "scratch") {
+        Ok(unexpected) => {
+            unexpected.cleanup()?;
+            return Err(format!(
+                "a file cannot be a scratch parent: {}",
+                parent.display()
+            ));
+        }
+        Err(error) => error,
+    };
     assert!(
         error.contains(&parent.display().to_string()),
         "parent-is-file error must name the path, got {error}"
@@ -728,8 +743,16 @@ fn exclusive_scratch_dir_error_names_the_path_when_parent_is_missing() -> Result
         "discriminator requires an absent parent: {}",
         parent.display()
     );
-    let error =
-        create_exclusive_dir(&child).expect_err("create_dir cannot invent a missing parent");
+    let error = match create_exclusive_dir(&child) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&parent);
+            return Err(format!(
+                "create_dir cannot invent a missing parent: {}",
+                child.display()
+            ));
+        }
+        Err(error) => error,
+    };
     assert!(
         error.contains(&child.display().to_string()),
         "bare ENOENT hid the missing path; got {error}"
