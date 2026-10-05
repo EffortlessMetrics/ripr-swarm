@@ -10,7 +10,7 @@
 # logic unnoticed.
 
 crates/ripr/build.rs|Command::new|1|build/commit-identity|#4256: the build script reads the enclosing checkout's HEAD and crate-source status with `git` (only when the checkout tracks this manifest and cargo recorded no `.cargo_vcs_info.json`) so `ripr --version` names the build commit; build time only, no runtime spawn.
-crates/ripr/src/agent/loop_commands.rs|Command::new|3|agent/advisory-commands|#2347: the bash argv encoder is proved by executing the encoded token in a real bash — a round-trip transcript over hostile values, a redirect-clobber guard, and a usability probe that rejects a WSL bash which cannot open host paths. Test module only; no production spawn.
+crates/ripr/src/agent/loop_commands.rs|Command::new|4|agent/advisory-commands|#2347: the bash argv encoder is proved by executing the encoded token in a real bash — a round-trip transcript over hostile values, a redirect-clobber guard, and a usability probe that rejects a WSL bash which cannot open host paths. and a POSIX sh round trip (#6309). Test module only; no production spawn.
 crates/ripr/src/analysis/diff/load.rs|Command::new|6|analysis/diff|Test module temp-repo setup only (#4363): every production git spawn in this module — the RIPR-SPEC-0084 default-base resolution, the RIPR-SPEC-0112 working-tree disclosure probe included — routes through the shared crate::git authority.
 crates/ripr/src/analysis/diff/load.rs|use std::process::Command|1|analysis/diff|Test module temp-repo setup imports Command directly; the production import moved to the shared crate::git authority (#4363).
 crates/ripr/src/analysis/language/rust/mod.rs|Command::new|5|language-adapter-swarm|test fixture recognizes Cargo binary subprocess invocation

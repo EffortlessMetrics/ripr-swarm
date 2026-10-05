@@ -305,7 +305,7 @@ escape it with their own encoders.
 
 The same escape covers the other terminal-bound text: the GitHub workflow
 annotation encoders (`--format github`), the command-failure line on stderr
-(`CommandError` display), and every library `eprintln!`/`eprint!`, which a
+(`CommandError` display), and every library `eprintln!`, which a
 crate-level shadow (`stderr_guard`) routes through the same escape so a new
 warning is safe by default. The progress sink writes to the stderr handle
 directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
