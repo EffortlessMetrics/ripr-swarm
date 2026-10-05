@@ -660,3 +660,75 @@ fn matcher_computation_and_asserted_result_have_different_runtime_grip() {
     assert!(matches!(original, Ok(())));
     assert!(wrong.is_err());
 }
+
+#[test]
+fn terminal_guard_balanced_scrutinee_keeps_its_same_row_sibling() -> Result<(), String> {
+    // A block scrutinee cannot own the guard body or its following observer.
+    for (statement, sibling_line) in [
+        (
+            "assert!(matches!({ score() }, 2));\nassert_eq!(sibling(), 7);",
+            7,
+        ),
+        (
+            "if !matches!({ score() }, 2) { return Err(()); } assert_eq!(sibling(), 7);",
+            6,
+        ),
+    ] {
+        let source = format!(
+            "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n#[test]\n\
+             fn observes_score() -> Result<(), ()> {{\nlet _setup = 0;\n{statement}\nOk(())\n}}\n"
+        );
+        let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let [test] = parsed.tests.as_slice() else {
+            return Err("balanced guard lost its named subject".to_string());
+        };
+        if test.name != "observes_score"
+            || test.file != Path::new("src/lib.rs")
+            || !test
+                .calls
+                .iter()
+                .any(|call| call.name == "score" && call.line == 6)
+            || !test
+                .calls
+                .iter()
+                .any(|call| call.name == "sibling" && call.line == sibling_line)
+        {
+            return Err(format!(
+                "balanced guard owner/sibling calls missing: {test:?}"
+            ));
+        }
+        let lexical = extract_assertions(&source, 1);
+        for facts in [&lexical, &test.assertions] {
+            // Same-row lexical sorting and parsed traversal can differ.
+            if facts.len() != 2 {
+                return Err(format!(
+                    "balanced guard lost or invented evidence: {facts:?}"
+                ));
+            }
+            let matcher = facts
+                .iter()
+                .find(|fact| fact.observed_tokens.contains(&"score".to_string()))
+                .ok_or("balanced guard lost its actual score observer")?;
+            let sibling = facts
+                .iter()
+                .find(|fact| fact.text.trim_end_matches(';') == "assert_eq!(sibling(), 7)")
+                .ok_or("balanced guard swallowed its actual sibling")?;
+            if matcher.line != 6
+                || matcher.kind != OracleKind::ExactValue
+                || matcher.strength != OracleStrength::Strong
+                || !matcher.text.contains("matches!({ score() }, 2)")
+                || sibling.line != sibling_line
+                || sibling.kind != OracleKind::ExactValue
+                || sibling.strength != OracleStrength::Strong
+                || !sibling.observed_tokens.contains(&"sibling".to_string())
+                || sibling.observed_tokens.contains(&"score".to_string())
+                || sibling.observed_tokens.contains(&"Err".to_string())
+            {
+                return Err(format!(
+                    "balanced guard grip or sibling ownership changed: {facts:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
