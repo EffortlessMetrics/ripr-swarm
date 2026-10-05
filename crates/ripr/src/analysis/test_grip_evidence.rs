@@ -23,8 +23,11 @@ use related_tests::{
     test_assertion_mentions_any_target_token,
 };
 
-use super::classify::{assertion_observes_direct_collection, direct_collection_mutation_receiver};
-use super::facts::CallFact;
+use super::classify::{
+    assertion_observes_direct_collection, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, test_calls_free_function,
+};
+use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
 use super::resource_cost::trace_latency_phase;
 use super::rust_index::{
@@ -430,10 +433,10 @@ fn activate_evidence(
         .filter(|owner| !owner.name.is_empty())
         .map(|owner| observed_argument_selection(seam, owner));
 
-    if let Some(selection) = &observed_argument_selection {
+    if let (Some(selection), Some(owner_fn)) = (&observed_argument_selection, owner_fn) {
         for indexed in related {
             observed.extend(observed_value_facts_for_test(
-                seam, indexed, index, owner_name, selection,
+                seam, indexed, index, owner_fn, selection,
             ));
         }
     }
@@ -442,10 +445,11 @@ fn activate_evidence(
     let field_assignment_value_unresolved = observed.is_empty()
         && observed_argument_selection
             .as_ref()
-            .is_some_and(|selection| {
+            .zip(owner_fn)
+            .is_some_and(|(selection, owner_fn)| {
                 related.iter().any(|indexed| {
                     field_assignment_value_unresolved_for_test(
-                        seam, indexed, index, owner_name, selection,
+                        seam, indexed, index, owner_fn, selection,
                     )
                 })
             });
@@ -510,9 +514,11 @@ fn activate_evidence(
     );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
-        && related
-            .iter()
-            .any(|indexed| has_direct_owner_call(indexed, owner_name));
+        && owner_fn.is_some_and(|owner_fn| {
+            related
+                .iter()
+                .any(|indexed| has_direct_owner_call(indexed, owner_fn))
+        });
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
     let helper_value_insensitive_owner_call = !owner_name.is_empty()
@@ -673,9 +679,10 @@ fn observed_value_facts_for_test(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
     index: &RustIndex,
-    owner_name: &str,
+    owner_fn: &FunctionSummary,
     observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
+    let owner_name = owner_fn.name.as_str();
     let mut observed: Vec<ValueFact> = Vec::new();
     if matches!(
         observed_argument_selection,
@@ -689,7 +696,7 @@ fn observed_value_facts_for_test(
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     for call in indexed.test.body_calls() {
-        if call.name != owner_name {
+        if !call_may_reach_owner(call, owner_fn) {
             continue;
         }
         let Some(args) = call_arguments(&call.text, owner_name) else {
@@ -751,16 +758,17 @@ fn field_assignment_value_unresolved_for_test(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
     index: &RustIndex,
-    owner_name: &str,
+    owner_fn: &FunctionSummary,
     selection: &ObservedArgumentSelection,
 ) -> bool {
+    let owner_name = owner_fn.name.as_str();
     let ObservedArgumentSelection::ArgumentOperands(operands) = selection else {
         return false;
     };
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     indexed.test.calls.iter().any(|call| {
-        if call.name != owner_name {
+        if !call_may_reach_owner(call, owner_fn) {
             return false;
         }
         let Some(args) = call_arguments(&call.text, owner_name) else {
@@ -776,10 +784,21 @@ fn field_assignment_value_unresolved_for_test(
     })
 }
 
-fn has_direct_owner_call(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
+fn has_direct_owner_call(indexed: &CompactTest<'_>, owner_fn: &FunctionSummary) -> bool {
     indexed.test.calls.iter().any(|call| {
-        call.name == owner_name && call_text_contains_named_call(&call.text, owner_name)
+        call_may_reach_owner(call, owner_fn)
+            && call_text_contains_named_call(&call.text, &owner_fn.name)
     })
+}
+
+/// Whether a captured call named like the owner can be a call of it. A free
+/// owner is reached only through a bare or module-qualified spelling:
+/// `ByteSize::kb(100)` and `size.kb()` call something else, so their
+/// arguments are not the free `kb`'s activation values (#6713).
+fn call_may_reach_owner(call: &CallFact, owner_fn: &FunctionSummary) -> bool {
+    call.name == owner_fn.name
+        && (owner_fn.impl_context != FunctionImplContext::Free
+            || call_text_may_call_free_function(&call.text, &owner_fn.name))
 }
 
 fn has_owner_call_via_one_hop_helper(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
@@ -1174,12 +1193,11 @@ fn activation_overlap_score(
         return 0;
     };
     let owner_fn = owner.owner_fn;
-    let owner_name = owner_fn.name.as_str();
 
     let mut score = boundary_equality_overlap_score(seam, indexed, context.index, owner_fn);
     let required_text = required_discriminator_text(seam);
     score +=
-        observed_value_facts_for_test(seam, indexed, context.index, owner_name, &owner.selection)
+        observed_value_facts_for_test(seam, indexed, context.index, owner_fn, &owner.selection)
             .iter()
             .filter(|fact| {
                 observed_value_matches_required_discriminator(&fact.value, required_text)
@@ -1296,9 +1314,14 @@ fn compact_activate_evidence(
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
+    // A free owner is called only by a bare or module-qualified spelling:
+    // `ByteSize::kb(100)` activates the associated `kb`, not the free one
+    // beside it (#6713).
+    let free_owner = owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
     let direct_owner_call = !owner_name.is_empty()
         && related.iter().any(|indexed| {
-            indexed.call_names.contains(owner_name)
+            (indexed.call_names.contains(owner_name)
+                && (!free_owner || test_calls_free_function(indexed.test, owner_name)))
                 || indexed.helper_owner_call_names.contains(owner_name)
                 || has_owner_call_via_target_affinity(
                     indexed,
@@ -1487,7 +1510,7 @@ fn test_passes_boundary_constant(
         return false;
     }
     indexed.test.calls.iter().any(|call| {
-        call.name == owner_name
+        call_may_reach_owner(call, owner_fn)
             && call_arguments(&call.text, owner_name)
                 .and_then(|arguments| arguments.get(constant.argument_index).cloned())
                 .is_some_and(|argument| {

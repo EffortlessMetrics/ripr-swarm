@@ -3582,6 +3582,112 @@ fn while_some_size_hint_upper_bound() {
     Ok(())
 }
 
+/// #6713 bytesize shape: a free `kb` beside the associated `ByteSize::kb`.
+/// `test_body` is the single inline test's body.
+fn free_kb_return_evidence(
+    test_body: &str,
+) -> Result<(TestGripEvidence, crate::analysis::seams::SeamGripClass), String> {
+    let prod_src = format!(
+        r#"
+pub const KB: u64 = 1_000;
+
+pub fn kb(size: impl Into<u64>) -> u64 {{
+    size.into() * KB
+}}
+
+#[derive(Debug, PartialEq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {{
+    pub const fn kb(size: u64) -> ByteSize {{
+        ByteSize(size + KB)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn units() {{
+        {test_body}
+    }}
+}}
+"#
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let free_kb = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size.into() * KB")
+        .ok_or_else(|| "free kb return seam present".to_string())?;
+    let evidence = evidence_for_seam(free_kb, &index);
+    let class = crate::analysis::seam_classification::classify_seam(free_kb, &evidence);
+    Ok((evidence, class))
+}
+
+/// #6713: a test that only calls the associated `ByteSize::kb` neither
+/// calls nor activates the free `kb`, so the free function's return seam
+/// cannot read strongly gripped from it.
+#[test]
+fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) =
+        free_kb_return_evidence("assert_eq!(ByteSize::kb(1), ByteSize(1_000));")?;
+    let labels: Vec<_> = evidence
+        .related_tests
+        .iter()
+        .map(|g| (g.test_name.clone(), g.relation_reason))
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .all(|(_, reason)| *reason != RelationReason::DirectOwnerCall),
+        "ByteSize::kb is not a call of the free kb: {labels:?}"
+    );
+    assert!(
+        evidence.observed_values.is_empty(),
+        "ByteSize::kb arguments are not the free kb's activation values: {:?}",
+        evidence.observed_values
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713 control: a bare `kb(1)` call keeps the direct relation and its
+/// activation value.
+#[test]
+fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
+{
+    let (evidence, _class) = free_kb_return_evidence(
+        "assert_eq!(ByteSize::kb(1), ByteSize(1_000));\n        assert_eq!(kb(2u64), 2_000);",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|g| g.test_name == "units" && g.relation_reason == RelationReason::DirectOwnerCall),
+        "bare kb(2u64) is a direct call: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "1"),
+        "only the bare call's argument is an activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
 #[test]
 fn producer_records_real_rust_test_symbol_identity_for_inline_and_integration_tests()
 -> Result<(), String> {

@@ -1,5 +1,8 @@
 use super::*;
-use crate::analysis::classify::{impl_self_type_name, method_call_resolves_to_impl_type};
+use crate::analysis::classify::{
+    impl_self_type_name, method_call_resolves_to_impl_type, test_calls_free_function,
+};
+use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
@@ -55,6 +58,9 @@ pub(super) struct OwnerContext {
     prefix: Option<String>,
     fixture_names: Arc<BTreeSet<String>>,
     impl_type: Option<String>,
+    /// The owner is a module-level `fn` (parser-established), so a
+    /// receiver or type-path call of its name reaches something else.
+    free_function: bool,
     same_name_count: usize,
 }
 
@@ -71,6 +77,8 @@ impl OwnerContext {
             .map(|file| context.fixture_names_for_owner_file(file))
             .unwrap_or_default();
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
+        let free_function =
+            owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
         let same_name_count = context.function_name_count(&name);
         Self {
             name,
@@ -80,6 +88,7 @@ impl OwnerContext {
             prefix,
             fixture_names,
             impl_type,
+            free_function,
             same_name_count,
         }
     }
@@ -218,6 +227,15 @@ pub(super) fn match_direct_owner_call(
             if !method_call_resolves_to_impl_type(indexed.test, &owner.name, impl_type) {
                 continue;
             }
+        }
+        // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
+        if owner.free_function
+            && !context
+                .tests
+                .get(*test_index)
+                .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
+        {
+            continue;
         }
         insert_related_candidate(
             candidates,
