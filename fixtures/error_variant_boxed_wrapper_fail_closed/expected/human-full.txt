@@ -34,7 +34,7 @@ error.downcast_ref::<ChecksumError>(),
 Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
-}; misses: assertion does not mention the changed expression
+}; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value payload = "payload?" at line 5
   - source enum variant value ChecksumError::MalformedPayload at line 8
 
@@ -83,7 +83,7 @@ error.downcast_ref::<ChecksumError>(),
 Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
-}; misses: assertion does not mention the changed expression
+}; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value payload = "payload?" at line 5
   - source enum variant value ChecksumError::MalformedPayload at line 8
 
@@ -132,7 +132,7 @@ error.downcast_ref::<ParseSummaryError>(),
 Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
-}; misses: assertion does not mention the changed expression
+}; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value raw = "zhex" at line 19
   - source enum variant value ParseSummaryError::MalformedSource at line 22
 
@@ -181,7 +181,7 @@ error.downcast_ref::<ParseSummaryError>(),
 Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
-}; misses: assertion does not mention the changed expression
+}; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value raw = "zhex" at line 19
   - source enum variant value ParseSummaryError::MalformedSource at line 22
 

@@ -283,3 +283,22 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## #5713 incoming-main observation wording
+
+Reason:
+The existing observation_unconfirmed renderer (#5508) discloses an unknown
+observation rather than an established miss. Only explanation wording changes;
+classes, oracle kinds/strengths and other JSON values remain unchanged.
+SPEC0094 singleton weak/unconfirmed policy and optional wrapper details remain.
+
+Producer custody:
+Exact b5af748229100b48bb327bcca813af963d6861c9 actual output from
+run37252849648, artifact11322143395 (wildcard-calibration-1), ZIP SHA256
+b59ea1caa1d210a1c667b7e9fc34011943e169ef35358575ae5ef206645d47d9.
+Guarded producer-byte transfer after semantic review; no local cargo bless ran.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

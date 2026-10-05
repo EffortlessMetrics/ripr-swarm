@@ -92,7 +92,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "parse_summary_other_receiver_pins_same_variant",
@@ -104,7 +104,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
@@ -198,7 +198,7 @@
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "parse_summary_other_receiver_pins_same_variant",
@@ -210,7 +210,7 @@
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],

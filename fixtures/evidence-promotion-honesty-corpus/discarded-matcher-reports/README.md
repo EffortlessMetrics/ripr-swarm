@@ -17,10 +17,14 @@ Producer binary SHA256:
 2ca25d0aea67a83289e598cedd422289a4e4dc50c3bec9cdfe2dd0224f9640e7.
 Nextest artifact11322060680, ZIP313384 bytes, SHA256:
 ed2af0e59f509ceec3a3e89b7ab89422fee5bb20883a62d281aef4eb7edc6f3b.
-producer-receipt.json retains original bytes (9939), SHA256:
-b42c773c0e07d38a8c1aa1637bc79b225bf15a532f4cb81162a4e0e88c69cb2d.
-Its seventy input/diff/output hashes were checked. Its absolute binary path
-is producer custody, while report root/probe paths are relative canonical paths.
+producer-receipt.portable.json is an explicitly labeled portable projection.
+It omits only the machine-specific binary path, retaining the binary digest
+and all seventy original input/diff/output hashes and records. It has different
+bytes from the original receipt and must not be identified as the original.
+The authentic raw receipt (9939 bytes), SHA256
+b42c773c0e07d38a8c1aa1637bc79b225bf15a532f4cb81162a4e0e88c69cb2d,
+remains in the official artifact, task evidence and commit666b097. The projection
+records its exact source/member custody. Report root/probe paths are relative.
 
 The existing corpus.json registers all14 via typed source_report assertions:
 eight discarded subjects require reachable_unrevealed/unknown/none; two

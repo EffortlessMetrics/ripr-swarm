@@ -1,6 +1,5 @@
 {
   "batch_deadline_seconds": 120,
-  "binary": "/home/runner/work/ripr-swarm/ripr-swarm/target/debug/ripr",
   "binary_sha256": "2ca25d0aea67a83289e598cedd422289a4e4dc50c3bec9cdfe2dd0224f9640e7",
   "command": "ripr check --root CASE --diff PATCH --mode fast --format json/human/human-full",
   "command_timeout_seconds": 10,
@@ -8,7 +7,7 @@
   "discarded_only_contract": "reachable_unrevealed/unknown/none; related oracle empty, miss no_assertion; human no-assertion explanation and no credited oracle",
   "discarded_only_subjects": 8,
   "independent_contract": "score(1) == 2; original returns2, wrong returns3",
-  "kind": "discarded_matcher_current_cli_controls",
+  "kind": "discarded_matcher_cli_receipt_portable_projection",
   "post_capture_retained_output_limit_bytes_per_subject": 262144,
   "records": [
     {
@@ -182,5 +181,19 @@
   ],
   "retained_wrapped_positive_subjects": 6,
   "run_attempt": "1",
-  "run_id": "37251340685"
+  "run_id": "37251340685",
+  "binary_name": "ripr",
+  "projection_rule": "Omit only the machine-specific binary path; preserve all other original custody fields, including binary digest and records.",
+  "source_original_receipt": {
+    "kind": "discarded_matcher_current_cli_controls",
+    "sha256": "b42c773c0e07d38a8c1aa1637bc79b225bf15a532f4cb81162a4e0e88c69cb2d",
+    "bytes": 9939,
+    "head": "fd2f11dcf7204fdccf6a15919590b8f820b2b4c7",
+    "run_id": 37251340685,
+    "run_attempt": 1,
+    "artifact_id": 11322060680,
+    "artifact_zip_sha256": "ed2af0e59f509ceec3a3e89b7ab89422fee5bb20883a62d281aef4eb7edc6f3b",
+    "artifact_member": "ripr/reports/discarded-matcher-cli-5713/ripr-discarded-matcher-cli-5713-1791164917591989031-76814-0/receipt.json",
+    "retention": "Authentic raw receipt retained in official artifact, task evidence and commit666b097; this portable projection has different bytes."
+  }
 }
