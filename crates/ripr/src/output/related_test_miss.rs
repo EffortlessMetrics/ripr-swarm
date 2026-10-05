@@ -423,6 +423,19 @@ mod tests {
                     row.miss = None;
                 }
                 assert_eq!(decisions(&finding)?, decisions(&cleared)?);
+                // Not vacuous: the currentness-filtered SARIF projection emits a
+                // result exactly for the candidate-current copies.
+                let sarif: serde_json::Value =
+                    serde_json::from_str(&crate::output::sarif::render_findings_sarif(
+                        &report_with(vec![finding.clone()]),
+                        &crate::config::RiprConfig::default(),
+                        &[],
+                    ))
+                    .map_err(|error| format!("parse SARIF: {error}"))?;
+                let results = sarif["runs"][0]["results"]
+                    .as_array()
+                    .map_or(0, |results| results.len());
+                assert_eq!(results > 0, finding.is_candidate_actionable(), "{sarif}");
 
                 let mut full = crate::output::human::render_finding(&finding);
                 for row in &finding.related_tests {
