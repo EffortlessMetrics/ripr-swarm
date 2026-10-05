@@ -809,9 +809,9 @@ impl FileFacts {
     /// File-level calls derived from per-function calls (#5415 step 3):
     /// every test fn is also present in [`Self::functions`], so functions
     /// alone reproduce the removed stored set — sorted by (line, name),
-    /// deduped by (line, name, text). Call text is the whole source line,
-    /// so the file level is effectively (line, name)-unique. Test-gated:
-    /// no production consumer reads the file-level set.
+    /// deduped by (line, name, text). Call text is the whole trimmed
+    /// source line, so the file level is effectively (line, name)-unique.
+    /// Test-gated: no production consumer reads the file-level set.
     #[cfg(test)]
     pub(crate) fn file_calls(&self) -> Vec<CallFact> {
         let mut calls: Vec<CallFact> = self
@@ -2001,14 +2001,16 @@ mod tests {
         Ok(())
     }
 
-    /// #5415 step 3: the derived file-level set is exactly the sorted,
-    /// (line, name, text)-deduped concatenation of per-function calls —
-    /// nested-fn overlaps collapse under the parser (the lexical scanner
-    /// skips nested fn lines instead), call text is the whole source line
-    /// so same-line repeats collapse too, and test fns (also present in
-    /// `functions`) add no second copy.
+    /// #5415 step 3: the derived file-level set is pinned explicitly per
+    /// producer — an independent oracle, not a re-implementation of the
+    /// derivation. Each entry below was verified by hand against the
+    /// fixture source: declaration calls, nested-fn overlap collapsing
+    /// under the parser (the lexical scanner skips nested fn lines, so it
+    /// never overlaps), whole-trimmed-line text collapsing same-line
+    /// repeats, and test fns (also present in `functions`) adding no
+    /// second copy.
     #[test]
-    fn derived_file_calls_match_sort_dedup_of_function_calls() -> Result<(), String> {
+    fn derived_file_calls_match_pinned_producer_sets() -> Result<(), String> {
         use crate::analysis::syntax::{
             LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
         };
@@ -2028,60 +2030,39 @@ fn checks_helper() {
     helper(3); helper(4);
 }
 ";
+        // (line, name, text) in derived order. Both producers agree on this
+        // fixture; they differ only in per-function totals below.
+        const EXPECTED: [(usize, &str, &str); 9] = [
+            (1, "outer", "fn outer() {"),
+            (2, "helper", "helper(1);"),
+            (3, "inner", "fn inner() {"),
+            (4, "helper", "helper(2);"),
+            (6, "inner", "inner();"),
+            (8, "helper", "fn helper(n: u32) {"),
+            (9, "helper", "helper(n);"),
+            (12, "checks_helper", "fn checks_helper() {"),
+            (13, "helper", "helper(3); helper(4);"),
+        ];
         let path = PathBuf::from("src/lib.rs");
         let parser = RaRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
         let lexical = LexicalRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
-        for (producer, facts, expect_collapse) in
-            [("parser", &parser, true), ("lexical", &lexical, false)]
+        // The parser records the nested fn separately, so two of its 11
+        // per-function calls collapse; the lexical scanner holds 9
+        // disjoint per-function calls.
+        for (producer, facts, per_function_total) in
+            [("parser", &parser, 11), ("lexical", &lexical, 9)]
         {
-            let derived = facts.file_calls();
-            assert!(
-                !derived.is_empty(),
-                "{producer} fixture must produce file-level calls"
-            );
             let per_function: usize = facts.functions.iter().map(|f| f.calls.len()).sum();
-            let mut expected: Vec<CallFact> = facts
-                .functions
-                .iter()
-                .flat_map(|function| function.calls.iter().cloned())
-                .collect();
-            expected.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-            expected.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
-            assert_eq!(derived, expected);
-            // Nested-fn overlap collapses under the parser: some
-            // per-function call appears in two functions but lands once at
-            // file level. The lexical scanner skips nested fn lines, so its
-            // per-function calls are already disjoint on this fixture.
-            if expect_collapse {
-                assert!(
-                    derived.len() < per_function,
-                    "{producer} fixture must exercise file-level dedup"
-                );
-            }
-            // Call text is the whole source line, so one line calling the
-            // same name twice with different arguments still collapses.
-            let probe_line = FIXTURE
-                .lines()
-                .position(|line| line.contains("helper(3)"))
-                .map(|index| index + 1)
-                .ok_or_else(|| "fixture lost its helper(3) line".to_string())?;
-            let same_line_helpers = derived
-                .iter()
-                .filter(|call| call.line == probe_line && call.name == "helper")
-                .count();
             assert_eq!(
-                same_line_helpers, 1,
-                "{producer}: same line and name collapses despite different arguments"
+                per_function, per_function_total,
+                "{producer} per-function shape changed; re-verify the pin"
             );
-            // The file level is (line, name)-unique: no concat-without-dedup
-            // implementation can pass.
-            let mut keys: Vec<(usize, &str)> = derived
+            let derived = facts.file_calls();
+            let simplified: Vec<(usize, &str, &str)> = derived
                 .iter()
-                .map(|call| (call.line, call.name.as_str()))
+                .map(|call| (call.line, call.name.as_str(), call.text.as_str()))
                 .collect();
-            keys.sort();
-            keys.dedup();
-            assert_eq!(keys.len(), derived.len(), "file level is unique");
+            assert_eq!(simplified, EXPECTED, "{producer} derived set");
         }
         Ok(())
     }
