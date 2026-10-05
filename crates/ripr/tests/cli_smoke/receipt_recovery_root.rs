@@ -176,7 +176,9 @@ fn known_command(root: &Path) -> TestResult<String> {
 }
 
 fn assert_verify(path: &Path, root: &Path) -> TestResult {
-    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("read verifier output {} failed: {error}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     assert_eq!(value["schema_version"], "0.3", "genuine verify: {value}");
     assert!(
         value["unchanged_seams"]
