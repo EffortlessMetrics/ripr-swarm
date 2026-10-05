@@ -1,9 +1,19 @@
 # ADR 0022: MCP is a bounded projection over shared RIPR authority
 
-- Status: Accepted
+- Status: Accepted (Slice B cancellation sentence corrected; see Correction Note)
 - Date: 2026-08-27
 - Related: #1599, #3087, #3088, #3094, #3089 (slice B: status, refresh,
   bounded gap lists, and evidence resources)
+
+## Correction Note
+
+The Slice B contract below first said a cancelled attempt is never committed.
+That was wrong: the server runs a refresh attempt to a terminal state and
+commits it when it finishes even when the client cancelled the MCP request
+(#5254 item 2, pinned by
+`refresh_limitations_distinguish_cancel_commit_from_teardown_abandon`). Only
+transport teardown abandons an attempt before it commits; a superseded attempt
+is never committed. The bullet below now states the corrected contract.
 
 ## Context
 
@@ -163,8 +173,10 @@ shared RIPR authority:
   model-provider authority as none.
 - The session keeps one in-memory completed snapshot (content-addressed
   `snapshot:sha256:` identity over the typed `AnalysisOutcome` and the
-  canonical item identities). A cancelled or superseded attempt is never
-  committed; a failed attempt never replaces the last-known-good snapshot.
+  canonical item identities). A cancelled attempt still commits as a
+  completed snapshot when it finishes and only transport teardown abandons
+  one before it commits, while a superseded attempt is never committed; a
+  failed attempt never replaces the last-known-good snapshot.
 - `ripr_list_gaps` serves the snapshot's stored shared diagnostic-budget
   selection (`lsp::diagnostic_budget`); the adapter never re-ranks and
   discloses every omitted identity and reason.

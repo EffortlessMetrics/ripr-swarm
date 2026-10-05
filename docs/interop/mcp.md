@@ -107,8 +107,10 @@ root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
-an attempt back or manufactures a snapshot, and a cancelled or superseded
-attempt is never committed. Project-local `ripr.toml` stays
+an attempt back or manufactures a snapshot. A cancelled attempt still commits
+as a completed snapshot when it finishes and only transport teardown abandons
+one before it commits, while a superseded attempt is never committed.
+Project-local `ripr.toml` stays
 detected-not-loaded: refresh runs with built-in defaults.
 
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
