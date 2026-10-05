@@ -388,7 +388,8 @@ the rule; ripr still reports only what the static shape shows.
     `pytest.approx` does (Decision 6). At its default seven places it
     fails for any change of at least `1e-7` in the observed value. That
     holds only for the default tolerance: with an explicit `places=` or
-    `delta=` (keyword or positional), the call is `relational_check` /
+    `delta=` (by keyword, or positionally as the third argument for
+    `places` or the fifth for `delta`; the fourth is `msg`), the call is `relational_check` /
     weak, because static evidence cannot tell whether the band excludes
     the pre-change value. The corpus evidence covers the default form
     only.
@@ -487,7 +488,7 @@ rejected alternative. Any can be reversed later without touching the rest.
    them adds credit no spec promises and no corpus case yet shows the
    cost. `assertAlmostEqual` was in this list until #6603: the corpus
    case `py-spec0233-ex08-almost-equal` fails on its `+ 2` mutant, so
-   rule 12 records it like `pytest.approx`. Rejected: add the rest here
+   rule 12 records its default-tolerance form like `pytest.approx`. Rejected: add the rest here
    without evidence. Each can follow rule 12's route when a corpus case
    shows a false actionable verdict.
 8. **`mocker.patch`.** Adopted: counts as `mocked_module`, because
