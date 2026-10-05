@@ -24,6 +24,7 @@ use super::super::{
 };
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
+mod admission;
 mod bounded_read;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -281,6 +282,9 @@ struct PythonTest {
     parametrize: Option<parametrize::PythonParametrizeCases>,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// Whether RIPR can say this test has no assertion, or only that it
+    /// recognized none (#5571).
+    assertion_admission: admission::PythonAssertionAdmission,
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,

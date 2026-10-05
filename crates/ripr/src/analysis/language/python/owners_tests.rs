@@ -1,3 +1,4 @@
+use super::admission::{PythonAdmissionContext, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -265,6 +266,12 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
     extract_source_facts(file, source).tests
 }
 
+/// Module-wide inputs every extracted test of one file shares.
+pub(super) struct PythonTestModule<'a> {
+    pub(super) imports: &'a [PythonImport],
+    pub(super) admission: &'a PythonAdmissionContext,
+}
+
 /// Follow the default pytest `python_functions` and unittest
 /// `TestLoader.testMethodPrefix`: both use `test`, not `test_`.
 /// Custom collection prefixes and hooks are not resolved here.
@@ -274,9 +281,10 @@ pub(super) fn collect_tests_from_statements(
     statements: &[Stmt],
     class_context: Option<&str>,
     in_unittest_class: bool,
-    imports: &[PythonImport],
+    module: &PythonTestModule<'_>,
     out: &mut Vec<PythonTest>,
 ) {
+    let PythonTestModule { imports, admission } = *module;
     let local_classes = LocalTestClasses::of(statements);
     for stmt in statements {
         match stmt {
@@ -287,6 +295,19 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let assertion_admission = assertion_admission(
+                    &function.body,
+                    &assertions,
+                    &fixtures,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
@@ -295,15 +316,13 @@ pub(super) fn collect_tests_from_statements(
                     body_text: text_for_range(source, function.range),
                     imports: test_imports(file, imports, &function.body),
                     decorators: decorator_names(&function.decorator_list),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -318,6 +337,19 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let assertion_admission = assertion_admission(
+                    &function.body,
+                    &assertions,
+                    &fixtures,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
@@ -326,15 +358,13 @@ pub(super) fn collect_tests_from_statements(
                     body_text: text_for_range(source, function.range),
                     imports: test_imports(file, imports, &function.body),
                     decorators: decorator_names(&function.decorator_list),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -354,7 +384,7 @@ pub(super) fn collect_tests_from_statements(
                         &class.body,
                         Some(&nested_class_context),
                         class_is_unittest,
-                        imports,
+                        module,
                         out,
                     );
                     // Mixin members this class resolves to run as this
@@ -373,7 +403,7 @@ pub(super) fn collect_tests_from_statements(
                             &mixin.body,
                             Some(&nested_class_context),
                             class_is_unittest,
-                            imports,
+                            module,
                             &mut from_mixin,
                         );
                         out.extend(from_mixin.into_iter().filter(|test| {

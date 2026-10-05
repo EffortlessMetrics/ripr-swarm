@@ -491,3 +491,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — python_method_owner (10)
+
+Reason:
+RIPR-SPEC-0224: assertion-free Python rows name their assertion-admission state and parameterization is no longer projected as an oracle (#5571)
+
+Command:
+`cargo xtask goldens bless python_method_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

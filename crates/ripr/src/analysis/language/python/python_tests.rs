@@ -1777,6 +1777,7 @@ fn same_stem_related_handles_missing_stems() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     // An owner with no file stem cannot match by stem.
     assert!(!same_stem_related(&test, &owner));
@@ -2713,10 +2714,10 @@ fn related_test_candidates_break_ties_by_oracle_then_file_then_name() {
 }
 
 #[test]
-fn find_related_tests_marks_parametrized_test_when_no_assertion_extracted() -> Result<(), String> {
-    // A parametrized test whose body calls the owner but contains no
-    // assertion at all should fall through to the parametrize-marker
-    // oracle text in `find_related_tests`.
+fn find_related_tests_never_projects_parametrize_as_an_oracle() -> Result<(), String> {
+    // A parametrized test whose body calls the owner but asserts nothing has
+    // no oracle: the parameters are inputs, and the row says no assertion
+    // rather than naming the decorator as its check (#5571).
     let owner = extract_owners(
         Path::new("src/pricing.py"),
         "def apply_discount(amount):\n    return amount - 10\n",
@@ -2739,19 +2740,162 @@ def test_apply_discount(amount):
             related.len()
         ));
     }
-    if related[0].oracle.as_deref() != Some("pytest.mark.parametrize") {
+    if related[0].oracle.is_some() {
         return Err(format!(
-            "expected parametrize-marker oracle text, got {:?}",
+            "parameterization must not be projected as an oracle, got {:?}",
             related[0].oracle
         ));
     }
-    if related[0].oracle_kind != OracleKind::Unknown {
+    if related[0].oracle_kind != OracleKind::Unknown
+        || related[0].oracle_strength != OracleStrength::Unknown
+    {
         return Err(format!(
-            "parametrize fallback should keep Unknown oracle kind, got {:?}",
-            related[0].oracle_kind
+            "an assertion-free row keeps unknown oracle kind and strength, got {:?} {:?}",
+            related[0].oracle_kind, related[0].oracle_strength
+        ));
+    }
+    let admission = tests
+        .first()
+        .map(|test| test.assertion_admission)
+        .ok_or("expected the parametrized test to be extracted")?;
+    if admission != super::admission::PythonAssertionAdmission::NoAssertionLike {
+        return Err(format!(
+            "a parametrized call with no assertion is established assertion-free, got {admission:?}"
         ));
     }
     Ok(())
+}
+
+fn admission_of(source: &str, test_name: &str) -> Result<&'static str, String> {
+    extract_tests(Path::new("tests/test_pricing.py"), source)
+        .into_iter()
+        .find(|test| test.name == test_name)
+        .map(|test| test.assertion_admission.as_str())
+        .ok_or_else(|| format!("expected `{test_name}` to be extracted"))
+}
+
+#[test]
+fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms()
+-> Result<(), String> {
+    use super::admission::PythonAssertionAdmission as A;
+    let recognized = A::Recognized.as_str();
+    let none = A::NoAssertionLike.as_str();
+    let unresolved = A::Unresolved.as_str();
+    let cases: &[(&str, &str, &str)] = &[
+        // 1. a literal assert is a recognized assertion.
+        (
+            "literal assert",
+            "def test_x():\n    assert apply_discount(20) == 10\n",
+            recognized,
+        ),
+        // 2. a call and an assignment, nothing else: established no assertion.
+        (
+            "call only",
+            "def test_x():\n    result = apply_discount(20)\n    apply_discount(result)\n",
+            none,
+        ),
+        // 3. parameterization adds inputs, not an assertion.
+        (
+            "parametrized call only",
+            "import pytest\n@pytest.mark.parametrize('amount', [1, 2])\ndef test_x(amount):\n    apply_discount(amount)\n",
+            none,
+        ),
+        // 4. supported pytest and unittest forms stay recognized.
+        (
+            "pytest.raises",
+            "import pytest\ndef test_x():\n    with pytest.raises(ValueError):\n        apply_discount(-1)\n",
+            recognized,
+        ),
+        (
+            "assertEqual",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(apply_discount(20), 10)\n",
+            recognized,
+        ),
+        // 5. custom, unknown or wrapped helpers are unresolved, never none.
+        (
+            "assert_* custom helper",
+            "def test_x():\n    assert_payload(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "check helper",
+            "def test_x():\n    check_result(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "unrecognized unittest assertion",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertIsNone(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "same-module helper with an arbitrary name",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "self helper method",
+            "class TestX:\n    def _run(self, value):\n        assert apply_discount(value) == 10\n    def test_x(self):\n        self._run(20)\n",
+            unresolved,
+        ),
+        (
+            "dynamic callee",
+            "CHECKS = {}\ndef test_x():\n    CHECKS['discount'](apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "assert inside a nested function",
+            "def test_x():\n    def inner():\n        assert apply_discount(20) == 10\n    inner()\n",
+            unresolved,
+        ),
+        (
+            "explicit raise",
+            "def test_x():\n    if apply_discount(20) != 10:\n        raise AssertionError('bad')\n",
+            unresolved,
+        ),
+        (
+            "assertion-like call nested in an expression",
+            "def test_x():\n    results = [verify(apply_discount(v)) for v in (1, 2)]\n",
+            unresolved,
+        ),
+        // Fixtures RIPR cannot see into may assert.
+        (
+            "opaque fixture",
+            "def test_x(checked_client):\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "builtin fixture",
+            "def test_x(tmp_path, monkeypatch):\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "uncertain parametrize leaves its argnames opaque",
+            "import pytest\nVALUES = [1]\n@pytest.mark.parametrize('amount', VALUES, indirect=True)\ndef test_x(amount):\n    apply_discount(amount)\n",
+            unresolved,
+        ),
+        (
+            "autouse fixture in the module",
+            "import pytest\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert True\n\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "autouse=False fixture does not run around tests",
+            "import pytest\n@pytest.fixture(autouse=False)\ndef other():\n    return 1\n\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, source, expected) in cases {
+        let actual = admission_of(source, "test_x")?;
+        if actual != *expected {
+            failures.push(format!("{label}: expected {expected}, got {actual}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[test]
@@ -2772,6 +2916,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
@@ -2788,6 +2933,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
@@ -2804,6 +2950,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(!test_has_mocked_module(&clean));
 }
@@ -3309,6 +3456,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(strong_oracle_observes_owner(
         &owner,
@@ -3377,6 +3525,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     }
 }
 
@@ -3420,6 +3569,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     let a = classify_sink_alignment(&owner, line, &related, std::slice::from_ref(&alias_test));
     assert_eq!(a.oracle_alignment, "alias");

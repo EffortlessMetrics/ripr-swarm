@@ -136,11 +136,7 @@ pub(super) fn find_related_tests(
                     assertion.oracle_strength.clone(),
                     Some(assertion.text.clone()),
                 ),
-                None if candidate.relation.uses_oracle() && candidate.test.parametrized => (
-                    OracleKind::Unknown,
-                    OracleStrength::Unknown,
-                    Some("pytest.mark.parametrize".to_string()),
-                ),
+                // Parameterization is input evidence, never an oracle (#5571).
                 None => (OracleKind::Unknown, OracleStrength::Unknown, None),
             };
             RelatedTest {
