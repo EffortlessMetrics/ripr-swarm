@@ -1607,7 +1607,7 @@ fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
 fn parse_utc_calendar_day(value: &str) -> Option<String> {
     match value.as_bytes().get(10) {
         None => format_civil_day(parse_gregorian_date(value)?),
-        Some(b'T') => parse_rfc3339_utc_day(value),
+        Some(b'T' | b't') => parse_rfc3339_utc_day(value),
         _ => None,
     }
 }
@@ -1661,7 +1661,7 @@ fn is_gregorian_leap(year: i64) -> bool {
 fn parse_rfc3339_utc_day(value: &str) -> Option<String> {
     let date = value.get(..10)?;
     let (year, month, day) = parse_gregorian_date(date)?;
-    if value.as_bytes().get(10).copied() != Some(b'T') {
+    if !matches!(value.as_bytes().get(10).copied(), Some(b'T' | b't')) {
         return None;
     }
     let time = value.get(11..)?;
@@ -1969,6 +1969,22 @@ mod tests {
             classify_review(Some(complete_review("2026-01-01")), "2026-10-05T12:00:00Z"),
             MetadataState::Stale,
             "ISO review_after vs RFC3339 generated_at must still evaluate"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01t00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase t is a valid date-time separator"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase z is a valid UTC offset"
         );
     }
 
