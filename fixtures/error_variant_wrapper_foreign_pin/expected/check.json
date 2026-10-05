@@ -29,7 +29,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: try_parse_summary_with_foreign_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: try_parse_summary(raw).map_err(Into::into)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches call effect: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses none unknown oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10", "source enum variant value OtherError::MalformedSource at line 10"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: try_parse_summary_with_foreign_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: try_parse_summary(raw).map_err(Into::into)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches call effect: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses none unknown oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10"],
       "flow_sinks": [
         {"kind":"call_effect","text":"try_parse_summary(raw).map_err(Into::into)","line":39}
       ],
@@ -44,12 +44,6 @@
             "line": 10,
             "value": "OtherError::MalformedSource",
             "context": "enum_variant"
-          },
-          {
-            "line": 10,
-            "value": "OtherError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(other, Err(OtherError::MalformedSource))"
           }
         ],
         "missing_discriminators": [
@@ -60,12 +54,6 @@
           "line": 10,
           "value": "OtherError::MalformedSource",
           "context": "enum_variant"
-        },
-        {
-          "line": 10,
-          "value": "OtherError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(other, Err(OtherError::MalformedSource))"
         }
       ],
       "missing_discriminators": [
@@ -113,7 +101,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: try_parse_summary_with_foreign_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: matches!(result, Err(_))", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: matches!(other, Err(OtherError::MalformedSource))", "source enum variant value OtherError::MalformedSource at line 10", "source enum variant value OtherError::MalformedSource at line 10"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_summary: try_parse_summary_with_foreign_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_parse_summary(raw).map_err(Into::into)","line":39}
       ],
@@ -128,12 +116,6 @@
             "line": 10,
             "value": "OtherError::MalformedSource",
             "context": "enum_variant"
-          },
-          {
-            "line": 10,
-            "value": "OtherError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(other, Err(OtherError::MalformedSource))"
           }
         ],
         "missing_discriminators": [
@@ -144,17 +126,11 @@
           "line": 10,
           "value": "OtherError::MalformedSource",
           "context": "enum_variant"
-        },
-        {
-          "line": 10,
-          "value": "OtherError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(other, Err(OtherError::MalformedSource))"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 4,
+      "related_tests_total": 2,
       "related_tests": [
         {
           "name": "try_parse_summary_with_foreign_pin",
@@ -172,33 +148,9 @@
           "name": "try_parse_summary_with_foreign_pin",
           "file": "tests/errors.rs",
           "line": 4,
-          "oracle_strength": "weak",
-          "oracle_kind": "broad_error",
-          "oracle": "matches!(result, Err(_))",
-          "relation_reason": "owner_named_test",
-          "relation_confidence": "medium",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
-        },
-        {
-          "name": "try_parse_summary_with_foreign_pin",
-          "file": "tests/errors.rs",
-          "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
           "oracle": "if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}",
-          "relation_reason": "owner_named_test",
-          "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "try_parse_summary_with_foreign_pin",
-          "file": "tests/errors.rs",
-          "line": 4,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_error_variant",
-          "oracle": "matches!(other, Err(OtherError::MalformedSource))",
           "relation_reason": "owner_named_test",
           "relation_confidence": "medium",
           "miss": "observation_unconfirmed",

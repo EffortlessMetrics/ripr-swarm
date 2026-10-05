@@ -2,26 +2,45 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::SeamGripClass;
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
 use crate::output::path::display_path;
+use crate::output::pilot::PilotCurrentChange;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub(crate) fn top_actionable_seams(
-    classified: &[ClassifiedSeam],
+/// Rank actionable seams. Seams on lines the current change touches come
+/// first; within each group (and when there is no change) the existing
+/// class/evidence/location order holds.
+pub(crate) fn top_actionable_seams<'a>(
+    classified: &'a [ClassifiedSeam],
     max_seams: usize,
-) -> Vec<&ClassifiedSeam> {
+    current_change: Option<&PilotCurrentChange>,
+) -> Vec<&'a ClassifiedSeam> {
+    let in_change =
+        |entry: &ClassifiedSeam| current_change.is_some_and(|change| change.touches(entry));
     let mut actionable = classified
         .iter()
         .filter(|entry| class_rank(entry.class).is_some())
+        .map(|entry| (bool_rank(in_change(entry)), entry))
         .collect::<Vec<_>>();
     // The rank key holds `suggested_assertion_for_classified_seam`, which
     // derives repair-route readiness from the seam's evidence; computing it
     // inside a comparator re-derived it O(n log n) times and dominated a
     // warm `ripr pilot` on a 900-seam crate (#5348). Compute it once per
     // seam; `sort_by_cached_key` is stable, like the `sort_by` it replaces.
-    actionable.sort_by_cached_key(|entry| RankKey::of(entry));
+    actionable.sort_by_cached_key(|(change, entry)| (*change, RankKey::of(entry)));
     spread_across_owners(&mut actionable);
     actionable.truncate(max_seams);
-    actionable
+    actionable.into_iter().map(|(_, entry)| entry).collect()
+}
+
+/// Actionable seams on lines the current change touches.
+pub(super) fn actionable_in_change(
+    classified: &[ClassifiedSeam],
+    current_change: &PilotCurrentChange,
+) -> usize {
+    classified
+        .iter()
+        .filter(|entry| class_rank(entry.class).is_some() && current_change.touches(entry))
+        .count()
 }
 
 /// Within each actionable class, rank every function's first seam ahead of
@@ -34,22 +53,31 @@ pub(crate) fn top_actionable_seams(
 /// Rounds count across classes on purpose: a function already listed for a
 /// weak seam does not get a fresh first pick among the unknown ones, so one
 /// function cannot claim a slot per class.
-fn spread_across_owners(ranked: &mut Vec<&ClassifiedSeam>) {
+///
+/// The current-change bucket still leads (#5480): the key is
+/// `(in_change, class, round)`, so spreading never lifts an unchanged seam
+/// above a changed one.
+fn spread_across_owners<C: Ord + Copy>(ranked: &mut Vec<(C, &ClassifiedSeam)>) {
     let mut taken: BTreeMap<(&Path, &str), usize> = BTreeMap::new();
     let mut keyed = ranked
         .drain(..)
-        .map(|entry| {
+        .map(|(change, entry)| {
             let round = taken
                 .entry((entry.seam.file(), entry.seam.owner()))
                 .or_default();
-            let key = (class_rank(entry.class), *round);
+            let key = (change, class_rank(entry.class), *round);
             *round += 1;
             (key, entry)
         })
         .collect::<Vec<_>>();
-    // Stable, so seams with the same class and round keep `RankKey` order.
+    // Stable, so seams with the same bucket, class and round keep `RankKey`
+    // order.
     keyed.sort_by_key(|(key, _)| *key);
-    ranked.extend(keyed.into_iter().map(|(_, entry)| entry));
+    ranked.extend(
+        keyed
+            .into_iter()
+            .map(|((change, _, _), entry)| (change, entry)),
+    );
 }
 
 /// Actionable seams that share an owning function with `entry`, itself
@@ -104,6 +132,12 @@ pub(super) fn actionable_total(classified: &[ClassifiedSeam]) -> usize {
         .iter()
         .filter(|entry| class_rank(entry.class).is_some())
         .count()
+}
+
+/// Whether pilot can recommend this seam. The seam budget uses the same
+/// predicate, so a changed seam kept past the cut is one ranking can use.
+pub(super) fn is_actionable(entry: &ClassifiedSeam) -> bool {
+    class_rank(entry.class).is_some()
 }
 
 fn class_rank(class: SeamGripClass) -> Option<u8> {

@@ -263,7 +263,8 @@ fn terminated_runs_leave_a_cache_every_later_run_agrees_with() -> Result<(), Str
 
         let label = format!("terminated after {delay_micros}us");
         // A kill between temp-file creation and rename can strand a
-        // `.ripr-atomic-*.tmp` file; nothing sweeps those yet (#6343). The
+        // `.ripr-atomic-*.tmp` file; the #6343 sweep removes only ones older
+        // than 10 minutes, so a fresh strand survives the rerun. The
         // guarantee checked here is the one readers rely on: such a file is
         // never taken for an entry, so later results still match.
         same_result(&label, &cold, &fixture.result("ge12.diff")?)?;

@@ -1054,12 +1054,14 @@ export class RiprClientController {
     const activeLine = editor ? editor.selection.active.line + 1 : undefined;
     const line = lineFromTarget(target) ?? activeLine ?? 1;
     const selector = `${relativePath}:${line}`;
+    // An empty base lets `ripr context` resolve the repository's default
+    // branch the same way the language server does.
+    const baseRef = config.baseRef.trim();
     const args = [
       'context',
       '--root',
       workspaceFolder.uri.fsPath,
-      '--base',
-      config.baseRef,
+      ...(baseRef ? ['--base', baseRef] : []),
       '--at',
       selector,
       '--json'
@@ -3588,8 +3590,11 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
+// Both the explicit-ref failure and the default-branch failure (an empty
+// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
+// by setting ripr.baseRef; the server's own wording names CLI flags instead.
 function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit/.test(message);
+  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
 }
 
 /**
