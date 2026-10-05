@@ -23,7 +23,7 @@ use crate::analysis::classify::{
 };
 use crate::analysis::rust_index::{FunctionSummary, TestSummary};
 use crate::domain::{Confidence, StageEvidence, StageState};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 /// Where an unresolved trait-dispatch path starts: a test that names the
@@ -90,11 +90,20 @@ impl TypeMentionIndex {
         // A dispatch root's callees may name further types whose trait
         // methods are roots in turn. Each round is one more hop, bounded
         // like the transitive walk.
-        let mut trait_methods: Vec<&FunctionSummary> = reach
-            .production_functions()
+        let mut production: Vec<&FunctionSummary> = reach.production_functions().collect();
+        sort_functions(&mut production);
+        // Each function's position in that order, so a root's callees sort
+        // by an integer instead of by path.
+        let order: HashMap<*const FunctionSummary, usize> = production
+            .iter()
+            .enumerate()
+            .map(|(position, &function)| (std::ptr::from_ref(function), position))
+            .collect();
+        let trait_methods: Vec<&FunctionSummary> = production
+            .iter()
+            .copied()
             .filter(|function| is_trait_impl_method(function))
             .collect();
-        sort_functions(&mut trait_methods);
         for _ in 0..MAX_TRANSITIVE_DEPTH {
             let mut grew = false;
             for &method in &trait_methods {
@@ -115,8 +124,19 @@ impl TypeMentionIndex {
                 };
                 reached.insert(method.id.0.as_str());
                 index.add_function_mentions(method, true);
-                let mut callees = reach.functions_reached_from(&method.calls, MAX_TRANSITIVE_DEPTH);
-                sort_functions(&mut callees);
+                // Only callees not yet reached are recorded, so only they
+                // need ordering.
+                let mut callees: Vec<&FunctionSummary> = reach
+                    .functions_reached_from(&method.calls, MAX_TRANSITIVE_DEPTH)
+                    .into_iter()
+                    .filter(|callee| !reached.contains(callee.id.0.as_str()))
+                    .collect();
+                callees.sort_by_key(|&callee| {
+                    order
+                        .get(&std::ptr::from_ref(callee))
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                });
                 for callee in callees {
                     if reached.insert(callee.id.0.as_str()) {
                         index
