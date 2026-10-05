@@ -8,7 +8,8 @@
 //! file, nor a quiet "clean" result for input ripr could not read is accepted.
 //!
 //! Cases: unusual in-repo file names, option-shaped `--base` values, a
-//! non-UTF-8 source file, symlink loops, an oversized diff, shallow clones,
+//! non-UTF-8 source file, symlink loops, an oversized diff, a package over
+//! the narrowing threshold, shallow clones,
 //! detached HEAD, linked worktrees, submodules, a repository without a usable
 //! base, and user git configuration that changes `git diff` output.
 
@@ -162,6 +163,15 @@ fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
 /// A repository with `main` at the base commit and `feat` checked out with the
 /// change committed. `edit` rewrites the working tree between the two commits.
 fn repo(root: &Path, edit: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
+    repo_with_test(root, TEST, edit)
+}
+
+/// [`repo`] with a caller-supplied `tests/t.rs` in the base commit.
+fn repo_with_test(
+    root: &Path,
+    test_source: &str,
+    edit: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
     let w = |rel: &str, body: &str| -> Result<(), String> {
         let path = root.join(rel);
         if let Some(parent) = path.parent() {
@@ -173,7 +183,7 @@ fn repo(root: &Path, edit: impl FnOnce(&Path) -> Result<(), String>) -> Result<(
     git(root, &["init", "-q", "-b", "main"])?;
     w("Cargo.toml", MANIFEST)?;
     w("src/lib.rs", BASE_LIB)?;
-    w("tests/t.rs", TEST)?;
+    w("tests/t.rs", test_source)?;
     git(root, &["add", "-A"])?;
     git(root, &["commit", "-q", "-m", "base"])?;
     git(root, &["checkout", "-q", "-b", "feat"])?;
@@ -415,6 +425,51 @@ fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
     Ok(())
 }
 
+/// A changed package larger than the 1,200-file narrowing threshold runs at
+/// default settings: that threshold bounds time, and only the higher
+/// `RIPR_MAX_DIFF_INDEX_FILES` memory guard refuses. Before the split, the
+/// same 1,200 bounded both and this run was refused. The control lowers the
+/// hard limit back to 1,200 and must refuse, so the fixture really selects
+/// more files than the threshold.
+#[test]
+fn package_over_the_narrowing_threshold_runs_until_the_memory_guard() -> Result<(), String> {
+    let scratch = Scratch::new("narrow")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        for i in 0..1_250 {
+            fs::write(
+                root.join(format!("src/m{i}.rs")),
+                format!("pub fn m{i}(a: u32) -> u32 {{ a + {i} }}\n"),
+            )
+            .map_err(|e| format!("write failed: {e}"))?;
+        }
+        // The unchanged modules belong to the base, so only `total` changes.
+        git(root, &["add", "-A"])?;
+        git(root, &["commit", "-q", "-m", "modules"])?;
+        git(root, &["branch", "-f", "main", "HEAD"])?;
+        change_lib(root)
+    })?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_found_change(&ran, "package over the narrowing threshold")?;
+    if ran.stderr.contains("diff_scope_oversized") {
+        return Err(format!("the narrowing threshold refused\n{}", ran.stderr));
+    }
+    let refused = ripr(&root, &["check"], &[("RIPR_MAX_DIFF_INDEX_FILES", "1200")])?;
+    assert_sane(&refused, "package over the memory guard")?;
+    if refused.code != Some(2)
+        || !refused.stderr.contains("diff_scope_oversized")
+        || !refused
+            .stderr
+            .contains("RIPR_MAX_DIFF_INDEX_FILES limit (1200)")
+    {
+        return Err(format!(
+            "expected the memory guard to refuse\n{}",
+            refused.stderr
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
     let scratch = Scratch::new("topology")?;
@@ -618,4 +673,76 @@ fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
         &ripr(&clone, &["check", "--base", "origin/main"], &[])?,
         "explicit base",
     )
+}
+
+/// Source text reaches the human reports verbatim, so a repository can carry
+/// terminal control bytes in an assertion message: ESC sequences that clear the
+/// screen or retitle the window, BEL, a bare CR that overwrites a line, and a
+/// bidi override. The human reports and `explain` must print them escaped; the
+/// machine formats must stay valid and keep the value.
+#[test]
+fn terminal_control_bytes_in_repo_text_never_reach_the_terminal() -> Result<(), String> {
+    let hostile = "\u{1b}[2J\u{1b}]0;PWNED\u{7}\r\u{202e}gnissim";
+    let test_source =
+        format!("use hx::total;\n#[test]\nfn t() {{ assert_eq!(total(1), 3, \"{hostile}\"); }}\n");
+    let scratch = Scratch::new("termctl")?;
+    let root = scratch.path.join("repo");
+    repo_with_test(&root, &test_source, change_lib)?;
+
+    let leaks = |text: &str| {
+        text.chars()
+            .any(|c| matches!(c, '\u{1b}' | '\u{7}' | '\r' | '\u{202e}'))
+    };
+    let clean = |ran: &Ran, what: &str| -> Result<(), String> {
+        assert_sane(ran, what)?;
+        if leaks(&ran.stdout) {
+            return Err(format!(
+                "{what}: terminal control bytes reached stdout\n{:?}",
+                ran.stdout
+            ));
+        }
+        Ok(())
+    };
+
+    let digest = ripr(&root, &["check", "--base", "main"], &[])?;
+    clean(&digest, "check human")?;
+    let probe = digest
+        .stdout
+        .split_whitespace()
+        .find(|word| word.starts_with("probe:"))
+        .ok_or_else(|| format!("no probe selector in\n{}", digest.stdout))?;
+
+    let full = ripr(
+        &root,
+        &["check", "--base", "main", "--format", "human-full"],
+        &[],
+    )?;
+    clean(&full, "check human-full")?;
+    let explain = ripr(
+        &root,
+        &["explain", "--root", ".", "--base", "main", probe],
+        &[],
+    )?;
+    clean(&explain, "explain")?;
+    // The text is escaped, not dropped: the reader still sees what the
+    // repository wrote, and these reports reached the assertion at all.
+    for (ran, what) in [(&full, "human-full"), (&explain, "explain")] {
+        if !ran.stdout.contains("\\u{1b}[2J") {
+            return Err(format!(
+                "{what}: expected the escaped assertion text\n{}",
+                ran.stdout
+            ));
+        }
+    }
+
+    let json = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+    assert_sane(&json, "check json")?;
+    if json.stdout.chars().any(|c| c.is_control() && c != '\n') || !json.stdout.contains("\\u001b")
+    {
+        return Err(format!(
+            "json must escape control bytes and keep the value\n{:?}",
+            json.stdout
+        ));
+    }
+    Ok(())
 }
