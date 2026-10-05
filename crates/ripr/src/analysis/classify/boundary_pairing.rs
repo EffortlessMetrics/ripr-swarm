@@ -97,12 +97,14 @@ fn assertion_observes_boundary_owner_call(
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
     // only when the assertion text names the owner once, and only when
-    // each compared parameter is a literal, identifier, or path. A
+    // each compared argument is a literal, identifier, or path. A
     // compound compared argument can mint a false activation `==` fact
     // from a buried scalar (#6668); named constants (`LIMIT`,
     // `parcels::BULK_ITEMS`) and helper hops keep identifier / path /
     // literal compared arguments. An extra unrelated compound argument
-    // (`make_context()`) does not block that path.
+    // (`make_context()`) does not block that path when every identifier
+    // operand maps to a parameter. An unresolved operand (`let amount =
+    // raw; amount >= threshold`) fail-closes to the whole argument list.
     lists.len() == 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
@@ -379,10 +381,15 @@ fn owner_call_arguments_admit_activation_fallback(
         .collect();
     // Compared parameters mint the false first-scalar `==` fact. Extra
     // arguments are not that producer, so `gate(LIMIT, make_context())`
-    // still admits a named-constant equality. When no operand is a
-    // parameter (helper hops such as `classify("word")` vs
-    // `final_label == "alpha"`), keep the whole list fail-closed.
-    let indices: Vec<usize> = if compared.is_empty() {
+    // still admits a named-constant equality. When an identifier operand
+    // is not a parameter (`let amount = raw; amount >= threshold`), this
+    // layer cannot see the alias without forking activation.rs, so the
+    // whole list stays fail-closed. Helper hops also take that path.
+    let unresolved_operand = [left.as_str(), right.as_str()].into_iter().any(|operand| {
+        comparison_operand_needs_argument_slot(operand)
+            && parameter_index(&parameters, operand).is_none()
+    });
+    let indices: Vec<usize> = if compared.is_empty() || unresolved_operand {
         (0..arguments.len()).collect()
     } else {
         compared
@@ -392,6 +399,11 @@ fn owner_call_arguments_admit_activation_fallback(
             .get(idx)
             .is_some_and(|argument| argument_is_activation_fallback_shape(argument.trim()))
     })
+}
+
+fn comparison_operand_needs_argument_slot(operand: &str) -> bool {
+    let trimmed = operand.trim();
+    !trimmed.is_empty() && !argument_is_whole_scalar_literal(trimmed)
 }
 
 fn argument_is_plain_identifier(text: &str) -> bool {
@@ -959,6 +971,100 @@ mod tests {
         assert!(
             !pairing_with_admitted_oracles(&probe, Some(&owner), &[&buried], &activation),
             "a compound compared argument must not pair just because an extra argument is an identifier"
+        );
+    }
+
+    #[test]
+    fn aliased_operand_buried_literal_does_not_pair_via_activation() {
+        let probe = predicate_probe("amount >= threshold");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::gate".to_string()),
+            name: "gate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 5,
+            body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
+                .to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
+        };
+        let buried = test_summary(
+            "aliased_buried",
+            "assert_eq!(gate(if false { 10 } else { 50 }, 10), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(if false { 10 } else { 50 }, 10), true);",
+            )],
+            vec![exact(
+                "assert_eq!(gate(if false { 10 } else { 50 }, 10), true);",
+            )],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(if false { 10 } else { 50 }, 10), true); | first scalar"
+                    .to_string(),
+                value: "amount == threshold".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&buried], &activation),
+            "a buried literal on an aliased input must not pair just because the named parameter is a literal"
+        );
+    }
+
+    #[test]
+    fn aliased_operand_named_constant_activation_still_pairs() {
+        let probe = predicate_probe("amount >= threshold");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::gate".to_string()),
+            name: "gate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 5,
+            body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
+                .to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
+        };
+        let paired = test_summary(
+            "aliased_const",
+            "assert_eq!(gate(LIMIT, 10), true);",
+            vec![call("gate", "assert_eq!(gate(LIMIT, 10), true);")],
+            vec![exact("assert_eq!(gate(LIMIT, 10), true);")],
+            &["10"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(LIMIT, 10), true); | named constant".to_string(),
+                value: "amount == threshold".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&paired], &activation),
+            "gate(LIMIT, 10) must still pair on an aliased operand when every argument is a name or literal"
         );
     }
 

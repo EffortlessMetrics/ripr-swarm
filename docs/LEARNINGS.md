@@ -322,8 +322,11 @@ recorded as `==` the boundary. Do not "fix" this by changing
 authority; #5638 / #5359). Activation `==` fallback is refused when the
 compared argument is compound, not when an unrelated extra argument is
 (`gate(LIMIT, make_context())` still pairs) or when the compared argument
-is a path-qualified constant (`bulk_rate(parcels::BULK_ITEMS)`). The reverse
-direction, helper-built inputs that read as gaps, is #6615.
+is a path-qualified constant (`bulk_rate(parcels::BULK_ITEMS)`). When a
+compared operand is a local alias rather than a parameter name, activation
+fallback fail-closes to the whole argument list so a buried literal in the
+aliased slot cannot restore pairing. The reverse direction, helper-built
+inputs that read as gaps, is #6615.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

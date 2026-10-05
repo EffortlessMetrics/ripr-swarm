@@ -133,6 +133,9 @@ relation are out of scope.
   also pairs: the extra compound argument is not the compared parameter.
   `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
   also pairs: a path-qualified constant is still the named boundary.
+  Given `let amount = raw; amount >= threshold` and
+  `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
+  not treat the aliased input as a boundary just because `threshold` is 10.
 
 ## Test Mapping
 
