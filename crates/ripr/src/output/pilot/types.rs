@@ -3,7 +3,7 @@ use crate::domain::{ExposureClass, LanguageId};
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
 use std::path::{Path, PathBuf};
 
-pub(crate) const PILOT_SUMMARY_SCHEMA_VERSION: &str = "0.2";
+pub(crate) const PILOT_SUMMARY_SCHEMA_VERSION: &str = "0.3";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PilotArtifacts {

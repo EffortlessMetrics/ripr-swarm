@@ -29,11 +29,11 @@ pub(crate) fn top_actionable_seams(
 /// tests, so when those tests are good every one of them is wrong together;
 /// ranked by location alone they filled the top ten (8 of semver's 10 sat in
 /// two `Identifier` methods). The class still leads, so a weak seam is never
-/// pushed below an unknown one, and `RankKey` order holds inside each round.
+/// pushed below an unrevealed one, and `RankKey` order holds inside each round.
 ///
 /// Rounds count across classes on purpose: a function already listed for a
-/// weak seam does not get a fresh first pick among the unknown ones, so one
-/// function cannot claim a slot per class.
+/// weak seam does not get a fresh first pick among the unrevealed ones, so
+/// one function cannot claim a slot per class.
 fn spread_across_owners(ranked: &mut Vec<&ClassifiedSeam>) {
     let mut taken: BTreeMap<(&Path, &str), usize> = BTreeMap::new();
     let mut keyed = ranked
@@ -99,6 +99,16 @@ impl<'a> RankKey<'a> {
     }
 }
 
+/// Seams withheld from the ranking because their class names a static
+/// limitation, not a gap. Renderers disclose this count so a short or empty
+/// ranking is never read as a clean result (#5497).
+pub(super) fn withheld_static_limitations(classified: &[ClassifiedSeam]) -> usize {
+    classified
+        .iter()
+        .filter(|entry| entry.class.is_static_limitation())
+        .count()
+}
+
 pub(super) fn actionable_total(classified: &[ClassifiedSeam]) -> usize {
     classified
         .iter()
@@ -106,7 +116,15 @@ pub(super) fn actionable_total(classified: &[ClassifiedSeam]) -> usize {
         .count()
 }
 
+/// Pilot ranks gap classes only. A class that names a static limitation
+/// (`SeamGripClass::is_static_limitation`: `opaque` and the `*_unknown`
+/// classes) is withheld from the ranking and counted by
+/// [`withheld_static_limitations`] instead, so pilot never offers a seam
+/// whose evidence it could not establish as the gap to test first (#5497).
 fn class_rank(class: SeamGripClass) -> Option<u8> {
+    if class.is_static_limitation() {
+        return None;
+    }
     Some(match class {
         SeamGripClass::WeaklyGripped => 0,
         SeamGripClass::Ungripped => 1,
@@ -114,11 +132,11 @@ fn class_rank(class: SeamGripClass) -> Option<u8> {
         SeamGripClass::ActivationUnknown
         | SeamGripClass::PropagationUnknown
         | SeamGripClass::ObservationUnknown
-        | SeamGripClass::DiscriminationUnknown => 3,
-        SeamGripClass::Opaque => 4,
-        SeamGripClass::StronglyGripped | SeamGripClass::Intentional | SeamGripClass::Suppressed => {
-            return None;
-        }
+        | SeamGripClass::DiscriminationUnknown
+        | SeamGripClass::Opaque
+        | SeamGripClass::StronglyGripped
+        | SeamGripClass::Intentional
+        | SeamGripClass::Suppressed => return None,
     })
 }
 

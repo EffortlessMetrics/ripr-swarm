@@ -12497,6 +12497,80 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// #5497: pilot ranks gap classes only. A private helper reached only
+/// through an integration test reads `opaque` (unresolved reach); pilot
+/// withholds it and says so, while the genuinely uncalled `shipping_fee`
+/// (`ungripped`) still ranks. The withheld seam stays in repo exposure.
+#[test]
+fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-withholds-limitations");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+    )?;
+    std::fs::write(
+        root.join("tests/checkout.rs"),
+        "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+    )?;
+
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let class_of = |owner: &str| {
+        exposure["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|seam| seam["owner"] == format!("src/lib.rs::{owner}"))
+            .map(|seam| seam["grip_class"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Preconditions: the fixture really holds one limitation and one gap.
+    assert_eq!(class_of("tier"), ["opaque"], "{exposure}");
+    assert_eq!(class_of("shipping_fee"), ["ungripped"], "{exposure}");
+
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["withheld_static_limitations_total"], 1, "{summary}");
+    let ranked = summary["top_actionable_seams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|seam| seam["owner"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(ranked.contains(&"src/lib.rs::shipping_fee"), "{summary}");
+    assert!(!ranked.contains(&"src/lib.rs::tier"), "{summary}");
+    assert_eq!(
+        summary["actionable_seams_total"].as_u64(),
+        Some(ranked.len() as u64),
+        "{summary}"
+    );
+
+    let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        "{md}"
+    );
+    let stdout = String::from_utf8_lossy(&pilot.stdout);
+    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// When the pilot seam budget truncates the inventory, pilot's snapshot holds
 /// fewer seams than the after snapshot `ripr check` takes. It must not carry
 /// the comparable identity, or verify would compare two populations.
@@ -12856,7 +12930,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""schema_version": "0.2""#));
+    assert!(summary_json.contains(r#""schema_version": "0.3""#));
     assert!(summary_json.contains(r#""scope": "repo""#));
     assert!(summary_json.contains(r#""status": "complete""#));
     assert!(summary_json.contains(r#""timeout_ms": 30000"#));

@@ -13,7 +13,9 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
 };
-use crate::output::pilot::ranking::{actionable_in_owner, actionable_total, top_actionable_seams};
+use crate::output::pilot::ranking::{
+    actionable_in_owner, actionable_total, top_actionable_seams, withheld_static_limitations,
+};
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
     PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -113,6 +115,10 @@ pub(crate) fn render_pilot_summary_json(
         "  \"actionable_seams_total\": {},\n",
         actionable_total
     ));
+    out.push_str(&format!(
+        "  \"withheld_static_limitations_total\": {},\n",
+        withheld_static_limitations(classified)
+    ));
     out.push_str("  \"top_actionable_seams\": [");
     for (idx, entry) in top.iter().enumerate() {
         if idx == 0 {
@@ -204,6 +210,14 @@ pub(crate) fn render_pilot_summary_md(
             actionable_total, context.max_seams
         ));
     }
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "- Withheld: {} ({WITHHELD_REASON}; listed in `{}`)\n",
+            seam_count_label(withheld),
+            display_path(&context.artifacts.repo_exposure_md)
+        ));
+    }
     out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
@@ -224,6 +238,12 @@ pub(crate) fn render_pilot_summary_md(
             out.push_str(&format!(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
                 unanalyzed_label(unanalyzed)
+            ));
+        } else if withheld > 0 {
+            out.push_str(&format!(
+                "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
+                seam_count_label(withheld),
+                display_path(&context.artifacts.repo_exposure_md)
             ));
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
@@ -395,6 +415,13 @@ pub(crate) fn render_pilot_summary_md(
             out.push('\n');
             return out;
         }
+        // #5497: with every seam withheld there is no gap to test, so the
+        // snapshot pair would only measure an edit nobody was asked to make.
+        (None, None) if top.is_empty() && withheld > 0 => {
+            out.push_str(WITHHELD_ONLY_NEXT);
+            out.push('\n');
+            return out;
+        }
         (None, None) => {
             match top.first() {
                 Some(entry)
@@ -471,6 +498,13 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "  withheld: {} ({WITHHELD_REASON})\n",
+            seam_count_label(withheld)
+        ));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
@@ -551,6 +585,14 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!(
             "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
             unanalyzed_label(unanalyzed)
+        ));
+        false
+    } else if withheld > 0 {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  none ranked: {} {WITHHELD_ONLY_VERDICT}\n  inspect: {}\n\n",
+            seam_count_label(withheld),
+            display_path(&context.artifacts.repo_exposure_md)
         ));
         false
     } else {
@@ -651,6 +693,11 @@ pub(crate) fn render_pilot_terminal(
         out.push('\n');
         return out;
     }
+    if top.is_empty() && withheld > 0 {
+        out.push_str(WITHHELD_ONLY_NEXT);
+        out.push('\n');
+        return out;
+    }
     if let Some(entry) = top.first().filter(|_| no_repair_target) {
         out.push_str(&format!(
             "Next, by hand: {}, then compare against this run:\n",
@@ -680,6 +727,23 @@ const NO_LANGUAGE_ROUTE_COMMAND: &str =
 /// Why an empty ranking is a non-claim when pilot found only source in
 /// languages no ripr adapter reads.
 const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages ripr does not analyze, so the empty ranking is not a clean result. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews.";
+
+/// Why pilot withheld seams from its ranking (#5497): their class is
+/// `opaque` or an `*_unknown` class, so ripr's static evidence could not
+/// establish whether a test discriminates them.
+const WITHHELD_REASON: &str =
+    "static evidence is unknown or opaque, so they are static limitations, not gaps";
+
+/// Why an empty ranking with withheld seams is not a clean result.
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result.";
+
+/// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
+/// pair to compare.
+const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
+
+fn seam_count_label(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+}
 
 /// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.
 const NO_ANALYZED_LANGUAGE_COMMAND: &str =

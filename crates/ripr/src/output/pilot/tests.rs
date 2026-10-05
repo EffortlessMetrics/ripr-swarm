@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
-use crate::output::pilot::ranking::top_actionable_seams;
+use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limitations};
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
@@ -340,12 +340,22 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
 #[test]
 fn pilot_ranking_counts_owner_rounds_across_classes() {
     // A function already listed for a weak seam does not get a fresh first
-    // pick among the opaque ones: the other function's two opaque seams lead.
+    // pick among the unrevealed ones: the other function's two lead.
     let entries = [
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1),
-        classified_in_owner(SeamGripClass::Opaque, "src/z.rs", "z::fmt", 9),
-        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 1),
-        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 2),
+        classified_in_owner(SeamGripClass::ReachableUnrevealed, "src/z.rs", "z::fmt", 9),
+        classified_in_owner(
+            SeamGripClass::ReachableUnrevealed,
+            "src/b.rs",
+            "b::parse",
+            1,
+        ),
+        classified_in_owner(
+            SeamGripClass::ReachableUnrevealed,
+            "src/b.rs",
+            "b::parse",
+            2,
+        ),
     ];
 
     assert_eq!(
@@ -459,40 +469,145 @@ fn pilot_summary_md_counts_an_owners_unlisted_seams_once() {
 }
 
 #[test]
-fn pilot_ranking_excludes_solved_governed_classes() {
-    let strong = classified_with(
-        SeamGripClass::StronglyGripped,
-        "src/strong.rs",
-        1,
-        Vec::new(),
-        Vec::new(),
-    );
-    let intentional = classified_with(
-        SeamGripClass::Intentional,
-        "src/intentional.rs",
-        2,
-        Vec::new(),
-        Vec::new(),
-    );
-    let suppressed = classified_with(
-        SeamGripClass::Suppressed,
-        "src/suppressed.rs",
-        3,
-        Vec::new(),
-        Vec::new(),
-    );
-    let opaque = classified_with(
-        SeamGripClass::Opaque,
-        "src/opaque.rs",
-        4,
-        Vec::new(),
-        Vec::new(),
-    );
+fn pilot_ranking_admits_gap_classes_only() {
+    // #5497: one seam of every class, each in its own function. Only the
+    // gap classes rank; the classes the classifier reached by stopping on a
+    // stage it could not establish are withheld and counted, and the solved
+    // and governed classes are neither ranked nor withheld.
+    let entries = SeamGripClass::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(idx, class)| classified_in_owner(class, "src/lib.rs", &format!("f{idx}"), idx + 1))
+        .collect::<Vec<_>>();
 
-    let entries = [strong, intentional, suppressed, opaque];
-    let ranked = top_actionable_seams(&entries, 5);
-    assert_eq!(ranked.len(), 1);
-    assert_eq!(ranked[0].class, SeamGripClass::Opaque);
+    let ranked = top_actionable_seams(&entries, entries.len())
+        .iter()
+        .map(|entry| entry.class)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ranked,
+        [
+            SeamGripClass::WeaklyGripped,
+            SeamGripClass::Ungripped,
+            SeamGripClass::ReachableUnrevealed,
+        ]
+    );
+    assert_eq!(withheld_static_limitations(&entries), 5);
+    for class in SeamGripClass::ALL {
+        assert_eq!(
+            entries
+                .iter()
+                .any(|entry| entry.class == class && ranked.contains(&entry.class)),
+            matches!(
+                class,
+                SeamGripClass::WeaklyGripped
+                    | SeamGripClass::Ungripped
+                    | SeamGripClass::ReachableUnrevealed
+            ),
+            "{class:?}"
+        );
+        assert!(
+            !(ranked.contains(&class) && class.is_static_limitation()),
+            "{class:?}"
+        );
+    }
+}
+
+#[test]
+fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
+    // #5497 mixed queue: one ungripped seam and three static limitations.
+    let entries = [
+        classified_in_owner(SeamGripClass::ActivationUnknown, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/a.rs", "a::f", 2),
+        classified_in_owner(SeamGripClass::PropagationUnknown, "src/b.rs", "b::g", 3),
+        classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 4),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+
+    let json = render_pilot_summary_json(&entries, context);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    assert_eq!(value["actionable_seams_total"], 1, "{json}");
+    assert_eq!(value["withheld_static_limitations_total"], 3, "{json}");
+    let top = value["top_actionable_seams"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(top.len(), 1, "{json}");
+    assert_eq!(top[0]["grip_class"], "ungripped", "{json}");
+
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains(
+            "- Withheld: 3 seams (static evidence is unknown or opaque, so they are static limitations, not gaps; listed in `target/ripr/pilot/repo-exposure.md`)\n"
+        ),
+        "{md}"
+    );
+    assert!(md.contains("src/c.rs:4"), "{md}");
+    assert!(!md.contains("src/a.rs:1"), "{md}");
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(
+            "  withheld: 3 seams (static evidence is unknown or opaque, so they are static limitations, not gaps)\n"
+        ),
+        "{terminal}"
+    );
+    assert!(terminal.contains("src/c.rs:4"), "{terminal}");
+}
+
+#[test]
+fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
+    // #5497: nothing ranks, but the withheld seams are named, not dropped.
+    let entries = [
+        classified_in_owner(SeamGripClass::ActivationUnknown, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::g", 2),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+
+    let json = render_pilot_summary_json(&entries, context);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    assert_eq!(value["actionable_seams_total"], 0, "{json}");
+    assert_eq!(value["withheld_static_limitations_total"], 2, "{json}");
+    assert_eq!(
+        value["top_actionable_seams"],
+        serde_json::json!([]),
+        "{json}"
+    );
+    assert!(value["next"]["repair_command"].is_null(), "{json}");
+
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains("None ranked: 2 seams were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result. Inspect them in `target/ripr/pilot/repo-exposure.md`.\n"),
+        "{md}"
+    );
+    assert!(!md.contains("No actionable seam was ranked"), "{md}");
+    assert!(!md.contains("After adding one focused test"), "{md}");
+    assert!(md.contains("No gap to test:"), "{md}");
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains("  none ranked: 2 seams were withheld"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("Run after adding the focused test"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("No gap to test:"), "{terminal}");
+
+    // With nothing withheld, the empty ranking keeps its old wording.
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("No actionable seam was ranked by the default pilot policy."),
+        "{md}"
+    );
+    assert!(!md.contains("Withheld"), "{md}");
 }
 
 #[test]
@@ -527,7 +642,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         &[entry],
         context,
     ));
-    assert!(json.contains(r#""schema_version": "0.2""#));
+    assert!(json.contains(r#""schema_version": "0.3""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
@@ -745,7 +860,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     };
 
     let json = render_pilot_timeout_summary_json(context);
-    assert!(json.contains(r#""schema_version": "0.2""#));
+    assert!(json.contains(r#""schema_version": "0.3""#));
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
