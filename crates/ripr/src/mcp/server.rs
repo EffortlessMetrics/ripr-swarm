@@ -1,13 +1,21 @@
 use super::{gaps, protocol, repair, repair_card, workspace};
 use crate::workspace_status::WorkspaceStatus;
-use rmcp::{ErrorData, RoleServer, ServerHandler, model::*, service::RequestContext};
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler,
+    model::*,
+    service::{NotificationContext, RequestContext},
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Application adapter only. The SDK owns RPC dispatch and lifecycle.
+/// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
+/// initialize-session `ping`: method name wins over `params._meta` so a
+/// handshake-shaped keepalive is not classified as a 2026-07-28 request
+/// (#6022).
 pub(super) struct McpServer {
     tools: ListToolsResult,
     resources: ListResourcesResult,
@@ -146,11 +154,11 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["gap_id", "snapshot_id"])?;
-        let gap_id = required_string_argument(&arguments, "gap_id")?;
+        reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
+        let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
-        match session.get_gap(&gap_id, requested.as_deref()) {
+        match session.get_gap(&canonical_id, requested.as_deref()) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 gaps::GAP_SCHEMA_VERSION,
@@ -164,11 +172,15 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["gap_id", "snapshot_id"])?;
-        let gap_id = required_string_argument(&arguments, "gap_id")?;
+        reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
+        let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let mut session = self.session.lock().await;
-        match session.prepare_repair(&gap_id, requested.as_deref(), self.root_identity.as_deref()) {
+        match session.prepare_repair(
+            &canonical_id,
+            requested.as_deref(),
+            self.root_identity.as_deref(),
+        ) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 repair::REPAIR_PACKET_SCHEMA_VERSION,
@@ -265,12 +277,12 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["gap_id", "snapshot_id"])?;
-        let gap_id = required_string_argument(&arguments, "gap_id")?;
+        reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
+        let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
         match session.repair_card_document(
-            &gap_id,
+            &canonical_id,
             requested.as_deref(),
             self.analysis_root.as_deref(),
         ) {
@@ -545,9 +557,9 @@ impl ServerHandler for McpServer {
                 )),
             };
         }
-        if let Some(gap_id) = gaps::gap_resource_id(&request.uri) {
+        if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.get_gap(gap_id, None) {
+            return match session.get_gap(canonical_id, None) {
                 Ok(document) => self.resource_result(document, &request.uri),
                 Err(failure) => Err(resource_failure("gap", &failure, None)),
             };
@@ -650,6 +662,82 @@ fn resource_failure(
         format!("unavailable {kind} resource: {}", failure.code),
         Some(data),
     )
+}
+
+/// Serve adapter that answers `ping` by method name on an `initialize`
+/// session. The pinned SDK treats a post-init ping whose `params._meta`
+/// names `2026-07-28` as a discovery-lifecycle request and replies
+/// `-32601`; pre-init ping already bypasses that match. Discovery sessions
+/// keep ping as method-not-found.
+pub(super) struct InitializeSessionService {
+    inner: McpServer,
+}
+
+impl InitializeSessionService {
+    pub(super) fn new(
+        status: WorkspaceStatus,
+        analysis_root: Option<PathBuf>,
+    ) -> Result<Self, ErrorData> {
+        Ok(Self {
+            inner: McpServer::new(status, analysis_root)?,
+        })
+    }
+}
+
+fn initialize_session_answers_ping(context: &RequestContext<RoleServer>) -> bool {
+    context
+        .peer
+        .peer_info()
+        .is_some_and(|info| info.protocol_version.has_initialize())
+}
+
+async fn answer_initialize_session_ping(
+    handler: &McpServer,
+    context: RequestContext<RoleServer>,
+) -> Result<ServerResult, ErrorData> {
+    if !initialize_session_answers_ping(&context) {
+        return Err(ErrorData::method_not_found::<PingRequestMethod>());
+    }
+    let mut result = handler.ping(context).await.map(ServerResult::empty)?;
+    // Initialize peers are older than `2026-07-28`; keep the empty `{}`
+    // wire shape the existing stdio ping control asserts.
+    result.strip_result_type_for_legacy_peer();
+    Ok(result)
+}
+
+impl rmcp::Service<RoleServer> for InitializeSessionService {
+    async fn handle_request(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ServerResult, ErrorData> {
+        if matches!(request, ClientRequest::PingRequest(_)) {
+            return answer_initialize_session_ping(&self.inner, context).await;
+        }
+        <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
+            .await
+    }
+
+    async fn handle_notification(
+        &self,
+        notification: ClientNotification,
+        context: NotificationContext<RoleServer>,
+    ) -> Result<(), ErrorData> {
+        <McpServer as rmcp::Service<RoleServer>>::handle_notification(
+            &self.inner,
+            notification,
+            context,
+        )
+        .await
+    }
+
+    fn get_info(&self) -> ServerConfig {
+        ServerHandler::get_info(&self.inner)
+    }
+
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        <McpServer as rmcp::Service<RoleServer>>::supported_protocol_versions(&self.inner)
+    }
 }
 
 #[cfg(test)]

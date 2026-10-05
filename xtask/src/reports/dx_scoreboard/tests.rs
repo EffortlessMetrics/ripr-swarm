@@ -2,7 +2,7 @@
 use super::measure::linked_target;
 use super::measure::{
     PasteVerdict, Probe, builds_ripr_from_source, check_contradictions, classify_replay,
-    contradiction_outcome, extract_commands, parse_test_result, probe_result,
+    contradiction_outcome, extract_commands, hostile_outcome, parse_test_result, probe_result,
     repo_exposure_contradictions, rss_sample,
 };
 use super::*;
@@ -482,7 +482,7 @@ fn first_run_receipt(with_install: bool) -> Value {
 fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(), String> {
     let config = parse_config(&MINIMAL.replace(
         "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
     ))?;
     let samples = parse_ingest(&first_run_receipt(true), &config)?;
     let find = |metric: &str, repo: Option<&str>| {
@@ -500,6 +500,10 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Incomplete(130.0))
     );
     assert_eq!(
+        find("first_run.install_seconds", None),
+        Some(SampleOutcome::Value(128.0))
+    );
+    assert_eq!(
         find("first_run.friction_events", None),
         Some(SampleOutcome::Value(2.0))
     );
@@ -508,13 +512,75 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(SampleOutcome::Value(1.0))
     );
 
+    // An install step with no duration must not pass as a faster install.
+    let mut partial = first_run_receipt(true);
+    if let Some(setup) = partial["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_extra", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&partial, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(128.0))
+    );
+
     // Without a timed install the journey metric stays unmeasured.
     let samples = parse_ingest(&first_run_receipt(false), &config)?;
     assert!(
         !samples
             .iter()
-            .any(|s| s.metric == "first_run.time_to_first_useful_result_s")
+            .any(|s| s.metric == "first_run.time_to_first_useful_result_s"
+                || s.metric == "first_run.install_seconds")
     );
+
+    // An install step with no duration at all is an incomplete sample, not a
+    // missing one, so a previously timed install cannot drop out unnoticed.
+    let mut untimed = first_run_receipt(false);
+    if let Some(setup) = untimed["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_published", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&untimed, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(0.0))
+    );
+
+    // A failed install writes no cases; its timing still becomes an
+    // incomplete install sample and no case-dependent metric appears.
+    let failed = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "ripr 0.11.0",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 101, "friction": []}],
+        "cases": [],
+    });
+    let samples = parse_ingest(&failed, &config)?;
+    assert_eq!(samples.len(), 1);
+    assert_eq!(
+        samples
+            .first()
+            .map(|s| (s.metric.as_str(), s.outcome.clone())),
+        Some(("first_run.install_seconds", SampleOutcome::Incomplete(20.0)))
+    );
+
+    // A receipt with an install step but no `cases` array is malformed, not
+    // an install-failed walk.
+    let no_cases = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "r",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 0, "friction": []}],
+    });
+    let rejected = parse_ingest(&no_cases, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("cases array")));
+
+    // No install step and no cases is still rejected.
+    let empty = json!({"schema_version": "first_run.v1", "ripr": "r", "setup": [], "cases": []});
+    let rejected = parse_ingest(&empty, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("non-empty cases")));
     Ok(())
 }
 
@@ -560,6 +626,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             {"pairings": {"seam_precise": 2}, "calibration_metrics": {"mutants_total": 86}},
             {"pairings": {"seam_precise": 170}, "calibration_metrics": {"mutants_total": 1659}},
         ],
+        "pilot_top_recommendations": {"scored": 39, "precision": 0.385, "by_tier": {"seam": {"confirmed": 2, "refuted": 5}, "owner": {"confirmed": 13, "refuted": 19}}, "repos": [{"name": "semver"}, {"name": "humantime"}]},
     });
     let input = mutation_spot_check_to_input(&receipt)?;
     let value = |id: &str| {
@@ -573,10 +640,98 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     assert!(
         value("trust.mutation_join_coverage").is_some_and(|v| (v - 172.0 / 1745.0).abs() < 1e-9)
     );
+    assert_eq!(
+        value("trust.pilot_top_recommendation_precision"),
+        Some(0.385)
+    );
+    let pilot_evidence = input["metrics"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == "trust.pilot_top_recommendation_precision")
+            .and_then(|row| row["evidence"].as_str())
+    });
+    assert_eq!(
+        pilot_evidence,
+        Some(
+            "39 pilot recommendations scored (seam 2/7, line 0/0, owner 13/32) over semver, humantime"
+        )
+    );
+
+    let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();
+    assert!(
+        !evidence(&input).contains("cargo-mutants arguments"),
+        "{}",
+        evidence(&input)
+    );
 
     let config = load_config(&committed_config())?;
     let samples = parse_ingest(&receipt, &config)?;
-    assert_eq!(samples.len(), 3);
+    assert_eq!(samples.len(), 4);
+
+    let mut empty_args = receipt.clone();
+    empty_args["repos"][0]["cargo_mutants_args"] = json!([]);
+    let input = mutation_spot_check_to_input(&empty_args)?;
+    assert!(
+        !evidence(&input).contains("cargo-mutants arguments"),
+        "{}",
+        evidence(&input)
+    );
+
+    let mut sampled = receipt.clone();
+    sampled["repos"][0]["cargo_mutants_args"] = json!(["--re=decode"]);
+    let caveat = "1 of 2 repositories ran with cargo-mutants arguments";
+    let input = mutation_spot_check_to_input(&sampled)?;
+    assert!(evidence(&input).contains(caveat), "{}", evidence(&input));
+    // Ingest publishes each row's own evidence, so the caveat must reach
+    // every sample, not only the top-level evidence.
+    let samples = parse_ingest(&sampled, &config)?;
+    assert_eq!(samples.len(), 4);
+    for sample in &samples {
+        assert!(sample.detail.contains(caveat), "{}", sample.detail);
+    }
+    let unsampled = parse_ingest(&receipt, &config)?;
+    assert!(
+        unsampled
+            .iter()
+            .all(|sample| !sample.detail.contains("cargo-mutants arguments"))
+    );
+
+    // A receipt from before the pilot section, or with nothing scored, adds
+    // no pilot row rather than a misleading zero.
+    // A run with a repository's pilot unavailable measured a smaller
+    // population, so it publishes no pilot row either.
+    for section in [
+        None,
+        Some(json!({"scored": 0, "precision": null})),
+        Some(json!({"scored": 39, "precision": 0.4, "unavailable_repos": 1})),
+    ] {
+        let mut older = receipt.clone();
+        match section {
+            Some(section) => older["pilot_top_recommendations"] = section,
+            None => {
+                older
+                    .as_object_mut()
+                    .map(|map| map.remove("pilot_top_recommendations"));
+            }
+        }
+        let rows = mutation_spot_check_to_input(&older)?;
+        assert!(rows["metrics"].as_array().is_some_and(|rows| {
+            rows.iter()
+                .all(|row| row["id"] != "trust.pilot_top_recommendation_precision")
+        }));
+    }
+    // A present section with an unreadable count is a malformed receipt.
+    let mut malformed = receipt.clone();
+    malformed["pilot_top_recommendations"]["unavailable_repos"] = json!("1");
+    if mutation_spot_check_to_input(&malformed).is_ok() {
+        return Err("accepted a string unavailable_repos".to_string());
+    }
+    for scored in [json!(null), json!("39"), json!(-1)] {
+        let mut malformed = receipt.clone();
+        malformed["pilot_top_recommendations"]["scored"] = scored.clone();
+        if mutation_spot_check_to_input(&malformed).is_ok() {
+            return Err(format!("accepted pilot scored {scored}"));
+        }
+    }
     Ok(())
 }
 
@@ -621,6 +776,11 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     let first = &get("first_run.time_to_first_useful_result_s")[0];
     assert_eq!(first["value"], json!(52.5));
     assert_eq!(first["completed"], json!(true));
+    // The install alone is its own row, so a slower compile regresses it even
+    // when the walk after it stays fast.
+    let install = &get("first_run.install_seconds")[0];
+    assert_eq!(install["value"], json!(40.0));
+    assert_eq!(install["completed"], json!(true));
     assert!(
         parse_ingest_text("{\"schema\":\"other\"}\nnot json")
             .is_err_and(|err| err.contains("line 1"))
@@ -840,6 +1000,40 @@ fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
         ))
         .is_err_and(|e| e.contains("no case rows"))
     );
+    // A failed install writes only setup rows; its timing still lands as an
+    // incomplete install sample, and no per-case metric appears.
+    let failed_install_text = [
+        row(
+            r#""ripr":"r","case":"_setup","step":"install_published","metric":"secs","value":20.0"#,
+        ),
+        row(r#""ripr":"r","case":"_setup","step":"install_published","metric":"exit","value":101"#),
+    ]
+    .join("\n");
+    let install_rows = convert(failed_install_text.clone()).map(|input| {
+        input["metrics"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r["id"].as_str() == Some("first_run.install_seconds"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    });
+    let measured_nothing = convert(failed_install_text.clone()).map(|input| {
+        input["metrics"].as_array().is_some_and(|rows| {
+            rows.iter().all(|r| {
+                !matches!(
+                    r["id"].as_str(),
+                    Some("first_run.friction_events" | "first_run.unknown_verdicts")
+                )
+            })
+        })
+    });
+    assert_eq!(measured_nothing, Ok(true));
+    assert!(install_rows.is_ok_and(|rows| rows.len() == 1
+        && rows[0]["value"] == json!(20.0)
+        && rows[0]["completed"] == json!(false)));
     // A step cut off before its exit row counts as failed.
     let cut = [
         row(r#""case":"a","step":"check","metric":"exit","value":0"#),
@@ -1148,10 +1342,85 @@ fn a_symlinked_target_is_never_cleared() -> Result<(), String> {
     std::os::unix::fs::symlink(&outside, checkout.join("target/ripr"))
         .map_err(|e| e.to_string())?;
     let reason = linked_target(&checkout);
+    // A symlinked `target` itself is refused too, not only `target/ripr`.
+    let other = root.join("other");
+    std::fs::create_dir_all(&other).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&outside, other.join("target")).map_err(|e| e.to_string())?;
+    let linked_parent = linked_target(&other);
     let _ = std::fs::remove_dir_all(&root);
+    assert!(linked_parent.is_some());
     assert!(
         reason.is_some_and(|r| r.contains("refusing to clear") && r.contains("remove the link"))
     );
+    Ok(())
+}
+
+fn smoke_receipt(rows: &[(&str, &str, u64)]) -> Value {
+    json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "corpus_version": "2026-10-04.5",
+        "tier": "fast",
+        "repos": rows
+            .iter()
+            .map(|(id, status, ms)| {
+                let mut row = json!({"id": id, "status": status, "duration_ms": ms});
+                if *status == "not_fetched" {
+                    row["reason"] = json!("missing checkout");
+                } else {
+                    row["findings"] = json!(2);
+                }
+                row
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn corpus_gate(base: &Value, current: &Value) -> Result<Value, String> {
+    let config = load_config(&committed_config())?;
+    let boards = vec!["corpus".to_string()];
+    let base = parse_ingest(base, &config)?;
+    let baseline = build_report(&config, &boards, &base, &context("r"), None, false);
+    let current = parse_ingest(current, &config)?;
+    Ok(build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    ))
+}
+
+#[test]
+fn a_corpus_repo_that_stops_analyzing_fails_the_gate() -> Result<(), String> {
+    // `c` failed closed in the baseline too, so it is not a new failure.
+    let base = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("b", "analyzed", 1200),
+        ("c", "diff_scope_oversized", 40),
+    ]);
+    let same = corpus_gate(&base, &base)?;
+    assert_eq!(same["gate"]["status"].as_str(), Some("pass"));
+
+    let current = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("b", "timed_out", 600_000),
+        ("c", "diff_scope_oversized", 40),
+    ]);
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    let regressions = report["gate"]["regressions"]
+        .as_array()
+        .ok_or("regressions missing")?;
+    assert!(
+        regressions
+            .iter()
+            .any(|r| r["metric"] == "corpus.not_analyzed"),
+        "{regressions:?}"
+    );
+    let text = regressions.iter().map(Value::to_string).collect::<String>();
+    assert!(text.contains("\"b\""), "{text}");
+    assert!(!text.contains("\"c\""), "{text}");
     Ok(())
 }
 
@@ -1174,6 +1443,111 @@ fn a_negative_ingested_value_is_refused() -> Result<(), String> {
 }
 
 #[test]
+fn an_unknown_ingested_metric_is_refused_with_where_to_declare_it() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let input = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "agent-as-user",
+        "metrics": [{"id": "agent.not_declared", "value": 1}],
+    });
+    assert!(parse_ingest(&input, &config).is_err_and(|e| e.contains("scoreboards.toml")));
+    // The agent-as-user stub-route counts are declared.
+    let stub_route = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "agent-as-user",
+        "metrics": [
+            {"id": "agent.stub_calls", "value": 5},
+            {"id": "agent.stub_calls_producing_stub", "value": 0},
+        ],
+    });
+    assert_eq!(parse_ingest(&stub_route, &config)?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_review_only_count_that_moves_with_unchanged_evidence_is_listed() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let boards = vec!["agent".to_string()];
+    let receipt = |calls: u64| {
+        json!({
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "source": "agent-as-user",
+            "metrics": [{"id": "agent.stub_calls", "value": calls}],
+        })
+    };
+    let base = parse_ingest(&receipt(5), &config)?;
+    let baseline = build_report(&config, &boards, &base, &context("r"), None, false);
+    let current = parse_ingest(&receipt(8), &config)?;
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        report["gate"]
+    );
+    let review = report["gate"]["review"].to_string();
+    assert!(review.contains("agent.stub_calls"), "{review}");
+    let rendered = render_markdown(&report);
+    assert!(
+        rendered.contains("`agent.stub_calls` changed: baseline [5.0] → current [8.0]"),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_status_flip_is_listed_next_to_a_lost_completion() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
+    let current = smoke_receipt(&[("a", "timed_out", 600_000), ("b", "not_fetched", 0)]);
+    let report = corpus_gate(&base, &current)?;
+    let regression = report["gate"]["regressions"]
+        .as_array()
+        .and_then(|all| all.iter().find(|r| r["metric"] == "corpus.not_analyzed"))
+        .ok_or("corpus.not_analyzed regression missing")?;
+    let repos: Vec<&str> = regression["regressed_repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["repo"].as_str())
+        .collect();
+    assert_eq!(repos, ["b", "a"], "{regression}");
+    Ok(())
+}
+
+#[test]
+fn a_corpus_repo_that_was_not_fetched_is_lost_completion_not_a_pass() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("b", "not_fetched", 0)]);
+    let input = rust_corpus_smoke_to_input(&current)?;
+    let rows = input["metrics"].as_array().ok_or("metrics missing")?;
+    assert!(rows.iter().filter(|row| row["repo"] == "b").all(|row| {
+        row["completed"] == false
+            && row["evidence"]
+                .as_str()
+                .is_some_and(|e| e.contains("missing checkout"))
+    }));
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    Ok(())
+}
+
+#[test]
+fn a_smoke_receipt_without_repos_is_refused() {
+    let empty = json!({"schema_version": "ripr-rust-corpus-smoke-v1", "repos": []});
+    assert!(rust_corpus_smoke_to_input(&empty).is_err_and(|e| e.contains("repos")));
+    let unnamed =
+        json!({"schema_version": "ripr-rust-corpus-smoke-v1", "repos": [{"status": "analyzed"}]});
+    assert!(rust_corpus_smoke_to_input(&unnamed).is_err_and(|e| e.contains("needs an id")));
+}
+
+#[test]
 fn libtest_summary_counts_are_read_by_label_not_position() {
     let line = "test result: FAILED. 123 passed; 45 failed; 6 ignored; 7 measured; 890 filtered out; finished in 1.0s\n";
     assert_eq!(parse_test_result(line), Some((123, 45)));
@@ -1188,4 +1562,188 @@ fn a_probe_ended_by_a_signal_is_a_refusal_not_a_clean_exit() {
     assert_eq!(probe_result(&run), Probe::Refused);
     run.output.status = Some(std::process::ExitStatus::from_raw(0));
     assert_eq!(probe_result(&run), Probe::ExitedZero);
+}
+
+#[test]
+fn a_negative_first_run_duration_is_refused() {
+    let row = |body: &str| format!(r#"{{"schema":"first_run_row.v1",{body}}}"#);
+    let text = [
+        row(r#""case":"a","step":"check","metric":"secs","value":-100.0"#),
+        row(r#""case":"a","step":"check","metric":"exit","value":0"#),
+    ]
+    .join("\n");
+    let parsed = parse_ingest_text(&text);
+    let converted = parsed.and_then(|value| first_run_rows_to_input(&value));
+    assert!(converted.is_err_and(|e| e.contains("negative")));
+}
+
+#[test]
+fn a_hostile_run_with_no_tests_is_not_zero_failures() {
+    let none = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out\n";
+    let (outcome, detail) = hostile_outcome(parse_test_result(none), "");
+    assert!(matches!(outcome, SampleOutcome::Failed), "{detail}");
+    let (outcome, _) = hostile_outcome(Some((13, 2)), "");
+    assert!(matches!(outcome, SampleOutcome::Value(n) if (n - 2.0).abs() < 1e-9));
+}
+
+#[test]
+fn the_gate_message_reports_the_compared_value_not_a_new_repos_worst() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let base = vec![sample(
+        "speed.warm_check_ms",
+        Some("a"),
+        SampleOutcome::Value(1000.0),
+    )];
+    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let current = vec![
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Value(3000.0),
+        ),
+        sample(
+            "speed.warm_check_ms",
+            Some("new"),
+            SampleOutcome::Value(9000.0),
+        ),
+    ];
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    let regression = report["gate"]["regressions"]
+        .as_array()
+        .and_then(|all| all.first())
+        .ok_or("regression missing")?;
+    assert_eq!(regression["current"].as_f64(), Some(3000.0), "{regression}");
+    Ok(())
+}
+
+#[test]
+fn a_slower_fail_closed_repo_is_not_a_time_regression() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 9000)]);
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        report["gate"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_repo_that_starts_completing_again_is_not_a_time_regression() -> Result<(), String> {
+    // The baseline's fail-closed sample records 0 ms; recovery must not be
+    // compared against that placeholder.
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
+    // c recovers slower than a, so it would also be the compared worst.
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("c", "analyzed", 4000)]);
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        report["gate"]
+    );
+    let row = report["metrics"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+        .ok_or("corpus.check_ms row missing")?;
+    assert_eq!(
+        row["baseline"]["recovered_repos"],
+        json!(["c"]),
+        "{}",
+        row["baseline"]
+    );
+    // A repository the baseline never sampled is new, not recovered.
+    let grown = smoke_receipt(&[
+        ("a", "analyzed", 900),
+        ("c", "analyzed", 800),
+        ("d", "analyzed", 700),
+    ]);
+    let report = corpus_gate(&base, &grown)?;
+    let row = report["metrics"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+        .ok_or("corpus.check_ms row missing")?;
+    assert_eq!(row["baseline"]["recovered_repos"], json!(["c"]));
+    assert_eq!(row["baseline"]["new_repos"], json!(["d"]));
+    let rendered = render_markdown(&report);
+    assert!(
+        rendered.contains("not in baseline: d; completed again: c"),
+        "{rendered}"
+    );
+    // A repository that completed in both runs still regresses on time.
+    let slower = smoke_receipt(&[("a", "analyzed", 9000), ("c", "analyzed", 4000)]);
+    let report = corpus_gate(&base, &slower)?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        report["gate"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_recovery_is_listed_next_to_a_lost_completion_and_when_nothing_compares() -> Result<(), String>
+{
+    let row_of = |report: &Value| -> Result<Value, String> {
+        report["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+            .cloned()
+            .ok_or_else(|| "corpus.check_ms row missing".to_string())
+    };
+    // a stops completing while c starts again: the gate fails for a and still
+    // lists c.
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
+    let swapped = smoke_receipt(&[("a", "diff_scope_oversized", 40), ("c", "analyzed", 900)]);
+    let report = corpus_gate(&base, &swapped)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    assert_eq!(
+        row_of(&report)?["baseline"]["recovered_repos"],
+        json!(["c"])
+    );
+    // Only c, which recovered, completed: nothing compares, and the Markdown
+    // cell still names the recovery.
+    let only_c = smoke_receipt(&[("c", "diff_scope_oversized", 40)]);
+    let report = corpus_gate(&only_c, &smoke_receipt(&[("c", "analyzed", 900)]))?;
+    let row = row_of(&report)?;
+    assert_eq!(
+        row["baseline"]["comparable"],
+        json!(false),
+        "{}",
+        row["baseline"]
+    );
+    let rendered = render_markdown(&report);
+    assert!(rendered.contains("completed again: c"), "{rendered}");
+    Ok(())
+}
+
+#[test]
+fn an_analyzed_smoke_row_without_a_duration_is_refused() -> Result<(), String> {
+    let receipt = json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "repos": [{"id": "a", "status": "analyzed", "findings": 1}],
+    });
+    assert!(rust_corpus_smoke_to_input(&receipt).is_err_and(|e| e.contains("duration_ms")));
+    let negative = json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "repos": [{"id": "a", "status": "analyzed", "duration_ms": -5, "findings": 1}],
+    });
+    assert!(rust_corpus_smoke_to_input(&negative).is_err_and(|e| e.contains("duration_ms")));
+    // A fail-closed row has no time to compare, so a missing one is fine.
+    let closed = json!({
+        "schema_version": "ripr-rust-corpus-smoke-v1",
+        "repos": [{"id": "c", "status": "diff_scope_oversized"}],
+    });
+    rust_corpus_smoke_to_input(&closed)?;
+    Ok(())
 }

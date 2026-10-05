@@ -954,6 +954,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
             oracle_strength: OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }],
         recommended_next_step: None,
         language: None,
@@ -1185,8 +1186,13 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
     );
     assert!(
-        serve_streams.contains(".serve(dollar_requests::AnswerDollarRequests(service))"),
-        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456) to the tower LSP server"
+        serve_streams.contains("dollar_requests::AnswerDollarRequests(")
+            && serve_streams.contains("RecordShutdownExit::new(service, order.clone())"),
+        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456, with the shutdown/exit order recorder inside it, #5249) to the tower LSP server"
+    );
+    assert!(
+        serve_streams.contains("order.exit_without_shutdown()"),
+        "serve_streams should exit nonzero when `exit` arrives without a prior `shutdown` (LSP section exit, #5249)"
     );
 
     Ok(())
@@ -2378,6 +2384,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let canonical_gap_id = diagnostic
@@ -2512,6 +2519,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         oracle_strength: OracleStrength::Weak,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
 
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -2774,6 +2782,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
@@ -3082,6 +3091,7 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
 
     let mut suppressed = sample_finding();
@@ -4734,6 +4744,7 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         oracle_strength: OracleStrength::Strong,
         relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
         relation_confidence: Some(crate::domain::RelationConfidence::High),
+        miss: None,
     }];
     let mut snapshot = sample_analysis_snapshot(
         root.path().to_path_buf(),
@@ -7835,6 +7846,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
 
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -13605,6 +13617,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
@@ -21087,6 +21100,7 @@ fn fix_route_rust_finding() -> Finding {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
     finding
 }

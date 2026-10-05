@@ -17,8 +17,9 @@
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
 use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex, TestFact};
+use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Maximum call-hop depth for the transitive walk.
@@ -204,6 +205,53 @@ impl<'a> ReachGraph<'a> {
         }
         reaching
     }
+
+    /// Whether `test` gives a name-only reason to believe its call to
+    /// `entry` lands on a function that reaches the owner, rather than on an
+    /// unrelated function that shares the name (#5481: a unit test calling
+    /// `Cache::build` while the path runs through `Site::build`).
+    ///
+    /// The entry is corroborated when some production function named `entry`
+    /// that calls the owner or a reaching name is a free function, or is an
+    /// associated function the test calls on a receiver resolved to its
+    /// `impl` self type (constructor, annotation, UFCS or struct literal; see
+    /// `method_call_resolves_to_impl_type`, which fails closed on an
+    /// unresolved receiver). When no such function is found (an index without
+    /// impl segments, or a depth edge), the entry counts as corroborated,
+    /// which keeps the plain file-order selection. This only ranks witnesses;
+    /// it never removes one or changes the classification.
+    fn entry_is_corroborated(
+        &self,
+        entry: &str,
+        test: &TestFact,
+        reaching: &HashSet<&str>,
+        owner_name: &str,
+    ) -> bool {
+        let mut saw_reaching_function = false;
+        for function in self.by_name.get(entry).into_iter().flatten() {
+            let reaches = calls_of(function).iter().any(|call| {
+                !is_macro_call(&call.name)
+                    && !is_own_declaration(call, function)
+                    && (call.name == owner_name || reaching.contains(call.name.as_str()))
+            });
+            if !reaches {
+                continue;
+            }
+            saw_reaching_function = true;
+            match super::related_tests::impl_self_type_name(&function.id.0) {
+                None => return true,
+                Some(self_type)
+                    if super::related_tests::method_call_resolves_to_impl_type(
+                        test, entry, &self_type,
+                    ) =>
+                {
+                    return true;
+                }
+                Some(_) => {}
+            }
+        }
+        !saw_reaching_function
+    }
 }
 
 impl<'a> TransitiveReachIndex<'a> {
@@ -232,13 +280,17 @@ impl<'a> TransitiveReachIndex<'a> {
             return None;
         }
 
-        // One witness per test: the lexicographically-smallest entry symbol
-        // from that test which reaches the owner. Collected as a sortable
-        // 4-tuple so the named witness is stable across index iteration order
+        // One witness per test: its best entry symbol that reaches the owner,
+        // where an entry the test body corroborates (see
+        // `ReachGraph::entry_is_corroborated`) beats a bare name match, then
+        // the lexicographically-smallest name. Collected as a sortable tuple
+        // with the corroboration rank first, so a test calling an unrelated
+        // type's same-named method cannot win on file order alone (#5481),
+        // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
-        let mut witnesses: Vec<(PathBuf, usize, String, String)> = Vec::new();
+        let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
         for test in &graph.all_tests {
-            let mut entry: Option<&str> = None;
+            let mut entry: Option<(bool, &str)> = None;
             for callee in &test.calls {
                 // Skip macro invocations.
                 if is_macro_call(&callee.name) {
@@ -250,14 +302,22 @@ impl<'a> TransitiveReachIndex<'a> {
                     continue;
                 }
                 if reaching.contains(callee.name.as_str()) {
+                    let uncorroborated = !graph.entry_is_corroborated(
+                        callee.name.as_str(),
+                        test,
+                        &reaching,
+                        owner_name,
+                    );
+                    let candidate = (uncorroborated, callee.name.as_str());
                     match entry {
-                        Some(current) if current <= callee.name.as_str() => {}
-                        _ => entry = Some(callee.name.as_str()),
+                        Some(current) if current <= candidate => {}
+                        _ => entry = Some(candidate),
                     }
                 }
             }
-            if let Some(symbol) = entry {
+            if let Some((uncorroborated, symbol)) = entry {
                 witnesses.push((
+                    uncorroborated,
                     test.file.clone(),
                     test.start_line,
                     test.name.clone(),
@@ -271,7 +331,7 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         witnesses.sort();
         let other_test_count = witnesses.len() - 1;
-        let (test_file, test_line, test_name, entry_symbol) = witnesses.into_iter().next()?;
+        let (_, test_file, test_line, test_name, entry_symbol) = witnesses.into_iter().next()?;
         Some(TransitiveWitness {
             test_name,
             test_file,
@@ -279,6 +339,77 @@ impl<'a> TransitiveReachIndex<'a> {
             entry_symbol,
             other_test_count,
         })
+    }
+}
+
+impl<'a> TransitiveReachIndex<'a> {
+    /// Production functions a test may run: every non-macro name a test
+    /// calls, and every production function those reach in at most
+    /// `MAX_TRANSITIVE_DEPTH - 1` further hops, matched by name the same way
+    /// as [`Self::transitive_witness`]. Pilot's trait-dispatch reach check
+    /// (#5411) reads it to ask whether any test-reached code names a type.
+    pub(in crate::analysis) fn test_reached_functions(&self) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let calls = graph.all_tests.iter().flat_map(|test| test.calls.iter());
+        self.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
+    }
+
+    /// Production functions `calls` may run within `depth` hops, matched by
+    /// name, sorted by name. Macro invocations and names with no in-crate
+    /// function stop their branch, as in the transitive walk.
+    pub(in crate::analysis) fn functions_reached_from<'c>(
+        &self,
+        calls: impl IntoIterator<Item = &'c CallFact>,
+        depth: usize,
+    ) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let mut seen: HashSet<&'a str> = HashSet::new();
+        let mut frontier: Vec<&'a str> = Vec::new();
+        for call in calls {
+            if is_macro_call(&call.name) {
+                continue;
+            }
+            if let Some((&name, _)) = graph.by_name.get_key_value(call.name.as_str())
+                && seen.insert(name)
+            {
+                frontier.push(name);
+            }
+        }
+        let mut reached: Vec<&'a str> = frontier.clone();
+        for _ in 1..depth {
+            let mut next = Vec::new();
+            for name in frontier {
+                for function in graph.by_name.get(name).into_iter().flatten() {
+                    for call in calls_of(function) {
+                        if is_macro_call(&call.name) {
+                            continue;
+                        }
+                        if let Some((&callee, _)) = graph.by_name.get_key_value(call.name.as_str())
+                            && seen.insert(callee)
+                        {
+                            next.push(callee);
+                        }
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            reached.extend(next.iter().copied());
+            frontier = next;
+        }
+        reached.sort_unstable();
+        reached
+            .into_iter()
+            .flat_map(|name| graph.by_name.get(name).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// Every production function, for checks that scan impl owners.
+    pub(in crate::analysis) fn production_functions(
+        &self,
+    ) -> impl Iterator<Item = &'a FunctionSummary> + '_ {
+        self.graph().by_name.values().flatten().copied()
     }
 }
 
@@ -914,11 +1045,43 @@ fn calls_of(f: &FunctionSummary) -> &[CallFact] {
     &f.calls
 }
 
+/// Whether `call` is the function's own declaration line (`fn build(&self)`),
+/// which call facts record under the function's own name. It is no evidence
+/// that the function leads anywhere: without this, `Cache::build` would
+/// "reach" through the name `build` (#5481). A real call to a same-named
+/// function on another type (`self.queue.build()`) still counts.
+fn is_own_declaration(call: &CallFact, function: &FunctionSummary) -> bool {
+    call.name == function.name
+        && contains_identifier(&call.text, "fn")
+        && call.text.contains(&format!("fn {}", function.name))
+}
+
 /// Returns true when the callee name looks like a macro invocation - i.e. it
 /// contains `!`. Lexical call extraction in ripr may or may not retain the
 /// bang; we check containment to fail closed.
 fn is_macro_call(name: &str) -> bool {
     name.contains('!')
+}
+
+/// The `static_limit_kind` a transitive witness names (RIPR-SPEC-0118): an
+/// integration-test origin is a public-API path, anything else a helper
+/// chain.
+pub(in crate::analysis) fn transitive_reach_limit_kind(test_file: &Path) -> StaticLimitKind {
+    if crate::analysis::rust_index::is_test_file(test_file) {
+        StaticLimitKind::RustIntegrationPublicApiPathUnresolved
+    } else {
+        StaticLimitKind::RustTransitiveReachUnresolved
+    }
+}
+
+/// The `static_limit_kind` a macro witness names: a macro in the test body
+/// itself, or one on the path toward the owner.
+pub(in crate::analysis) fn macro_reach_limit_kind(macro_host: &str) -> StaticLimitKind {
+    if macro_host == MACRO_WITNESS_TEST_BODY_HOST {
+        StaticLimitKind::RustMacroWrappedTestCallUnresolved
+    } else {
+        StaticLimitKind::RustMacroReachUnresolved
+    }
 }
 
 /// The human/JSON message emitted as a stop-reason when the transitive
@@ -1135,6 +1298,205 @@ mod tests {
         assert_eq!(
             witness.as_ref().map(|w| w.test_name.as_str()),
             Some("test_a")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
+    fn make_method(self_type: &str, name: &str, calls: Vec<&str>) -> FunctionSummary {
+        let mut function = make_fn(name, calls);
+        function.id = SymbolId(format!("src/lib.rs::impl {self_type}::{name}"));
+        function
+    }
+
+    /// Adds the declaration-line call fact the parser records under the
+    /// function's own name (`fn build(&mut self) {`).
+    fn with_declaration(mut function: FunctionSummary) -> FunctionSummary {
+        function.calls.insert(
+            0,
+            CallFact {
+                line: 1,
+                name: function.name.clone(),
+                text: format!("fn {}(&mut self) {{", function.name),
+            },
+        );
+        function
+    }
+
+    fn with_call_text(mut function: FunctionSummary, name: &str, text: &str) -> FunctionSummary {
+        for call in &mut function.calls {
+            if call.name == name {
+                call.text = text.to_string();
+            }
+        }
+        function
+    }
+
+    fn with_body(mut test: TestFact, body: &str) -> TestFact {
+        test.body = body.to_string();
+        test
+    }
+
+    // (#5481) A unit test calling an unrelated type's same-named method must
+    // not win on file order over the integration test whose body names the
+    // type that reaches the owner. Only the ranking moves: both tests stay
+    // candidates, so the count of others is unchanged.
+    #[test]
+    fn given_same_named_method_on_other_type_then_corroborated_witness_is_named() {
+        let site_build = make_method("Site", "build", vec!["full_build"]);
+        // Call facts include the function's own name; that must not count
+        // as a path onward.
+        let cache_build = with_declaration(make_method("Cache", "build", vec![]));
+        let index = index_with(
+            vec![site_build, cache_build],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/render.rs", 24, vec!["new", "build"]),
+                    "let mut c = Cache::new(); c.build(); assert!(c.is_built());",
+                ),
+                with_body(
+                    make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+                    "let site = Site { langs: Vec::new() }; assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("atom_written")
+        );
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_file.clone()),
+            Some(PathBuf::from("tests/site.rs"))
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+
+        // Control: with no body naming `Site`, neither test is corroborated
+        // and file order decides, as before.
+        let uncorroborated = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                make_method("Cache", "build", vec![]),
+            ],
+            vec![
+                make_test_at("cache_builds", "src/render.rs", 24, vec!["build"]),
+                make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+            ],
+        );
+        assert_eq!(
+            find_transitive_witness("full_build", &uncorroborated)
+                .as_ref()
+                .map(|w| w.test_name.as_str()),
+            Some("cache_builds")
+        );
+    }
+
+    // (#5481 review) A test that names the reaching type away from the call
+    // is not corroborated: `cache.build()` does not resolve to `Site`. With
+    // neither test corroborated, file order decides.
+    #[test]
+    fn given_type_named_away_from_the_call_then_the_test_is_not_corroborated() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at(
+                        "site_from_fixture",
+                        "src/a.rs",
+                        3,
+                        vec!["make_site", "build"],
+                    ),
+                    "let site = make_site(); assert!(site.build().is_empty());",
+                ),
+                with_body(
+                    make_test_at(
+                        "cache_with_unused_site",
+                        "src/b.rs",
+                        3,
+                        vec!["new", "build"],
+                    ),
+                    "let _unused = Site { langs: Vec::new() }; let mut cache = Cache::new(); cache.build();",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_from_fixture")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
+    // (#5481 review) A type named only as a constructor argument is not the
+    // receiver's type: `Cache::new(Site::default())` binds a `Cache`. The
+    // cache test sorts first, so it would win if it counted as corroborated.
+    #[test]
+    fn given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at(
+                        "cache_wraps_site",
+                        "src/0_cache.rs",
+                        3,
+                        vec!["new", "build"],
+                    ),
+                    "let cache = Cache::new(Site::default()); cache.build();",
+                ),
+                with_body(
+                    make_test_at("site_builds", "tests/site.rs", 3, vec!["new", "build"]),
+                    "let site: Site = Site::new(); assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_builds")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
+    }
+
+    // (#5481 review) `Site::build` calling `self.queue.build()` is a real call
+    // onward, not the declaration of `build`, so a test on `Site` stays
+    // corroborated when `Queue::build` is what reaches the owner.
+    #[test]
+    fn given_cross_type_same_named_call_then_the_caller_still_reaches() {
+        let index = index_with(
+            vec![
+                with_call_text(
+                    with_declaration(make_method("Site", "build", vec!["build"])),
+                    "build",
+                    "self.queue.build()",
+                ),
+                make_method("Queue", "build", vec!["full_build"]),
+                with_declaration(make_method("Cache", "build", vec![])),
+            ],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/0_cache.rs", 3, vec!["new", "build"]),
+                    "let _q = Queue::new(); let mut cache = Cache::new(); cache.build();",
+                ),
+                with_body(
+                    make_test_at("site_builds", "src/site.rs", 3, vec!["new", "build"]),
+                    "let site = Site::new(); assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+
+        let witness = find_transitive_witness("full_build", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("site_builds")
         );
         assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(1));
     }
@@ -1713,6 +2075,30 @@ mod tests {
         assert!(!reaching.contains("b2"));
         assert!(!reaching.contains("m1"));
         assert!(reaching.contains("dup"));
+    }
+
+    #[test]
+    fn transitive_reach_limit_kind_names_integration_test_path() {
+        assert_eq!(
+            transitive_reach_limit_kind(Path::new("tests/version_req.rs")),
+            StaticLimitKind::RustIntegrationPublicApiPathUnresolved
+        );
+        assert_eq!(
+            transitive_reach_limit_kind(Path::new("src/lib.rs")),
+            StaticLimitKind::RustTransitiveReachUnresolved
+        );
+    }
+
+    #[test]
+    fn macro_reach_limit_kind_names_direct_test_body_macro_path() {
+        assert_eq!(
+            macro_reach_limit_kind(MACRO_WITNESS_TEST_BODY_HOST),
+            StaticLimitKind::RustMacroWrappedTestCallUnresolved
+        );
+        assert_eq!(
+            macro_reach_limit_kind("outer"),
+            StaticLimitKind::RustMacroReachUnresolved
+        );
     }
 
     #[test]
