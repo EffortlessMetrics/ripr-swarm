@@ -90,11 +90,17 @@ impl Fixture {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|error| format!("result is not UTF-8: {error}"))?;
-        // JSON escapes a Windows path's backslashes, so mask that spelling
-        // first; on Unix both spellings are the same string.
+        // The result is JSON, so mask the fixture path as the serializer
+        // spells it (escaped backslashes on Windows, escaped quotes or
+        // control characters anywhere), then any raw spelling.
         let base = self.base.display().to_string();
+        let escaped = serde_json::to_string(&base).map_err(|error| error.to_string())?;
+        let escaped = escaped
+            .strip_prefix('"')
+            .and_then(|inner| inner.strip_suffix('"'))
+            .unwrap_or(&escaped);
         Ok(text
-            .replace(&base.replace('\\', "\\\\"), "<fixture>")
+            .replace(escaped, "<fixture>")
             .replace(&base, "<fixture>")
             .into_bytes())
     }

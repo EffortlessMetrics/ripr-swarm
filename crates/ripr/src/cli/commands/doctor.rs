@@ -1582,15 +1582,17 @@ Point RIPR_CACHE_DIR at a writable directory or free space there."
 }
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
-/// one could. For the base and every directory a production cache writes
-/// entries into, probes the nearest existing ancestor with a short-lived
+/// one could. For every directory a production cache writes entries into,
+/// probes the nearest existing ancestor with a short-lived
 /// exclusive file, so doctor never creates the cache or any layer itself. A
 /// regular file anywhere on one of those paths is reported by name.
 fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
-    let mut targets = vec![cache_dir.to_path_buf()];
-    targets.extend(analysis::seam_cache::production_entry_dirs(cache_dir));
+    // Only the entry directories matter: their nearest existing ancestor is
+    // the base itself whenever the base is missing, blocked or still empty,
+    // and a read-only base whose entry directories already exist and accept
+    // writes does not stop caching.
     let mut probed: Vec<PathBuf> = Vec::new();
-    for target in &targets {
+    for target in &analysis::seam_cache::production_entry_dirs(cache_dir) {
         let probe_dir = match nearest_existing_dir(target) {
             Ok(Some(dir)) => dir,
             Ok(None) => continue,
