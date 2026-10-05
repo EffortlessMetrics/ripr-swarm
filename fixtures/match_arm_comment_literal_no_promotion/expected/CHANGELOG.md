@@ -165,7 +165,7 @@ Updated:
 ## Pending — match_arm_comment_literal_no_promotion (13)
 
 Reason:
-RIPR-SPEC-0229 merged with RIPR-SPEC-0224 (#5424): the named unselected arm and weak infection now carry into the examined-test miss reason
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
 
 Command:
 `cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
@@ -178,7 +178,20 @@ Updated:
 ## Pending — match_arm_comment_literal_no_promotion (14)
 
 Reason:
-RIPR-SPEC-0229 with RIPR-SPEC-0224: an unselected arm is a missing input (no test input selects the arm), not a missing exact assertion
+RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
+
+Command:
+`cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_comment_literal_no_promotion (15)
+
+Reason:
+RIPR-SPEC-0229 (#5432): related tests that call the owner with an input selecting another arm name the changed arm as the missing input (re-blessed over #5578 wording)
 
 Command:
 `cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`

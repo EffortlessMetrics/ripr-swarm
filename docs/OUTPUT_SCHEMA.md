@@ -1032,8 +1032,12 @@ The evidence-first fields are additive in schema `0.2`:
   `No related test call selects arm` entry, RIPR-SPEC-0229).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
-  `observation_unconfirmed`: the oracle has the right shape but its text never
-  names the changed expression (`observation_unverified`). Tests are listed
+  `observation_unconfirmed`: the oracle has the right shape but ripr could not
+  confirm that it observes the changed behavior (for Rust, its text never
+  names the changed expression, `observation_unverified`; for Perl, the
+  packet establishes no sink alignment). It is an unknown, not an
+  established miss: only `assertion_not_observing` claims the assertion
+  observes something else. Tests are listed
   even when they supply no oracle, so `related_tests_total` counts every
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
@@ -15349,7 +15353,12 @@ Field contract:
 - `top_actionable_seams[]` — ranked seams using class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
   then `opaque`, with evidence tie-breakers for missing discriminator, related
-  test, suggested assertion, and stable location.
+  test, suggested assertion, and stable location. Within each class, each
+  owning function's (file plus owner) first seam in the whole ranking comes
+  before any function's second, so adjacent seams of one function cannot fill
+  the list; a function already ranked in a higher class counts as having its
+  first. `pilot-summary.md` names how many actionable seams each listed
+  function has beyond the ones shown, among the seams pilot analyzed.
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.

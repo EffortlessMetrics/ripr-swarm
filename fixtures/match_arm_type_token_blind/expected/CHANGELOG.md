@@ -215,7 +215,7 @@ Updated:
 ## Pending — match_arm_type_token_blind (9)
 
 Reason:
-RIPR-SPEC-0229 merged with RIPR-SPEC-0224 (#5424): the named unselected arm and weak infection now carry into the examined-test miss reason
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior', an unknown rather than a claim that the assertion misses. The miss token and every decision field are unchanged.
 
 Command:
 `cargo xtask goldens bless match_arm_type_token_blind --reason "..."`
@@ -227,7 +227,7 @@ Updated:
 ## Pending — match_arm_type_token_blind (10)
 
 Reason:
-RIPR-SPEC-0229 with RIPR-SPEC-0224: an unselected arm is a missing input (no test input selects the arm), not a missing exact assertion
+RIPR-SPEC-0229 (#5432): related tests that call the owner with an input selecting another arm name the changed arm as the missing input (re-blessed over #5578 wording)
 
 Command:
 `cargo xtask goldens bless match_arm_type_token_blind --reason "..."`

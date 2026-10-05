@@ -69,6 +69,12 @@ are scoped or reviewed.
   through a helper, a closure of the same name or a foreign import, when
   the match may be skipped, when the diff changed the arm's pattern (credit
   only), or for guards, ranges, tuples and refutable payloads.
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
 - Repair attempts preserve literal Unix backslashes in the canonical root
   stored by the before producer. Newly published manifests reopen in the
   selected repository while authentic copies in another root remain refused
@@ -277,6 +283,11 @@ are scoped or reviewed.
 
 ### Changed
 
+- The install route is now timed as its own scoreboard metric,
+  `first_run.install_seconds` with a rise rule that needs a committed baseline sample and a nightly first-run ingest before it can fail anything (#5311, #5983). The README, quickstart
+  and install-channel notes state the measured source-build time of a 0.11
+  development build (about 11 minutes against about 2 for 0.10.0) and that no
+  prebuilt 0.11 archive exists until 0.11.0 is published.
 - Performance: cold `ripr pilot` parses each production file once for
   new-test placement instead of twice per seam, and a run that passes the
   default 30s deadline keeps going instead of restarting. On a 4-core Linux
