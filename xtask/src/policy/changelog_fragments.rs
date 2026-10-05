@@ -142,7 +142,10 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
         }
     }
 
-    let mut lines = text.lines().map(|line| line.trim_end_matches('\r'));
+    // An editor-added byte-order mark would otherwise make a valid section
+    // line fail with a message that prints the same visible text.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.lines();
     let first = lines.next().unwrap_or_default();
     match section_of(first) {
         Some(section) if ALLOWED_SECTIONS.contains(&section) => {}
@@ -159,12 +162,25 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     match body.iter().find(|line| !line.trim().is_empty()) {
         None => violations.push(format!("{path}: entry is empty")),
         Some(line) if !line.starts_with("- ") => violations.push(format!(
-            "{path}: entry must start with a `- ` bullet, found `{}`",
-            line.trim()
+            "{path}: entry must start with a `- ` bullet at column 0, found `{line}`"
         )),
         Some(_) => {}
     }
-    if !body.iter().any(|line| has_issue_reference(line)) {
+    // HTML comments are copied into CHANGELOG.md verbatim at the fold, so a
+    // second section line or a reference hidden in a comment is not an entry.
+    if body
+        .iter()
+        .any(|line| line.trim_start().starts_with("<!--"))
+    {
+        violations.push(format!(
+            "{path}: only the first line may be an HTML comment; one fragment holds one section"
+        ));
+    }
+    if !body
+        .iter()
+        .filter(|line| !line.trim_start().starts_with("<!--"))
+        .any(|line| has_issue_reference(line))
+    {
         violations.push(format!(
             "{path}: entry names no issue or PR; add `(#N)` or a link to it"
         ));
@@ -191,24 +207,53 @@ fn is_kebab_slug(stem: &str) -> bool {
         })
 }
 
-/// `#123`, or a GitHub `/issues/123` or `/pull/123` link.
+/// `#123` as its own token (after the line start, a space, `(` or `[`, so a
+/// heading anchor such as `X.md#3-step` or a color such as `#1f2937` does not
+/// count), or a GitHub `/issues/123` or `/pull/123` link.
 fn has_issue_reference(line: &str) -> bool {
     let followed_by_digit = |rest: &str| {
         rest.bytes()
             .next()
             .is_some_and(|byte| byte.is_ascii_digit())
     };
-    line.match_indices('#')
-        .any(|(index, _)| followed_by_digit(&line[index + 1..]))
-        || ["/issues/", "/pull/"].iter().any(|marker| {
-            line.match_indices(marker)
-                .any(|(index, _)| followed_by_digit(&line[index + marker.len()..]))
-        })
+    let bare_issue_number = |rest: &str| {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        digits > 0
+            && rest[digits..]
+                .bytes()
+                .next()
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && byte != b'-')
+    };
+    line.match_indices('#').any(|(index, _)| {
+        let before = line[..index].bytes().next_back();
+        before.is_none_or(|byte| byte.is_ascii_whitespace() || byte == b'(' || byte == b'[')
+            && bare_issue_number(&line[index + 1..])
+    }) || ["/issues/", "/pull/"].iter().any(|marker| {
+        line.match_indices(marker)
+            .any(|(index, _)| followed_by_digit(&line[index + marker.len()..]))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEMP_ROOTS: AtomicUsize = AtomicUsize::new(0);
+
+    /// A fresh directory per call, so a leftover from a crashed run cannot add
+    /// stray fragments to an exact-count assertion.
+    fn fresh_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-{label}-{}-{}",
+            std::process::id(),
+            TEMP_ROOTS.fetch_add(1, Ordering::Relaxed)
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        }
+        Ok(root)
+    }
 
     const GOOD: &str = "<!-- section: Fixed -->\n- `ripr first-pr` quotes the root (#5188).\n";
 
@@ -262,6 +307,43 @@ mod tests {
     }
 
     #[test]
+    fn anchors_colors_and_comments_are_not_references() {
+        for body in [
+            "- See docs/X.md#3-step for the steps.",
+            "- Badge color is now #1f2937.",
+            "- Fixed `foo#1` parsing.",
+        ] {
+            let text = format!("<!-- section: Fixed -->\n{body}\n");
+            let violations = fragment_violations("not-a-ref.md", &text);
+            assert_eq!(violations.len(), 1, "{body}: {violations:?}");
+            assert!(violations[0].contains("names no issue or PR"), "{body}");
+        }
+        let hidden = "<!-- section: Fixed -->\n- x.\n<!-- #12 -->\n";
+        let violations = fragment_violations("hidden.md", hidden);
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(violations[0].contains("only the first line may be an HTML comment"));
+        let two_sections =
+            "<!-- section: Fixed -->\n- x (#1).\n<!-- section: Added -->\n- y (#2).\n";
+        let violations = fragment_violations("two.md", two_sections);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+    }
+
+    #[test]
+    fn byte_order_mark_and_indented_bullet() {
+        assert_eq!(
+            fragment_violations("bom.md", &format!("\u{feff}{GOOD}")),
+            Vec::<String>::new()
+        );
+        let indented = "<!-- section: Fixed -->\n  - x (#1).\n";
+        let violations = fragment_violations("indented.md", indented);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].ends_with("found `  - x (#1).`"),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
     fn names_must_be_kebab_slugs_with_text() {
         for bad in [
             "Fix.md",
@@ -282,8 +364,7 @@ mod tests {
 
     #[test]
     fn release_cut_rejects_any_remaining_fragment() -> Result<(), String> {
-        let root =
-            std::env::temp_dir().join(format!("ripr-changelog-fragments-{}", std::process::id()));
+        let root = fresh_root("changelog-fragments")?;
         let dir = root.join(FRAGMENT_DIR);
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
@@ -312,10 +393,7 @@ mod tests {
 
     #[test]
     fn policy_doc_drift_is_reported() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-changelog-policy-drift-{}",
-            std::process::id()
-        ));
+        let root = fresh_root("changelog-policy-drift")?;
         fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
         fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
         fs::write(root.join(POLICY_DOC), "- `Added`\n").map_err(|err| err.to_string())?;
