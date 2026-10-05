@@ -5,8 +5,8 @@ use std::path::Path;
 
 use super::options::FirstPrOptions;
 use super::{
-    command_problem, detect_typescript_project, git_args, missing_base_command, resolve_path,
-    run_git,
+    base_fetch_refspec, command_problem, detect_typescript_project, git_args, missing_base_command,
+    resolve_path, run_git,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -262,10 +262,7 @@ fn missing_base_recovery_commands(options: &FirstPrOptions) -> Vec<String> {
         .strip_prefix("origin/")
         .filter(|branch| !branch.trim().is_empty())
     {
-        // An explicit destination: in a single-branch or shallow checkout the
-        // remote has no mapping for this branch, so a bare fetch only fills
-        // FETCH_HEAD and the rerun still cannot resolve `origin/<branch>`.
-        let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
+        let refspec = base_fetch_refspec(branch);
         commands.push(format!(
             "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),

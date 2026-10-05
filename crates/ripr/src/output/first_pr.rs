@@ -662,7 +662,7 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         .map(|branch| {
             format!(
                 "git fetch origin -- {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                shell_arg(branch),
+                shell_arg(&base_fetch_refspec(branch)),
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),
                 shell_arg(&options.head)
@@ -2659,12 +2659,20 @@ fn git_success_with_ceiling(
     Ok(output.status.success())
 }
 
+/// Fetch refspec with an explicit destination. In a single-branch or shallow
+/// checkout the remote has no mapping for the branch, so a bare
+/// `git fetch origin -- <branch>` only fills FETCH_HEAD and `origin/<branch>`
+/// stays unresolved. Every printed missing-base fetch uses this one spelling.
+fn base_fetch_refspec(branch: &str) -> String {
+    format!("+refs/heads/{branch}:refs/remotes/origin/{branch}")
+}
+
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
         format!(
             "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
-            shell_arg(branch)
+            shell_arg(&base_fetch_refspec(branch))
         )
     } else {
         format!(
@@ -3902,7 +3910,11 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["next_command"],
-            format!("git -C {} fetch origin -- missing-base", bound_arg("."))
+            format!(
+                "git -C {} fetch origin -- {}",
+                bound_arg("."),
+                shell_arg("+refs/heads/missing-base:refs/remotes/origin/missing-base")
+            )
         );
         cleanup(&repo)
     }
@@ -6398,7 +6410,10 @@ mod tests {
         assert!(
             base["next_command"]
                 .as_str()
-                .is_some_and(|command| command.contains("git fetch origin -- missing-base"))
+                .is_some_and(|command| command.contains(&format!(
+                    "git fetch origin -- {}",
+                    shell_arg("+refs/heads/missing-base:refs/remotes/origin/missing-base")
+                )))
         );
         let config = preflight_check(&packet, "ripr_config")?;
         assert_eq!(config["status"], "defaulted");
