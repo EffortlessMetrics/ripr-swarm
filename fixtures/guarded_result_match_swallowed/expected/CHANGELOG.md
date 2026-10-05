@@ -253,3 +253,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_swallowed (18)
+
+Reason:
+RIPR-SPEC-0197: static-limit guidance only for a refused assert_eq! that calls the changed owner; this refused Ok-arm assertion cannot observe the error path, so the generic establish-the-assertion step applies (#5359 Codex P1)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -246,6 +246,12 @@ rule only for an assertion whose context was admitted.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
+  A refused assertion whose text calls the changed owner is named first.
+  Only that one earns the next step that calls the refusal a possible static
+  limit to confirm with a real mutation run; a refused assertion that does
+  not call the owner (an `Ok`-arm `assert_eq!` beside an error-path change,
+  or `if flag { assert_eq!(1, 1) }`) could not observe the change even if
+  credited, so the next step stays the generic one.
 - Macro-binding ambiguity is scoped to what can bind the name. Any
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
