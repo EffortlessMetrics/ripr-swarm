@@ -393,6 +393,13 @@ preview-skipped: typescript
 A missing preview adapter, absent packet, or limited downstream route must not
 be interpreted as evidence that the change is safe.
 
+Enabled preview-language findings (`language_status = "preview"`) stay visible
+in check JSON and human output. They do not increment the diff badge's
+calibrated exposure-gap count (`unsuppressed_exposure_gaps`), the unknowns
+headline contribution, or the RIPR 0 message. The badge authority is that
+status field, not a language-name table in the renderer. A candidate-current
+Rust gap still counts.
+
 ## Colors and status
 
 The ordinary count thresholds are:

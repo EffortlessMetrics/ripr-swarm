@@ -3084,10 +3084,12 @@ name = "preview evidence policy boundary"
 spec = "docs/specs/RIPR-SPEC-0030-preview-evidence-policy-boundary.md"
 tests = [
   "crates/ripr/src/output/policy_readiness.rs",
+  "crates/ripr/src/output/badge/tests.rs",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/output/policy_readiness.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0030-preview-evidence-policy-boundary.md",

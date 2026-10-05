@@ -20,9 +20,9 @@ use crate::analysis_outcome::{
 use crate::app::{CheckInput, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, MissingDiscriminatorFact,
-    OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
-    RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
+    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId, LanguageStatus,
+    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
+    RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
 };
 use std::path::PathBuf;
 
@@ -167,6 +167,14 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
     }
 }
 
+fn preview_finding(class: ExposureClass, language: LanguageId) -> Finding {
+    let mut finding = finding(class, vec![]);
+    finding.language = Some(language);
+    finding.language_status = Some(LanguageStatus::Preview);
+    finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+    finding
+}
+
 #[test]
 fn badge_summary_counts_weakly_exposed_reachable_unrevealed_and_no_static_path() {
     let output = check_output(vec![
@@ -179,6 +187,86 @@ fn badge_summary_counts_weakly_exposed_reachable_unrevealed_and_no_static_path()
 
     assert_eq!(summary.counts.unsuppressed_exposure_gaps, 3);
     assert_eq!(summary.message, "3");
+}
+
+/// #6761: a candidate-current preview finding is visible in the analyzed
+/// denominator but is not calibrated RIPR 0 gap debt. The authority is
+/// `language_status = preview`, so Python, TypeScript, and Perl share the
+/// exclusion without a language-name table in the badge.
+#[test]
+fn candidate_current_preview_gaps_are_excluded_from_calibrated_ripr_zero() {
+    let output = check_output(vec![
+        preview_finding(ExposureClass::WeaklyExposed, LanguageId::Python),
+        preview_finding(ExposureClass::ReachableUnrevealed, LanguageId::TypeScript),
+        preview_finding(ExposureClass::NoStaticPath, LanguageId::Perl),
+    ]);
+
+    let summary = ripr_badge_summary(&output, BadgePolicy::default());
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(summary.counts.unknowns, 0);
+    assert_eq!(summary.counts.analyzed_findings, 3);
+    assert_eq!(summary.message, "0");
+    assert_eq!(summary.status, BadgeStatus::Pass);
+    assert_eq!(summary.color, "brightgreen");
+}
+
+/// #6761 negative control: a candidate-current Rust gap still counts, even
+/// when the same report also carries preview gap findings.
+#[test]
+fn candidate_current_rust_gap_still_counts_beside_preview_findings() {
+    let rust_gap = finding(ExposureClass::WeaklyExposed, vec![]);
+    let output = check_output(vec![
+        rust_gap,
+        preview_finding(ExposureClass::WeaklyExposed, LanguageId::Python),
+    ]);
+
+    let summary = ripr_badge_summary(&output, BadgePolicy::default());
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 1);
+    assert_eq!(summary.counts.analyzed_findings, 2);
+    assert_eq!(summary.message, "1");
+    assert_eq!(summary.status, BadgeStatus::Warn);
+}
+
+/// #6761: preview unknowns must not inflate the headline when
+/// `include_unknowns` is on. A Rust unknown still would.
+#[test]
+fn preview_unknowns_are_excluded_from_calibrated_unknown_headline() {
+    let mut policy = BadgePolicy::default();
+    policy.include_unknowns = true;
+    policy.fail_on_nonzero = true;
+
+    let preview_only = check_output(vec![preview_finding(
+        ExposureClass::InfectionUnknown,
+        LanguageId::Python,
+    )]);
+    let preview_summary = ripr_badge_summary(&preview_only, policy.clone());
+    assert_eq!(preview_summary.counts.unknowns, 0);
+    assert_eq!(preview_summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(preview_summary.message, "0");
+    assert_eq!(preview_summary.status, BadgeStatus::Pass);
+
+    let rust_unknown = check_output(vec![finding(ExposureClass::InfectionUnknown, vec![])]);
+    let rust_summary = ripr_badge_summary(&rust_unknown, policy);
+    assert_eq!(rust_summary.counts.unknowns, 1);
+    assert_eq!(rust_summary.message, "1");
+    assert_eq!(rust_summary.status, BadgeStatus::Fail);
+}
+
+/// Language name without `language_status = preview` is not the badge
+/// authority. A Python-tagged finding that omitted preview status still
+/// counts, so a later producer bug cannot be papered over by a language
+/// table in this renderer.
+#[test]
+fn language_name_without_preview_status_still_counts_as_a_gap() {
+    let mut python_tagged = finding(ExposureClass::WeaklyExposed, vec![]);
+    python_tagged.language = Some(LanguageId::Python);
+
+    let summary = ripr_badge_summary(&check_output(vec![python_tagged]), BadgePolicy::default());
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 1);
+    assert_eq!(summary.message, "1");
 }
 
 #[test]

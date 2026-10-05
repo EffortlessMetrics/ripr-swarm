@@ -8,7 +8,7 @@ use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::CheckOutput;
 #[cfg(test)]
 use crate::config::{ConfigSeverity, RiprConfig};
-use crate::domain::ExposureClass;
+use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use crate::output::evidence_record::evidence_record_for;
 use crate::output::gap_decision_ledger;
 use crate::output::suppressions::{
@@ -82,6 +82,51 @@ pub(super) fn apply_analysis_outcome_disclosure(
     )
 }
 
+/// Preview evidence cannot count against calibrated RIPR 0
+/// (`docs/BLOCKING_READINESS.md` Preview Evidence Boundary, RIPR-SPEC-0030).
+/// The badge authority is `language_status = preview`, not a language-name
+/// table: Python, TypeScript, JavaScript, and Perl share this status today,
+/// and a later language keeps the same exclusion until an explicit promotion
+/// policy says otherwise.
+fn is_preview_evidence(finding: &Finding) -> bool {
+    finding.language_status == Some(LanguageStatus::Preview)
+}
+
+/// Candidate-current findings that may populate calibrated RIPR 0 buckets.
+/// Base-side and unresolved subjects stay out (#3281); preview evidence
+/// stays visible in reports but is not badge gap or unknown debt (#6761).
+fn counts_toward_calibrated_ripr_zero(finding: &Finding) -> bool {
+    finding.is_candidate_actionable() && !is_preview_evidence(finding)
+}
+
+fn is_calibrated_exposure_gap_class(class: ExposureClass) -> bool {
+    matches!(
+        class,
+        ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::NoStaticPath
+    )
+}
+
+fn is_calibrated_unknown_class(class: ExposureClass) -> bool {
+    matches!(
+        class,
+        ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown
+    )
+}
+
+fn record_related_tests(unique_tests: &mut BTreeSet<(String, String, usize)>, finding: &Finding) {
+    for test in &finding.related_tests {
+        unique_tests.insert((
+            test.file.to_string_lossy().into_owned(),
+            test.name.clone(),
+            test.line,
+        ));
+    }
+}
+
 /// Builds the `ripr` badge summary from a `CheckOutput`, applying any
 /// `kind = "exposure_gap"` suppression whose `finding_id` or root-relative
 /// `path`/`static_class` selector matches a currently-counted exposure gap.
@@ -101,39 +146,16 @@ pub fn ripr_badge_summary_with_suppressions(
     let mut unique_tests: BTreeSet<(String, String, usize)> = BTreeSet::new();
 
     for finding in &output.findings {
-        // Candidate-actionable eligibility (#3281): base-side evidence
-        // (base_deleted / moved_or_renamed) and unresolved subjects never
-        // count as exposure gaps or unknowns in the badge; the analyzed
-        // denominator below keeps every finding.
-        if !finding.is_candidate_actionable() {
-            for test in &finding.related_tests {
-                unique_tests.insert((
-                    test.file.to_string_lossy().into_owned(),
-                    test.name.clone(),
-                    test.line,
-                ));
-            }
+        // Analyzed-test and analyzed-finding denominators keep every finding,
+        // including preview and base-side evidence that the headline omits.
+        record_related_tests(&mut unique_tests, finding);
+        if !counts_toward_calibrated_ripr_zero(finding) {
             continue;
         }
-        match finding.class {
-            ExposureClass::WeaklyExposed
-            | ExposureClass::ReachableUnrevealed
-            | ExposureClass::NoStaticPath => {
-                gap_findings.push(finding);
-            }
-            ExposureClass::InfectionUnknown
-            | ExposureClass::PropagationUnknown
-            | ExposureClass::StaticUnknown => {
-                unknowns += 1;
-            }
-            ExposureClass::Exposed => {}
-        }
-        for test in &finding.related_tests {
-            unique_tests.insert((
-                test.file.to_string_lossy().into_owned(),
-                test.name.clone(),
-                test.line,
-            ));
+        if is_calibrated_exposure_gap_class(finding.class) {
+            gap_findings.push(finding);
+        } else if is_calibrated_unknown_class(finding.class) {
+            unknowns += 1;
         }
     }
 
