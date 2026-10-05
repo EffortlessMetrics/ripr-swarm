@@ -1297,8 +1297,9 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
 /// Quote-count parity (`matches('\'').count() % 2`) is not enough: an odd or
 /// unterminated `'` before an unquoted token, plus any later quote, would
 /// pass that check. The opening quote must be a delimiter (start of the
-/// string or after whitespace), and the matching closer must end the
-/// argument (end of the string, whitespace, or another quote).
+/// string or after whitespace). A closer followed by a word character is an
+/// apostrophe, not the end of the argument (`it's`); `;`, backticks, and
+/// other token boundaries after the closer remain valid.
 fn recovery_ref_occurrence_is_shell_quoted(text: &str, at: usize, len: usize) -> bool {
     let after = at + len;
     let adjacent = at > 0
@@ -1320,8 +1321,10 @@ fn inside_closed_single_quoted_argument(text: &str, start: usize, end: usize) ->
     let close = end + rel;
     let after_close = close + 1;
     if after_close < text.len()
-        && !text[after_close..].starts_with(char::is_whitespace)
-        && !text[after_close..].starts_with('\'')
+        && text[after_close..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_alphanumeric() || next == '_')
     {
         return false;
     }
@@ -1346,6 +1349,17 @@ fn recovery_ref_quoting_accepts_adjacent_and_refspec_forms() {
         at,
         hostile.len(),
     ));
+    // Producer missing-base `next_command`: the closer is followed by `; then`.
+    let missing_base = "origin/x;touch injected-marker";
+    let compound = format!(
+        "git fetch origin -- '+refs/heads/x;touch injected-marker:refs/remotes/{missing_base}'; then rerun `ripr first-pr --base '{missing_base}'`"
+    );
+    for (at, _) in compound.match_indices(missing_base) {
+        assert!(
+            recovery_ref_occurrence_is_shell_quoted(&compound, at, missing_base.len()),
+            "producer compound quoting must hold at {at}: {compound}"
+        );
+    }
 }
 
 #[test]
