@@ -4087,6 +4087,31 @@ fn perl_direct_strong_row_without_sink_alignment_is_observation_unconfirmed() ->
     Ok(())
 }
 
+/// #6584: an exposed finding's discriminate stage agrees with its class;
+/// a finding that is not exposed still says the discriminator is missing.
+#[test]
+fn perl_exposed_finding_credits_the_discriminate_stage() -> Result<(), String> {
+    use crate::domain::{ExposureClass, StageState};
+    for (packet, class, state) in [
+        (
+            with_sinks("$amount / 2", Some("$amount / 2")),
+            ExposureClass::Exposed,
+            StageState::Yes,
+        ),
+        (
+            with_sinks("$rate * 0.9", Some("$amount / 2")),
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+    ] {
+        let findings = findings_from_packet(&packet)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(finding.class, class);
+        assert_eq!(finding.ripr.reveal.discriminate.state, state, "{class:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn perl_rows_without_an_established_defect_keep_no_miss() -> Result<(), String> {
     use crate::domain::ExposureClass;

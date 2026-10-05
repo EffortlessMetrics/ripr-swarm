@@ -688,11 +688,22 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 propagate: unknown,
                 reveal: RevealEvidence {
                     observe: reach,
-                    discriminate: StageEvidence::new(
-                        StageState::Weak,
-                        RiprConfidence::Medium,
-                        "Missing discriminator from packet",
-                    ),
+                    // #6584: an exposed finding was credited by a sink-aligned
+                    // strong exact oracle, which is the discriminator; saying
+                    // it is missing contradicts the class.
+                    discriminate: if is_already_observed {
+                        StageEvidence::new(
+                            StageState::Yes,
+                            RiprConfidence::Medium,
+                            "Sink-aligned strong exact oracle from packet",
+                        )
+                    } else {
+                        StageEvidence::new(
+                            StageState::Weak,
+                            RiprConfidence::Medium,
+                            "Missing discriminator from packet",
+                        )
+                    },
                 },
             },
             confidence: 0.5,
