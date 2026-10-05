@@ -2204,39 +2204,77 @@ pub(crate) fn default_out(dir: &Path) -> PathBuf {
     }
 }
 
-/// Every `<language>-verdict-corpus` directory under `fixtures`, sorted. A
-/// directory with that name but no `corpus.json` is refused rather than
-/// skipped, so a corpus cannot drop out of the gate by losing its header.
-pub(crate) fn corpus_dirs(fixtures: &Path) -> Result<Vec<PathBuf>, String> {
+/// Every `<language>-verdict-corpus` entry under `fixtures`, sorted. An
+/// entry that cannot be a corpus (no `corpus.json`, a symlink, a file, an
+/// empty language) is an `Err` in place, so it fails the gate without
+/// stopping the other corpora from being checked.
+pub(crate) fn corpus_dirs(fixtures: &Path) -> Result<Vec<Result<PathBuf, String>>, String> {
     let entries = fs::read_dir(fixtures)
         .map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?;
-    let mut dirs = Vec::new();
+    let mut found = Vec::new();
     for entry in entries {
-        let path = entry
-            .map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?
-            .path();
-        let named = path
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().ends_with(CORPUS_SUFFIX));
-        if !named || !path.is_dir() {
+        let entry = entry.map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(language) = name.strip_suffix(CORPUS_SUFFIX) else {
             continue;
-        }
-        if !path.join("corpus.json").is_file() {
-            return Err(format!(
-                "{} has no corpus.json; restore it or rename the directory",
-                normalize_path(&path)
-            ));
-        }
-        dirs.push(path);
+        };
+        let shown = normalize_path(&path);
+        let is_symlink = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink());
+        let problem = if language.is_empty() {
+            Some(format!(
+                "{shown} names no language; use `<language>{CORPUS_SUFFIX}`"
+            ))
+        } else if is_symlink {
+            Some(format!(
+                "{shown} is a symlink; a corpus is one real directory"
+            ))
+        } else if !path.is_dir() {
+            Some(format!("{shown} is not a directory"))
+        } else if !path.join("corpus.json").is_file() {
+            Some(format!(
+                "{shown} has no corpus.json; restore it or rename the directory"
+            ))
+        } else {
+            None
+        };
+        found.push((path.clone(), problem.map_or(Ok(path), Err)));
     }
-    dirs.sort();
-    if dirs.is_empty() {
+    if found.is_empty() {
         return Err(format!(
             "no *{CORPUS_SUFFIX} directory under {}",
             normalize_path(fixtures)
         ));
     }
-    Ok(dirs)
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(found.into_iter().map(|(_, entry)| entry).collect())
+}
+
+/// Check each corpus with `check`, continuing past failures so one run
+/// reports every drifted or broken corpus. Returns how many were checked.
+pub(crate) fn check_each(
+    corpora: Vec<Result<PathBuf, String>>,
+    check: impl Fn(&Path) -> Result<(), String>,
+) -> Result<usize, String> {
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for corpus in corpora {
+        match corpus {
+            Ok(dir) => {
+                println!("verdict-corpus: checking {}", normalize_path(&dir));
+                checked += 1;
+                if let Err(err) = check(&dir) {
+                    failures.push(err);
+                }
+            }
+            Err(err) => failures.push(err),
+        }
+    }
+    if failures.is_empty() {
+        Ok(checked)
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }
 
 /// `report`, or with `check` also the comparison with the expected state.
@@ -2278,10 +2316,11 @@ fn score_corpus(
         shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
     }
     Err(format!(
-        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, run `cargo xtask verdict-corpus bless` and state why each moved row changed in the PR.",
+        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless` for the Rust corpus) and state why each moved row changed in the PR.",
         normalize_path(&expected_dir),
         shown.join("\n- "),
-        normalize_path(&out.join("report.md"))
+        normalize_path(&out.join("report.md")),
+        normalize_path(&expected_dir)
     ))
 }
 
@@ -2344,20 +2383,11 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "check-all" => {
             // Every language's corpus gates the same way, found by name so a
             // new corpus is checked without a workflow change.
-            let dirs = corpus_dirs(Path::new(FIXTURES_DIR))?;
-            let mut failures = Vec::new();
-            for corpus_dir in &dirs {
-                println!("verdict-corpus: checking {}", normalize_path(corpus_dir));
-                if let Err(err) = score_corpus(corpus_dir, true, None, None) {
-                    failures.push(err);
-                }
-            }
-            if failures.is_empty() {
-                println!("verdict-corpus: {} corpora checked", dirs.len());
-                Ok(())
-            } else {
-                Err(failures.join("\n\n"))
-            }
+            let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
+                score_corpus(dir, true, None, None)
+            })?;
+            println!("verdict-corpus: {checked} corpora checked");
+            Ok(())
         }
         other => Err(format!(
             "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, report, bless, or split)"

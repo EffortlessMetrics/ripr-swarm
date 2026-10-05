@@ -949,25 +949,66 @@ fn check_all_finds_every_language_corpus_and_refuses_one_without_a_header() -> R
         crate::tests::write(&fixtures.join(name).join("corpus.json"), "{}\n");
     }
     crate::tests::write(&fixtures.join("other-corpus/corpus.json"), "{}\n");
-    crate::tests::write(&fixtures.join("notes-verdict-corpus"), "a file\n");
-    let dirs = corpus_dirs(&fixtures)?;
-    let names: Vec<String> = dirs
+    let ok: Vec<PathBuf> = corpus_dirs(&fixtures)?
+        .into_iter()
+        .collect::<Result<_, _>>()?;
+    let names: Vec<String> = ok
         .iter()
         .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect();
     assert_eq!(names, ["perl-verdict-corpus", "rust-verdict-corpus"]);
     // Rust keeps its report path; every language owns its run directory.
-    assert_eq!(default_out(&dirs[1]), PathBuf::from(DEFAULT_OUT));
-    assert_eq!(default_out(&dirs[0]), Path::new(DEFAULT_OUT).join("perl"));
-    assert_eq!(work_root(&dirs[0]), Path::new(WORK_ROOT).join("perl"));
-    assert_eq!(work_root(&dirs[1]), Path::new(WORK_ROOT).join("rust"));
-    // A corpus directory that lost its header fails instead of dropping out.
+    assert_eq!(default_out(&ok[1]), PathBuf::from(DEFAULT_OUT));
+    assert_eq!(default_out(&ok[0]), Path::new(DEFAULT_OUT).join("perl"));
+    assert_eq!(work_root(&ok[0]), Path::new(WORK_ROOT).join("perl"));
+    assert_eq!(work_root(&ok[1]), Path::new(WORK_ROOT).join("rust"));
+
+    // Entries that cannot be a corpus fail in place instead of dropping out.
     fs::create_dir_all(fixtures.join("python-verdict-corpus")).map_err(|err| err.to_string())?;
-    let err = corpus_dirs(&fixtures).err().unwrap_or_default();
+    crate::tests::write(&fixtures.join("notes-verdict-corpus"), "a file\n");
+    crate::tests::write(&fixtures.join("-verdict-corpus/corpus.json"), "{}\n");
+    let entries = corpus_dirs(&fixtures)?;
+    let errors: Vec<String> = entries.iter().filter_map(|e| e.clone().err()).collect();
+    for expected in [
+        "python-verdict-corpus has no corpus.json",
+        "notes-verdict-corpus is not a directory",
+        "-verdict-corpus names no language",
+    ] {
+        assert!(
+            errors.iter().any(|e| e.contains(expected)),
+            "{expected}: {errors:?}"
+        );
+    }
+
+    // One broken or drifted corpus does not stop the others being checked,
+    // and every failure is reported.
+    let seen = std::cell::RefCell::new(Vec::new());
+    let result = check_each(entries, |dir| {
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        seen.borrow_mut().push(name.clone());
+        if name == "perl-verdict-corpus" {
+            Err("perl drifted".to_string())
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(
+        *seen.borrow(),
+        ["perl-verdict-corpus", "rust-verdict-corpus"]
+    );
+    let err = result.err().unwrap_or_default();
     assert!(
-        err.contains("python-verdict-corpus has no corpus.json"),
+        err.contains("perl drifted") && err.contains("has no corpus.json"),
         "{err}"
     );
+    assert_eq!(
+        check_each(vec![Ok(fixtures.join("rust-verdict-corpus"))], |_| Ok(()))?,
+        1
+    );
+
     let empty = crate::tests::temp_dir("verdict-no-dirs");
     let none = corpus_dirs(&empty).err().unwrap_or_default();
     assert!(none.contains("no *-verdict-corpus directory"), "{none}");
@@ -993,11 +1034,14 @@ fn split_moves_the_one_file_layout_into_records_without_loss() -> Result<(), Str
     );
     // An unsafe id is refused before anything is written.
     let mut escaping = legacy.clone();
-    escaping["cases"][0]["case_id"] = json!("../escape");
+    if let Some(last) = escaping["cases"].as_array_mut().and_then(|c| c.last_mut()) {
+        last["case_id"] = json!("../escape");
+    }
     crate::tests::write(&dir.join("corpus.json"), &format!("{escaping:#}"));
     let err = split(&dir).err().unwrap_or_default();
     assert!(err.contains("`../escape`"), "{err}");
     assert!(files_under(&dir.join("cases"))?.is_empty());
+    assert!(files_under(&dir.join("subjects"))?.is_empty());
     assert!(!dir.join("escape.json").exists());
     crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
     split(&dir)?;
