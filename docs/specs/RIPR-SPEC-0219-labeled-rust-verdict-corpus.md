@@ -180,7 +180,7 @@ differs from `expected/report.md`. It refuses an
   `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables cleared; the empty
   `RUSTFLAGS` family also overrides config-file rustflags. A checkout
   symlink that resolves outside the checkout, followed through any chain of
-  links, is refused, and the test command may not pass
+  links, or that does not resolve at all, is refused, and the test command may not pass
   `--manifest-path`, `--target-dir`, `--config`, or a short flag bundling
   `-Z` or `-C` before `--`;
   `validate` refuses such a command too. `--sample` picks a deterministic
@@ -193,7 +193,8 @@ differs from `expected/report.md`. It refuses an
   binaries; a binary that aborts (a stack overflow, `process::exit`) names no
   failing test, so only its failed outcome is checked; cargo stops at the first failing binary, so a labeled test in a
   later binary reads as not failing (fail-closed); a doctest name contains
-  spaces and cannot be a `failing_test`; and the default `--work-dir` sits
+  spaces and cannot be a `failing_test`; the short-flag check also refuses
+  an attached value containing `Z` or `C` (`-pZstd`), so use the long form; and the default `--work-dir` sits
   under this repository's `target`, so this repository's `.cargo/config.toml`
   applies to subject builds; other caller `CARGO_*` settings such as
   `CARGO_PROFILE_*` overflow checks still reach the subject build; and a

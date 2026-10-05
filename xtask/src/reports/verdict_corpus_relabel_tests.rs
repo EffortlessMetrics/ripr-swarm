@@ -376,6 +376,10 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
     ));
     let escaped = copy_checkout(&checkout, &base.join("copy"));
     fs::remove_file(checkout.join("esc")).map_err(io)?;
+    // A dangling link cannot be shown to stay inside.
+    symlink("sub/up/sub/up/../missing", checkout.join("dangling")).map_err(io)?;
+    let dangling = copy_checkout(&checkout, &base.join("copy-dangling"));
+    fs::remove_file(checkout.join("dangling")).map_err(io)?;
     let contained = copy_checkout(&checkout, &base.join("copy-ok"));
     fs::remove_dir_all(&base).map_err(io)?;
     assert!(
@@ -384,6 +388,13 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
             .err()
             .is_some_and(|err| err.contains("links outside the checkout")),
         "{escaped:?}"
+    );
+    assert!(
+        dangling
+            .as_ref()
+            .err()
+            .is_some_and(|err| err.contains("does not resolve")),
+        "{dangling:?}"
     );
     contained
 }

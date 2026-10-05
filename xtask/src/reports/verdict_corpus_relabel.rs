@@ -590,14 +590,13 @@ pub(crate) fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
                 // A link out of the checkout would let edits and mutants
                 // write through the copy into files the run does not own.
                 // Resolve it for real, since a chain of links can each look
-                // contained; a dangling link falls back to the lexical check.
-                let resolved_inside = match fs::canonicalize(from.join(&child)) {
-                    Ok(resolved) => resolved.starts_with(&root),
-                    Err(_) => true,
-                };
+                // contained. A link that does not resolve (dangling, a loop,
+                // unreadable) cannot be shown to stay inside, so it is refused.
+                let resolved_inside = fs::canonicalize(from.join(&child))
+                    .is_ok_and(|resolved| resolved.starts_with(&root));
                 if !resolved_inside || !link_stays_inside(&rel, &link) {
                     return Err(format!(
-                        "{} links outside the checkout ({}); refusing to replay it",
+                        "{} links outside the checkout or does not resolve ({}); refusing to replay it",
                         normalize_path(&from.join(&child)),
                         normalize_path(&link)
                     ));
