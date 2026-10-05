@@ -45,6 +45,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
     normalize, owning_package_dir,
@@ -58,6 +60,11 @@ const MAX_WALK_FILES: usize = 20_000;
 
 /// Queue length up to which the walk picks the entry nearest its target.
 const DIRECTED_QUEUE_LIMIT: usize = 512;
+
+/// Unscanned files one read-ahead round reads and scans on the rayon
+/// workers. A round costs about one parse of wall time; the files it scans
+/// that the walk never expands are the only waste.
+const READ_AHEAD_FILES: usize = 16;
 
 /// How a reached file anchors its own default `mod name;` children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -111,6 +118,11 @@ struct PackageWalk {
     production_root_read: bool,
     /// Parsed module-tree scans, so the evidence phase re-parses nothing.
     scans: BTreeMap<PathBuf, Option<RustModuleTreeScan>>,
+    /// Reads of queued files scanned ahead of the walk. A file moves into
+    /// `scans` only when the walk expands it, exactly where a sequential
+    /// read would have happened, so the walk limit and completeness see
+    /// the same sequence either way.
+    read_ahead: BTreeMap<PathBuf, ModuleRead>,
     /// False once any edge could not be resolved.
     complete: bool,
     /// Out-of-line `mod` declarations with an unresolved `#[path]` that the
@@ -693,6 +705,7 @@ impl PackageWalk {
             production_roots,
             production_root_read: false,
             scans: BTreeMap::new(),
+            read_ahead: BTreeMap::new(),
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -714,6 +727,7 @@ impl PackageWalk {
             production_roots: BTreeSet::new(),
             production_root_read: false,
             scans: BTreeMap::new(),
+            read_ahead: BTreeMap::new(),
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -773,6 +787,44 @@ impl PackageWalk {
         }
     }
 
+    /// Reads and scans `file` together with the unscanned queue entries the
+    /// walk would expand next, on the rayon workers. Parsing is most of a
+    /// walk's cost (about a millisecond a file), and the walk expands one
+    /// file at a time.
+    fn scan_ahead(&mut self, workspace_root: &Path, target: &Path, file: &Path) {
+        let mut pending = self
+            .queue
+            .iter()
+            .map(|(queued, _)| queued)
+            .filter(|queued| {
+                queued.as_path() != file
+                    && !self.scans.contains_key(*queued)
+                    && !self.read_ahead.contains_key(*queued)
+            })
+            .collect::<Vec<_>>();
+        // The same order `step` picks in: nearest the target first, or the
+        // stack top past the directed bound.
+        if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+            pending.sort_by_key(|queued| std::cmp::Reverse(shared_prefix_len(queued, target)));
+        } else {
+            pending.reverse();
+        }
+        let mut batch = vec![file.to_path_buf()];
+        for queued in pending {
+            if batch.len() >= READ_AHEAD_FILES {
+                break;
+            }
+            if !batch.contains(queued) {
+                batch.push(queued.clone());
+            }
+        }
+        let reads = batch
+            .par_iter()
+            .map(|path| read_module(workspace_root, path))
+            .collect::<Vec<_>>();
+        self.read_ahead.extend(batch.into_iter().zip(reads));
+    }
+
     /// Whether a completed walk proves every unreached file unreachable. A
     /// package with no readable library or binary root is not a tree this
     /// walk can judge (a partial checkout, a manifest ahead of its sources).
@@ -820,10 +872,17 @@ impl PackageWalk {
                 self.evidence_roots = None;
                 return false;
             }
-            let scan = match read_source(workspace_root, &file) {
-                SourceRead::Text(source) => Some(rust_module_tree_scan(&source)),
-                SourceRead::Absent => None,
-                SourceRead::Unreadable => {
+            if !self.read_ahead.contains_key(&file) {
+                self.scan_ahead(workspace_root, target, &file);
+            }
+            let read = self
+                .read_ahead
+                .remove(&file)
+                .unwrap_or_else(|| read_module(workspace_root, &file));
+            let scan = match read {
+                ModuleRead::Scanned(scan) => Some(scan),
+                ModuleRead::Absent => None,
+                ModuleRead::Unreadable => {
                     self.complete = false;
                     None
                 }
@@ -964,6 +1023,22 @@ enum SourceRead {
     Unreadable,
 }
 
+/// One module file's read, scanned when it held text.
+#[derive(Debug)]
+enum ModuleRead {
+    Scanned(RustModuleTreeScan),
+    Absent,
+    Unreadable,
+}
+
+fn read_module(workspace_root: &Path, file: &Path) -> ModuleRead {
+    match read_source(workspace_root, file) {
+        SourceRead::Text(source) => ModuleRead::Scanned(rust_module_tree_scan(&source)),
+        SourceRead::Absent => ModuleRead::Absent,
+        SourceRead::Unreadable => ModuleRead::Unreadable,
+    }
+}
+
 /// Reads a module file through the same committed-source view the analysis
 /// reads, so a committed-history diff walks HEAD content.
 fn read_source(workspace_root: &Path, file: &Path) -> SourceRead {
@@ -1021,6 +1096,41 @@ mod tests {
     }
 
     const MANIFEST: &str = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n";
+
+    #[test]
+    fn read_ahead_leaves_completeness_to_the_files_the_walk_expands() -> Result<(), String> {
+        // `zz.rs` is not UTF-8, so expanding it makes the walk incomplete.
+        // Reading it ahead must not: the walk finds `a.rs` first.
+        let root = fixture(
+            "read-ahead",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", "mod a;\nmod zz;\n"),
+                ("src/a.rs", ""),
+            ],
+        )?;
+        std::fs::write(root.join("src/zz.rs"), [0xff_u8, 0xfe])
+            .map_err(|error| error.to_string())?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut walk = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            walk.find(&root, &[path("src/a.rs")]),
+            Some(Origin::Production)
+        );
+        assert!(
+            walk.read_ahead.contains_key(&path("src/zz.rs")),
+            "fixture control: the unreadable sibling was read ahead"
+        );
+        assert!(!walk.scans.contains_key(&path("src/zz.rs")));
+        assert!(walk.complete, "a file read ahead but never expanded");
+        // Exhausting the walk expands `zz.rs`, and only then does it count.
+        assert_eq!(walk.find(&root, &[path("src/missing.rs")]), None);
+        assert!(walk.scans.contains_key(&path("src/zz.rs")));
+        assert!(!walk.complete);
+        assert!(!walk.proves_unreached());
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
 
     #[test]
     fn walk_follows_mod_rs_bin_roots_and_evidence_roots() -> Result<(), String> {
