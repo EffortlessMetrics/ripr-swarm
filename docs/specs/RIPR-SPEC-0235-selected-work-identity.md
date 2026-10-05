@@ -26,7 +26,8 @@ Linked issues:
 
 Support-tier impact:
 
-- None. The identity check is an offline typed validation over committed
+- None.
+- The identity check is an offline typed validation over committed
   captured bytes. It launches no agent, selects no work, claims nothing,
   authorizes nothing, calls no provider, reads no live GitHub state, and
   writes only `target/ripr/reports/work-selection-check.{json,md}` plus
