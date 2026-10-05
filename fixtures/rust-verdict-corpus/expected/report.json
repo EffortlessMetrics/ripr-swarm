@@ -4026,7 +4026,7 @@
       "contradictions": []
     },
     {
-      "case_id": "grid-flow-else-tested",
+      "case_id": "grid-flow-else-pinned",
       "subject_id": "authored-grid-flow",
       "origin": "authored",
       "anchor": "src/lib.rs:23",
@@ -4045,7 +4045,7 @@
       "contradictions": []
     },
     {
-      "case_id": "grid-flow-else-untested",
+      "case_id": "grid-flow-else-loose",
       "subject_id": "authored-grid-flow",
       "origin": "authored",
       "anchor": "src/lib.rs:32",

@@ -11762,9 +11762,9 @@
       }
     },
     {
-      "case_id": "grid-flow-else-tested",
+      "case_id": "grid-flow-else-pinned",
       "subject_id": "authored-grid-flow",
-      "diff": "cases/grid-flow-else-tested.diff",
+      "diff": "cases/grid-flow-else-pinned.diff",
       "anchor": {
         "file": "src/lib.rs",
         "line": 23
@@ -11805,9 +11805,9 @@
       }
     },
     {
-      "case_id": "grid-flow-else-untested",
+      "case_id": "grid-flow-else-loose",
       "subject_id": "authored-grid-flow",
-      "diff": "cases/grid-flow-else-untested.diff",
+      "diff": "cases/grid-flow-else-loose.diff",
       "anchor": {
         "file": "src/lib.rs",
         "line": 32

@@ -224,8 +224,8 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `grid-flow-else-tested` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
-| `grid-flow-else-untested` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-flow-else-pinned` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-flow-else-loose` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `grid-flow-field-direct` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
 | `grid-flow-field-opaque` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
 | `grid-flow-err-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
