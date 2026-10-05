@@ -99,22 +99,25 @@ fn counts_toward_calibrated_ripr_zero(finding: &Finding) -> bool {
     finding.is_candidate_actionable() && !is_preview_evidence(finding)
 }
 
-fn is_calibrated_exposure_gap_class(class: &ExposureClass) -> bool {
-    matches!(
-        class,
+/// Headline bucket for one calibrated finding. Exhaustive over
+/// `ExposureClass` so a new variant cannot silently skip both gap and
+/// unknown accounting.
+fn calibrated_ripr_zero_bucket(class: &ExposureClass) -> CalibratedRiprZeroBucket {
+    match class {
         ExposureClass::WeaklyExposed
-            | ExposureClass::ReachableUnrevealed
-            | ExposureClass::NoStaticPath
-    )
+        | ExposureClass::ReachableUnrevealed
+        | ExposureClass::NoStaticPath => CalibratedRiprZeroBucket::ExposureGap,
+        ExposureClass::InfectionUnknown
+        | ExposureClass::PropagationUnknown
+        | ExposureClass::StaticUnknown => CalibratedRiprZeroBucket::Unknown,
+        ExposureClass::Exposed => CalibratedRiprZeroBucket::NotHeadline,
+    }
 }
 
-fn is_calibrated_unknown_class(class: &ExposureClass) -> bool {
-    matches!(
-        class,
-        ExposureClass::InfectionUnknown
-            | ExposureClass::PropagationUnknown
-            | ExposureClass::StaticUnknown
-    )
+enum CalibratedRiprZeroBucket {
+    ExposureGap,
+    Unknown,
+    NotHeadline,
 }
 
 fn record_related_tests(unique_tests: &mut BTreeSet<(String, String, usize)>, finding: &Finding) {
@@ -152,10 +155,10 @@ pub fn ripr_badge_summary_with_suppressions(
         if !counts_toward_calibrated_ripr_zero(finding) {
             continue;
         }
-        if is_calibrated_exposure_gap_class(&finding.class) {
-            gap_findings.push(finding);
-        } else if is_calibrated_unknown_class(&finding.class) {
-            unknowns += 1;
+        match calibrated_ripr_zero_bucket(&finding.class) {
+            CalibratedRiprZeroBucket::ExposureGap => gap_findings.push(finding),
+            CalibratedRiprZeroBucket::Unknown => unknowns += 1,
+            CalibratedRiprZeroBucket::NotHeadline => {}
         }
     }
 
