@@ -2971,6 +2971,66 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "local bound from a module registry of helpers",
+            "def _verify_one(value):\n    assert value\nHANDLERS = [_verify_one]\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "local bound from a module list of same-module objects",
+            "class Case:\n    def run(self):\n        assert apply_discount(20)\nCASES = [Case()]\ndef test_x():\n    for case in CASES:\n        case.run()\n",
+            unresolved,
+        ),
+        (
+            "chained module globals",
+            "def _verify_one(value):\n    assert value\nFIRST = _verify_one\nSECOND = (FIRST,)\ndef test_x():\n    for fn in SECOND:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper registered by an attribute decorator",
+            "HANDLERS = []\n@HANDLERS.append\ndef _verify_one(value):\n    assert value\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper registered by a module-level call",
+            "HANDLERS = []\ndef _verify_one(value):\n    assert value\nHANDLERS.append(_verify_one)\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "raise_for_status style check",
+            "def test_x():\n    r = apply_discount(20)\n    r.raise_for_status()\n",
+            unresolved,
+        ),
+        (
+            "module constant table",
+            "CASES = [(20, 10), (30, 20)]\ndef test_x():\n    for price, _ in CASES:\n        apply_discount(price)\n",
+            none,
+        ),
+        (
+            "class object bound to a local",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        klass = type(self)\n        klass._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "instance bound to a local",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        t = self\n        t._check(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "nested definition with a star-imported decorator",
+            "from tests.helpers import *\ndef test_x():\n    @harness\n    def inner():\n        apply_discount(20)\n    inner()\n",
+            unresolved,
+        ),
+        (
+            "star-imported helper passed as a value",
+            "from tests.helpers import *\ndef test_x():\n    list(map(runner, [apply_discount(20)]))\n",
+            unresolved,
+        ),
+        (
+            "local named like an assertion",
+            "def test_x():\n    expected = apply_discount(20)\n    print(expected)\n",
+            none,
+        ),
+        (
             "class attribute that is a plain constant",
             "class TestX:\n    rate = 20\n    def test_x(self):\n        apply_discount(self.rate)\n",
             none,

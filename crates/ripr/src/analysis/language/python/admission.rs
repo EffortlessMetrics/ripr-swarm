@@ -93,6 +93,7 @@ impl PythonAdmissionContext {
         };
         let mut lifecycle_bodies = Vec::new();
         context.collect(statements, &mut lifecycle_bodies);
+        context.taint_module_bindings(statements, imports);
         // Defined names are complete only after the whole module is seen.
         context.has_assertion_like_lifecycle = lifecycle_bodies.iter().any(|body| {
             let scope = TestScope::of_body(module_dir, &[], body, None);
@@ -106,6 +107,50 @@ impl PythonAdmissionContext {
             scan.assertion_like
         });
         context
+    }
+
+    /// A module global bound from a same-module helper or a test-support
+    /// import (`HANDLERS = [verify_one]`, `CASES = [Case(1)]`) carries that
+    /// callable into any test that reads it, so it is treated like a defined
+    /// name. Repeated until no new binding is tainted, for chains of globals.
+    fn taint_module_bindings(&mut self, statements: &[Stmt], imports: &[PythonImport]) {
+        let mut bindings = Vec::new();
+        let mut registries = Vec::new();
+        module_bindings(statements, &mut bindings, &mut registries);
+        // `@HANDLERS.append` or `HANDLERS.append(verify)` registers a
+        // same-module callable in a global without assigning it.
+        self.defined_names.extend(
+            registries
+                .into_iter()
+                .filter(|root| !imports.iter().any(|import| &import.alias == root)),
+        );
+        let scope = TestScope::of_body(&self.module_dir, &[], &[], None);
+        loop {
+            let tainted: Vec<String> = bindings
+                .iter()
+                .filter(|(targets, value)| {
+                    targets
+                        .iter()
+                        .any(|target| !self.defined_names.contains(target))
+                        && {
+                            let mut scan = BodyScan {
+                                context: self,
+                                imports,
+                                scope: &scope,
+                                assertion_like: false,
+                            };
+                            scan.expr(value);
+                            scan.assertion_like
+                        }
+                })
+                .flat_map(|(targets, _)| targets.iter().cloned())
+                .collect();
+            let before = self.defined_names.len();
+            self.defined_names.extend(tainted);
+            if self.defined_names.len() == before {
+                break;
+            }
+        }
     }
 
     fn collect<'s>(&mut self, statements: &'s [Stmt], lifecycle: &mut Vec<&'s [Stmt]>) {
@@ -371,6 +416,92 @@ const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "tmpdir_factory",
 ];
 
+/// Module-level assignments, including those under a module-level `if`,
+/// `try` or `with`, as (bound names, value).
+fn module_bindings<'s>(
+    statements: &'s [Stmt],
+    out: &mut Vec<(Vec<String>, &'s Expr)>,
+    registries: &mut Vec<String>,
+) {
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => registry_roots(&function.decorator_list, registries),
+            Stmt::AsyncFunctionDef(function) => {
+                registry_roots(&function.decorator_list, registries)
+            }
+            Stmt::ClassDef(class) => registry_roots(&class.decorator_list, registries),
+            // A module-level method call on a global (`HANDLERS.append(f)`).
+            Stmt::Expr(expr) => {
+                if let Expr::Call(call) = expr.value.as_ref()
+                    && let Expr::Attribute(attribute) = call.func.as_ref()
+                {
+                    let mut names = Vec::new();
+                    binding_roots(&attribute.value, &mut names);
+                    out.push((names, expr.value.as_ref()));
+                }
+            }
+            Stmt::Assign(assign) => {
+                let mut names = Vec::new();
+                for target in &assign.targets {
+                    binding_roots(target, &mut names);
+                }
+                out.push((names, assign.value.as_ref()));
+            }
+            Stmt::AnnAssign(assign) => {
+                if let Some(value) = assign.value.as_deref() {
+                    let mut names = Vec::new();
+                    binding_roots(&assign.target, &mut names);
+                    out.push((names, value));
+                }
+            }
+            Stmt::AugAssign(assign) => {
+                let mut names = Vec::new();
+                binding_roots(&assign.target, &mut names);
+                out.push((names, assign.value.as_ref()));
+            }
+            Stmt::If(if_stmt) => {
+                module_bindings(&if_stmt.body, out, registries);
+                module_bindings(&if_stmt.orelse, out, registries);
+            }
+            Stmt::Try(try_stmt) => {
+                module_bindings(&try_stmt.body, out, registries);
+                module_bindings(&try_stmt.orelse, out, registries);
+                module_bindings(&try_stmt.finalbody, out, registries);
+            }
+            Stmt::With(with_stmt) => module_bindings(&with_stmt.body, out, registries),
+            _ => {}
+        }
+    }
+}
+
+/// Root names of attribute decorators (`@HANDLERS.append`,
+/// `@registry.register("k")`): the decorated definition is stored there.
+fn registry_roots(decorators: &[Expr], out: &mut Vec<String>) {
+    for decorator in decorators {
+        let callee = match decorator {
+            Expr::Call(call) => call.func.as_ref(),
+            other => other,
+        };
+        if let Expr::Attribute(attribute) = callee {
+            binding_roots(&attribute.value, out);
+        }
+    }
+}
+
+/// Names bound by an assignment target; a subscript or attribute target
+/// (`REGISTRY["k"] = f`) taints its root name.
+fn binding_roots(target: &Expr, out: &mut Vec<String>) {
+    match target {
+        Expr::Name(name) => out.push(name.id.to_string()),
+        Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| binding_roots(elt, out)),
+        Expr::List(list) => list.elts.iter().for_each(|elt| binding_roots(elt, out)),
+        Expr::Starred(starred) => binding_roots(&starred.value, out),
+        Expr::Subscript(subscript) => binding_roots(&subscript.value, out),
+        Expr::Attribute(attribute) => binding_roots(&attribute.value, out),
+        _ => {}
+    }
+}
+
 /// A plain dotted name. Unlike `expr_full_name`, a call inside the chain
 /// (`type(self)._check`) yields `None`: the call's result, not the callee's
 /// name, decides what runs.
@@ -418,7 +549,7 @@ const UNSAFE_BUILTINS: &[&str] = &[
 /// ever withhold `NoAssertionLike` (a method on a test-bound value such as
 /// `result.verify()`), never grant it.
 const ASSERTION_LIKE_PREFIXES: &[&str] = &[
-    "assert", "check", "compare", "ensure", "expect", "fail", "must", "require", "should",
+    "assert", "check", "compare", "ensure", "expect", "fail", "must", "raise", "require", "should",
     "validate", "verify",
 ];
 
@@ -686,22 +817,30 @@ impl BodyScan<'_> {
             // Any `assert` the oracle extractor did not record (one in a
             // nested function, for example) and any `raise` can fail the test.
             Stmt::Assert(_) | Stmt::Raise(_) => self.assertion_like = true,
+            // Nested decorators, bases and metaclasses run when the
+            // definition executes, so they are judged as calls.
             Stmt::FunctionDef(function) => {
-                self.exprs(&function.decorator_list);
+                function
+                    .decorator_list
+                    .iter()
+                    .for_each(|d| self.decorator(d));
                 self.arguments(&function.args);
                 self.statements(&function.body);
             }
             Stmt::AsyncFunctionDef(function) => {
-                self.exprs(&function.decorator_list);
+                function
+                    .decorator_list
+                    .iter()
+                    .for_each(|d| self.decorator(d));
                 self.arguments(&function.args);
                 self.statements(&function.body);
             }
             Stmt::ClassDef(class) => {
-                self.exprs(&class.bases);
+                class.bases.iter().for_each(|base| self.decorator(base));
                 for keyword in &class.keywords {
-                    self.expr(&keyword.value);
+                    self.decorator(&keyword.value);
                 }
-                self.exprs(&class.decorator_list);
+                class.decorator_list.iter().for_each(|d| self.decorator(d));
                 self.statements(&class.body);
             }
             Stmt::Return(ret) => self.opt_expr(ret.value.as_deref()),
@@ -995,14 +1134,18 @@ impl BodyScan<'_> {
         if has_dunder_member(&segments) {
             return true;
         }
-        if matches!(root, "self" | "cls") || self.scope.argnames.contains(root) {
+        if matches!(root, "self" | "cls") {
+            // The bare instance or class as a value (`t = self`,
+            // `type(self)`) lets a local reach every method on it.
+            return segments.len() == 1;
+        }
+        // A local holding a forbidden value is caught where it is bound, so
+        // its own name (`expected = 10`) is not suspect.
+        if self.scope.argnames.contains(root) || self.scope.locals.contains(root) {
             return false;
         }
         if has_assertion_like_prefix(last) {
             return true;
-        }
-        if self.scope.locals.contains(root) {
-            return false;
         }
         if self.scope.builtin_fixtures.contains(root) {
             return matches!(last, "getfixturevalue" | "getfuncargvalue");
@@ -1010,7 +1153,13 @@ impl BodyScan<'_> {
         if let Some(qualified) = self.imported_name(name) {
             return self.import_is_assertion_like(&qualified);
         }
-        self.context.defined_names.contains(root) || UNSAFE_BUILTINS.contains(&root)
+        // A star import (`from tests.helpers import *`) can bind any
+        // otherwise unknown global to a helper.
+        let star_imported = self.imports.iter().any(|import| import.alias == "*")
+            && !INERT_BUILTINS.contains(&root);
+        self.context.defined_names.contains(root)
+            || UNSAFE_BUILTINS.contains(&root)
+            || star_imported
     }
 
     fn import_is_assertion_like(&self, qualified: &str) -> bool {
