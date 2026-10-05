@@ -1932,6 +1932,149 @@ mod tests {
         Ok(())
     }
 
+    /// #5415 step 3: file-level calls duplicate every per-function call
+    /// (sorted and deduped), costing a full extra copy in memory and in
+    /// cache JSON. The stored copy must go; per-function calls stay.
+    #[test]
+    fn file_level_calls_are_not_stored_in_cache_json() -> Result<(), serde_json::Error> {
+        let source: Arc<str> = Arc::from("fn a() {\n    helper();\n}\n");
+        let call = CallFact {
+            line: 2,
+            name: "helper".to_string(),
+            text: "helper()".to_string(),
+        };
+        let facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![FunctionFact {
+                id: SymbolId("src/lib.rs::a".to_string()),
+                name: "a".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                end_line: 3,
+                body: SourceText::shared_or_owned(&source, 0, "fn a() {\n    helper();\n}"),
+                calls: vec![call.clone()],
+                returns: Vec::new(),
+                literals: Vec::new(),
+                source_role: FunctionSourceRole::Production,
+                attrs: Vec::new(),
+                impl_attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+                item: FunctionItemFact::default(),
+                impl_context: FunctionImplContext::Unknown,
+            }],
+            tests: Vec::new(),
+            calls: vec![call],
+            returns: Vec::new(),
+            literals: Vec::new(),
+            probe_shapes: Vec::new(),
+            used_lexical_fallback: false,
+            module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
+            role_provenance: SourceRoleProvenance::default(),
+            source: Arc::clone(&source),
+        };
+        let wire = serde_json::to_value(&facts)?;
+        assert!(
+            wire.get("calls").is_none(),
+            "file-level calls must be derived, not stored"
+        );
+        assert_eq!(
+            wire["functions"][0]["calls"].as_array().map(Vec::len),
+            Some(1),
+            "per-function calls are the retained authority"
+        );
+        Ok(())
+    }
+
+    /// Characterization for #5415 step 3: both producers store exactly the
+    /// sorted, (line, name, text)-deduped concatenation of per-function
+    /// calls at file level — nested-fn overlaps collapse under the parser
+    /// (the lexical scanner skips nested fn lines instead), call text is
+    /// the whole source line so same-line repeats collapse too, and test
+    /// fns (also present in `functions`) add no second copy. The
+    /// derivation must reproduce this set exactly once the stored copy
+    /// is removed.
+    #[test]
+    fn stored_file_calls_equal_derived_sort_dedup_of_function_calls() -> Result<(), String> {
+        use crate::analysis::syntax::{
+            LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
+        };
+        const FIXTURE: &str = "\
+fn outer() {
+    helper(1);
+    fn inner() {
+        helper(2);
+    }
+    inner();
+}
+fn helper(n: u32) {
+    helper(n);
+}
+#[test]
+fn checks_helper() {
+    helper(3); helper(4);
+}
+";
+        let path = PathBuf::from("src/lib.rs");
+        let parser = RaRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
+        let lexical = LexicalRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
+        for (producer, facts, expect_collapse) in
+            [("parser", &parser, true), ("lexical", &lexical, false)]
+        {
+            assert!(
+                !facts.calls.is_empty(),
+                "{producer} fixture must produce file-level calls"
+            );
+            let per_function: usize = facts.functions.iter().map(|f| f.calls.len()).sum();
+            let mut expected: Vec<CallFact> = facts
+                .functions
+                .iter()
+                .flat_map(|function| function.calls.iter().cloned())
+                .collect();
+            expected.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
+            expected.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
+            assert_eq!(facts.calls, expected);
+            // Nested-fn overlap collapses under the parser: some
+            // per-function call appears in two functions but lands once at
+            // file level. The lexical scanner skips nested fn lines, so its
+            // per-function calls are already disjoint on this fixture.
+            if expect_collapse {
+                assert!(
+                    facts.calls.len() < per_function,
+                    "{producer} fixture must exercise file-level dedup"
+                );
+            }
+            // Call text is the whole source line, so one line calling the
+            // same name twice with different arguments still collapses.
+            let probe_line = FIXTURE
+                .lines()
+                .position(|line| line.contains("helper(3)"))
+                .map(|index| index + 1)
+                .ok_or_else(|| "fixture lost its helper(3) line".to_string())?;
+            let same_line_helpers = facts
+                .calls
+                .iter()
+                .filter(|call| call.line == probe_line && call.name == "helper")
+                .count();
+            assert_eq!(
+                same_line_helpers, 1,
+                "{producer}: same line and name collapses despite different arguments"
+            );
+            // The file level is (line, name)-unique: no concat-without-dedup
+            // implementation can pass.
+            let mut keys: Vec<(usize, &str)> = facts
+                .calls
+                .iter()
+                .map(|call| (call.line, call.name.as_str()))
+                .collect();
+            keys.sort();
+            keys.dedup();
+            assert_eq!(keys.len(), facts.calls.len(), "file level is unique");
+        }
+        Ok(())
+    }
+
     #[test]
     fn file_facts_wire_rejects_spans_outside_the_source() {
         let wire = serde_json::json!({
