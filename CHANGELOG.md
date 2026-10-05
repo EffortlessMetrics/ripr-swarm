@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- TypeScript preview: a Node test registered with an active `expectFailure`
+  option no longer counts as ordinary test evidence, and a locally shadowed
+  `undefined` no longer passes for the global value in a test's
+  skip/todo/fails/expectFailure option. Such a test could otherwise lend its
+  assertions to a seam it is expected to fail on.
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8

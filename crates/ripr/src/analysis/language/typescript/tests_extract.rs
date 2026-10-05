@@ -621,11 +621,13 @@ pub(crate) fn collect_tests_from_statements(
         }
         returned |= may_return(stmt, source);
     }
-    // A block/destructuring declaration can also shadow `undefined` at a
-    // registration. Over-collecting block names only withholds credit; do not
+    // A destructuring or hoisted declaration can also shadow `undefined` at a
+    // registration. Nested blocks contribute only names visible after them
+    // (`var` and, conservatively, function declarations), so a block-local
+    // `let undefined` cannot erase an ordinary registration outside it. Do not
     // enter unrelated function bodies or count test callback parameters here.
     let mut declared_names = Vec::new();
-    collect_block_declared_names(statements, &mut declared_names);
+    collect_registration_scope_names(statements, &mut declared_names);
     if declared_names.iter().any(|name| name == "undefined")
         && !level.iter().any(|(name, _, _)| name == "undefined")
     {
@@ -889,6 +891,10 @@ fn collect_scope_bindings(
     sites: &mut Vec<usize>,
 ) {
     match stmt {
+        // `declare` forms are erased before the test runs: no runtime binding.
+        Statement::VariableDeclaration(declaration) if declaration.declare => {}
+        Statement::FunctionDeclaration(function) if function.declare => {}
+        Statement::ClassDeclaration(class) if class.declare => {}
         Statement::VariableDeclaration(declaration) => {
             for declarator in &declaration.declarations {
                 if let BindingPattern::BindingIdentifier(identifier) = &declarator.id {
@@ -1424,6 +1430,10 @@ fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<Stri
 
 fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     match statement {
+        // `declare` forms are erased before the test runs: no runtime binding.
+        Statement::VariableDeclaration(declaration) if declaration.declare => {}
+        Statement::FunctionDeclaration(function) if function.declare => {}
+        Statement::ClassDeclaration(class) if class.declare => {}
         Statement::ImportDeclaration(import) if import.import_kind != ImportOrExportKind::Type => {
             for specifier in import.specifiers.iter().flatten() {
                 match specifier {
@@ -1456,6 +1466,10 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
             _ => {}
         },
         Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(oxc_ast::ast::Declaration::VariableDeclaration(declaration))
+                if declaration.declare => {}
+            Some(oxc_ast::ast::Declaration::FunctionDeclaration(function)) if function.declare => {}
+            Some(oxc_ast::ast::Declaration::ClassDeclaration(class)) if class.declare => {}
             Some(oxc_ast::ast::Declaration::VariableDeclaration(declaration)) => {
                 out.extend(declaration_binding_names(declaration));
             }
@@ -1541,6 +1555,96 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
         Statement::SwitchStatement(switch) => {
             for case in &switch.cases {
                 collect_block_declared_names(&case.consequent, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Names declared in `statements` that are visible to a later sibling
+/// statement: every declaration at this level, plus the `var` and function
+/// declarations nested blocks hoist out. Block-scoped `let`/`const`/`class`
+/// and catch/loop bindings stay inside their block.
+fn collect_registration_scope_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(_)
+            | Statement::IfStatement(_)
+            | Statement::ForStatement(_)
+            | Statement::ForOfStatement(_)
+            | Statement::ForInStatement(_)
+            | Statement::WhileStatement(_)
+            | Statement::DoWhileStatement(_)
+            | Statement::LabeledStatement(_)
+            | Statement::TryStatement(_)
+            | Statement::SwitchStatement(_) => collect_hoisted_names(statement, out),
+            _ => collect_statement_declared_names(statement, out),
+        }
+    }
+}
+
+fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
+    let var_names = |declaration: &oxc_ast::ast::VariableDeclaration<'_>, out: &mut Vec<String>| {
+        if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var && !declaration.declare {
+            out.extend(declaration_binding_names(declaration));
+        }
+    };
+    let each = |statements: &[Statement<'_>], out: &mut Vec<String>| {
+        for statement in statements {
+            collect_hoisted_names(statement, out);
+        }
+    };
+    match statement {
+        Statement::VariableDeclaration(declaration) => var_names(declaration, out),
+        // Sloppy-mode Annex B hoisting can expose a block function's name, so
+        // keep it; over-collection only withholds credit.
+        Statement::FunctionDeclaration(function) if !function.declare => {
+            if let Some(identifier) = &function.id {
+                out.push(identifier.name.to_string());
+            }
+        }
+        Statement::BlockStatement(block) => each(&block.body, out),
+        Statement::IfStatement(if_stmt) => {
+            collect_hoisted_names(&if_stmt.consequent, out);
+            if let Some(alternate) = &if_stmt.alternate {
+                collect_hoisted_names(alternate, out);
+            }
+        }
+        Statement::ForStatement(for_stmt) => {
+            if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &for_stmt.init
+            {
+                var_names(declaration, out);
+            }
+            collect_hoisted_names(&for_stmt.body, out);
+        }
+        Statement::ForOfStatement(for_of) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
+                var_names(declaration, out);
+            }
+            collect_hoisted_names(&for_of.body, out);
+        }
+        Statement::ForInStatement(for_in) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
+                var_names(declaration, out);
+            }
+            collect_hoisted_names(&for_in.body, out);
+        }
+        Statement::WhileStatement(while_stmt) => collect_hoisted_names(&while_stmt.body, out),
+        Statement::DoWhileStatement(do_while) => collect_hoisted_names(&do_while.body, out),
+        Statement::LabeledStatement(labeled) => collect_hoisted_names(&labeled.body, out),
+        Statement::TryStatement(try_stmt) => {
+            each(&try_stmt.block.body, out);
+            if let Some(handler) = &try_stmt.handler {
+                each(&handler.body.body, out);
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                each(&finalizer.body, out);
+            }
+        }
+        Statement::SwitchStatement(switch) => {
+            for case in &switch.cases {
+                each(&case.consequent, out);
             }
         }
         _ => {}

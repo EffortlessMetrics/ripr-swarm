@@ -65,6 +65,9 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
             format!(
                 "const undefined = true; suite('qualified', {{ {key}: undefined }}, () => {{ test('child', {callback}); }});"
             ),
+            // `var` hoists out of its block, so it still shadows.
+            format!("{{ var undefined = true; }} {registration}"),
+            format!("if (flag) {{ var undefined = true; }} {registration}"),
         ] {
             let source = format!("{imports}{source}");
             let tests = extract_tests(Path::new("tests/shadowed.test.ts"), &source);
@@ -80,6 +83,15 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
         "test('ordinary', { expectFailure: undefined }, (...[undefined]) => { assert.strictEqual(isAdult(18), true); });".to_string(),
         "test('ordinary', { expectFailure: undefined }, function undefined() { assert.strictEqual(isAdult(18), true); });".to_string(),
         format!("const undefined = true; test('ordinary', {{ expectFailure: false }}, {callback});"),
+        // Ambient `declare` forms are erased before the test runs.
+        format!("declare const undefined: undefined; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("declare function undefined(): void; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("export declare const undefined: undefined; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        // Block-scoped bindings end with their block.
+        format!("{{ let undefined = true; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("if (flag) {{ const undefined = true; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("try {{ run(); }} catch (undefined) {{ }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("for (let undefined of []) {{ }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
     ] {
         let source = format!("{imports}{source}");
         let tests = extract_tests(Path::new("tests/ordinary.test.ts"), &source);
