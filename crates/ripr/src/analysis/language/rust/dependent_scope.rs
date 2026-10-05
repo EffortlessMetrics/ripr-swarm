@@ -63,7 +63,7 @@ const ADMISSION_BATCH_FILES: usize = 64;
 
 /// Env override for the dependent scope. `auto` (also empty or unset)
 /// admits by name only when the whole reverse closure would exceed the
-/// index limit; `named` always admits by name; `full` never does (the
+/// narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`); `named` always admits by name; `full` never does (the
 /// pre-#5320 selection). Anything else fails. `full` and `named` are the
 /// operator escape hatches and the parity-check switches.
 pub(crate) const DEPENDENT_SCOPE_ENV: &str = "RIPR_DIFF_DEPENDENT_SCOPE";
@@ -72,7 +72,7 @@ pub(crate) const DEPENDENT_SCOPE_ENV: &str = "RIPR_DIFF_DEPENDENT_SCOPE";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DependentScopeMode {
     /// Admit dependent files by name when the full selection would exceed
-    /// the index limit (the default). Under the limit the full selection
+    /// the narrowing threshold (the default). Under it the full selection
     /// already runs, and narrowing costs more than it saves whenever the
     /// witness closure ends up admitting most dependent files (measured on
     /// rust-analyzer: 17.0s narrowed against 14.0s full, identical output).
@@ -89,7 +89,7 @@ pub(crate) enum DependentScopeMode {
 
 impl DependentScopeMode {
     /// Whether a run whose full selection holds `selected` files, against
-    /// an index limit of `limit`, narrows.
+    /// against a narrowing threshold of `limit`, narrows.
     pub(crate) fn narrows(self, selected: usize, limit: usize) -> bool {
         match self {
             Self::Auto => selected > limit,
@@ -400,7 +400,7 @@ pub(super) fn admission_query(
 }
 
 /// The witness search for this finding's owner would need more files than
-/// the index limit allows. Today's full selection refused the whole run in
+/// the narrowing threshold allows. Today's full selection refused the whole run in
 /// this case; this keeps the run and names the unsearched reach instead of
 /// letting `no_static_path` read as a searched-and-empty result.
 pub(super) fn apply_reach_search_over_limit(
@@ -417,8 +417,9 @@ pub(super) fn apply_reach_search_over_limit(
         .push(crate::domain::StopReason::TransitiveReachUnresolved);
     finding.evidence.push(format!(
         "ripr did not search dependent packages for a test that reaches `{owner}`: its callers \
-         span at least {files} Rust files, over the {limit}-file index limit. A test there may \
-         still observe this change. Raise RIPR_DIFF_NARROW_INDEX_FILES to search them."
+         span at least {files} Rust files, over the {limit}-file narrowing threshold. A test there \
+         may still observe this change. Raise RIPR_DIFF_NARROW_INDEX_FILES to search them \
+         (it is capped at RIPR_MAX_DIFF_INDEX_FILES)."
     ));
     finding.evidence.extend([
         format!(
@@ -426,7 +427,7 @@ pub(super) fn apply_reach_search_over_limit(
             crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX
         ),
         format!(
-            "{}callers of `{owner}` -> tests beyond the {limit}-file index limit",
+            "{}callers of `{owner}` -> tests beyond the {limit}-file narrowing threshold",
             crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX
         ),
         format!(

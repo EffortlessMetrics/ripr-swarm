@@ -17,8 +17,8 @@ mod stream;
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
 /// (`analysis/language/rust/mod.rs:DIFF_INDEX_FILE_LIMIT`); kept in sync so the
 /// parser-level guard is consistent with the adapter-level guard (#2398).
-/// Raised to 1200 in lockstep with the adapter defaults (repo-growth evidence
-/// in the guard-raise commit); the parser counts distinct changed paths while
+/// It was raised to 1200 with the adapter defaults (repo-growth evidence in
+/// the guard-raise commit); the parser counts distinct changed paths while
 /// the adapter counts indexed Rust files, so both limits stay necessary.
 /// Raised to 10,000 with the adapter's memory guard once its time bound moved
 /// to the separate narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`).

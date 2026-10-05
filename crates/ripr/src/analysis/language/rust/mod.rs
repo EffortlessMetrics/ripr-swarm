@@ -130,11 +130,52 @@ const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
     "No statically reachable test path was found, so activation/infection cannot be estimated";
 
 fn diff_index_file_limit() -> Result<usize, String> {
-    diff_index_file_limit_from_env(std::env::var(DIFF_INDEX_FILE_LIMIT_ENV))
+    diff_index_file_limit_from_env(diff_limit_env(DIFF_INDEX_FILE_LIMIT_ENV))
 }
 
 fn diff_narrow_index_files(hard_limit: usize) -> Result<usize, String> {
-    diff_narrow_index_files_from_env(std::env::var(DIFF_NARROW_INDEX_FILES_ENV), hard_limit)
+    diff_narrow_index_files_from_env(diff_limit_env(DIFF_NARROW_INDEX_FILES_ENV), hard_limit)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    // Thread-owned so parallel tests never see each other's limits.
+    static FORCED_DIFF_LIMIT_ENV: std::cell::RefCell<Vec<(&'static str, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The diff limit env var `name`, or a value a test forced on this thread.
+fn diff_limit_env(name: &'static str) -> Result<String, std::env::VarError> {
+    #[cfg(test)]
+    {
+        let forced = FORCED_DIFF_LIMIT_ENV.with(|forced| {
+            forced
+                .borrow()
+                .iter()
+                .find(|(forced_name, _)| *forced_name == name)
+                .map(|(_, value)| value.clone())
+        });
+        if let Some(value) = forced {
+            return Ok(value);
+        }
+    }
+    std::env::var(name)
+}
+
+/// Run `work` with the diff limit env vars in `values` forced on this
+/// thread, so a test drives the real lookups without touching the process
+/// environment.
+#[cfg(test)]
+fn with_forced_diff_limit_env<T>(values: &[(&'static str, &str)], work: impl FnOnce() -> T) -> T {
+    FORCED_DIFF_LIMIT_ENV.with(|forced| {
+        *forced.borrow_mut() = values
+            .iter()
+            .map(|(name, value)| (*name, (*value).to_string()))
+            .collect();
+    });
+    let result = work();
+    FORCED_DIFF_LIMIT_ENV.with(|forced| forced.borrow_mut().clear());
+    result
 }
 
 fn diff_narrow_index_files_from_env(
@@ -2188,21 +2229,22 @@ impl RustAdapter {
 #[cfg(test)]
 mod tests {
     use super::{
-        DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_NARROW_INDEX_FILES,
-        DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources, PARTIAL_DIFF_FILE_BUDGET_DEFAULT,
-        PARTIAL_DIFF_FILE_BUDGET_ENV, PARTIAL_DIFF_LANGUAGE_TIER_VERSION,
-        PARTIAL_DIFF_LINE_BUDGET_DEFAULT, PARTIAL_DIFF_LINE_BUDGET_ENV,
-        PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets, PartialDiffScope,
-        PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
-        apply_probe_and_oracle_limits, changed_rust_line_count, dependent_scope,
+        DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
+        DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
+        PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
+        PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
+        PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
+        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
+        RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count, dependent_scope,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, diff_narrow_index_files_from_env,
         enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
-        is_cargo_binary_invocation, is_generated_rust_file, is_generated_rust_file_with_patterns,
-        limitations_for_absent_changed_files, partial_diff_budgets_from_env,
-        partition_canonical_form, replace_witnessed_no_path_infection_summary,
-        repo_index_file_limit_from_env, select_partial_diff_partition,
-        select_partial_diff_partition_with_identity, selection_with_open_files, sha256_hex,
+        is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
+        is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
+        partial_diff_budgets_from_env, partition_canonical_form,
+        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
+        select_partial_diff_partition, select_partial_diff_partition_with_identity,
+        selection_with_open_files, sha256_hex, with_forced_diff_limit_env,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -3186,6 +3228,55 @@ mod tests {
             main.contains(&"e/src/lib.rs".to_string()),
             "the typographic-quoted mention must be admitted: {main:?}"
         );
+        Ok(())
+    }
+
+    /// The narrowing threshold, not the memory guard, decides when Auto
+    /// narrows and how far reach widening searches, and both values arrive
+    /// through the real env lookups. A threshold of 2 under a generous
+    /// guard narrows and names the 2-file threshold; the same threshold
+    /// under a 1-file guard is clamped and the run is refused.
+    #[test]
+    fn auto_narrows_at_the_threshold_and_refuses_at_the_guard() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-narrow-threshold")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+
+        let (findings, main, _) = with_forced_diff_limit_env(
+            &[
+                (DIFF_INDEX_FILE_LIMIT_ENV, "100"),
+                (DIFF_NARROW_INDEX_FILES_ENV, "2"),
+            ],
+            || scoped_findings(&root, DependentScopeMode::Auto),
+        )?;
+        let main = slash_paths(&main.ok_or("auto must narrow over the threshold")?);
+        assert_eq!(main, ["a/src/lib.rs", "b/src/lib.rs"], "main index");
+        assert!(
+            findings.contains("over the 2-file narrowing threshold"),
+            "reach search must stop at the narrowing threshold: {findings}"
+        );
+
+        let (unforced, unforced_main, _) =
+            with_forced_diff_limit_env(&[(DIFF_INDEX_FILE_LIMIT_ENV, "100")], || {
+                scoped_findings(&root, DependentScopeMode::Auto)
+            })?;
+        assert!(
+            unforced_main.is_none(),
+            "control: the default threshold keeps the full selection"
+        );
+        assert!(!unforced.contains("narrowing threshold"), "{unforced}");
+
+        let refused = with_forced_diff_limit_env(
+            &[
+                (DIFF_INDEX_FILE_LIMIT_ENV, "1"),
+                (DIFF_NARROW_INDEX_FILES_ENV, "2"),
+            ],
+            || scoped_findings(&root, DependentScopeMode::Auto),
+        );
+        match refused {
+            Err(error) => assert!(is_diff_scope_oversized(&error), "{error}"),
+            Ok(_) => return Err("a 1-file guard must refuse the run".to_string()),
+        }
         Ok(())
     }
 
