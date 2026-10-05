@@ -1119,18 +1119,31 @@ fn may_reach_owner_unread(
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let bytes = masked.as_bytes();
+    // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
+    // `exercise !()`), so both are skipped before reading the delimiter
+    // and the name.
     masked.match_indices('!').any(|(offset, _)| {
-        let next = bytes.get(offset + 1).copied();
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
         if !matches!(next, Some(b'(' | b'[' | b'{')) {
             return false;
         }
-        let name_start = masked[..offset]
+        let name_end = masked[..offset].trim_end().len();
+        let name_start = masked[..name_end]
             .char_indices()
             .rev()
             .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
             .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let name = &masked[name_start..offset];
-        !name.is_empty() && !READ_MACROS.contains(&name)
+        let name = &masked[name_start..name_end];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !READ_MACROS.contains(&name)
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
     })
 }
 
@@ -2460,6 +2473,38 @@ mod tests {
             "inline commented match aliases must not resolve boundary operands; got {:?}",
             activation.missing_discriminators
         );
+    }
+
+    #[test]
+    fn an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced() {
+        let unread = |body: &str| {
+            may_reach_owner_unread(
+                &test_with_body_call(body, 11, "reason(Some(5))"),
+                "reason",
+                &std::collections::BTreeMap::new(),
+            )
+        };
+        for spelling in [
+            "exercise!()",
+            "exercise! ()",
+            "exercise !()",
+            "exercise ! [x]",
+        ] {
+            assert!(
+                unread(&format!(
+                    "fn t() {{\n    assert_eq!(reason(Some(5)), 6);\n    {spelling};\n}}\n"
+                )),
+                "{spelling}"
+            );
+        }
+        for read in [
+            "assert_eq! (reason(Some(5)), 6);",
+            "assert!(!(reason(Some(5)) == 0));",
+            "if !(reason(Some(5)) == 0) { return; }",
+            "assert!(reason(Some(5)) != (0));",
+        ] {
+            assert!(!unread(&format!("fn t() {{\n    {read}\n}}\n")), "{read}");
+        }
     }
 
     fn test_with_body_call(body: &str, call_line: usize, call: &str) -> TestSummary {

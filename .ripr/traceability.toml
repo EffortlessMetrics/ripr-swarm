@@ -12460,6 +12460,7 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::typed_mutable_receivers_establish_nothing",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_free_owner_called_through_a_foreign_path_is_not_read",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_inequality_never_selects",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_bare_variant_imported_from_another_enum_is_not_read",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_change_pairs_with_its_own_removed_arm",

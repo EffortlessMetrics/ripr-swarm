@@ -433,6 +433,14 @@ impl ArmSelector {
         {
             return ArmSelection::Unknown;
         }
+        // `other_crate::RenameRule::LowerCase` names a same-named type
+        // outside the workspace: a path above the type must start at a
+        // workspace root, like a qualified free owner call.
+        if input_path_root(input)
+            .is_some_and(|root| !self.local_roots.iter().any(|local| local == root))
+        {
+            return ArmSelection::Unknown;
+        }
         let input = input_head(input);
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
@@ -1081,6 +1089,18 @@ fn input_qualifier(input: &str) -> Option<&str> {
     segments.next()
 }
 
+/// The first segment of a qualified input path with segments above its
+/// type (`a` in `a::Mode::Hot`), or `None` for `Mode::Hot` and `Hot`. A
+/// leading `::` roots the path at an extern crate, read as an empty root.
+fn input_path_root(input: &str) -> Option<&str> {
+    let input = input.trim();
+    let path_end = input
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+        .unwrap_or(input.len());
+    let segments = input[..path_end].split("::").collect::<Vec<_>>();
+    (segments.len() > 2).then(|| segments[0])
+}
+
 struct ParameterDeclaration {
     mutable: bool,
     type_name: Option<String>,
@@ -1465,6 +1485,16 @@ mod tests {
         assert!(
             !selector.assertion_selects("assert_eq!(rule().apply_to_variant(original), lower);")
         );
+        // A same-named type outside the workspace is another type.
+        assert!(!selector.assertion_selects(
+            "assert_eq!(other_crate::RenameRule::LowerCase.apply_to_variant(original), lower);"
+        ));
+        assert!(!selector.assertion_selects(
+            "assert_eq!(::other_crate::RenameRule::LowerCase.apply_to_variant(original), lower);"
+        ));
+        assert!(selector.assertion_selects(
+            "assert_eq!(crate::RenameRule::LowerCase.apply_to_variant(original), lower);"
+        ));
         Ok(())
     }
 

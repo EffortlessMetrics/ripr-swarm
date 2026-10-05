@@ -238,12 +238,13 @@ implies but does not spell out:
   unconditional expression, since a nested, short-circuited or
   early-returned match may never run;
 - a test that may reach the owner through a helper (at any depth) or a
-  non-standard macro has an unresolved call;
+  non-standard macro (however its `!` is spaced) has an unresolved call;
 - a test whose file imports a foreign same-named function, or whose package
   defines one, has an unresolved call;
 - a qualified input whose type is neither `Self` nor the scrutinee's type
-  is unresolved, and an owner name that is not unique in a complete
-  workspace establishes nothing.
+  is unresolved, as is one whose path above the type starts outside the
+  workspace roots (`other_crate::RenameRule::LowerCase`). An owner name
+  that is not unique in a complete workspace establishes nothing;
 - a bare variant input (`LowerCase`) is unresolved when the test's file
   imports that name from a path whose type segment is not the scrutinee's
   type, renames an import to it, or glob-imports another type's variants
