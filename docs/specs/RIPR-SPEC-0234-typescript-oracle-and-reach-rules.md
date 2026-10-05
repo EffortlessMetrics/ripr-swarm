@@ -382,7 +382,9 @@ and every test file holding an assertion that credits `exposed` mocks that
 module, a ladder result of `exposed` reads `static_unknown` instead. A
 module mock applies to its whole test file and to no other, so it is read
 per file: when one crediting assertion sits in a file with no such mock,
-`exposed` stands, with the limit as advisory below. The result then is: reach Yes, observe and
+`exposed` stands, with the limit as advisory below. ripr reads only mock
+calls written in the test file; config-level mocks (`setupFiles`,
+`automock`, automatic `__mocks__`) are not modelled. The result then is: reach Yes, observe and
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
@@ -422,7 +424,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    only. Rejected: whole identifiers in the effect side-channel rule too,
    because there a substring miss grants credit, so tightening it would
    add credit.
-5. **Static limits (D4).** Adopted: rule 8, fail closed. A mock of a
+5. **Static limits (D4).** Adopted: rule 8, fail closed, read per test
+   file so an unmocked crediting file keeps `exposed` (example 33). A mock of a
    module whose symbol the changed line calls can swallow the changed
    value (the measured `fee` counterexample reads `exposed` today), so
    static evidence cannot say the assertion observes the change. The

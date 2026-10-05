@@ -327,6 +327,20 @@ rejected alternative. Any can be reversed later without touching the rest.
    recipe extension as a cross-repo issue. Rejected: change the recipe
    here, because the real producer computes the same recipe and a
    one-sided change rejects every real packet.
+10. **Suggested location on a partial packet.** Adopted: rule 13 keeps
+    `perl_suggested_test_location` and `perl_suggested_assertion` on a
+    partial packet that has a bound `direct_owner_call` / `reachable`
+    relation. RIPR-SPEC-0064 lists the suggested test location as one
+    field of an actionable repair packet (its "Strict actionability
+    boundary"), and a partial packet still never gets that packet: rule
+    13 withholds the canonical gap, and the finding carries
+    `language_limitation_reason: packet_status partial: findings are
+    advisory only`. The standalone location is advisory evidence that
+    names a test the packet itself relates, not an actionable repair.
+    The real producer always emits `partial`, so withholding it would
+    remove the location from every real packet. Rejected: gate both
+    suggestions on `packet_status: complete`. Reopen this if a corpus
+    case shows a partial packet's omitted facts moving the right test.
 
 ## Required Evidence
 

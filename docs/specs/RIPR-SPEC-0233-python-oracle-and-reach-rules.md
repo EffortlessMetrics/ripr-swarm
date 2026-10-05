@@ -162,7 +162,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertTrue`, `assertFalse` | `smoke_only` / smoke |
 | `assertRaisesRegex` | `exact_error_variant` / strong |
 | `assertRaises` | `broad_error` / weak |
-| `raises` as `pytest.raises` or bare `raises`, with `match=` | `exact_error_variant` / strong |
+| `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
 | `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
 | other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` |
@@ -402,7 +402,10 @@ the rule; ripr still reports only what the static shape shows.
     `assertRaisesRegex`) is the function the assertion calls when it is a
     bare or dotted name. The test relates to that owner as R1
     `syntactic_call`, under the same identity checks as a written call
-    (rule 7 applies), and the assertion keeps its table row. A lambda or
+    (rule 7 applies), and the assertion keeps its table row, with one
+    exception: in the callable form, pytest passes keyword arguments,
+    `match=` included, to the callable rather than checking the message,
+    so `pytest.raises(E, f, ..., match=...)` is `broad_error` / weak. A lambda or
     any other expression in that position is not read.
 14. **A bound exception compared by value pins the error.** A `with` item
     `pytest.raises(...) as N` (or bare `raises`), or
@@ -410,8 +413,11 @@ the rule; ripr still reports only what the static shape shows.
     is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
     chain with `==`, or `assertEqual`) between two operands, one of which
-    contains `N.value` (pytest) or `N.exception` (unittest), and `N` is
-    not assigned again in between. A comparison inside the `with` body
+    is a value-preserving read of the exception: `N.value` (pytest) or
+    `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
+    or as its `.args` or a literal index of `.args`. A coarser read such
+    as `len(str(N.value))` or `type(N.value)` does not promote, and `N`
+    must not be assigned again in between. A comparison inside the `with` body
     does not count: it runs only when nothing is raised. Rule 1 applies
     to that comparison first: a tautology does not promote. The value
     assertion keeps its own table row. The promoted item, its `with`
@@ -688,7 +694,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `exc` was assigned again). With
     `assert str(exc.value) == "'empty'"` inside the `with` body after
     `perr('')`: `weakly_exposed` (unchanged; the comparison never runs
-    when the call raises).
+    when the call raises). With `assert len(str(exc.value)) == 7` after
+    the block: `weakly_exposed` (unchanged; a length read does not pin
+    the message, and `'empty'` and `'blank'` have equal length).
+    `pytest.raises(KeyError, perr, '', match='empty')`, the callable
+    form: `syntactic_call`, `broad_error` / weak, `weakly_exposed`
+    (rule 13; `match=` goes to `perr`).
 
 ## Test Mapping
 
