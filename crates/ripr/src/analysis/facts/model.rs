@@ -175,8 +175,10 @@ fn filesystem_fingerprint(root: &Path, relative: &Path) -> String {
     let mut fingerprint = String::new();
     let source = root.join(relative);
     append_metadata_fingerprint(&mut fingerprint, &source);
+    append_entry_fingerprint(&mut fingerprint, &source);
     let mut cursor = source.parent().map(Path::to_path_buf);
     while let Some(directory) = cursor {
+        append_entry_fingerprint(&mut fingerprint, &directory);
         append_metadata_fingerprint(&mut fingerprint, &directory.join("Cargo.toml"));
         if directory == root {
             break;
@@ -202,6 +204,30 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
             ));
         }
         Err(error) => output.push_str(&format!("{}:{:?};", path.display(), error.kind())),
+    }
+}
+
+/// The directory entry itself, not what it points at: whether it is a symlink
+/// and, on Unix, its device and inode. `metadata` follows links, so swapping a
+/// file or directory for a symlink to same-sized bytes written within one
+/// mtime tick left the followed fingerprint unchanged and the cache kept
+/// admitting a target that now resolves outside the root (#5478).
+fn append_entry_fingerprint(output: &mut String, path: &Path) {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            output.push_str(&format!(
+                "{}:link={}",
+                path.display(),
+                metadata.file_type().is_symlink()
+            ));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                output.push_str(&format!(":{}:{}", metadata.dev(), metadata.ino()));
+            }
+            output.push(';');
+        }
+        Err(error) => output.push_str(&format!("{}:entry:{:?};", path.display(), error.kind())),
     }
 }
 
@@ -1244,6 +1270,90 @@ mod tests {
         let source = Path::new("pkg/src/lib.rs");
         assert!(authority.validates_target(test, source, sources[1].1));
         std::fs::write(root.join("pkg/tests/lib.rs"), "changed\n")?;
+        assert!(!authority.validates_target(test, source, sources[1].1));
+        Ok(())
+    }
+
+    /// #5478: swap the test file for a symlink to identical bytes outside the
+    /// root, with the same size and mtime, after the cache saw it current.
+    /// Under load the original write and the copy land in one mtime tick; the
+    /// test pins that case by copying the mtime instead of racing for it.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_swap_with_same_size_and_mtime_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(Vec<PathBuf>);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                for path in &self.0 {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-authority-symlink-swap-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        let _cleanup = FixtureCleanup(vec![base.clone()]);
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::create_dir_all(&outside)?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (
+                PathBuf::from("pkg/tests/lib.rs"),
+                "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
+            ),
+        ];
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, sources[1].1));
+
+        let original = root.join(test);
+        let modified = std::fs::metadata(&original)?.modified()?;
+        let escaped = outside.join("lib.rs");
+        std::fs::write(&escaped, sources[1].1)?;
+        std::fs::File::options()
+            .write(true)
+            .open(&escaped)?
+            .set_modified(modified)?;
+        std::fs::remove_file(&original)?;
+        std::os::unix::fs::symlink(&escaped, &original)?;
+        let followed = std::fs::metadata(&original)?;
+        assert_eq!(
+            followed.modified()?,
+            modified,
+            "fixture must keep the mtime"
+        );
+        assert_eq!(followed.len(), sources[1].1.len() as u64);
+
         assert!(!authority.validates_target(test, source, sources[1].1));
         Ok(())
     }
