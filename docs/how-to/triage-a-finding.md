@@ -59,6 +59,9 @@ weakly exposed rows. `no_call_path`,
 `no_assertion`, `assertion_not_observing` and `assertion_not_credited` can
 appear under any class, because they describe a single test. The other values
 appear only under `weakly_exposed` and `reachable_unrevealed`.
+On an `exposed` finding, a row with a miss only explains why that test did not
+help; act on it only if you are working on that test, because another test
+already supplies the discriminator.
 
 | `why` reads | `miss` value | What to do |
 | --- | --- | --- |
