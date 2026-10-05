@@ -88,115 +88,21 @@ fn build_index_from_paths_with_cache_and_adapters(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
-    let mut load_known_file_paths = || cache.known_file_paths();
-    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
-    let mut stats = FileFactCacheStats::default();
-    let mut index = RustIndex::default();
-
-    enum Pending {
-        Ready(super::FileFacts),
-        Parse {
-            key: RepoFileFactCacheKey,
-            bytes: Vec<u8>,
-        },
-    }
-
-    for chunk in paths.chunks(PARSE_BATCH_FILES) {
-        // Phase 1 (sequential, chunk order): read one chunk and resolve
-        // cache lookups. Raw bytes live only inside this chunk's `pending`.
-        let mut pending: Vec<(PathBuf, Pending)> = Vec::with_capacity(chunk.len());
-        for file in chunk {
-            cancellation::checkpoint()?;
-            let bytes = std::fs::read(root.join(file))
-                .map_err(|err| format!("read {} failed: {err}", file.display()))?;
-            let key = RepoFileFactCacheKey::new(file, &bytes);
-            match cache.load_file_facts(&key) {
-                CacheLoad::Hit(facts) => {
-                    stats.hits += 1;
-                    pending.push((file.clone(), Pending::Ready(facts)));
-                }
-                CacheLoad::Miss => {
-                    stats.misses += 1;
-                    if known_cached_file_paths
-                        .get_or_insert_with(&mut load_known_file_paths)
-                        .contains(file)
-                    {
-                        stats.invalidated_files.insert(file.clone());
-                    }
-                    pending.push((file.clone(), Pending::Parse { key, bytes }));
-                }
-                CacheLoad::CorruptIgnored { reason } => {
-                    stats.corrupt_ignored += 1;
-                    eprintln!("ripr: repo file fact cache entry ignored ({reason})");
-                    pending.push((file.clone(), Pending::Parse { key, bytes }));
-                }
-            }
-        }
-
-        // Phase 2 (parallel, chunk order): parse misses on the rayon pool.
-        // Collecting only the pending-parse inputs (total `match`, no
-        // panic-family fallback) keeps the no-panic policy intact.
-        let parse_inputs: Vec<(usize, &PathBuf, &Vec<u8>)> = pending
+    // Each batch is read only when the shared loop asks for it, so the
+    // previous batch's bytes are dropped before the next read.
+    let batches = paths.chunks(PARSE_BATCH_FILES).map(|chunk| {
+        chunk
             .iter()
-            .enumerate()
-            .filter_map(|(position, (file, entry))| match entry {
-                Pending::Ready(_) => None,
-                Pending::Parse { bytes, .. } => Some((position, file, bytes)),
+            .map(|file| {
+                cancellation::checkpoint()?;
+                let bytes = std::fs::read(root.join(file))
+                    .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+                Ok((file.clone(), bytes))
             })
-            .collect();
-        let mut parsed: Vec<Option<Result<super::FileFacts, String>>> = Vec::new();
-        parsed.resize_with(pending.len(), || None);
-        for batch in parse_inputs.chunks(PARSE_BATCH_FILES) {
-            cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = batch
-                .par_iter()
-                .map(|(position, file, bytes)| {
-                    (
-                        *position,
-                        summarize_loaded_file(file, bytes, adapter, fallback),
-                    )
-                })
-                .collect();
-            for (position, result) in results {
-                parsed[position] = Some(result);
-            }
-        }
-
-        // Phase 3 (sequential, chunk order): store fresh facts, then insert.
-        // The first error in overall input order wins because chunks drain
-        // in order and each chunk drains in order.
-        for (position, (file, entry)) in pending.into_iter().enumerate() {
-            let summary = match entry {
-                Pending::Ready(facts) => facts,
-                Pending::Parse { key, .. } => {
-                    let facts = match parsed[position].take() {
-                        Some(result) => result?,
-                        None => {
-                            return Err(format!(
-                                "missing parse result for {}",
-                                root.join(&file).display()
-                            ));
-                        }
-                    };
-                    match cache.store_file_facts(&key, &facts) {
-                        Ok(()) => stats.stores += 1,
-                        Err(error) => stats.record_store_failure(file.clone(), error),
-                    }
-                    facts
-                }
-            };
-            insert_file_summary(&mut index, file, summary);
-            cancellation::checkpoint()?;
-        }
-        // Chunk `pending` (and every chunk's raw bytes) drops here.
-    }
-
-    super::includes::resolve_repository_local_includes(root, &mut index);
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
-    index.package_names = manifest_package_names(root);
-    Ok(CachedRustIndex {
-        index,
-        file_fact_cache: stats,
+            .collect::<Result<Vec<_>, String>>()
+    });
+    build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
+        cache.known_file_paths()
     })
 }
 
@@ -206,12 +112,34 @@ fn build_index_with_file_fact_cache(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
+    load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
+) -> Result<CachedRustIndex, String> {
+    build_index_with_file_fact_cache_batches(
+        root,
+        files.chunks(PARSE_BATCH_FILES).map(Ok),
+        adapter,
+        fallback,
+        cache,
+        load_known_file_paths,
+    )
+}
+
+/// Shared by the loaded-corpus and streaming paths (#4996): `batches`
+/// yields one `PARSE_BATCH_FILES` slice at a time, either borrowed from a
+/// loaded corpus or read from disk on demand. A batch read error is the
+/// same fail-closed `Err` as a parse error in that batch.
+fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
+    root: &Path,
+    batches: impl Iterator<Item = Result<B, String>>,
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    cache: &RepoFileFactCache,
     mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
 ) -> Result<CachedRustIndex, String> {
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
         root,
-        files,
+        batches,
         adapter,
         fallback,
         cache,
@@ -267,9 +195,9 @@ struct CacheAccounting {
 /// Earlier batches' fresh facts may already be stored when a later batch
 /// fails. That matches the per-file, non-transactional cache contract: each
 /// entry is keyed by its own content and remains a valid future hit.
-fn insert_cached_file_batches(
+fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     root: &Path,
-    files: &[(PathBuf, Vec<u8>)],
+    batches: impl Iterator<Item = Result<B, String>>,
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
@@ -291,7 +219,9 @@ fn insert_cached_file_batches(
     let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
     let mut index = RustIndex::default();
     let token = cancellation::current_token();
-    for batch in files.chunks(PARSE_BATCH_FILES) {
+    for batch in batches {
+        let batch = batch?;
+        let batch = batch.as_ref();
         // Phase 1 (sequential): this batch's cache lookups, in input order.
         let mut pending: Vec<Pending> = Vec::with_capacity(batch.len());
         for (file, bytes) in batch {

@@ -1989,16 +1989,24 @@ fn collect_workspace_state_from_files(
     let mut sorted_files = rust_files;
     sorted_files.sort();
     let mut builder = FilesContentHashBuilder::new();
+    #[cfg(test)]
+    let mut folded_source_bytes = 0usize;
     for path in &sorted_files {
         cancellation::checkpoint()?;
         let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
         builder.push(path, &bytes);
+        #[cfg(test)]
+        {
+            folded_source_bytes += bytes.len();
+        }
         // `bytes` drops here, before the next file is read.
     }
+    // The state no longer owns the bytes (#4996). The lease still charges
+    // the folded total for the state's lifetime, so the #5132 probe keeps
+    // proving the state is released before evidence construction.
     #[cfg(test)]
-    let source_lifetime =
-        source_lifetime_probe::constructed(root, files.iter().map(|(_, bytes)| bytes.len()).sum());
+    let source_lifetime = source_lifetime_probe::constructed(root, folded_source_bytes);
     Ok(OwnedWorkspaceState {
         #[cfg(test)]
         _source_lifetime: source_lifetime,
@@ -3466,18 +3474,18 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 paths.len()
             ));
         }
-        if streamed.index.files.len() != legacy.index.files.len()
-            || streamed.index.functions.len() != legacy.index.functions.len()
-            || streamed.index.tests.len() != legacy.index.tests.len()
-        {
+        // Whole-index equality, not counts: the serialized index carries
+        // every file fact, include, authority and package name.
+        let streamed_json =
+            serde_json::to_string(&streamed.index).map_err(|err| err.to_string())?;
+        let legacy_json = serde_json::to_string(&legacy.index).map_err(|err| err.to_string())?;
+        if streamed_json != legacy_json {
             return Err(format!(
-                "streaming index must match legacy oracle: {} vs {} files, {} vs {} functions, {} vs {} tests",
-                streamed.index.files.len(),
-                legacy.index.files.len(),
-                streamed.index.functions.len(),
-                legacy.index.functions.len(),
-                streamed.index.tests.len(),
-                legacy.index.tests.len()
+                "streaming index must match legacy oracle: {} vs {} files, {} vs {} functions",
+                streamed.index.files().len(),
+                legacy.index.files().len(),
+                streamed.index.functions().len(),
+                legacy.index.functions().len(),
             ));
         }
 

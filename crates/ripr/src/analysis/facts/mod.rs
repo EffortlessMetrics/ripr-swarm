@@ -83,9 +83,19 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let mut cached = index_phase("index_cached_parse", || {
+    let cached = index_phase("index_cached_parse", || {
         build::build_index_from_loaded_files_with_cache(root, files)
     })?;
+    post_process_cached_index(cached, root, registrations)
+}
+
+/// Every post-parse phase, shared by the loaded and streaming builders so
+/// the two can never drift (#4996).
+fn post_process_cached_index(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
         cached.index.refresh_memberships()
@@ -128,25 +138,10 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
     paths: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let mut cached = index_phase("index_cached_parse", || {
+    let cached = index_phase("index_cached_parse", || {
         build::build_index_from_paths_with_cache(root, paths)
     })?;
-    index_phase("index_parameterized_tests", || {
-        parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
-        Ok(())
-    })?;
-    index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut cached.index)
-    })?;
-    index_phase("index_role_composition", || {
-        role_composition::compose_index_source_roles(&mut cached.index, root);
-        Ok(())
-    })?;
-    index_phase("index_harness_registry", || {
-        harness_registry::apply_registrations(&mut cached.index, root, registrations);
-        Ok(())
-    })?;
-    Ok(cached)
+    post_process_cached_index(cached, root, registrations)
 }
 
 // The Cargo-validated file-wide harness evidence grant (#3608) is shared
