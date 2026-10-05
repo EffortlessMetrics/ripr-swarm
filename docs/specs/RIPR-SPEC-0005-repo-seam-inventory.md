@@ -164,7 +164,14 @@ what test is missing and why:
 - reach evidence: does any test call the owner? With no related test, reach
   is `no` only when ripr established that no test path exists; an unresolved
   transitive, macro or trait-dispatch path makes it `opaque`, so the seam
-  classifies `opaque`, not `ungripped` (RIPR-SPEC-0230)
+  classifies `opaque`, not `ungripped` (RIPR-SPEC-0230). A related test
+  tied to the owner only by sharing its file or module, or (for an owner
+  that is a function) by asserting a token the seam names, is not reach:
+  when every related test is such a relation, reach follows the diff-mode
+  rule, `weak` when something could run the owner unseen (a doctest or
+  caller names it, a trait impl, a test macro, an unresolved transitive
+  path) and `no` otherwise, so the seam never reads `strongly_gripped`
+  from them (#5335)
 - activate evidence: does any test supply the triggering input?
 - propagate evidence: does the test observe the changed state downstream?
 - observe evidence: does the test assert on the visible sink?

@@ -58,6 +58,8 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per owner id: the unresolved-reach summary, or `None` when the
     /// `no` reach is established. Seams share owners.
     unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
+    /// Built on first use; see [`Self::unseen_reach_names`].
+    unseen_reach_names: OnceLock<crate::analysis::classify::UnseenReachNames>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -487,6 +489,7 @@ impl<'a> CompactGripContext<'a> {
             transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
+            unseen_reach_names: OnceLock::new(),
         })
     }
 
@@ -498,6 +501,15 @@ impl<'a> CompactGripContext<'a> {
         self.type_mentions.get_or_init(|| {
             crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex::build(self)
         })
+    }
+
+    /// Which owners something could run without a test naming them, from
+    /// one workspace scan shared by every seam that needs it.
+    pub(in crate::analysis::test_grip_evidence) fn unseen_reach_names(
+        &self,
+    ) -> &crate::analysis::classify::UnseenReachNames {
+        self.unseen_reach_names
+            .get_or_init(|| crate::analysis::classify::UnseenReachNames::build(self.index))
     }
 
     pub(in crate::analysis::test_grip_evidence) fn unresolved_reach_cached(

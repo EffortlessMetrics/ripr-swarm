@@ -523,17 +523,28 @@ pub(super) fn insert_related_candidate(
     candidate_reasons.insert(test_index, reason);
 }
 
+#[cfg(test)]
 pub(super) fn find_related_tests_compact<'a>(
     seam: &RepoSeam,
     context: &'a CompactGripContext<'_>,
 ) -> Vec<&'a CompactTest<'a>> {
-    let mut related = find_related_tests_with_context(seam, context);
-    sort_related_tests_for_seam(seam, context, &mut related);
-    related
+    find_related_tests_ranked(seam, context)
         .into_iter()
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, _reason)| indexed)
         .collect()
+}
+
+/// Every related test for `seam` with its relation, in rank order. Compact
+/// evidence caps the tests it scores but decides reach over this full list,
+/// so a reach-bearing relation ranked below the cap still counts.
+pub(super) fn find_related_tests_ranked<'a>(
+    seam: &RepoSeam,
+    context: &'a CompactGripContext<'_>,
+) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
+    let mut related = find_related_tests_with_context(seam, context);
+    sort_related_tests_for_seam(seam, context, &mut related);
+    related
 }
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]

@@ -41,11 +41,12 @@ pub(in crate::analysis) fn reach_evidence(
     // outside its own definition names it (see
     // `owner_may_be_reached_unseen`) and no proximity test invokes a
     // non-assertion macro (whose expansion may call it).
+    let owner_is_function = owner_fn.is_some();
     let proximity_only = !owner_anchored.is_empty()
         && related_tests
             .iter()
             .filter(|(_, reason)| *reason != RelationReason::SeamCalleeCall)
-            .all(|(_, reason)| is_proximity_only(*reason));
+            .all(|(_, reason)| !relation_establishes_reach(*reason, owner_is_function));
     if proximity_only {
         let names = owner_anchored
             .iter()
@@ -118,6 +119,36 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
         })
 }
 
+/// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
+/// for callers that ask about many owners (repo seam evidence asks once per
+/// owner whose related tests are all proximity).
+#[derive(Debug, Default)]
+pub(in crate::analysis) struct UnseenReachNames {
+    /// Every identifier some source names other than directly after `fn`.
+    named: std::collections::HashSet<String>,
+    /// Some file pulls external docs in as doctests.
+    external_docs: bool,
+}
+
+impl UnseenReachNames {
+    pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
+        let mut names = Self::default();
+        for file in index.files().values() {
+            names.external_docs |= includes_external_docs(&file.source);
+            names
+                .named
+                .extend(identifiers_outside_fn_definition(&file.source).map(str::to_string));
+        }
+        names
+    }
+
+    pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
+        is_trait_impl_method(owner)
+            || self.external_docs
+            || (!owner.name.is_empty() && self.named.contains(&owner.name))
+    }
+}
+
 /// `#![doc = include_str!("../README.md")]` turns an unindexed file into
 /// doctests that may call anything, so the name scan cannot rule them out.
 fn includes_external_docs(source: &str) -> bool {
@@ -142,27 +173,37 @@ pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool
 /// directly after the `fn` keyword. Comments and strings count: a doctest or
 /// a stringly dispatched call may be what reaches the owner.
 fn names_identifier_outside_fn_definition(source: &str, name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
+    !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
+}
+
+/// Each whole identifier in `source` (an ASCII alphanumeric or `_` run) that
+/// does not sit directly after the `fn` keyword.
+fn identifiers_outside_fn_definition(source: &str) -> impl Iterator<Item = &str> {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    source.match_indices(name).any(|(start, _)| {
-        let bytes = source.as_bytes();
-        let end = start + name.len();
-        if start > 0 && is_ident(bytes[start - 1]) {
-            return false;
+    let bytes = source.as_bytes();
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        while start < bytes.len() {
+            if !is_ident(bytes[start]) {
+                start += 1;
+                continue;
+            }
+            let begin = start;
+            while start < bytes.len() && is_ident(bytes[start]) {
+                start += 1;
+            }
+            let before = source[..begin]
+                .strip_suffix("r#")
+                .unwrap_or(&source[..begin]);
+            let is_fn_definition = before
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|prefix| !prefix.bytes().last().is_some_and(is_ident));
+            if !is_fn_definition {
+                return Some(&source[begin..start]);
+            }
         }
-        if bytes.get(end).is_some_and(|byte| is_ident(*byte)) {
-            return false;
-        }
-        let before = source[..start]
-            .strip_suffix("r#")
-            .unwrap_or(&source[..start]);
-        let is_fn_definition = before
-            .trim_end()
-            .strip_suffix("fn")
-            .is_some_and(|prefix| !prefix.bytes().last().is_some_and(is_ident));
-        !is_fn_definition
+        None
     })
 }
 
@@ -217,6 +258,26 @@ fn invokes_opaque_macro(body: &str) -> bool {
         let name = &body[start..bang];
         !name.is_empty() && !TRANSPARENT_TEST_MACROS.contains(&name)
     })
+}
+
+/// Whether a relation by itself is evidence that the test runs a seam's
+/// owner, shared by diff-mode reach and repo-mode seam reach (#5335).
+///
+/// Proximity relations ([`is_proximity_only`]) never are. An
+/// `AssertionTargetAffinity` relation means a test asserts on a token the
+/// seam's expression also names; for a module-level owner (a struct or
+/// field with no owning function) that assertion is how the owner is
+/// observed, but for a function-bodied owner the token can belong to any
+/// code, so it is not a path to the function. Diff mode emits that relation
+/// only for owners without a function, so the rule leaves it unchanged.
+pub(in crate::analysis) fn relation_establishes_reach(
+    reason: RelationReason,
+    owner_is_function: bool,
+) -> bool {
+    if is_proximity_only(reason) {
+        return false;
+    }
+    !(owner_is_function && reason == RelationReason::AssertionTargetAffinity)
 }
 
 /// Relations that come from file or name proximity alone, with no captured

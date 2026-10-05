@@ -19,6 +19,10 @@
 //! 9. `discriminate == Unknown`                          → `DiscriminationUnknown`
 //! 10. fallback                                          → `Opaque`
 //!
+//! `reach == Weak` (related tests only share the owner's file, module or an
+//! asserted token, yet something may run the owner unseen) never satisfies
+//! rule 3; with every other stage `Yes` it falls back to `Opaque` (#5335).
+//!
 //! `Intentional` and `Suppressed` are reserved variants. The classifier
 //! does not emit them today; a follow-up PR will consult declared test
 //! intent (`.ripr/intents.toml`-style) and reasoned suppressions
@@ -301,6 +305,24 @@ mod tests {
         assert_eq!(
             classify_seam(&sample_seam(), &evidence),
             SeamGripClass::StronglyGripped
+        );
+    }
+
+    #[test]
+    fn weak_reach_never_reads_strongly_gripped_even_with_every_other_stage_yes() {
+        // #5335: proximity-only related tests leave reach `weak` (the owner
+        // may run unseen); their oracles cannot make the seam strongly gripped.
+        let evidence = evidence_with(
+            StageState::Weak,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            no_missing(),
+        );
+        assert_eq!(
+            classify_seam(&sample_seam(), &evidence),
+            SeamGripClass::Opaque
         );
     }
 

@@ -2942,7 +2942,11 @@ mod tests {
 
     let evidence = evidence_for_seam(return_seam, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::No,
+        "#5335: no related test is seen calling the owner"
+    );
     assert!(
         !evidence
             .related_tests
@@ -3000,7 +3004,11 @@ mod tests {
 
     let evidence = evidence_for_seam(return_seam, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert!(
         !evidence
             .related_tests
@@ -3047,7 +3055,11 @@ fn return_value_contract_mentions_empty_output() {
 
     let evidence = evidence_for_seam(return_seam, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert!(
         evidence
             .related_tests
@@ -4261,7 +4273,11 @@ fn given_call_presence_when_assertion_mentions_short_specific_call_target_then_a
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::No,
+        "#5335: no related test is seen calling the owner"
+    );
     assert!(
         evidence
             .related_tests
@@ -4475,7 +4491,11 @@ mod tests {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -4806,7 +4826,11 @@ fn command_formats_dynamic_args() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -4928,7 +4952,11 @@ fn command_formats_dynamic_args() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -5275,7 +5303,11 @@ fn ambiguous_production_wrapper_keeps_pipeline_limited() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -6592,7 +6624,11 @@ fn local_shadow_keeps_pipeline_limited() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -6658,7 +6694,11 @@ mod tests {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert!(
         !evidence
             .related_tests
@@ -6886,7 +6926,11 @@ fn ambiguous_support_helper_smoke() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -7384,7 +7428,11 @@ fn direct_imported_support_helper_reaches_report() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::No,
+        "#5335: no related test is seen calling the owner"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -7438,7 +7486,11 @@ fn external_direct_import_mentions_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::No,
+        "#5335: no related test is seen calling the owner"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -8502,7 +8554,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -8681,7 +8737,11 @@ fn helper_asserts_pipeline_output() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -8799,7 +8859,11 @@ fn helper_asserts_pipeline_output() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -8913,7 +8977,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -9028,7 +9096,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -9202,7 +9274,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -9318,7 +9394,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -9556,7 +9636,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert!(
         !evidence
             .related_tests
@@ -9618,7 +9702,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert!(
         !evidence
             .related_tests
@@ -9748,7 +9836,11 @@ fn helper_exercises_pipeline() {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -10240,7 +10332,11 @@ mod tests {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -10379,7 +10475,11 @@ mod tests {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::No,
+        "#5335: no related test is seen calling the owner"
+    );
     assert!(
         !evidence
             .related_tests
@@ -10508,7 +10608,11 @@ mod tests {
 
     let evidence = evidence_for_seam(call_presence, &index);
 
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "#5335: no related test is seen calling the owner, which something else names"
+    );
     assert_eq!(evidence.activate.state, StageState::Unknown);
     assert!(
         !evidence
@@ -17032,5 +17136,182 @@ mod tests {
             evidence.activate.state, evidence.missing_discriminators
         ));
     }
+    Ok(())
+}
+
+/// #5335: grade one seam from `files` with both the full and the compact
+/// evidence builders, and return the full evidence, its class, and the
+/// compact reach state (badges and reports must agree on reach).
+fn proximity_reach_case(
+    files: &[(&str, &str)],
+    production: &str,
+    kind: SeamKind,
+    expression: &str,
+) -> Result<(TestGripEvidence, SeamGripClass, StageState), String> {
+    let files: Vec<(PathBuf, &str)> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), *source))
+        .collect();
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from(production)], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.kind() == kind && s.expression().contains(expression))
+        .ok_or_else(|| format!("{kind:?} seam `{expression}` present in {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    let context = CompactGripContext::new(&index);
+    let compact = compact_evidence_for_seam(seam, &context);
+    Ok((evidence, class, compact.reach.state))
+}
+
+const UNCALLED_SIBLING_LIB: &str = "pub struct Size(pub u64);\n\
+     impl Size {\n\
+         pub fn as_kb(&self) -> f64 {\n\
+             self.0 as f64 / 1000.0\n\
+         }\n\
+         pub fn as_kib(&self) -> f64 {\n\
+             self.0 as f64 / 1024.0\n\
+         }\n\
+     }\n\
+     #[cfg(test)]\n\
+     mod tests {\n\
+         use super::*;\n\
+         #[test]\n\
+         fn conversions() {\n\
+             assert_eq!(Size(2048).as_kib(), 2.0);\n\
+         }\n\
+         #[test]\n\
+         fn zero_size() {\n\
+             assert_eq!(Size(0).0, 0);\n\
+         }\n\
+     }\n";
+
+#[test]
+fn called_sibling_stays_strongly_gripped_beside_an_uncalled_one() -> Result<(), String> {
+    let (evidence, class, compact_reach) = proximity_reach_case(
+        &[("src/lib.rs", UNCALLED_SIBLING_LIB)],
+        "src/lib.rs",
+        SeamKind::ReturnValue,
+        "1024.0",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.test_name == "conversions"
+                && test.relation_reason == RelationReason::DirectOwnerCall),
+        "fixture: `conversions` calls `as_kib`: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Yes,
+        "{:?}",
+        evidence.reach
+    );
+    assert_eq!(compact_reach, StageState::Yes);
+    assert_eq!(class, SeamGripClass::StronglyGripped, "{evidence:?}");
+    Ok(())
+}
+
+#[test]
+fn uncalled_sibling_with_only_same_file_tests_has_no_static_path() -> Result<(), String> {
+    let (evidence, class, compact_reach) = proximity_reach_case(
+        &[("src/lib.rs", UNCALLED_SIBLING_LIB)],
+        "src/lib.rs",
+        SeamKind::ReturnValue,
+        "1000.0",
+    )?;
+    // The same-file tests carry exact-value oracles, so before #5335 they
+    // supplied `reach: yes` and the strong oracle to a function none of
+    // them calls.
+    assert!(
+        !evidence.related_tests.is_empty()
+            && evidence
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason == RelationReason::SameTestFile),
+        "fixture: only same-file tests relate to `as_kb`: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
+    assert!(
+        evidence
+            .reach
+            .summary
+            .contains("No test is seen calling as_kb"),
+        "{}",
+        evidence.reach.summary
+    );
+    assert_eq!(compact_reach, StageState::No);
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn uncalled_sibling_named_by_a_doctest_keeps_weak_reach() -> Result<(), String> {
+    // A doc example may call `as_kb`; ripr does not index doctests, so the
+    // shared diff-mode rule keeps reach undecided rather than claiming a gap.
+    let lib = format!(
+        "//! ```\n//! assert_eq!(Size(2000).as_kb(), 2.0);\n//! ```\n{UNCALLED_SIBLING_LIB}"
+    );
+    let (evidence, class, compact_reach) = proximity_reach_case(
+        &[("src/lib.rs", lib.as_str())],
+        "src/lib.rs",
+        SeamKind::ReturnValue,
+        "1000.0",
+    )?;
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Weak,
+        "{:?}",
+        evidence.reach
+    );
+    assert_eq!(compact_reach, StageState::Weak);
+    assert_ne!(class, SeamGripClass::StronglyGripped);
+    assert_ne!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn asserted_token_affinity_alone_does_not_reach_a_function_owner() -> Result<(), String> {
+    // atuin `context.rs:72`-shaped: an unrelated test asserts a field the
+    // predicate also reads, but never calls `history_allowed`.
+    let (evidence, class, compact_reach) = proximity_reach_case(
+        &[
+            (
+                "src/capability.rs",
+                "pub struct Capabilities { pub enable_history_output: bool }\n\
+                 pub fn history_allowed(daemon_enabled: bool, caps: &Capabilities) -> bool {\n\
+                     daemon_enabled && caps.enable_history_output\n\
+                 }\n",
+            ),
+            (
+                "tests/settings.rs",
+                "use ripr_fixture::capability::Capabilities;\n\
+                 #[test]\n\
+                 fn defaults_enable_history_output() {\n\
+                     let caps = Capabilities { enable_history_output: true };\n\
+                     assert_eq!(caps.enable_history_output, true);\n\
+                 }\n",
+            ),
+        ],
+        "src/capability.rs",
+        SeamKind::PredicateBoundary,
+        "daemon_enabled && caps.enable_history_output",
+    )?;
+    assert!(
+        !evidence.related_tests.is_empty()
+            && evidence
+                .related_tests
+                .iter()
+                .all(|test| { test.relation_reason == RelationReason::AssertionTargetAffinity }),
+        "fixture: the test relates only by asserted-token affinity: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
+    assert_eq!(compact_reach, StageState::No);
+    assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }

@@ -42,7 +42,8 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver,
 };
 pub(in crate::analysis) use reach::{
-    is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
+    UnseenReachNames, is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
+    relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,

@@ -17,13 +17,15 @@ mod related_tests;
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
-    CompactTest, assertion_target_tokens, call_text_contains_named_call,
-    find_related_tests_compact, find_related_tests_with_context, required_discriminator_text,
-    sort_related_tests_for_seam, strip_comments_and_strings,
-    test_assertion_mentions_any_target_token,
+    CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
+    find_related_tests_with_context, required_discriminator_text, sort_related_tests_for_seam,
+    strip_comments_and_strings, test_assertion_mentions_any_target_token,
 };
 
-use super::classify::{assertion_observes_direct_collection, direct_collection_mutation_receiver};
+use super::classify::{
+    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+    reach_evidence as classify_reach_evidence, relation_establishes_reach,
+};
 use super::facts::CallFact;
 use super::new_test_target::{self, NewTestTargetAdmission};
 use super::resource_cost::trace_latency_phase;
@@ -311,7 +313,11 @@ fn evidence_for_seam_with_context(
 
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
 
-    let reach = reach_evidence(seam, &related, owner_fn, context);
+    let related_reasons: Vec<(&TestSummary, RelationReason)> = related_with_reason
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
@@ -365,11 +371,20 @@ pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
-    let related_indexed = find_related_tests_compact(seam, context);
+    let ranked = find_related_tests_ranked(seam, context);
+    let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let related_indexed: Vec<&CompactTest<'_>> = ranked
+        .iter()
+        .take(COMPACT_RELATED_TEST_LIMIT)
+        .map(|(indexed, _reason)| *indexed)
+        .collect();
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
-    let reach = reach_evidence(seam, &related, owner_fn, context);
+    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
@@ -390,16 +405,56 @@ pub(crate) fn compact_evidence_for_seam(
     }
 }
 
+/// Reach evidence: does a related test call the seam's owner?
+///
+/// Only relations that tie a test to running the owner count
+/// ([`relation_establishes_reach`], the rule diff-mode reach uses). A test
+/// related only by sharing the owner's file or module, or by asserting a
+/// token the seam's expression names, may never run the owner: crediting it
+/// let an uncalled `as_kb` borrow a sibling test's exact-value oracle and
+/// read `reach: yes` (#5335). When every related test is such a relation,
+/// the shared diff-mode reach decides: `weak` when something could still run
+/// the owner unseen (a doctest or caller names it, a trait impl, a test
+/// macro), otherwise `no`. A bounded transitive, macro or trait-dispatch
+/// witness from repo reach keeps it `weak` too. Either way the seam can no
+/// longer read `strongly_gripped`; the related tests stay listed as
+/// suggestions.
 fn reach_evidence(
     seam: &RepoSeam,
-    related: &[&TestSummary],
+    related: &[(&TestSummary, RelationReason)],
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
-    let names: Vec<&str> = related.iter().take(3).map(|t| t.name.as_str()).collect();
+    let reaches = related
+        .iter()
+        .any(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()));
+    if !reaches {
+        let shared = classify_reach_evidence(related, owner_fn, || {
+            owner_fn.is_none_or(|owner| context.unseen_reach_names().may_reach_unseen(owner))
+        });
+        if shared.state != StageState::No {
+            return shared;
+        }
+        let unreached = reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
+        if unreached.state == StageState::No {
+            return shared;
+        }
+        // An unresolved path from a test toward the owner exists, so these
+        // nearby tests may run it after all: weak reach, never full reach.
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!("{} {}", shared.summary, unreached.summary),
+        );
+    }
+    let names: Vec<&str> = related
+        .iter()
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect();
     StageEvidence::new(
         StageState::Yes,
         Confidence::Medium,
