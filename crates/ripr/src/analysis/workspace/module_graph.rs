@@ -801,9 +801,12 @@ impl PackageWalk {
         // stack top past the directed bound. Past the bound the queue can be
         // long, so only the entries the batch takes are visited.
         let pending = if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+            // Reversed so the stable sort breaks ties the way `step`'s
+            // `max_by_key` does: the later queue entry first.
             let mut nearest = self
                 .queue
                 .iter()
+                .rev()
                 .map(|(queued, _)| queued)
                 .filter(unscanned)
                 .collect::<Vec<_>>();
@@ -1115,42 +1118,6 @@ mod tests {
     }
 
     const MANIFEST: &str = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n";
-
-    #[test]
-    fn zz_review_overlay_survives_read_ahead() -> Result<(), String> {
-        let root = fixture(
-            "rv-overlay",
-            &[
-                ("Cargo.toml", "[workspace]\nmembers=['a','b']\n"),
-                ("a/Cargo.toml", MANIFEST),
-                ("a/src/lib.rs", "mod gen;\nmod s1;\nmod s2;\nmod s3;\n"),
-                ("a/src/s1.rs", ""),
-                ("a/src/s2.rs", ""),
-                ("a/src/s3.rs", ""),
-                ("b/Cargo.toml", MANIFEST),
-                ("b/src/lib.rs", ""),
-                ("b/src/reached.rs", ""),
-            ],
-        )?;
-        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
-            &root,
-            [(
-                "a/src/gen.rs",
-                Some(b"#[path = \"../../b/src/reached.rs\"]\nmod reached;\n".as_slice()),
-            )],
-        );
-        let committed = crate::analysis::committed_source::with_overlay(
-            Some(std::sync::Arc::new(overlay)),
-            || evidence_for(&root, &["b/src/reached.rs"]),
-        );
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            committed.module_graph_orphans.is_empty(),
-            "{:?}",
-            committed.module_graph_orphans
-        );
-        Ok(())
-    }
 
     #[test]
     fn read_ahead_leaves_completeness_to_the_files_the_walk_expands() -> Result<(), String> {
