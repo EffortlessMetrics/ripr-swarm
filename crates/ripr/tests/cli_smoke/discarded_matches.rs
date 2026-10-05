@@ -11,6 +11,7 @@ use super::{
 #[test]
 fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> Result<(), String> {
     let root = unique_temp_workspace("discarded-matcher-cli-5713");
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let retained = workspace_root()
         .join("target/ripr/reports/discarded-matcher-cli-5713")
         .join(
