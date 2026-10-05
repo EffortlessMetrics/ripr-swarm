@@ -319,8 +319,10 @@ the same matcher. Pairing now admits an argument only when it is the literal
 itself, a named local bound to that literal, or a call infection already
 recorded as `==` the boundary. Do not "fix" this by changing
 `owner_argument_values` / `scalar_values` (those remain the activation
-authority; #5638 / #5359). The reverse direction, helper-built inputs that
-read as gaps, is #6615.
+authority; #5638 / #5359). Activation `==` fallback is refused when the
+compared argument is compound, not when an unrelated extra argument is
+(`gate(LIMIT, make_context())` still pairs). The reverse direction,
+helper-built inputs that read as gaps, is #6615.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

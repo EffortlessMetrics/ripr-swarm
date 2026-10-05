@@ -10599,6 +10599,8 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::subtraction_from_boundary_literal_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::local_bound_to_boundary_literal_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::named_constant_activation_equality_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::named_constant_pairs_despite_compound_unrelated_argument",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::compound_compared_argument_does_not_pair_via_unrelated_identifier",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_literal_argument_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::pairing_argument_values_keep_direct_inputs_and_drop_buried_literals"
 ]

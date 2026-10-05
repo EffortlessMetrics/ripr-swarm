@@ -97,11 +97,13 @@ fn assertion_observes_boundary_owner_call(
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
     // only when the assertion text names the owner once, and only when
-    // every parsed argument is a literal or identifier. Compound arguments
-    // can mint a false activation `==` fact from a buried scalar (#6668);
-    // named constants and helper hops keep identifier / literal arguments.
+    // each compared parameter is a literal or identifier. A compound
+    // compared argument can mint a false activation `==` fact from a
+    // buried scalar (#6668); named constants and helper hops keep
+    // identifier / literal compared arguments. An extra unrelated
+    // compound argument (`make_context()`) does not block that path.
     lists.len() == 1
-        && owner_call_arguments_admit_activation_fallback(&lists[0])
+        && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
             activation,
             &CallFact {
@@ -188,7 +190,7 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, &arguments) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(&arguments) {
+        if !owner_call_arguments_admit_activation_fallback(probe, owner, &arguments) {
             return false;
         }
     }
@@ -347,11 +349,37 @@ fn argument_is_direct_pairing_shape(argument: &str) -> bool {
         && (argument_is_plain_identifier(argument) || argument_is_whole_scalar_literal(argument))
 }
 
-fn owner_call_arguments_admit_activation_fallback(arguments: &[String]) -> bool {
-    !arguments.is_empty()
-        && arguments
-            .iter()
-            .all(|argument| argument_is_direct_pairing_shape(argument.trim()))
+fn owner_call_arguments_admit_activation_fallback(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    arguments: &[String],
+) -> bool {
+    if arguments.is_empty() {
+        return false;
+    }
+    let Some((left, right)) = comparison_operands(&probe.expression) else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    let compared: Vec<usize> = [left.as_str(), right.as_str()]
+        .into_iter()
+        .filter_map(|operand| parameter_index(&parameters, operand))
+        .collect();
+    // Compared parameters mint the false first-scalar `==` fact. Extra
+    // arguments are not that producer, so `gate(LIMIT, make_context())`
+    // still admits a named-constant equality. When no operand is a
+    // parameter (helper hops such as `classify("word")` vs
+    // `final_label == "alpha"`), keep the whole list fail-closed.
+    let indices: Vec<usize> = if compared.is_empty() {
+        (0..arguments.len()).collect()
+    } else {
+        compared
+    };
+    indices.iter().all(|&idx| {
+        arguments
+            .get(idx)
+            .is_some_and(|argument| argument_is_direct_pairing_shape(argument.trim()))
+    })
 }
 
 fn argument_is_plain_identifier(text: &str) -> bool {
@@ -757,6 +785,110 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "gate(LIMIT) must not pair from the identifier spelling alone"
+        );
+    }
+
+    #[test]
+    fn named_constant_pairs_despite_compound_unrelated_argument() {
+        let probe = predicate_probe("input >= 10");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::gate".to_string()),
+            name: "gate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: "pub fn gate(input: u32, context: u32) -> bool { input >= 10 }".to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
+        };
+        let paired = test_summary(
+            "const_with_context",
+            "assert_eq!(gate(LIMIT, make_context()), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(LIMIT, make_context()), true);",
+            )],
+            vec![exact("assert_eq!(gate(LIMIT, make_context()), true);")],
+            &["10"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(LIMIT, make_context()), true); | named constant".to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&paired], &activation),
+            "gate(LIMIT, make_context()) must pair when infection recorded input == 10 on the compared parameter"
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&paired],
+                &ActivationEvidence::default(),
+            ),
+            "without the activation == fact, LIMIT plus a compound extra argument must not pair"
+        );
+    }
+
+    #[test]
+    fn compound_compared_argument_does_not_pair_via_unrelated_identifier() {
+        let probe = predicate_probe("input >= 10");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::gate".to_string()),
+            name: "gate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
+        };
+        let buried = test_summary(
+            "buried_with_marker",
+            "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true);",
+            )],
+            vec![exact(
+                "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true);",
+            )],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(if false { 10 } else { 50 }, LIMIT), true); | first scalar"
+                    .to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&buried], &activation),
+            "a compound compared argument must not pair just because an extra argument is an identifier"
         );
     }
 

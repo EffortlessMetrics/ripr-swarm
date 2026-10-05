@@ -98,7 +98,8 @@ relation are out of scope.
   same-line split calls, unused-argument literals, shadowed bindings,
   let-bound pairing including short names, buried-literal if-expression and
   `std::cmp::max` arguments (including `assert!`), typed literals, locals
-  bound to the boundary, and named-constant pairing through infection `==`.
+  bound to the boundary, named-constant pairing through infection `==`,
+  and named-constant pairing when an unrelated extra argument is compound.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
@@ -128,6 +129,8 @@ relation are out of scope.
 - Given `let threshold = 10; assert_eq!(gate(threshold), true)`, or
   `assert_eq!(gate(10u32), true)`, or `assert_eq!(gate(LIMIT), true)` with an
   infection `==` fact, when the predicate is classified, then it pairs.
+  `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
+  also pairs: the extra compound argument is not the compared parameter.
 
 ## Test Mapping
 
