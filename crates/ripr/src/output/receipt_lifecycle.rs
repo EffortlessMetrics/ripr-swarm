@@ -127,7 +127,7 @@ fn nonempty_field<'a>(receipt: &'a Value, key: &str) -> Option<&'a str> {
     receipt
         .get(key)
         .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn canonical_current_head(receipt: &Value) -> bool {
@@ -136,8 +136,9 @@ fn canonical_current_head(receipt: &Value) -> bool {
 }
 
 fn canonical_receipt_write_presence(receipt: &Value) -> bool {
-    // Mirror `app::receipt::validate_receipt_structure` required keys and the
-    // 40-hex `current_head` shape without depending on the app layer.
+    // Mirror `app::receipt::validate_receipt_structure` required keys, the
+    // writer's `trim().is_empty()` rejection, and the 40-hex `current_head`
+    // shape without depending on the app layer.
     // This is not git HEAD binding; a malformed SHA stays missing.
     receipt.get("kind").and_then(Value::as_str) == Some("receipt")
         && receipt.get("schema_version").and_then(Value::as_str) == Some("0.1")
@@ -399,6 +400,34 @@ mod tests {
             })),
             RECEIPT_MISSING,
             "malformed current_head is not a valid receipt write artifact"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": " ",
+                "verify_command": "cargo test large_order_gets_discount",
+                "verify_status": "passed",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "whitespace-only canonical_gap_id is incomplete, not found"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:5a536229e5ed368b",
+                "verify_command": " ",
+                "verify_status": "passed",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "whitespace-only verify_command is incomplete, not found"
         );
     }
 }
