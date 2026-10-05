@@ -166,8 +166,19 @@ fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
 /// common subsequence diff, so a moved or duplicated line is reported; blank
 /// lines are not shown.
 fn changed_lines(old: &str, new: &str) -> Vec<String> {
-    let a: Vec<&str> = old.lines().collect();
-    let b: Vec<&str> = new.lines().collect();
+    let a_all: Vec<&str> = old.lines().collect();
+    let b_all: Vec<&str> = new.lines().collect();
+    // Drop the common head and tail first: a page edit is local, so the
+    // quadratic table below only spans the lines in between.
+    let head = a_all.iter().zip(&b_all).take_while(|(x, y)| x == y).count();
+    let tail = a_all[head..]
+        .iter()
+        .rev()
+        .zip(b_all[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let a = &a_all[head..a_all.len() - tail];
+    let b = &b_all[head..b_all.len() - tail];
     let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
     for i in (0..a.len()).rev() {
         for j in (0..b.len()).rev() {
@@ -1099,16 +1110,20 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         num(precise - scored)
     ));
 
-    for bar in bars
-        .iter()
-        .filter(|b| b.status == Status::Below && b.board == "Speed and memory")
-    {
+    for bar in bars.iter().filter(|b| {
+        matches!(b.status, Status::Below | Status::Failed) && b.board == "Speed and memory"
+    }) {
         let worst = worst_sample(&r.dx, &bar.id).unwrap_or_else(|| {
             bar.value
                 .map_or_else(|| "not measured".to_string(), |v| fmt_value(v, &bar.unit))
         });
+        let lead = if bar.status == Status::Failed {
+            "Instrument failed"
+        } else {
+            "Worst repository"
+        };
         page.line(format!(
-            "- **{}.** Worst repository: {worst}; the bar is {} {}.",
+            "- **{}.** {lead}: {worst}; the bar is {} {}.",
             bar.title,
             if bar.lower_is_better {
                 "at most"
@@ -2267,6 +2282,36 @@ mod tests {
             changed_lines("a\nold\nz", "a\nnew\nz"),
             vec!["- old", "+ new"]
         );
+    }
+
+    #[test]
+    fn failed_speed_instrument_reaches_the_rendered_shortfalls() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.board == "Speed and memory" && bar.id.starts_with("speed."))
+            .map(|bar| bar.id)
+            .ok_or("no speed bar in the receipts")?;
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    metric["status"] = Value::from("failed");
+                    metric["samples"] = serde_json::json!([
+                        {"repo": "beta", "status": "failed", "value": null, "detail": "clone failed"}
+                    ]);
+                }
+            }
+        }
+        let all = bars(&receipts)?;
+        let mut page = Page(String::new());
+        shortfalls(&mut page, &receipts, &all)?;
+        assert!(
+            page.0
+                .contains("Instrument failed: beta (instrument failed)"),
+            "{}",
+            page.0
+        );
+        Ok(())
     }
 
     #[test]
