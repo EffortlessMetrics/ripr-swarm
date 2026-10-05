@@ -85,23 +85,7 @@ pub(super) fn serialize<S: Serializer>(
     let mut index_of: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut seam_refs = Vec::with_capacity(seams.len());
     for classified in seams {
-        let ClassifiedSeam {
-            seam,
-            evidence,
-            class,
-        } = classified;
-        let TestGripEvidence {
-            seam_id,
-            related_tests: seam_tests,
-            reach,
-            activate,
-            propagate,
-            observe,
-            discriminate,
-            observed_values,
-            missing_discriminators,
-            new_test_target,
-        } = evidence;
+        let seam_tests = &classified.evidence.related_tests;
         let mut indices = Vec::with_capacity(seam_tests.len());
         for test in seam_tests {
             let key = serde_json::to_vec(test).map_err(S::Error::custom)?;
@@ -112,28 +96,186 @@ pub(super) fn serialize<S: Serializer>(
             });
             indices.push(index);
         }
-        seam_refs.push(SeamRef {
-            seam,
-            evidence: EvidenceRef {
-                seam_id,
-                related_tests: indices,
-                reach,
-                activate,
-                propagate,
-                observe,
-                discriminate,
-                observed_values,
-                missing_discriminators,
-                new_test_target: new_test_target.as_ref(),
-            },
-            class,
-        });
+        seam_refs.push(seam_ref(classified, indices));
     }
     TableRef {
         related_tests,
         seams: seam_refs,
     }
     .serialize(serializer)
+}
+
+fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_> {
+    let ClassifiedSeam {
+        seam,
+        evidence,
+        class,
+    } = classified;
+    let TestGripEvidence {
+        seam_id,
+        related_tests: _,
+        reach,
+        activate,
+        propagate,
+        observe,
+        discriminate,
+        observed_values,
+        missing_discriminators,
+        new_test_target,
+    } = evidence;
+    SeamRef {
+        seam,
+        evidence: EvidenceRef {
+            seam_id,
+            related_tests,
+            reach,
+            activate,
+            propagate,
+            observe,
+            discriminate,
+            observed_values,
+            missing_discriminators,
+            new_test_target: new_test_target.as_ref(),
+        },
+        class,
+    }
+}
+
+/// Pretty-printed size of a table body as seams are appended, for shard
+/// planning (#5364).
+///
+/// The planner used to find each shard's end by re-encoding growing prefixes,
+/// about a dozen full encodes of the payload. This sizer encodes each seam and
+/// each newly tabled test once. It mirrors [`serialize`] under
+/// `serde_json::to_writer_pretty` with the body nested two levels deep, as
+/// in a cache envelope: both arrays sit at depth 2 and their items at depth
+/// 3, so an item adds six bytes of indentation per line break to its
+/// standalone pretty size. Callers confirm the result against a real encode.
+#[derive(Default)]
+pub(super) struct PrettyTableSizer {
+    index_of: HashMap<Vec<u8>, u32>,
+    tests: usize,
+    test_bytes: usize,
+    seams: usize,
+    seam_bytes: usize,
+}
+
+/// A seam measured against a [`PrettyTableSizer`] but not yet added to it.
+pub(super) struct MeasuredSeam {
+    new_tests: Vec<Vec<u8>>,
+    new_test_bytes: usize,
+    seam_bytes: usize,
+}
+
+const PRETTY_ITEM_INDENT_PER_LINE: usize = 6;
+
+impl PrettyTableSizer {
+    /// Bytes the body adds to an envelope whose body is the empty table
+    /// (`{"related_tests": [], "seams": []}`).
+    pub(super) fn bytes_over_empty(&self) -> usize {
+        pretty_array_growth(self.tests, self.test_bytes)
+            .saturating_add(pretty_array_growth(self.seams, self.seam_bytes))
+    }
+
+    /// [`Self::bytes_over_empty`] once `measured` is added.
+    pub(super) fn bytes_over_empty_with(&self, measured: &MeasuredSeam) -> usize {
+        pretty_array_growth(
+            self.tests.saturating_add(measured.new_tests.len()),
+            self.test_bytes.saturating_add(measured.new_test_bytes),
+        )
+        .saturating_add(pretty_array_growth(
+            self.seams.saturating_add(1),
+            self.seam_bytes.saturating_add(measured.seam_bytes),
+        ))
+    }
+
+    pub(super) fn measure(&self, classified: &ClassifiedSeam) -> Result<MeasuredSeam, String> {
+        let seam_tests = &classified.evidence.related_tests;
+        let mut new_tests: Vec<Vec<u8>> = Vec::new();
+        let mut new_test_bytes = 0usize;
+        let mut indices = Vec::with_capacity(seam_tests.len());
+        for test in seam_tests {
+            let key = serde_json::to_vec(test).map_err(|err| err.to_string())?;
+            let index = match self.index_of.get(&key) {
+                Some(index) => *index,
+                None => {
+                    let pending = new_tests.iter().position(|seen| *seen == key);
+                    let offset = match pending {
+                        Some(offset) => offset,
+                        None => {
+                            new_test_bytes =
+                                new_test_bytes.saturating_add(pretty_item_bytes(test)?);
+                            new_tests.push(key);
+                            new_tests.len().saturating_sub(1)
+                        }
+                    };
+                    u32::try_from(self.tests.saturating_add(offset))
+                        .map_err(|err| err.to_string())?
+                }
+            };
+            indices.push(index);
+        }
+        let seam_bytes = pretty_item_bytes(&seam_ref(classified, indices))?;
+        Ok(MeasuredSeam {
+            new_tests,
+            new_test_bytes,
+            seam_bytes,
+        })
+    }
+
+    pub(super) fn add(&mut self, measured: MeasuredSeam) -> Result<(), String> {
+        for key in measured.new_tests {
+            let index = u32::try_from(self.tests).map_err(|err| err.to_string())?;
+            self.index_of.insert(key, index);
+            self.tests = self.tests.saturating_add(1);
+        }
+        self.test_bytes = self.test_bytes.saturating_add(measured.new_test_bytes);
+        self.seams = self.seams.saturating_add(1);
+        self.seam_bytes = self.seam_bytes.saturating_add(measured.seam_bytes);
+        Ok(())
+    }
+}
+
+/// A pretty array at depth 2 is `[]` when empty, and otherwise `[`, then each
+/// item on its own line after six spaces, joined by `,`, then a line holding
+/// four spaces and `]`: items plus 8 bytes each plus 6.
+fn pretty_array_growth(items: usize, item_bytes: usize) -> usize {
+    if items == 0 {
+        0
+    } else {
+        item_bytes
+            .saturating_add(items.saturating_mul(8))
+            .saturating_add(6)
+            .saturating_sub(2)
+    }
+}
+
+fn pretty_item_bytes<T: Serialize>(value: &T) -> Result<usize, String> {
+    struct LineCounter {
+        bytes: usize,
+        newlines: usize,
+    }
+    impl std::io::Write for LineCounter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes = self.bytes.saturating_add(buf.len());
+            self.newlines = self
+                .newlines
+                .saturating_add(buf.iter().filter(|byte| **byte == b'\n').count());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = LineCounter {
+        bytes: 0,
+        newlines: 0,
+    };
+    serde_json::to_writer_pretty(&mut counter, value).map_err(|err| err.to_string())?;
+    Ok(counter
+        .bytes
+        .saturating_add(counter.newlines.saturating_mul(PRETTY_ITEM_INDENT_PER_LINE)))
 }
 
 pub(super) fn deserialize<'de, D: Deserializer<'de>>(
