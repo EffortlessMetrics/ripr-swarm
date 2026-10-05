@@ -37,6 +37,8 @@ pub(crate) const RECEIPT_SCHEMA_VERSION: &str = "ripr-pilot-ranking-v1";
 /// are ever replaced.
 const OWNER_MARKER: &str = "ripr-pilot-ranking-checkout";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
+/// `cargo mutants --list` builds cargo metadata for the crate first.
+const LIST_TIMEOUT: Duration = Duration::from_mins(10);
 
 const USAGE: &str = "usage: cargo xtask pilot-ranking check [--manifest <path>]
        cargo xtask pilot-ranking fetch --allow-network [--manifest <path>] [--root <dir>] [--repo <id>]...
@@ -622,6 +624,24 @@ fn label(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
     let mutants = read("mutants.json")?;
     let outcomes = read("outcomes.json")?;
     mutation_spot_check::require_mutants_match_checkout(id, checkout, &repo.revision, &mutants)?;
+    // outcomes.json does not record selection arguments, so an unfiltered
+    // `--list` at the pin is the independent inventory a full run must match.
+    let list_args = [
+        "mutants".to_string(),
+        "--list".to_string(),
+        "--json".to_string(),
+        "--dir".to_string(),
+        checkout.to_string_lossy().into_owned(),
+    ];
+    let listed = run_output_owned_with_timeout(
+        "cargo",
+        &list_args,
+        LIST_TIMEOUT,
+        "pilot-ranking cargo mutants --list",
+    )?;
+    let listed: Value = serde_json::from_str(&listed)
+        .map_err(|err| format!("parse `cargo mutants --list --json` for `{id}`: {err}"))?;
+    require_full_run(id, &listed, &mutants)?;
     let labels = labels_from_mutants_out(repo, &mutants, &outcomes)?;
     let path = labels_dir.join(&repo.labels);
     fs::write(&path, render_labels(&labels)?)
@@ -638,6 +658,39 @@ fn label(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
             "pilot-ranking: set `{id}`'s manifest `labeled` to {{\"caught\": {}, \"missed\": {}}} once this relabel is intended",
             found.caught, found.missed
         );
+    }
+    Ok(())
+}
+
+/// A label set must cover every mutant cargo-mutants generates at the pin:
+/// a run narrowed by `--file`, `--re`, `--package` or `--shard` leaves real
+/// mutants out of the key, and picks there would score as unscored rather
+/// than refuted.
+fn require_full_run(id: &str, listed: &Value, mutants: &Value) -> Result<(), String> {
+    let names = |records: &Value, what: &str| -> Result<BTreeSet<String>, String> {
+        records
+            .as_array()
+            .ok_or_else(|| format!("{what} for `{id}` is not an array of mutants"))?
+            .iter()
+            .map(|record| {
+                record
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("a mutant in {what} for `{id}` has no name"))
+            })
+            .collect()
+    };
+    let listed = names(listed, "`cargo mutants --list`")?;
+    let run = names(mutants, "mutants.json")?;
+    let missing = listed.difference(&run).count();
+    let extra = run.difference(&listed).count();
+    if missing > 0 || extra > 0 {
+        return Err(format!(
+            "mutants.out for `{id}` holds {} mutants, but an unfiltered `cargo mutants --list` at the pin lists {} ({missing} missing from the run, {extra} not listed); label from a full run with no selection arguments",
+            run.len(),
+            listed.len()
+        ));
     }
     Ok(())
 }

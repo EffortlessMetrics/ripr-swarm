@@ -6,5 +6,6 @@
   rerunning cargo-mutants. A new advisory `ranking` scoreboard lane compares
   the pooled numbers, the confirmed and refuted counts and the pick count with
   a committed baseline nightly, on demand, and when a pull request that
-  touches pilot ranking or seam grading leaves draft. Labels are
-  documented as coming from a full cargo-mutants run.
+  touches pilot ranking or seam grading leaves draft. Labels must
+  come from a full cargo-mutants run, checked against an unfiltered
+  `cargo mutants --list`.

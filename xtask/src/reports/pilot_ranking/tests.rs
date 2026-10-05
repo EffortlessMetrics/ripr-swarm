@@ -571,3 +571,26 @@ fn default_binary_follows_the_target_directory_cargo_reports() -> Result<(), Str
     assert!(release_binary("{}").is_err_and(|err| err.contains("target_directory")));
     Ok(())
 }
+
+#[test]
+fn label_refuses_a_run_narrower_than_the_pin_lists() {
+    let named = |names: &[&str]| -> Value {
+        Value::Array(names.iter().map(|name| json!({ "name": name })).collect())
+    };
+    let listed = named(&["a", "b", "c"]);
+    assert_eq!(
+        require_full_run("demo", &listed, &named(&["c", "a", "b"])),
+        Ok(())
+    );
+    // `--file` dropped `c`; the run's own files agree with each other but
+    // not with the unfiltered inventory.
+    assert!(
+        require_full_run("demo", &listed, &named(&["a", "b"]))
+            .is_err_and(|err| err.contains("1 missing from the run"))
+    );
+    assert!(
+        require_full_run("demo", &listed, &named(&["a", "b", "c", "d"]))
+            .is_err_and(|err| err.contains("1 not listed"))
+    );
+    assert!(require_full_run("demo", &json!({}), &listed).is_err());
+}
