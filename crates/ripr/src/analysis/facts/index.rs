@@ -306,15 +306,23 @@ impl Deref for FileFactsView<'_> {
 impl serde::Serialize for FileFactsView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         // Attached encoding, identical to `FileFacts`: children keep spans
-        // into `source` (detached `FunctionFact` serialization would inline
-        // them instead).
-        let functions: Vec<FunctionFactWire> =
-            self.functions.iter().map(FunctionFactWire::from).collect();
-        let tests: Vec<TestFactWire> = self.tests.iter().map(TestFactWire::from).collect();
+        // into `source` when they share its allocation (detached
+        // `FunctionFact` serialization would inline them instead), and
+        // arena children from a foreign allocation inline their text.
+        let functions: Vec<FunctionFactWire> = self
+            .functions
+            .iter()
+            .map(|fact| FunctionFactWire::attached(fact, &self.source))
+            .collect();
+        let tests: Vec<TestFactWire> = self
+            .tests
+            .iter()
+            .map(|fact| TestFactWire::attached(fact, &self.source))
+            .collect();
         let probe_shapes: Vec<ProbeShapeFactWire> = self
             .probe_shapes
             .iter()
-            .map(ProbeShapeFactWire::from)
+            .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
         let mut state = serializer.serialize_struct("FileFacts", 11)?;
         state.serialize_field("path", &self.path)?;

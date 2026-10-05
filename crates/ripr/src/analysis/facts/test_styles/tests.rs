@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::facts::{FileFacts, OwnedRustIndex, SourceText};
+use crate::analysis::facts::{FileFacts, OwnedRustIndex};
 use crate::analysis::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use std::error::Error;
 use std::fs;
@@ -1057,17 +1057,8 @@ fn equal_function_keys_keep_distinct_local_context_and_legacy_flat_roles() -> Re
     gated.functions = vec![function.clone()];
     let mut plain = gated.clone();
     plain.source = "\n\nfn helper() -> usize { 7 }\n".into();
-    // #5415 step 2: the swapped source no longer contains the cloned spans,
-    // so these synthetic children decode owned (same text, no linkage).
-    for function in &mut plain.functions {
-        function.body = SourceText::owned(function.body.as_str());
-    }
-    for test in &mut plain.tests {
-        test.body = SourceText::owned(test.body.as_str());
-    }
-    for shape in &mut plain.probe_shapes {
-        shape.text = SourceText::owned(shape.text.as_str());
-    }
+    // #5415 step 2: the swapped source no longer shares the cloned spans'
+    // allocation, so the attached wire inlines those children (same text).
     let mut actual = RustIndex::default();
     actual.insert_file(PathBuf::from("a-context.rs"), gated, true);
     actual.insert_file(PathBuf::from("z-context.rs"), plain, true);

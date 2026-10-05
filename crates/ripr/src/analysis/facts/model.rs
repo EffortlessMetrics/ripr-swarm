@@ -648,7 +648,12 @@ impl From<&SourceText> for String {
 
 impl serde::Serialize for SourceText {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        WireText::from(self).serialize(serializer)
+        // Bare serialization has no parent allocation to resolve a span
+        // against, so it always inlines (detached by definition).
+        WireText::Inline {
+            text: self.as_str().to_string(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -663,14 +668,21 @@ pub(crate) enum WireText {
     Inline { text: String },
 }
 
-impl From<&SourceText> for WireText {
-    fn from(text: &SourceText) -> Self {
+impl WireText {
+    /// Attached encoding for one child of `parent`: a span is emitted
+    /// only when the child provably shares the parent allocation. A
+    /// child from a foreign allocation (reassigned source, arena-backed
+    /// view child from another file) falls back to inline text, so a
+    /// span can never silently resolve to different bytes at decode.
+    pub(crate) fn attached(text: &SourceText, parent: &Arc<str>) -> Self {
         match &text.inner {
-            SourceTextInner::Shared { start, len, .. } => WireText::Span {
-                start: *start,
-                len: *len,
-            },
-            SourceTextInner::Owned(_) => WireText::Inline {
+            SourceTextInner::Shared { source, start, len } if Arc::ptr_eq(source, parent) => {
+                WireText::Span {
+                    start: *start,
+                    len: *len,
+                }
+            }
+            _ => WireText::Inline {
                 text: text.as_str().to_string(),
             },
         }
@@ -1298,15 +1310,44 @@ pub(crate) struct FileFactsWire {
     pub source: String,
 }
 
-impl From<&FunctionFact> for FunctionFactWire {
-    fn from(fact: &FunctionFact) -> Self {
+impl FunctionFactWire {
+    /// Attached encoding: the body spans only when it shares `parent`
+    /// (see [`WireText::attached`]).
+    pub(crate) fn attached(fact: &FunctionFact, parent: &Arc<str>) -> Self {
         Self {
             id: fact.id.clone(),
             name: fact.name.clone(),
             file: fact.file.clone(),
             start_line: fact.start_line,
             end_line: fact.end_line,
-            body: WireText::from(&fact.body),
+            body: WireText::attached(&fact.body, parent),
+            calls: fact.calls.clone(),
+            returns: fact.returns.clone(),
+            literals: fact.literals.clone(),
+            source_role: fact.source_role,
+            attrs: fact.attrs.clone(),
+            impl_attrs: fact.impl_attrs.clone(),
+            nested_fn_names: fact.nested_fn_names.clone(),
+            let_bindings: fact.let_bindings.clone(),
+            item: fact.item.clone(),
+            impl_context: fact.impl_context.clone(),
+        }
+    }
+
+    /// Self-contained encoding for detached snapshots (whole-index wire):
+    /// the body resolves to inline text, so the payload decodes without
+    /// its file allocation. Attached children instead use [`Self::attached`]
+    /// through [`FileFacts`].
+    fn detached(fact: &FunctionFact) -> Self {
+        Self {
+            id: fact.id.clone(),
+            name: fact.name.clone(),
+            file: fact.file.clone(),
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            body: WireText::Inline {
+                text: fact.body.as_str().to_string(),
+            },
             calls: fact.calls.clone(),
             returns: fact.returns.clone(),
             literals: fact.literals.clone(),
@@ -1321,14 +1362,35 @@ impl From<&FunctionFact> for FunctionFactWire {
     }
 }
 
-impl From<&TestFact> for TestFactWire {
-    fn from(fact: &TestFact) -> Self {
+impl TestFactWire {
+    /// Attached encoding; see [`FunctionFactWire::attached`].
+    pub(crate) fn attached(fact: &TestFact, parent: &Arc<str>) -> Self {
         Self {
             name: fact.name.clone(),
             file: fact.file.clone(),
             start_line: fact.start_line,
             end_line: fact.end_line,
-            body: WireText::from(&fact.body),
+            body: WireText::attached(&fact.body, parent),
+            calls: fact.calls.clone(),
+            assertions: fact.assertions.clone(),
+            literals: fact.literals.clone(),
+            attrs: fact.attrs.clone(),
+            nested_fn_names: fact.nested_fn_names.clone(),
+            let_bindings: fact.let_bindings.clone(),
+        }
+    }
+
+    /// Self-contained encoding for detached snapshots; see
+    /// [`FunctionFactWire::detached`].
+    fn detached(fact: &TestFact) -> Self {
+        Self {
+            name: fact.name.clone(),
+            file: fact.file.clone(),
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            body: WireText::Inline {
+                text: fact.body.as_str().to_string(),
+            },
             calls: fact.calls.clone(),
             assertions: fact.assertions.clone(),
             literals: fact.literals.clone(),
@@ -1339,40 +1401,29 @@ impl From<&TestFact> for TestFactWire {
     }
 }
 
-impl FunctionFactWire {
-    /// Self-contained encoding for detached snapshots (whole-index wire):
-    /// the body resolves to inline text, so the payload decodes without
-    /// its file allocation. Attached children instead use the
-    /// span-preserving `From` conversion through [`FileFacts`].
-    fn detached(fact: &FunctionFact) -> Self {
-        let mut wire = Self::from(fact);
-        wire.body = WireText::Inline {
-            text: fact.body.as_str().to_string(),
-        };
-        wire
-    }
-}
-
-impl TestFactWire {
-    /// Self-contained encoding for detached snapshots; see
-    /// [`FunctionFactWire::detached`].
-    fn detached(fact: &TestFact) -> Self {
-        let mut wire = Self::from(fact);
-        wire.body = WireText::Inline {
-            text: fact.body.as_str().to_string(),
-        };
-        wire
-    }
-}
-
-impl From<&ProbeShapeFact> for ProbeShapeFactWire {
-    fn from(fact: &ProbeShapeFact) -> Self {
+impl ProbeShapeFactWire {
+    /// Attached encoding; see [`FunctionFactWire::attached`].
+    pub(crate) fn attached(fact: &ProbeShapeFact, parent: &Arc<str>) -> Self {
         Self {
             start_line: fact.start_line,
             end_line: fact.end_line,
             start_byte: fact.start_byte,
             kind: fact.kind,
-            text: WireText::from(&fact.text),
+            text: WireText::attached(&fact.text, parent),
+        }
+    }
+
+    /// Self-contained encoding for detached snapshots; see
+    /// [`FunctionFactWire::detached`].
+    fn detached(fact: &ProbeShapeFact) -> Self {
+        Self {
+            start_line: fact.start_line,
+            end_line: fact.end_line,
+            start_byte: fact.start_byte,
+            kind: fact.kind,
+            text: WireText::Inline {
+                text: fact.text.as_str().to_string(),
+            },
         }
     }
 }
@@ -1381,15 +1432,23 @@ impl From<&FileFacts> for FileFactsWire {
     fn from(facts: &FileFacts) -> Self {
         Self {
             path: facts.path.clone(),
-            functions: facts.functions.iter().map(FunctionFactWire::from).collect(),
-            tests: facts.tests.iter().map(TestFactWire::from).collect(),
+            functions: facts
+                .functions
+                .iter()
+                .map(|fact| FunctionFactWire::attached(fact, &facts.source))
+                .collect(),
+            tests: facts
+                .tests
+                .iter()
+                .map(|fact| TestFactWire::attached(fact, &facts.source))
+                .collect(),
             calls: facts.calls.clone(),
             returns: facts.returns.clone(),
             literals: facts.literals.clone(),
             probe_shapes: facts
                 .probe_shapes
                 .iter()
-                .map(ProbeShapeFactWire::from)
+                .map(|fact| ProbeShapeFactWire::attached(fact, &facts.source))
                 .collect(),
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations.clone(),
@@ -1561,7 +1620,7 @@ impl<'de> serde::Deserialize<'de> for TestFact {
 
 impl serde::Serialize for ProbeShapeFact {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        ProbeShapeFactWire::from(self).serialize(serializer)
+        ProbeShapeFactWire::detached(self).serialize(serializer)
     }
 }
 
@@ -1906,6 +1965,65 @@ mod tests {
         });
         let decoded: Result<FileFacts, _> = serde_json::from_value(wire);
         assert!(decoded.is_err(), "legacy string body must not decode");
+    }
+
+    #[test]
+    fn attached_wire_inlines_children_from_a_foreign_allocation() -> Result<(), serde_json::Error> {
+        // A child built against another allocation must never encode a
+        // span: the span would resolve against the wrong `source` at
+        // decode. It inlines its text instead, and the round trip
+        // preserves every byte.
+        let home: Arc<str> = Arc::from("fn a() {}\n");
+        let away: Arc<str> = Arc::from("fn b() {}\n");
+        let mut facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![FunctionFact {
+                id: SymbolId("src/lib.rs::a".to_string()),
+                name: "a".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                end_line: 1,
+                body: SourceText::shared_or_owned(&home, 0, "fn a() {}"),
+                calls: Vec::new(),
+                returns: Vec::new(),
+                literals: Vec::new(),
+                source_role: FunctionSourceRole::Production,
+                attrs: Vec::new(),
+                impl_attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+                item: FunctionItemFact::default(),
+                impl_context: FunctionImplContext::Unknown,
+            }],
+            tests: Vec::new(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            probe_shapes: Vec::new(),
+            used_lexical_fallback: false,
+            module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
+            role_provenance: SourceRoleProvenance::default(),
+            source: Arc::clone(&home),
+        };
+        // Paired children span.
+        let wire = serde_json::to_value(&facts)?;
+        assert_eq!(
+            wire["functions"][0]["body"],
+            serde_json::json!({"start": 0, "len": 9})
+        );
+        // Reassigned source: the foreign child inlines, and the text
+        // survives the round trip instead of resolving to "fn b() {}".
+        facts.source = Arc::clone(&away);
+        let wire = serde_json::to_value(&facts)?;
+        assert_eq!(
+            wire["functions"][0]["body"],
+            serde_json::json!({"text": "fn a() {}"})
+        );
+        let decoded: FileFacts = serde_json::from_value(wire)?;
+        assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
+        assert_eq!(decoded.source.as_ref(), "fn b() {}\n");
+        Ok(())
     }
 
     #[test]
