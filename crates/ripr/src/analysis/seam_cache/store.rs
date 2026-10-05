@@ -367,6 +367,7 @@ fn publish_sharded_generation(
         return Err("sharded classified cache publication requires at least one shard".to_string());
     }
     let shard_count = ranges.len();
+    let started_at = std::time::SystemTime::now();
     let sharded_dir = cache.sharded_entry_dir(key);
     std::fs::create_dir_all(&sharded_dir)
         .map_err(|err| format!("create sharded cache dir failed: {err}"))?;
@@ -435,10 +436,7 @@ fn publish_sharded_generation(
     unpublished.retain();
     #[cfg(test)]
     run_after_commit_hook();
-    // The loader prefers a single entry over a manifest. A competing writer that
-    // rolls back after parking can restore an older single entry after this
-    // commit; removing it here closes that window, and a miss is the worst result.
-    let _ = std::fs::remove_file(cache.entry_path(key));
+    remove_single_entry_older_than(&cache.entry_path(key), started_at);
     if let Some(previous) = previous {
         remove_replaced_generation_files(&sharded_dir, &previous, &publication_id);
     }
@@ -458,20 +456,37 @@ fn publish_sharded_generation(
     })
 }
 
+/// The loader prefers a single entry over a manifest. A competing writer that rolls
+/// back after parking can restore an older single entry after this writer's manifest
+/// commit (a re-check after its `hard_link` usually catches that, so this is defence
+/// in depth). Remove only an entry last written before this publication began: a
+/// single entry a later writer published is newer and stays.
+fn remove_single_entry_older_than(entry: &Path, started_at: std::time::SystemTime) {
+    let Ok(modified) = std::fs::symlink_metadata(entry).and_then(|meta| meta.modified()) else {
+        return;
+    };
+    if modified < started_at {
+        let _ = std::fs::remove_file(entry);
+    }
+}
+
 fn read_previous_manifest(
     cache: &RepoSeamFactCache,
     key: &RepoSeamCacheKey,
 ) -> Option<ShardedCacheManifest> {
     let bytes = std::fs::read(cache.sharded_manifest_path(key)).ok()?;
     let manifest = codec::decode_sharded_manifest(&bytes).ok()?;
-    // A tampered manifest must not steer deletes.
+    // The digest is keyless, so it catches corruption, not a hostile writer; deletes
+    // are bounded by only ever touching files under `g*/`.
     manifest.validate_integrity().ok()?;
     Some(manifest)
 }
 
 /// Generation directories a terminated or superseded writer left behind stay until they
-/// are this old, so a concurrent writer's in-progress generation is never swept.
-const ORPHAN_GENERATION_GRACE: std::time::Duration = std::time::Duration::from_mins(10);
+/// are this old, so a concurrent writer's in-progress generation is not swept. A writer
+/// stalled longer than this between creating its last shard and committing can lose its
+/// generation; the loader checks every listed shard, so that is a cache miss, never wrong data.
+const ORPHAN_GENERATION_GRACE: std::time::Duration = std::time::Duration::from_hours(1);
 
 /// Remove `g*` generation directories under `sharded_dir` that the current manifest
 /// does not reference and that have not been touched for `grace`. Any doubt (no
@@ -1674,7 +1689,14 @@ mod tests {
         let entry = cache.entry_path(&key);
         // A competing writer rolls back after this commit and restores its parked entry.
         after_next_manifest_commit(Box::new(move || {
-            let _ = std::fs::write(entry, stale_single);
+            if let Ok(file) = std::fs::File::create(&entry) {
+                use std::io::Write;
+                let mut file = file;
+                let _ = file.write_all(&stale_single);
+                let _ = file.set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_hours(1),
+                );
+            }
         }));
         cache
             .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
@@ -1683,6 +1705,36 @@ mod tests {
             "a restored older single entry must not survive a newer sharded commit"
         );
         round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn single_entry_published_after_a_sharded_commit_is_kept() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("newer-single", 6)?;
+        let newer = vec![classified_with_pad("newer-single")];
+        let entry = cache.entry_path(&key);
+        let bytes = {
+            let scratch = RepoSeamFactCache::at_dir(isolated_dir("newer-single-scratch"));
+            scratch.store_classified_seams_with_record_and_byte_limits(
+                &key, &newer, None, 8, 1_000_000,
+            )?;
+            std::fs::read(scratch.entry_path(&key)).map_err(|err| err.to_string())?
+        };
+        // A competing single publication lands after this writer's manifest commit.
+        after_next_manifest_commit(Box::new(move || {
+            if let Some(parent) = entry.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&entry, bytes);
+        }));
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert!(
+            cache.entry_path(&key).exists(),
+            "a single entry published after the commit is newer and must stay"
+        );
+        round_trip(&cache, &key, &newer)?;
         ignore_remove_dir_all(&dir);
         Ok(())
     }
@@ -1711,7 +1763,7 @@ mod tests {
             "a young orphan may belong to a writer still running"
         );
         assert!(orphan.exists());
-        let later = now + std::time::Duration::from_hours(1);
+        let later = now + std::time::Duration::from_hours(2);
         assert_eq!(
             sweep_orphan_generations(&sharded, later, ORPHAN_GENERATION_GRACE),
             1
@@ -1738,7 +1790,7 @@ mod tests {
         let mut bytes = std::fs::read(&manifest).map_err(|err| err.to_string())?;
         bytes.push(b'x');
         std::fs::write(&manifest, bytes).map_err(|err| err.to_string())?;
-        let later = std::time::SystemTime::now() + std::time::Duration::from_hours(1);
+        let later = std::time::SystemTime::now() + std::time::Duration::from_hours(2);
         assert_eq!(
             sweep_orphan_generations(&sharded, later, std::time::Duration::ZERO),
             0
@@ -1752,7 +1804,7 @@ mod tests {
     }
 
     #[test]
-    fn tampered_previous_manifest_cannot_steer_deletes() -> Result<(), String> {
+    fn tampered_previous_manifest_never_deletes_the_live_manifest() -> Result<(), String> {
         let (dir, cache, key, seams) = sharded_fixture("tampered-manifest", 6)?;
         cache
             .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;

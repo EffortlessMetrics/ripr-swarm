@@ -58,11 +58,13 @@ proving a universal RSS threshold.
   (a leftover manifest from an earlier single-entry publish does not
   block restore; a replaced or unreadable manifest does). After its
   manifest commits, the writer also removes any single entry at the
-  preferred path, so a competing writer that rolls back late cannot
-  restore an older single entry over the newer generation.
+  preferred path when that entry was last written before this publication
+  began, so a competing writer that rolls back late cannot restore an
+  older single entry over the newer generation. A single entry a later
+  writer published is newer and stays.
 - After a commit, the writer removes `g*/` generation directories the
-  current manifest does not reference once they are older than ten
-  minutes (a killed or superseded writer leaves them). The previous
+  current manifest does not reference once they are older than one
+  hour (a terminated or superseded writer leaves them). The previous
   manifest is integrity-validated before any of its files are deleted,
   and only files under `g*/` are ever deleted.
 - If one classified seam cannot fit under the configured byte ceiling,
@@ -149,6 +151,13 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_cache_paths_reject_drive_prefix_and_parent_components`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::oversized_record_skip_names_the_record_its_size_and_the_remedy`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::oversized_metadata_skip_names_metadata_not_a_record`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::older_single_entry_restored_after_a_sharded_commit_never_hides_it`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::single_entry_published_after_a_sharded_commit_is_kept`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_generations_are_swept_only_when_old_and_unreferenced`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::tampered_previous_manifest_never_deletes_the_live_manifest`
 - Existing `crates/ripr/src/analysis/seam_cache.rs` integrity, missing-shard,
   and sharded warm-hit tests
 
