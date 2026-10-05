@@ -168,7 +168,9 @@ Baseline review status values:
 - `stale` - `review_after` is in the past. `unix_ms:<millis>` deadlines compare
   in milliseconds; `YYYY-MM-DD` dates and RFC3339 datetimes compare against
   the UTC run date taken from `generated_at`. RFC3339 values with a numeric
-  offset are converted to UTC before that day comparison.
+  offset are converted to UTC before that day comparison. RFC 3339 leap seconds
+  (`23:59:60` UTC, including offset forms such as `15:59:60-08:00`) stay on that
+  UTC civil day; other `*:60` values are `unknown`.
 - `missing_metadata` - owner, reason, created_at, or review_after is absent.
 - `unknown` - the report cannot parse enough metadata to classify the entry,
   including a present `review_after` that cannot be compared with

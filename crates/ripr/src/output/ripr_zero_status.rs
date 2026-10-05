@@ -1674,24 +1674,25 @@ fn parse_rfc3339_utc_day(value: &str) -> Option<String> {
         return None;
     }
     let second = parse_two_digits(time.get(6..8)?)?;
-    if hour > 23 || minute > 59 {
+    if hour > 23 || minute > 59 || second > 60 {
         return None;
     }
-    // RFC 3339 §5.7 permits `23:59:60` as a leap second. Civil-day conversion
-    // keeps that instant on the same UTC day rather than rolling into the next.
-    let second_for_day = match second {
-        0..=59 => second,
-        60 if hour == 23 && minute == 59 => 59,
-        _ => return None,
-    };
     let offset_seconds = parse_rfc3339_offset(skip_rfc3339_fraction(time.get(8..)?)?)?;
     let local_days = civil_date_to_days(year, month, day)?;
     let local_seconds = local_days
         .checked_mul(86_400)?
         .checked_add(i64::from(hour) * 3_600)?
         .checked_add(i64::from(minute) * 60)?
-        .checked_add(i64::from(second_for_day))?;
+        .checked_add(i64::from(second.min(59)))?;
     let utc_seconds = local_seconds.checked_sub(offset_seconds)?;
+    // RFC 3339 §5.7 leap seconds are 23:59:60 UTC, including offset forms such
+    // as 15:59:60-08:00. Civil-day conversion keeps that instant on the UTC day.
+    if second == 60 {
+        const UTC_LEAP_SECOND_TOD: i64 = 23 * 3_600 + 59 * 60 + 59;
+        if utc_seconds.rem_euclid(86_400) != UTC_LEAP_SECOND_TOD {
+            return None;
+        }
+    }
     let utc_days = utc_seconds.div_euclid(86_400);
     format_civil_day(days_to_civil_date(utc_days)?)
 }
@@ -2001,6 +2002,14 @@ mod tests {
             MetadataState::Stale,
             "RFC 3339 leap second 23:59:60 stays on that UTC day"
         );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("1990-12-31T15:59:60-08:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC 3339 leap second with offset is the same UTC instant"
+        );
     }
 
     #[test]
@@ -2060,7 +2069,15 @@ mod tests {
                 RUN_AT_2026_10_05_NOON
             ),
             MetadataState::Unknown,
-            "second 60 is only a leap second at 23:59"
+            "second 60 is only a leap second at 23:59 UTC"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:59:60-02:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "local 23:59:60 is not a leap second unless UTC is 23:59"
         );
         assert_eq!(
             classify_review(Some(complete_review("2026-01-01")), "not-a-timestamp"),
@@ -2107,7 +2124,7 @@ mod tests {
                 RUN_AT_2026_10_05_NOON
             ),
             MetadataState::Current,
-            "same-day leap second stays on the UTC run date"
+            "same-day UTC leap second stays on the UTC run date"
         );
         assert_eq!(
             classify_review(Some(complete_review("2026-12-31")), RUN_AT_2026_10_05_NOON),

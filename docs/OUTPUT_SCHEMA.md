@@ -9923,8 +9923,9 @@ Field contract:
 - `baseline.metadata.current`, `stale`, `missing_metadata`, and `unknown` -
   baseline review metadata health counts. `stale` includes past-due
   `unix_ms:<millis>` and `YYYY-MM-DD` `review_after` values, and RFC3339
-  datetimes after conversion to the UTC run date. Impossible Gregorian dates
-  and a `T` suffix that is not RFC3339 count as `unknown`, not `current`.
+  datetimes after conversion to a UTC calendar date. Impossible Gregorian dates,
+  a `T` suffix that is not RFC3339, and `*:60` values that are not `23:59:60`
+  UTC (including offset leap-second forms) count as `unknown`, not `current`.
   Missing metadata must not hide the entry.
 - `debt_delta.*` - baseline movement buckets copied from the baseline debt
   delta report so summaries can show old debt, new debt, resolved debt,

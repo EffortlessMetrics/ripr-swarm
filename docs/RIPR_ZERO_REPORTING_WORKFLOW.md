@@ -107,12 +107,14 @@ stale metadata
 
 `review_after` may be `unix_ms:<millis>` or a `YYYY-MM-DD` calendar date.
 RFC3339 datetimes (`YYYY-MM-DDTHH:MM:SSZ` or with a numeric offset; `t`/`z`
-case-insensitive) convert to the UTC run date; a `T`/`t` suffix that is not a
-complete RFC3339 value is `unknown`. Impossible calendar dates (including
-February 31 and 29 February on a non-leap year) are `unknown`. Calendar
-deadlines are compared with the UTC
-run date taken from `generated_at`. A supplied deadline that cannot be compared
-is counted as `unknown` and warned; it is not reported as `current`.
+case-insensitive) convert to a UTC calendar date before comparison with the UTC
+run date; a `T`/`t` suffix that is not a complete RFC3339 value is `unknown`.
+Leap seconds are accepted only as `23:59:60` UTC, including offset forms such as
+`1990-12-31T15:59:60-08:00`; other `*:60` values are `unknown`. Impossible
+calendar dates (including February 31 and 29 February on a non-leap year) are
+`unknown`. Calendar deadlines are compared with the UTC run date taken from
+`generated_at`. A supplied deadline that cannot be compared is counted as
+`unknown` and warned; it is not reported as `current`.
 
 Use shrink-only refreshes after focused tests move evidence:
 
