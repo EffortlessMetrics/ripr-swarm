@@ -792,23 +792,35 @@ impl PackageWalk {
     /// walk's cost (about a millisecond a file), and the walk expands one
     /// file at a time.
     fn scan_ahead(&mut self, workspace_root: &Path, target: &Path, file: &Path) {
-        let mut pending = self
-            .queue
-            .iter()
-            .map(|(queued, _)| queued)
-            .filter(|queued| {
-                queued.as_path() != file
-                    && !self.scans.contains_key(*queued)
-                    && !self.read_ahead.contains_key(*queued)
-            })
-            .collect::<Vec<_>>();
+        let unscanned = |queued: &&PathBuf| {
+            queued.as_path() != file
+                && !self.scans.contains_key(*queued)
+                && !self.read_ahead.contains_key(*queued)
+        };
         // The same order `step` picks in: nearest the target first, or the
-        // stack top past the directed bound.
-        if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
-            pending.sort_by_key(|queued| std::cmp::Reverse(shared_prefix_len(queued, target)));
+        // stack top past the directed bound. Past the bound the queue can be
+        // long, so only the entries the batch takes are visited.
+        let pending = if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+            let mut nearest = self
+                .queue
+                .iter()
+                .map(|(queued, _)| queued)
+                .filter(unscanned)
+                .collect::<Vec<_>>();
+            nearest.sort_by_key(|queued| std::cmp::Reverse(shared_prefix_len(queued, target)));
+            nearest
         } else {
-            pending.reverse();
-        }
+            let mut stack_top = Vec::new();
+            for queued in self.queue.iter().rev().map(|(queued, _)| queued) {
+                if stack_top.len() >= READ_AHEAD_FILES {
+                    break;
+                }
+                if unscanned(&queued) && !stack_top.contains(&queued) {
+                    stack_top.push(queued);
+                }
+            }
+            stack_top
+        };
         let mut batch = vec![file.to_path_buf()];
         for queued in pending {
             if batch.len() >= READ_AHEAD_FILES {
@@ -1132,7 +1144,11 @@ mod tests {
             || evidence_for(&root, &["b/src/reached.rs"]),
         );
         let _ = std::fs::remove_dir_all(&root);
-        assert!(committed.module_graph_orphans.is_empty(), "{:?}", committed.module_graph_orphans);
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "{:?}",
+            committed.module_graph_orphans
+        );
         Ok(())
     }
 
