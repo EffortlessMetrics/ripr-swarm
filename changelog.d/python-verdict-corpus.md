@@ -5,4 +5,4 @@
   by running its mutants against the project's own tests.
   `cargo xtask verdict-corpus check --language python` scores them: today
   15/32 false actionable, 6/29 false exposed, 0/29 false silent. The DX
-  scoreboard gates those three rates against the committed baseline.
+  scoreboard gates those three rates against the committed baseline (#6597).
