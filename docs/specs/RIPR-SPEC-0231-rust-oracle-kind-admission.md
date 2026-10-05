@@ -109,7 +109,8 @@ wildcard pre-check (#5410) assigns `relational_check` / weak to an
 `assert!`, `debug_assert!` or `ensure!` whose whole condition is
 `matches!(x, _)`, and to an `assert_matches!` or `debug_assert_matches!`
 whose pattern is a whole unguarded `_`. Admission rule 3 widens this
-pre-check to every whole irrefutable pattern, guarded or not.
+pre-check to every whole irrefutable pattern, guarded or not, except for a
+guard that pins a value (decision 6).
 
 0. an `ensure!` condition runs its own sub-chain
    (`classify_fallible_assertion`): `exact_error_variant` / strong, then
@@ -176,13 +177,15 @@ Two pattern terms are used below.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
    irrefutable, `..` or pins no value (rule 3's test) assigns
-   `broad_error` / weak, guard or not.
+   `broad_error` / weak, guard or not, unless the guard pins a value
+   (decision 6).
    `Err(E::X)`, `Err(E::X(..))` and `Err(E::X { .. })` stay
    `exact_error_variant`. `assert_eq!` against `Err(value)` with any
    expression stays `exact_error_variant`, because equality pins the value.
 3. **Pattern assertions follow their pattern.** Before step 0, with the
    wildcard pre-check, a `matches!` or `assert_matches!` whose whole
-   pattern is irrefutable assigns `relational_check` / weak, guard or not,
+   pattern is irrefutable assigns `relational_check` / weak, guard or not
+   (except a guard that pins a value, decision 6),
    so `Ok(_) | Err(_)` never reaches step 2 as a result-side oracle that
    RIPR-SPEC-0227 rules 3 and 3b could credit. Rule 2 takes precedence
    over the rest of this rule for an `Err(..)` pattern it covers, so
@@ -250,8 +253,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    (`probe_relative_oracle_strength`) may lower but never raise a medium, weak
    or smoke classifier strength, and the return-value owner pin needs a strong
    oracle. Without this an `assert_ne!` struct literal's weak
-   `whole_object_equality` came back as strong and pinned the owner. Rejected:
-   a new kind for weak whole-object inequality (decision 1).
+   `whole_object_equality` (rule 1) came back as strong and pinned the
+   owner. Today every exact kind the classifier emits is strong, so the cap
+   and the gate change nothing until rule 1 emits a weak exact kind; they
+   are what keeps rule 1's weakening from being undone downstream. This
+   narrows the owner-pin Non-Goal below: the pin's confirmation is
+   unchanged, but it no longer accepts a weak oracle. Rejected: a new kind
+   for weak whole-object inequality (decision 1).
 4. **Asserted subject for observer words.** Adopted: rule 5's subject is
    every identifier except the name of a free function call (`is_present()`);
    a method or getter name (`store.saved()`) still counts. Rejected: parsing
@@ -261,15 +269,19 @@ rejected alternative. Any can be reversed later without touching the rest.
    a single-variant enum and keep today's exact reading, as the rules allow.
    Those two forms of examples 24 and 25 stay `not_established` until type
    resolution reaches the oracle classifier (#6737).
-6. **A guard with `==`.** Adopted: rules 2 and 3 weaken a guarded pattern
-   only when the guard has no `==` comparison. `_ if value == 2` and
-   `Some(x) if x == 3` keep the ordinary chain's reading, because the guard
-   pins a value: RIPR-SPEC-0108's runtime-controlled fixtures
+6. **A guard that pins a value.** Adopted: a guard pins a value when one of
+   its top-level `&&` conjuncts is `a == b` with `a` or `b` the matched
+   scrutinee or a name the pattern binds. Rules 2 and 3 then leave the
+   assertion to the ordinary chain: `_ if value == 2`, `Some(x) if x == 3`
+   and `Err(e) if e == E::Bad` keep today's exact reading.
+   RIPR-SPEC-0108's runtime-controlled fixtures
    `wildcard_oracle_guarded_original` and `_wrong` show the guarded equality
    catches the wrong value, and reading it as weak turned their `exposed`
-   into a false gap. Guards such as `!e.is_empty()` and `e.len() > 1`
-   (examples 3 and 21) still weaken. Rejected: weakening every guard, as
-   rule 3's "guard or not" reads literally.
+   into a false gap. Any other guard still weakens: `!e.is_empty()`,
+   `e.len() > 1` (examples 3 and 21), `e.len() == 3` and `flag == true`.
+   Rejected: weakening every guard, as rules 2 and 3's "guard or not" read
+   literally, and keeping every guard that contains `==`, which keeps
+   `Err(e) if e.len() == 3` as a strong variant pin.
 
 ## Required Evidence
 
@@ -290,7 +302,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No new oracle kind or strength value.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
-- No change to reveal's token or owner-pin confirmation.
+- No change to reveal's token or owner-pin confirmation, except that the
+  owner pin needs a strong oracle (decision 3).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -338,12 +351,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(matches!(check(5), Ok(_) | Err(_)))`: `relational_check` /
     weak (today `broad_error` / weak, which RIPR-SPEC-0227 could credit).
     `assert!(matches!(pair(), (_, _)))` and `matches!(cfg(), Cfg { .. })`:
-    `relational_check` / weak (today `exact_value` / strong).
+    `relational_check` / weak (today `exact_value` / strong). The
+    `Cfg { .. }` form is `not_established` until the classifier can resolve
+    a struct path (decision 5, #6737).
 25. `assert!(matches!(lookup(1), Some(1..=5)))`: `relational_check` / weak;
     `assert!(matches!(parse(), Some(Ok(_))))` and `&Some(_)`: `smoke_only` /
     smoke; `assert!(matches!(items(), [_, ..]))` and, for
     `enum Only { Value }`, `assert!(matches!(make(), Only::Value))`:
-    `relational_check` / weak, because neither pins a value;
+    `relational_check` / weak, because neither pins a value (the
+    `Only::Value` form is `not_established` until enum resolution, decision
+    5, #6737);
     `assert!(matches!(items(), [1, ..]))` stays `exact_value`; all read
     `exact_value` / strong today. `assert!(matches!(check(20), Ok(_) | Err(E::Bad)))`:
     `relational_check` / weak (today `exact_error_variant` / strong).
@@ -363,13 +380,17 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
-  (examples 3, 4, 7, 17, 18, 21 to 26 and the pinning controls 6, 22, 23).
+  (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
+  controls 6, 22 and 23, and decision 6's guards).
+- Existing: `classify.rs::tests::spec_0231_pattern_readings_reach_the_classifier_and_scanner`
+  and `spec_0231_pattern_readings_reach_the_parser_path` (the same readings
+  through `classify_assertion`, the line scanner and `syntax/ra.rs`).
 - Existing: `classify.rs::tests::spec_0231_rules_4_to_6_match_whole_names`
-  (examples 8, 9, 10, 12, 15, 16 and 26).
+  (examples 8, 9, 10, 12, 15, 16 and the `is_ok() || is_err()` form of 26).
 - Existing: `reveal.rs::tests::probe_relative_oracle_strength_preserves_family_overrides`
   (a family override never raises a weakened strength).
-- Corpus: the `spec0231-*` verdict-corpus cases (#6638) carry each example's
-  runtime truth.
+- Pending: the `spec0231-*` verdict-corpus cases (#6638) carry each
+  example's runtime truth once they land.
 - Planned: a fixture for example 1 showing the related test's reported kind
   and strength.
 

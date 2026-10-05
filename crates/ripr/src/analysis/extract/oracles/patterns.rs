@@ -266,17 +266,19 @@ fn line_references_variable(line: &str, var: &str) -> bool {
 }
 
 pub(super) fn is_broad_error_assertion(line: &str) -> bool {
-    has_method_segment(line, "is_err") || line.contains("Err(_)")
+    let masked = mask_comments_and_strings(line);
+    has_method_segment(&masked, "is_err") || masked.contains("Err(_)")
 }
 
 /// RIPR-SPEC-0231 rule 4: `.unwrap(`, `.expect(` and the side checks
 /// `is_ok`, `is_some` and `is_none` as whole method names.
 pub(super) fn is_smoke_check(text: &str) -> bool {
-    text.contains(".unwrap(")
-        || text.contains(".expect(")
-        || has_method_segment(text, "is_ok")
-        || has_method_segment(text, "is_some")
-        || has_method_segment(text, "is_none")
+    let masked = mask_comments_and_strings(text);
+    masked.contains(".unwrap(")
+        || masked.contains(".expect(")
+        || has_method_segment(&masked, "is_ok")
+        || has_method_segment(&masked, "is_some")
+        || has_method_segment(&masked, "is_none")
 }
 
 /// RIPR-SPEC-0231 rule 4: `is_ok()` with `is_err()`, or `is_some()` with
@@ -553,11 +555,12 @@ pub(super) fn is_clear_exact_custom_assertion_helper(line: &str) -> bool {
     } else {
         arguments.len() >= 2
     };
-    // RIPR-SPEC-0231 rule 6: only an equality name is strong. An
-    // inequality-named helper (rule 1) is decided by the caller.
+    // RIPR-SPEC-0231 rule 6: only an equality name is strong. Excluding a
+    // `ne`, `not` or `neq` segment is rule 1's case (#6670), not this check.
     let segments = name.split('_').collect::<Vec<_>>();
-    let equality_name = matches!(segments.last().copied(), Some("eq" | "equal" | "equals"))
-        || (segments.len() > 1 && segments.last() == Some(&"matches"));
+    let last = segments.last().copied();
+    let equality_name = matches!(last, Some("eq" | "equal" | "equals"))
+        || (segments.len() > 1 && matches!(last, Some("matches")));
     argument_count_supports_exact && equality_name
 }
 

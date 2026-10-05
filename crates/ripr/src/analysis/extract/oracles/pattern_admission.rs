@@ -40,12 +40,13 @@ enum Reading {
 /// The classification a whole-pattern assertion earns from its pattern, or
 /// `None` when the pattern pins a value and the ordinary chain decides.
 pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClassification> {
-    let pattern = asserted_pattern(line)?;
+    let (scrutinee, pattern) = asserted_pattern(line)?;
     let (pattern, guard) = split_guard(&pattern);
-    // A guard that compares with `==` pins a value itself
-    // (`_ if value == 2`, RIPR-SPEC-0108's runtime-controlled fixtures), so
-    // the ordinary chain keeps its reading (decision 6).
-    if guard.is_some_and(guard_pins_value) {
+    // A guard that equates the scrutinee or a pattern binding with a value
+    // pins that value itself (`_ if value == 2`, RIPR-SPEC-0108's
+    // runtime-controlled fixtures), so the ordinary chain keeps its reading
+    // (decision 6).
+    if guard.is_some_and(|guard| guard_pins_value(guard, &scrutinee, pattern)) {
         return None;
     }
     let guarded = guard.is_some();
@@ -59,12 +60,16 @@ pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClass
 /// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, or
 /// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`
 /// or `ensure!`. A compound condition is not a pattern assertion.
-fn asserted_pattern(line: &str) -> Option<String> {
+fn asserted_pattern(line: &str) -> Option<(String, String)> {
+    let pair = |arguments: Vec<String>| match arguments.as_slice() {
+        [scrutinee, pattern] => Some((scrutinee.clone(), pattern.clone())),
+        _ => None,
+    };
     if let Some(arguments) = ["assert_matches!", "debug_assert_matches!"]
         .into_iter()
         .find_map(|name| complete_macro_arguments(line, name))
     {
-        return arguments.get(1).cloned();
+        return pair(arguments);
     }
     let condition = ["assert!", "debug_assert!", "ensure!"]
         .into_iter()
@@ -73,16 +78,113 @@ fn asserted_pattern(line: &str) -> Option<String> {
     while let Some(inner) = parenthesized_contents(expression) {
         expression = inner.trim();
     }
-    let arguments = complete_macro_arguments(expression, "matches!")?;
-    if arguments.len() == 2 {
-        arguments.get(1).cloned()
-    } else {
-        None
-    }
+    pair(complete_macro_arguments(expression, "matches!")?)
 }
 
-fn guard_pins_value(guard: &str) -> bool {
-    mask_comments_and_strings(guard).contains("==")
+/// A guard conjunct `a == b` where one side is the scrutinee or a name the
+/// pattern binds. `e.len() == 3` or `flag == true` pins no value of the
+/// matched expression, so it does not count.
+fn guard_pins_value(guard: &str, scrutinee: &str, pattern: &str) -> bool {
+    let bound = pattern_bindings(pattern);
+    let subject = comparable(scrutinee);
+    split_conjuncts(guard).into_iter().any(|conjunct| {
+        let masked = mask_comments_and_strings(conjunct);
+        // A disjunct (`x > 1 || x == 0`) does not pin the value.
+        if masked.contains("||") {
+            return false;
+        }
+        let Some(index) = top_level_equality(&masked) else {
+            return false;
+        };
+        [&conjunct[..index], &conjunct[index + 2..]]
+            .into_iter()
+            .map(comparable)
+            .any(|side| side == subject || bound.contains(&side))
+    })
+}
+
+fn comparable(expression: &str) -> String {
+    expression
+        .split_whitespace()
+        .collect::<String>()
+        .trim_start_matches(['&', '*'])
+        .to_string()
+}
+
+/// Top-level `&&` conjuncts of a guard.
+fn split_conjuncts(guard: &str) -> Vec<&str> {
+    let masked = mask_comments_and_strings(guard);
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let bytes = masked.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'&' if depth == 0 && bytes.get(index + 1) == Some(&b'&') => {
+                parts.push(guard[start..index].trim());
+                start = index + 2;
+                index += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(guard[start..].trim());
+    parts
+}
+
+/// The byte index of a top-level `==` that is not part of `!=`, `<=`, `>=`.
+fn top_level_equality(masked: &str) -> Option<usize> {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0
+                && bytes.get(index + 1) == Some(&b'=')
+                && !(index > 0 && matches!(bytes[index - 1], b'!' | b'<' | b'>' | b'=')) =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Names a pattern binds: lowercase-initial identifiers that are not a path
+/// segment, a call or a keyword.
+fn pattern_bindings(pattern: &str) -> Vec<String> {
+    let masked = mask_comments_and_strings(pattern);
+    let bytes = masked.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if is_identifier_byte(bytes[index]) && (index == 0 || !is_identifier_byte(bytes[index - 1]))
+        {
+            let start = index;
+            while index < bytes.len() && is_identifier_byte(bytes[index]) {
+                index += 1;
+            }
+            let name = &masked[start..index];
+            let path_segment = masked[..start].ends_with("::") || masked[index..].starts_with("::");
+            let call = masked[index..].trim_start().starts_with(['(', '{', '!']);
+            if !path_segment
+                && !call
+                && name.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
+                && !matches!(name, "ref" | "mut" | "box" | "true" | "false" | "_")
+            {
+                names.push(name.to_string());
+            }
+        } else {
+            index += 1;
+        }
+    }
+    names
 }
 
 /// Split `pattern if guard` at its top-level `if`.
@@ -132,7 +234,7 @@ fn split_top_level(text: &str, separator: char) -> Vec<&str> {
                         || (index > 0 && bytes[index - 1] == b'|'));
                 if !doubled {
                     parts.push(text[start..index].trim());
-                    start = index + 1;
+                    start = index + separator.len_utf8();
                 }
             }
             _ => {}
@@ -207,15 +309,27 @@ fn top_side(pattern: &str) -> Option<Side> {
     side_of_path(path)
 }
 
+/// The `Option`/`Result` constructor a path names: bare (`Some`) or
+/// qualified through `Option`/`Result` (`std::option::Option::Some`). A
+/// user enum's `Mode::None` or `Reply::Ok` is a variant, not a side.
 fn side_of_path(path: &str) -> Option<Side> {
-    let last = path.rsplit("::").next()?.trim();
-    match last {
-        "Some" => Some(Side::Some),
-        "None" => Some(Side::None),
-        "Ok" => Some(Side::Ok),
-        "Err" => Some(Side::Err),
-        _ => None,
-    }
+    let path = path.split_whitespace().collect::<String>();
+    let path = path.trim_start_matches("::");
+    let (qualifier, last) = path.rsplit_once("::").unwrap_or(("", path));
+    let (side, owner) = match last {
+        "Some" => (Side::Some, "Option"),
+        "None" => (Side::None, "Option"),
+        "Ok" => (Side::Ok, "Result"),
+        "Err" => (Side::Err, "Result"),
+        _ => return None,
+    };
+    let module = owner.to_ascii_lowercase();
+    let qualified = qualifier.is_empty()
+        || qualifier == owner
+        || ["std", "core"]
+            .iter()
+            .any(|krate| qualifier == format!("{krate}::{module}::{owner}"));
+    qualified.then_some(side)
 }
 
 /// `&p`, `&mut p`, `box p` and `name @ p` read through to `p`.
@@ -273,25 +387,47 @@ fn constructor_parts(pattern: &str) -> (&str, Option<(char, &str)>) {
         return (pattern.trim(), None);
     };
     let delimiter = masked[open..].chars().next().unwrap_or('(');
-    let close = match delimiter {
-        '(' => ')',
-        '{' => '}',
-        _ => ']',
-    };
-    if !masked.trim_end().ends_with(close) {
+    // The first delimiter must close at the very end: `A(x) | B(y)` or
+    // `(a) .. (b)` is not one constructor.
+    let end = masked.trim_end().len().saturating_sub(1);
+    if matching_close(&masked, open) != Some(end) {
         return (pattern.trim(), None);
     }
-    let end = masked.trim_end().len() - 1;
     (
         pattern[..open].trim(),
         Some((delimiter, pattern.get(open + 1..end).unwrap_or_default())),
     )
 }
 
+/// The byte index of the delimiter that closes the one at `open`.
+fn matching_close(masked: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, byte) in masked.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn read_pattern(pattern: &str) -> Reading {
     let pattern = strip_wrappers(pattern);
-    if pattern == "_" || is_binding(pattern) {
+    // Comments and literal contents never make a binding or wildcard.
+    let masked = mask_comments_and_strings(pattern);
+    let code = masked.trim();
+    if code == "_" || code == ".." || is_binding(code) {
         return Reading::Irrefutable;
+    }
+    let alternatives = split_top_level(pattern, '|');
+    if alternatives.len() > 1 {
+        return nested_or_reading(&alternatives);
     }
     if is_range(pattern) {
         return Reading::Range { err: false };
@@ -315,6 +451,38 @@ fn read_pattern(pattern: &str) -> Reading {
             Some(Side::None) => Reading::SideOnly(Side::None),
             _ => Reading::Pins,
         },
+    }
+}
+
+/// An or-pattern inside a constructor or tuple (`Some(Ok(_) | Err(_))`).
+fn nested_or_reading(alternatives: &[&str]) -> Reading {
+    let readings = alternatives
+        .iter()
+        .map(|alternative| read_pattern(alternative))
+        .collect::<Vec<_>>();
+    let covers = |a: Side, b: Side| {
+        readings.contains(&Reading::SideOnly(a)) && readings.contains(&Reading::SideOnly(b))
+    };
+    if readings.contains(&Reading::Irrefutable)
+        || covers(Side::Some, Side::None)
+        || covers(Side::Ok, Side::Err)
+    {
+        Reading::Irrefutable
+    } else if readings.contains(&Reading::Pins) {
+        Reading::Pins
+    } else if let [Reading::SideOnly(side), rest @ ..] = readings.as_slice()
+        && rest
+            .iter()
+            .all(|reading| *reading == Reading::SideOnly(*side))
+    {
+        Reading::SideOnly(*side)
+    } else if readings
+        .iter()
+        .any(|reading| matches!(reading, Reading::Range { .. }))
+    {
+        Reading::Range { err: false }
+    } else {
+        Reading::PinsNothing { err: false }
     }
 }
 
@@ -518,7 +686,60 @@ mod tests {
                 RelationalCheck,
                 Weak,
             ),
-            // Other forms the rules name.
+            // Nested or-patterns, `(..)`, comments and qualified sides.
+            (
+                "assert!(matches!(lookup(1), Some(Ok(_) | Err(_))))",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(None | Some(_))))",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(_ | _)))",
+                SmokeOnly,
+                Smoke,
+            ),
+            ("assert!(matches!(pair(), (..)))", RelationalCheck, Weak),
+            (
+                "assert!(matches!(lookup(1), Some(x /* any */)))",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(matches!(lookup(1), std::option::Option::Some(_)))",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(matches!(check(5), Result::Ok(_)))",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(x) if !(x == 3)))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(x) if x > 1 || x == 0))",
+                RelationalCheck,
+                Weak,
+            ),
+            // Other forms the rules name. A guard `==` that does not equate
+            // the scrutinee or a binding pins no value (decision 6).
+            (
+                "assert!(matches!(check(20), Err(e) if e.len() == 3))",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(matches!(check(5), Ok(_) if flag == true))",
+                RelationalCheck,
+                Weak,
+            ),
             ("assert!(matches!(check(20), Err(1..=5)))", BroadError, Weak),
             (
                 "assert!(matches!(lookup(1), Some(x) if x > 3))",
@@ -545,7 +766,10 @@ mod tests {
             }
         }
         // Patterns that pin a value keep the ordinary chain's reading, and
-        // compound conditions are not pattern assertions.
+        // compound conditions are not pattern assertions. `Only::Value` and
+        // `Cfg { .. }` pin nothing per examples 24 and 25, but the line
+        // cannot resolve them, so they keep today's reading (decision 5,
+        // #6737).
         for text in [
             "assert!(matches!(check(5), Ok(5)))",
             "assert!(matches!(check(20), Err(E::Bad)))",
@@ -560,10 +784,19 @@ mod tests {
             "assert!(matches!(check(20), Err(E::A) | Err(E::B)))",
             "assert!(matches!(check(5), Ok(_)) && score(2) == 4)",
             "assert_eq!(check(20), Err(e))",
-            // A guard that compares with `==` pins a value (decision 6).
+            // A guard equating the scrutinee or a binding pins a value
+            // (decision 6).
             "assert!(matches!(value, _ if value == 2))",
             "assert_matches!(value, _ if value == 2)",
             "assert!(matches!(lookup(1), Some(x) if x == 3))",
+            "assert!(matches!(lookup(1), Some(x) if ready && *x == 3))",
+            "assert!(matches!(check(20), Err(e) if e == E::Bad))",
+            // A user enum's `None`, `Ok` or `Err` variant is a variant pin.
+            "assert!(matches!(mode(), Mode::None))",
+            "assert!(matches!(reply(), Reply::Ok(_)))",
+            "assert!(matches!(reply(), Reply::Err(_)))",
+            "assert!(matches!(lookup(1), Some(Foo::A | Foo::None)))",
+            "assert!(matches!(lookup(1), Some(3 /* three */)))",
         ] {
             let actual = pattern_assertion_classification(text);
             if actual.is_some() {

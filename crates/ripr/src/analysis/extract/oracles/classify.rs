@@ -355,4 +355,113 @@ mod tests {
         }
         Ok(())
     }
+
+    /// Rules 2 and 3 through the classifier and the scanner that feed
+    /// related tests, not only through the pattern reader.
+    #[test]
+    fn spec_0231_pattern_readings_reach_the_classifier_and_scanner() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, ExactValue, RelationalCheck, SmokeOnly};
+        use OracleStrength::{Smoke, Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            ("assert!(matches!(check(20), Err(_e)));", BroadError, Weak),
+            ("assert!(matches!(check(5), Ok(_)));", SmokeOnly, Smoke),
+            (
+                "assert!(matches!(lookup(1), Some(_) | None));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(1..=5)));",
+                RelationalCheck,
+                Weak,
+            ),
+            ("ensure!(matches!(check(5), Ok(_)));", SmokeOnly, Smoke),
+            (
+                "assert_matches!(check(20), Err(ref e) if e.len() > 1);",
+                BroadError,
+                Weak,
+            ),
+            ("assert!(matches!(check(5), Ok(5)));", ExactValue, Strong),
+            (
+                "assert!(matches!(check(20), Err(e @ E::Bad)));",
+                ExactErrorVariant,
+                Strong,
+            ),
+            (
+                "assert!(matches!(value, _ if value == 2));",
+                ExactValue,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            let facts = crate::analysis::extract::extract_assertions(text, 7);
+            let scanned = facts
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if actual.kind != expected_kind
+                || actual.strength != expected_strength
+                || scanned != vec![(expected_kind.clone(), expected_strength.clone())]
+            {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, classifier {actual:?}, scanner {scanned:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The parser path (`syntax/ra.rs`) that builds related tests reads the
+    /// same pattern strengths.
+    #[test]
+    fn spec_0231_pattern_readings_reach_the_parser_path() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = r#"
+#[test]
+fn err_binding() {
+    assert!(matches!(check(20), Err(_e)));
+}
+
+#[test]
+fn ok_wildcard() {
+    assert!(matches!(check(5), Ok(_)));
+}
+
+#[test]
+fn ok_literal() {
+    assert!(matches!(check(5), Ok(5)));
+}
+"#;
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), source)?;
+        let readings = facts
+            .tests
+            .iter()
+            .map(|test| {
+                let oracle = test.assertions.first();
+                (
+                    test.name.as_str(),
+                    oracle.map(|fact| (fact.kind.clone(), fact.strength.clone())),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected = vec![
+            (
+                "err_binding",
+                Some((OracleKind::BroadError, OracleStrength::Weak)),
+            ),
+            (
+                "ok_wildcard",
+                Some((OracleKind::SmokeOnly, OracleStrength::Smoke)),
+            ),
+            (
+                "ok_literal",
+                Some((OracleKind::ExactValue, OracleStrength::Strong)),
+            ),
+        ];
+        if readings != expected {
+            return Err(format!("parser readings {readings:?}"));
+        }
+        Ok(())
+    }
 }
