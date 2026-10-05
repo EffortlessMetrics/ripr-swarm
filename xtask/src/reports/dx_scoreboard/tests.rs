@@ -1807,6 +1807,14 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
         value("ranking.pilot_confirmed_top5"),
         Some(SampleOutcome::Value(8.0))
     );
+    assert_eq!(
+        value("ranking.pilot_refuted_top5"),
+        Some(SampleOutcome::Value(12.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_confirmed_top10"),
+        Some(SampleOutcome::Value(13.0))
+    );
     assert!(
         samples
             .iter()
@@ -1958,18 +1966,17 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
 
     // A baseline from another answer key is reported uncompared, never
     // compared as the same population.
+    // The run is worse on every axis, so any compared row would regress.
     let other = report(&receipt_on("other", 50, 3, 50), None)?;
-    let crossed = report(&receipt(50, 3, 50), Some(&other))?;
-    assert!(regressed(&crossed).is_empty());
-    let uncompared = crossed["gate"]["uncompared"].as_array().map_or(0, |rows| {
-        rows.iter()
-            .filter(|row| {
-                row["metric"]
-                    .as_str()
-                    .is_some_and(|metric| metric.starts_with("ranking."))
-            })
-            .count()
-    });
-    assert!(uncompared >= 9, "{}", crossed["gate"]);
+    let crossed = report(&receipt(40, 1, 40), Some(&other))?;
+    assert!(regressed(&crossed).is_empty(), "{}", crossed["gate"]);
+    let uncompared: std::collections::BTreeSet<&str> = crossed["gate"]["uncompared"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["metric"].as_str())
+        .filter(|metric| metric.starts_with("ranking."))
+        .collect();
+    assert_eq!(uncompared.len(), 9, "{}", crossed["gate"]);
     Ok(())
 }

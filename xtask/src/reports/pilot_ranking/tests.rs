@@ -340,6 +340,8 @@ fn mark_fetched(dir: &Path) -> Result<(), String> {
 /// untracked files, commits on top and amends are refused at any revision.
 #[test]
 fn refetch_refuses_local_work_at_any_revision() -> Result<(), String> {
+    // Paths and spawned git are relative to the working directory.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let interrupted = scratch_checkout("interrupted")?;
     fs::write(interrupted.join(".git").join(OWNER_MARKER), "demo\n")
         .map_err(|err| err.to_string())?;
@@ -390,6 +392,15 @@ fn refetch_refuses_local_work_at_any_revision() -> Result<(), String> {
     // The refusal reaches fetch: the marked checkout survives.
     assert!(materialize(&repo(), &committed).is_err_and(|err| err.contains("did not check out")));
     assert!(committed.join("b.rs").is_file());
+
+    // A clone fetch did not create (no marker) is never replaced.
+    let foreign = scratch_checkout("foreign")?;
+    commit(&foreign, "a.rs")?;
+    assert!(
+        materialize(&repo(), &foreign)
+            .is_err_and(|err| err.contains("not created by pilot-ranking fetch"))
+    );
+    assert!(foreign.join("a.rs").is_file());
     Ok(())
 }
 
@@ -508,19 +519,30 @@ fn labels_keep_the_name_and_column_the_seam_tier_reads() -> Result<(), String> {
 }
 
 /// The gate compares the receipt with this committed baseline; a ranking
-/// metric missing from it would be listed as not compared and pass.
+/// metric missing from it, or tagged with another corpus version, would be
+/// listed as not compared and pass. A corpus bump must refresh it.
 #[test]
 fn committed_baseline_carries_every_ranking_metric_completed() -> Result<(), String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../metrics/dx-scoreboard/pilot-ranking-baseline.json");
     let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     let baseline: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    let manifest = load_manifest(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(DEFAULT_MANIFEST),
+    )?;
+    let corpus = format!("pilot-ranking corpus {}", manifest.corpus_version);
     for id in [
         "ranking.pilot_precision_top5",
         "ranking.pilot_precision_top10",
         "ranking.pilot_scored_share_top10",
         "ranking.pilot_distinct_function_share_top10",
         "ranking.pilot_picks_top10",
+        "ranking.pilot_confirmed_top5",
+        "ranking.pilot_refuted_top5",
+        "ranking.pilot_confirmed_top10",
+        "ranking.pilot_refuted_top10",
     ] {
         let metric = baseline["metrics"]
             .as_array()
@@ -528,6 +550,11 @@ fn committed_baseline_carries_every_ranking_metric_completed() -> Result<(), Str
             .ok_or_else(|| format!("baseline has no `{id}`"))?;
         assert!(metric["value"].is_number(), "{id}: {metric}");
         assert_eq!(metric["partial"], false, "{id}");
+        let samples = metric["samples"].as_array().map_or(&[][..], Vec::as_slice);
+        assert!(!samples.is_empty(), "{id}");
+        for sample in samples {
+            assert_eq!(sample["repo"].as_str(), Some(corpus.as_str()), "{id}");
+        }
     }
     Ok(())
 }

@@ -654,8 +654,8 @@ source = "ingest:rust-corpus-smoke"
 # and pilot are deterministic, so there is no run-to-run noise to allow for:
 # each rate floor sits just under one pick even when every pick is judged
 # (top-5 precision moves at least 0.04 per pick, top-10 precision 0.02, the
-# top-10 shares 0.02), and the confirmed and refuted counts allow no change,
-# because an unscored pick turning refuted moves precision by less than one
+# top-10 shares 0.02), and the confirmed and refuted counts allow no change in
+# the worse direction, because an unscored pick turning refuted moves precision by less than one
 # pick's step. Any pick that moves the wrong way fails. An intended trade-off
 # refreshes the baseline in the same pull request. Each row's repository is
 # the corpus version, so a baseline from another answer key is reported

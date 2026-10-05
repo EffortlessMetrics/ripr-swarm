@@ -94,10 +94,13 @@ cargo xtask pilot-ranking label --repo semver=../pilot-ranking/semver \
 
 Label from a full run: options that change which mutants cargo-mutants tries
 (`--re`, `--file`, `--package`, `--shard`) leave real mutants out of the key,
-so a pick there would score as unlabeled instead of refuted. Options that only
-change scheduling, such as `--jobs`, are fine. `check` refuses a label file
-whose `cargo_mutants_args` is not empty, and the manifest's `labeled` counts
-turn a relabel from a narrower run into a visible count change in review.
+so a pick there would score as unscored instead of refuted. Options that only
+change scheduling, such as `--jobs`, are fine. The full-run rule is a
+procedure: `outcomes.json` does not record selection arguments, so `label`
+cannot detect a narrowed run. What guards it is review of the manifest's
+`labeled` counts, which make a relabel from a narrower run at the same pin a
+visible count change. `check` also refuses a label file whose
+`cargo_mutants_args` is not empty.
 `label` refuses a `mutants.out` whose mutant diffs do not match the
 pinned checkout, a mutant without an outcome, and an outcome without a mutant.
 It prints the caught and missed counts; record them as the repository's

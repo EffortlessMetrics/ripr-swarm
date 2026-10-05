@@ -20,6 +20,8 @@ on:
     types: [opened, ready_for_review]
     paths:
       - "crates/ripr/src/output/pilot/**"
+      - "crates/ripr/src/output/path.rs"
+      - "crates/ripr/src/cli/commands/pilot.rs"
       - "crates/ripr/src/output/agent_seam_packets.rs"
       - "crates/ripr/src/analysis/repair_route.rs"
       - "crates/ripr/src/analysis/new_test_target.rs"
