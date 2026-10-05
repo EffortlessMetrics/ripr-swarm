@@ -392,7 +392,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the seam inventory and the evidence facts both ran with built-in defaults; project-local configuration stays detected-not-loaded",
+                "the card's own seam inventory and evidence facts ran with built-in defaults (the card path does not load project-local configuration, #6825), while the snapshot's findings ran with the workspace's ripr.toml when one loads; compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),

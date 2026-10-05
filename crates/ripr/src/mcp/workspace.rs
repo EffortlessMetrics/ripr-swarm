@@ -32,6 +32,11 @@ pub(crate) const SNAPSHOT_SCHEMA_VERSION: &str = "ripr-mcp-snapshot-v1";
 pub(crate) const CODE_WORKSPACE_UNAVAILABLE: &str = "workspace_unavailable";
 pub(crate) const CODE_ANALYSIS_FAILED: &str = "analysis_failed";
 pub(crate) const CODE_UNSUPPORTED_PROFILE: &str = "unsupported_profile";
+/// The workspace `ripr.toml` is present but cannot be read or parsed
+/// (#6825): the refresh attempt fails closed instead of silently analyzing
+/// with built-in defaults. Promoted from the reserved vocabulary when the
+/// config path landed.
+pub(crate) const CODE_CONFIG_INVALID: &str = "config_invalid";
 pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
@@ -41,7 +46,6 @@ pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// closed before any of these states can occur; they are named so the wire
 /// contract stays stable when the owning slice lands.
 pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
-    "config_invalid",
     "workspace_ambiguous",
     "static_limitation",
     "cancelled",
@@ -546,10 +550,13 @@ impl WorkspaceSession {
             },
             "analysis_outcome": analysis_outcome,
             "profile": profile.document(),
-            "limitations": [
-                "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
-                "project-local ripr.toml stays detected-not-loaded; refresh runs with built-in defaults",
-            ],
+            "limitations": profile
+                .session_limitation()
+                .into_iter()
+                .chain([
+                    "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
+                ])
+                .collect::<Vec<_>>(),
         })
     }
 }
@@ -635,14 +642,68 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     })
 }
 
-/// Built-in-default analysis profile facts for the session block.
+/// The resolved analysis-configuration posture of the session (#6825): which
+/// configuration `ripr_refresh` will run under. The read-only boundary
+/// (ADR 0022) is untouched — the server still edits nothing and loads no
+/// *provider* configuration; honoring the workspace's analysis
+/// configuration is the same `load_for_root` resolution the CLI uses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionConfigPosture {
+    /// A workspace `ripr.toml` was read and parsed; `identity` is the
+    /// fingerprint of its exact text.
+    Loaded { identity: String },
+    /// A `ripr.toml` entry is present but could not be read or parsed;
+    /// refresh fails closed with `config_invalid`.
+    DetectedNotLoaded,
+    /// No config resolved; refresh runs on built-in defaults (marker-based
+    /// language auto-enable is disclosed through `languages`).
+    BuiltInDefaults,
+}
+
+/// The analysis profile facts for the session block, resolved from the
+/// workspace's own configuration (#6825).
+#[derive(Clone, Debug)]
 pub(crate) struct SessionProfile {
     mode: &'static str,
     languages: Vec<String>,
+    posture: SessionConfigPosture,
 }
 
 impl SessionProfile {
-    pub(crate) fn built_in() -> Self {
+    /// Resolve the profile from the analyzed root. `None` (an unavailable
+    /// root) keeps the built-in-default profile.
+    pub(crate) fn resolve(root: Option<&Path>) -> Self {
+        let Some(root) = root else {
+            return Self::built_in();
+        };
+        match crate::config::load_for_root(root) {
+            Ok(config) => {
+                let languages = config
+                    .languages()
+                    .enabled()
+                    .iter()
+                    .map(|language| language.as_str().to_string())
+                    .collect();
+                let posture = match crate::config::loaded_config_identity(&config) {
+                    Some(identity) => SessionConfigPosture::Loaded { identity },
+                    None => SessionConfigPosture::BuiltInDefaults,
+                };
+                Self {
+                    mode: "draft",
+                    languages,
+                    posture,
+                }
+            }
+            Err(_) => Self {
+                posture: SessionConfigPosture::DetectedNotLoaded,
+                ..Self::built_in()
+            },
+        }
+    }
+
+    /// The built-in-default profile (an unavailable root, or the defaults
+    /// fallback when the workspace config cannot load).
+    fn built_in() -> Self {
         let languages = crate::config::RiprConfig::default()
             .languages()
             .enabled()
@@ -652,33 +713,68 @@ impl SessionProfile {
         Self {
             mode: "draft",
             languages,
+            posture: SessionConfigPosture::BuiltInDefaults,
         }
     }
 
     fn document(&self) -> Value {
-        json!({
+        let (project_config, support) = match &self.posture {
+            SessionConfigPosture::Loaded { .. } => ("loaded", "project_config"),
+            SessionConfigPosture::DetectedNotLoaded => ("detected_not_loaded", "built_in_defaults"),
+            SessionConfigPosture::BuiltInDefaults => ("built_in_defaults", "built_in_defaults"),
+        };
+        let mut document = json!({
             "mode": self.mode,
             "languages": self.languages,
-            "project_config": "detected_not_loaded",
-            "support": "built_in_defaults",
-        })
+            "project_config": project_config,
+            "support": support,
+        });
+        if let SessionConfigPosture::Loaded { identity } = &self.posture {
+            document["config_identity"] = Value::from(identity.clone());
+        }
+        document
+    }
+
+    /// The session-block limitation naming the configuration posture, so a
+    /// zero finding count is never mistaken for a language gate (#6825).
+    fn session_limitation(&self) -> Option<&'static str> {
+        match self.posture {
+            SessionConfigPosture::Loaded { .. } => None,
+            SessionConfigPosture::DetectedNotLoaded => Some(
+                "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
+            ),
+            SessionConfigPosture::BuiltInDefaults => {
+                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
+            }
+        }
     }
 }
 
 /// Run one bounded analysis through the shared check authority and bind it
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
-/// the LSP run in-process.
+/// the LSP run in-process. The workspace's own configuration is honored
+/// through the same `load_for_root` resolution the CLI uses (#6825): a
+/// config file is loaded, and a config-less root keeps built-in defaults
+/// (with the zero-config marker-based language auto-enable), so a
+/// Python-enabled workspace analyzes identically over MCP and CLI.
 pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
+    let config = crate::config::load_for_root(root).map_err(|error| {
+        AttemptFailure::new(
+            CODE_CONFIG_INVALID,
+            format!("the workspace ripr.toml could not be loaded: {error}"),
+            "fix or remove the workspace ripr.toml, then retry with ripr_refresh",
+        )
+    })?;
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace(input).map_err(|error| {
+    let output = crate::app::check_workspace_with_config(input, &config).map_err(|error| {
         AttemptFailure::new(
             CODE_ANALYSIS_FAILED,
             format!("shared check authority failed: {error}"),
@@ -1017,9 +1113,27 @@ mod tests {
         if document
             .pointer("/profile/project_config")
             .and_then(Value::as_str)
-            != Some("detected_not_loaded")
+            != Some("built_in_defaults")
         {
-            return Err("session profile must stay detected-not-loaded".to_string());
+            return Err(format!(
+                "built-in profile must disclose its defaults posture: {document}"
+            ));
+        }
+        if document.pointer("/profile/support").and_then(Value::as_str) != Some("built_in_defaults")
+        {
+            return Err(format!(
+                "built-in profile lost its support fact: {document}"
+            ));
+        }
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!(
+                "a defaults session must disclose the missing config: {text}"
+            ));
         }
         if document
             .pointer("/last_completed_snapshot/snapshot_id")
@@ -1034,6 +1148,103 @@ mod tests {
         if profile.languages.is_empty() {
             return Err("built-in profile must name at least one language".to_string());
         }
+        Ok(())
+    }
+
+    /// #6825: the session profile resolves the workspace's own
+    /// configuration, so a Python-enabled workspace discloses `loaded` with
+    /// its config identity and the enabled language — never a rust-only
+    /// built-in default.
+    #[test]
+    fn session_profile_resolves_the_workspace_configuration() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-mcp-profile-resolve-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+
+        // No config: built-in defaults (no python markers in an empty root).
+        let defaults = SessionProfile::resolve(Some(&root));
+        if defaults.languages != vec!["rust".to_string()]
+            || defaults.posture != SessionConfigPosture::BuiltInDefaults
+        {
+            return Err(format!(
+                "a config-less empty root must keep built-in defaults: {defaults:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&defaults);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!("defaults posture must be disclosed: {text}"));
+        }
+
+        // A python-enabled workspace: loaded posture with the config
+        // identity and the enabled language.
+        std::fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"python\"]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let loaded = SessionProfile::resolve(Some(&root));
+        match &loaded.posture {
+            SessionConfigPosture::Loaded { identity }
+                if identity.starts_with("fnv1a64:") && loaded.languages == vec!["python"] => {}
+            other => {
+                return Err(format!(
+                    "a python-enabled workspace must project loaded with its language: {other:?}"
+                ));
+            }
+        }
+        let document = crate::mcp::workspace::WorkspaceSession::default().session_document(&loaded);
+        if document.pointer("/profile/config_identity").is_none() {
+            return Err(format!(
+                "a loaded profile must publish its config identity: {document}"
+            ));
+        }
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if text.contains("ripr.toml") {
+            return Err(format!("a loaded config is not a limitation: {text}"));
+        }
+
+        // A present but unparseable config: detected-not-loaded, refresh
+        // fails closed with config_invalid.
+        std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+            .map_err(|error| error.to_string())?;
+        let detected = SessionProfile::resolve(Some(&root));
+        if detected.posture != SessionConfigPosture::DetectedNotLoaded
+            || detected.languages != vec!["rust".to_string()]
+        {
+            return Err(format!(
+                "an unparseable ripr.toml must project detected-not-loaded: {detected:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&detected);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("config_invalid") {
+            return Err(format!(
+                "detected-not-loaded must name the refresh failure: {text}"
+            ));
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
