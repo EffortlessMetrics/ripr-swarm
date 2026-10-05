@@ -454,14 +454,18 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
                 })
                 .count(),
         ),
+        // A step with no numeric duration makes the walk's total unknowable, so the
+        // metric is not measured rather than summed over the steps that were timed.
         "first_run.walk_secs" => items(receipt, "cases")
             .iter()
             .map(|case| {
                 steps_of(case)
                     .iter()
-                    .filter_map(|s| field(s, "secs").as_f64())
-                    .sum::<f64>()
+                    .map(|s| field(s, "secs").as_f64())
+                    .sum::<Option<f64>>()
             })
+            .collect::<Option<Vec<f64>>>()?
+            .into_iter()
             .reduce(f64::max),
         _ => None,
     }
@@ -674,7 +678,7 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
             }
         }
         if status == Status::NotMeasured || status == Status::Failed {
-            basis = text(metric, "reason");
+            basis = unmeasured_reason(metric);
             if status == Status::Failed {
                 basis = format!("instrument failed: {basis}");
             }
@@ -1041,6 +1045,35 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
     ));
     page.blank();
     Ok(())
+}
+
+/// Why a metric has no usable number: its own reason, else the details of its
+/// failed samples (a failed instrument records the diagnostic only there).
+fn unmeasured_reason(metric: &Value) -> String {
+    let reason = text(metric, "reason");
+    if !reason.trim().is_empty() {
+        return reason;
+    }
+    let samples = items(metric, "samples");
+    let mut details: Vec<String> = samples
+        .iter()
+        .filter(|s| text(s, "status") == "failed")
+        .map(|s| text(s, "detail"))
+        .filter(|d| !d.trim().is_empty())
+        .collect();
+    if details.is_empty() {
+        details = samples
+            .iter()
+            .map(|s| text(s, "detail"))
+            .filter(|d| !d.trim().is_empty())
+            .collect();
+    }
+    details.dedup();
+    if details.is_empty() {
+        "the receipt records no reason".to_string()
+    } else {
+        details.join("; ")
+    }
 }
 
 /// The repository with the worst sample for a metric, as `repo (value)`.
@@ -1864,6 +1897,74 @@ mod tests {
         assert!(status_of(&receipts)? == Status::Failed);
         set_status(&mut receipts, "below_target");
         assert!(status_of(&receipts)? == Status::Below);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_instrument_keeps_its_sample_detail() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = "paste.unsafe_commands";
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id) {
+                    metric["status"] = Value::from("failed");
+                    metric["reason"] = Value::from("");
+                    metric["samples"] = serde_json::json!([
+                        {"repo": null, "status": "failed", "value": null, "detail": "paste corpus did not build"}
+                    ]);
+                }
+            }
+        }
+        let bar = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.id == id)
+            .ok_or_else(|| format!("no bar {id}"))?;
+        assert!(bar.status == Status::Failed);
+        assert!(
+            bar.basis
+                .contains("instrument failed: paste corpus did not build"),
+            "basis was {:?}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn untimed_walk_step_is_not_measured_not_summed() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let status_of = |receipts: &Receipts| -> Result<Status, String> {
+            bars(receipts)?
+                .into_iter()
+                .find(|bar| bar.id == "first_run.walk_secs")
+                .map(|bar| bar.status)
+                .ok_or_else(|| "no first_run.walk_secs bar".to_string())
+        };
+        assert!(status_of(&receipts)? != Status::NotMeasured);
+        let mut removed = false;
+        if let Some(cases) = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+        {
+            for case in cases {
+                let steps = case
+                    .get_mut("steps")
+                    .and_then(Value::as_array_mut)
+                    .into_iter()
+                    .flatten();
+                for step in steps {
+                    if !removed
+                        && step.get("secs").is_some()
+                        && let Some(object) = step.as_object_mut()
+                    {
+                        object.remove("secs");
+                        removed = true;
+                    }
+                }
+            }
+        }
+        assert!(removed, "fixture has no timed step to remove");
+        assert!(status_of(&receipts)? == Status::NotMeasured);
         Ok(())
     }
 
