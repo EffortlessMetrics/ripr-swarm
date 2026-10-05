@@ -1750,6 +1750,7 @@ tests = [
   "crates/ripr/src/output/ripr_zero_status.rs::tests::classify_review_marks_past_due_iso_calendar_deadline_stale",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::classify_review_marks_past_due_unix_ms_deadline_stale",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::classify_review_marks_incomparable_review_after_unknown_not_current",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::classify_review_normalizes_rfc3339_offsets_to_utc_day",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::classify_review_keeps_current_and_future_deadlines_current",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::unix_ms_to_iso_day_uses_utc_civil_date",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_evaluates_iso_review_after_and_fails_closed_on_incomparable",
