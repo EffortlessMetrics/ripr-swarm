@@ -154,7 +154,7 @@ ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-m
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root to analyze. |
-| `--out PATH` | `target/ripr/pilot` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
+| `--out PATH` | `target/ripr/pilot` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. The default resolves under `--root`; an explicit path stays verbatim. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. |
 | `--max-seams N` | `5` | Maximum ranked seams shown in the pilot summary. Must be positive. |
 | `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. |
