@@ -15,8 +15,10 @@ this repository's license, one per test library or library feature:
   have two. Examples 9, 10 and the `lambda: 0` half of 33 are left out: 9
   has no realistic owner, 10 needs numpy, and `sorted(x, key=lambda: 0)`
   raises at runtime. Alternate forms within an example are not all covered:
-  6's assertEqual form, 19's `Exception, match=''`, 24's third form, 25's
-  no-import form, the alternate edits of 26 to 29, and 31's second test.
+  6's assertEqual form, 18's form with the test bodies swapped between the
+  names, 19's `Exception, match=''`, 24's third form, 25's no-import form,
+  the alternate edits of 26 to 28, 29's `patch('os.getcwd')` and
+  `mocker.patch` tests, and 31's exact-assertion form.
 - `authored-py-pytest-fixtures`: conftest fixtures, a parametrized fixture,
   `tmp_path`, `monkeypatch`, `capsys` on stderr.
 - `authored-py-unittest-accounts`: `assertEqual`, `assertTrue`,

@@ -586,8 +586,18 @@ fn validator_requires_both_truth_directions() -> Result<(), String> {
 
 #[test]
 fn expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
-    let dir = repo_corpus_dir();
-    let corpus = load_corpus(&dir)?;
+    report_rows_agree_with_labels(&repo_corpus_dir())
+}
+
+#[test]
+fn python_expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
+    report_rows_agree_with_labels(&crate::dogfood::repo_rooted_fixture_path(
+        &corpus_dir("python")?.to_string_lossy(),
+    ))
+}
+
+fn report_rows_agree_with_labels(dir: &Path) -> Result<(), String> {
+    let corpus = load_corpus(dir)?;
     let report: Value = serde_json::from_str(&read(&dir.join("expected/report.json"))?)
         .map_err(|err| err.to_string())?;
     let rows = report["rows"].as_array().cloned().unwrap_or_default();
