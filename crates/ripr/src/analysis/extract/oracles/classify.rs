@@ -4,11 +4,13 @@ use super::arguments::{
     assertion_oracle_text, ensure_assertion_arguments, is_unguarded_wildcard_assertion,
     outer_assertion_condition,
 };
+use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
     contains_exact_comparison, is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
-    is_exact_error_variant_assertion, is_exact_value_assertion, is_mock_expectation_line,
-    is_side_effect_observer_assertion, is_snapshot_assertion, is_whole_object_equality_assertion,
+    is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
+    is_exact_value_assertion, is_mock_expectation_line, is_smoke_check, is_snapshot_assertion,
+    is_whole_object_equality_assertion, tests_both_sides,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +35,11 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Weak,
         };
     }
+    // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
+    // strong as its pattern, ahead of every step that reads `matches!`.
+    if let Some(classification) = pattern_assertion_classification(line) {
+        return classification;
+    }
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
@@ -40,6 +47,13 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
+        }
+    } else if tests_both_sides(line) {
+        // RIPR-SPEC-0231 rule 4: a condition that tests both sides accepts
+        // every value, so it is neither a broad error nor a smoke check.
+        OracleClassification {
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
         }
     } else if is_broad_error_assertion(line) {
         OracleClassification {
@@ -66,12 +80,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             kind: OracleKind::Snapshot,
             strength: OracleStrength::Medium,
         }
-    } else if line.contains(".unwrap(")
-        || line.contains(".expect(")
-        || line.contains("is_ok")
-        || line.contains("is_some")
-        || line.contains("is_none")
-    {
+    } else if is_smoke_check(line) {
         OracleClassification {
             kind: OracleKind::SmokeOnly,
             strength: OracleStrength::Smoke,
@@ -81,7 +90,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             kind: OracleKind::RelationalCheck,
             strength: OracleStrength::Weak,
         }
-    } else if is_mock_expectation_line(line) || is_side_effect_observer_assertion(line) {
+    } else if is_mock_expectation_line(line) || is_effect_observer_subject_assertion(line) {
         OracleClassification {
             kind: OracleKind::MockExpectation,
             strength: OracleStrength::Medium,
@@ -165,6 +174,11 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
         })
+    } else if tests_both_sides(&condition) {
+        Some(OracleClassification {
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
+        })
     } else if is_broad_error_assertion(&condition) {
         Some(OracleClassification {
             kind: OracleKind::BroadError,
@@ -177,12 +191,7 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
         })
-    } else if condition.contains(".unwrap(")
-        || condition.contains(".expect(")
-        || condition.contains("is_ok")
-        || condition.contains("is_some")
-        || condition.contains("is_none")
-    {
+    } else if is_smoke_check(&condition) {
         Some(OracleClassification {
             kind: OracleKind::SmokeOnly,
             strength: OracleStrength::Smoke,
@@ -270,6 +279,77 @@ mod tests {
             if actual.kind != expected_kind || actual.strength != expected_strength {
                 return Err(format!(
                     "fallible oracle classification mismatch for {text}: {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spec_0231_rules_4_to_6_match_whole_names() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactValue, MockExpectation, RelationalCheck, SmokeOnly};
+        use OracleStrength::{Medium, Smoke, Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            // Acceptance examples 8 (not mock), 9, 10, 12, 15, 16 and 26.
+            ("assert!(is_present());", RelationalCheck, Weak),
+            ("assert_eq!(events_sent.len(), 1);", ExactValue, Strong),
+            (
+                "assert!(events_sent.contains(&id));",
+                MockExpectation,
+                Medium,
+            ),
+            ("assert_json_eq(actual, expected);", ExactValue, Strong),
+            ("assert!(opt.is_some_and(|v| v > 1));", SmokeOnly, Smoke),
+            ("assert!(!events.is_empty());", MockExpectation, Medium),
+            ("assert!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
+            // Rule 4: whole method names only.
+            ("assert!(r.is_okay());", RelationalCheck, Weak),
+            ("assert!(this_errs(r));", RelationalCheck, Weak),
+            ("assert!(r.is_err());", BroadError, Weak),
+            ("assert!(Option::is_some(&r));", SmokeOnly, Smoke),
+            (
+                "assert!(o.is_some() || o.is_none());",
+                RelationalCheck,
+                Weak,
+            ),
+            ("ensure!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
+            ("assert!(o.is_none_or(|v| v > 1));", SmokeOnly, Smoke),
+            // Rule 5: whole identifier segments, outside free calls.
+            (
+                "assert!(sentEvents.contains(&id));",
+                MockExpectation,
+                Medium,
+            ),
+            ("assert!(state.ready);", MockExpectation, Medium),
+            ("assert!(statement.is_empty());", RelationalCheck, Weak),
+            ("assert!(consent_given());", RelationalCheck, Weak),
+            (
+                "assert!(store.saved().is_empty());",
+                MockExpectation,
+                Medium,
+            ),
+            // Rule 6: equality names only.
+            (
+                "assert_equalish(score(2), 4);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            ),
+            (
+                "assert_eqv(score(2), 4);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            ),
+            ("assert_values_equals(score(2), 4);", ExactValue, Strong),
+            (
+                "assert_snapshot_matches(actual, expected);",
+                ExactValue,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            if actual.kind != expected_kind || actual.strength != expected_strength {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, got {actual:?}"
                 ));
             }
         }

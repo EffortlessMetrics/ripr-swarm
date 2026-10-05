@@ -87,7 +87,7 @@ fn is_wildcard_pattern(pattern: &str) -> bool {
     pattern == "_"
 }
 
-fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
+pub(super) fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
     let open = masked.find(['(', '[', '{'])?;

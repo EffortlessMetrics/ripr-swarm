@@ -246,6 +246,31 @@ rejected alternative. Any can be reversed later without touching the rest.
    credit. Rejected: drop step 9's observer words entirely and keep only the
    mock call forms.
 
+3. **Family strength overrides.** Adopted: reveal's per-family override
+   (`probe_relative_oracle_strength`) may lower but never raise a medium, weak
+   or smoke classifier strength, and the return-value owner pin needs a strong
+   oracle. Without this an `assert_ne!` struct literal's weak
+   `whole_object_equality` came back as strong and pinned the owner. Rejected:
+   a new kind for weak whole-object inequality (decision 1).
+4. **Asserted subject for observer words.** Adopted: rule 5's subject is
+   every identifier except the name of a free function call (`is_present()`);
+   a method or getter name (`store.saved()`) still counts. Rejected: parsing
+   the receiver chain, which this line-level classifier cannot do reliably.
+5. **Unresolved paths.** Adopted: the classifier sees only the assertion
+   text, so `Cfg { .. }` and `Only::Value` cannot be shown to name a struct or
+   a single-variant enum and keep today's exact reading, as the rules allow.
+   Those two forms of examples 24 and 25 stay `not_established` until type
+   resolution reaches the oracle classifier (#6737).
+6. **A guard with `==`.** Adopted: rules 2 and 3 weaken a guarded pattern
+   only when the guard has no `==` comparison. `_ if value == 2` and
+   `Some(x) if x == 3` keep the ordinary chain's reading, because the guard
+   pins a value: RIPR-SPEC-0108's runtime-controlled fixtures
+   `wildcard_oracle_guarded_original` and `_wrong` show the guarded equality
+   catches the wrong value, and reading it as weak turned their `exposed`
+   into a false gap. Guards such as `!e.is_empty()` and `e.len() > 1`
+   (examples 3 and 21) still weaken. Rejected: weakening every guard, as
+   rule 3's "guard or not" reads literally.
+
 ## Required Evidence
 
 - Each row of the Problem table, and each overstatement listed after it,
@@ -337,8 +362,16 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
-- Planned: one classifier unit test per acceptance example, and a fixture
-  for example 1 showing the related test's reported kind and strength.
+- Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
+  (examples 3, 4, 7, 17, 18, 21 to 26 and the pinning controls 6, 22, 23).
+- Existing: `classify.rs::tests::spec_0231_rules_4_to_6_match_whole_names`
+  (examples 8, 9, 10, 12, 15, 16 and 26).
+- Existing: `reveal.rs::tests::probe_relative_oracle_strength_preserves_family_overrides`
+  (a family override never raises a weakened strength).
+- Corpus: the `spec0231-*` verdict-corpus cases (#6638) carry each example's
+  runtime truth.
+- Planned: a fixture for example 1 showing the related test's reported kind
+  and strength.
 
 ## Implementation Mapping
 
@@ -346,7 +379,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/extract/oracles/scan.rs`: the RIPR-SPEC-0106
   upgrade, unchanged.
 - `crates/ripr/src/analysis/extract/oracles/patterns.rs`: token-level
-  matching for rules 1 to 6.
+  matching for rules 1 and 4 to 6.
+- `crates/ripr/src/analysis/extract/oracles/pattern_admission.rs`: the
+  pattern reading for rules 2 and 3.
+- `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
+  override is a cap that never raises a classifier-weakened strength, and an
+  owner pin needs a strong oracle (decision 3).
 
 ## Metrics
 

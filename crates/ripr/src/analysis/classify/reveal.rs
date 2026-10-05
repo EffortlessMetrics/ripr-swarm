@@ -433,6 +433,7 @@ fn analyze_related_assertions(
                     assertion.kind,
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 )
+                && assertion.strength == OracleStrength::Strong
                 && (return_admission.owner_return_pin)(test, assertion);
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
@@ -2404,13 +2405,26 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     if matches!(family, ProbeFamily::StaticUnknown) {
         return OracleStrength::Unknown;
     }
-    ORACLE_FAMILY_STRENGTH_OVERRIDES
+    let overridden = ORACLE_FAMILY_STRENGTH_OVERRIDES
         .iter()
         .find(|(rule_family, rule_kind, _)| rule_family == family && rule_kind == &assertion.kind)
         .map_or_else(
             || assertion.strength.clone(),
             |(_, _, strength)| strength.clone(),
-        )
+        );
+    // RIPR-SPEC-0231: no rule raises a strength. A family override may lower
+    // the classifier's reading, but an assertion the classifier weakened
+    // (`assert_ne!` against a struct literal keeps `whole_object_equality`
+    // at weak) never comes back as strong because of its kind.
+    if matches!(
+        assertion.strength,
+        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+    ) && overridden.rank() > assertion.strength.rank()
+    {
+        assertion.strength.clone()
+    } else {
+        overridden
+    }
 }
 
 #[cfg(test)]
@@ -4079,7 +4093,7 @@ return Err(\"typed pin\".into());
             (
                 ProbeFamily::ErrorPath,
                 oracle("exact", OracleKind::ExactErrorVariant, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
             ),
             (
                 ProbeFamily::ErrorPath,
@@ -4099,7 +4113,7 @@ return Err(\"typed pin\".into());
             (
                 ProbeFamily::ReturnValue,
                 oracle("exact", OracleKind::ExactValue, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
             ),
             (
                 ProbeFamily::Predicate,
@@ -4128,7 +4142,7 @@ return Err(\"typed pin\".into());
                     OracleKind::WholeObjectEquality,
                     OracleStrength::Weak,
                 ),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
             ),
             (
                 ProbeFamily::CallDeletion,
