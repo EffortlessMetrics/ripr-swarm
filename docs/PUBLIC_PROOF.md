@@ -34,7 +34,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on the hand-checked verdict corpus | **35.6%** | <= 5.0% | below the bar | first receipt (verdict corpus) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **29.4%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 104 cases: 35.6%) |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
@@ -58,8 +58,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On the labeled corpus ripr reported a gap on 33 of 56 changes whose tests caught every listed mutant (58.9%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`, `pricing-gold-discount-rate`, `ledger-ship-log-push`, `ledger-receipt-remaining`, `ledger-stock-insert`, `config-missing-equals-line`, `config-log-level-warn`, `checkout-fee-err-return-guard`, `checkout-withdraw-guarded-match-pin`, `checkout-refund-matches-variant`, `checkout-daily-limit-imported-const`, `checkout-minimum-same-file-const`, `checkout-bulk-custom-assert-macro`, `checkout-region-literal-match-helper`, `tokens-recursive-label-arm`, `tokens-base-six-hop-chain`, `tokens-inner-rate-macro-reach`, `tokens-inner-bonus-test-macro-call`, `tokens-add-fee-integration-api`, `tokens-long-flag-strip-prefix`, `tokens-byte-at-unsafe-fn`, `shop-score-imported-across-crates`, `shop-discount-path-dependent-test`, `shop-gate-let-bound-input`.
-- **Mostly unsure.** It abstained on 34 of 104 corpus cases (32.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 10 of 20 whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 23 of 36 (63.9%).
+- **Mostly unsure.** On real-repository changes it abstained on 19 of 34 cases (55.9%); on the authored cases, 15 of 70 (21.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
@@ -120,122 +120,124 @@ False-gap examples, as recorded:
 
 This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
-| Rate | Count | Share |
-| --- | --- | --- |
-| False verdicts (all cases) | 37/104 | 35.6% |
-| False actionable (of discriminated) | 33/56 | 58.9% |
-| False exposed (of not fully discriminated) | 4/48 | 8.3% |
-| False silent (of not fully discriminated) | 0/48 | 0.0% |
-| Ideal verdict | 33/104 | 31.7% |
-| Abstained (limited or silent where acceptable) | 34/104 | 32.7% |
-| Findings with a contradiction | 2/138 | 1.5% |
+Only the upstream cases come from real repositories. The authored cases were written to fill verdict and probe-family cells the upstream cases leave empty, so their rates are not real-world rates and are shown apart.
 
-| Case | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
-| --- | --- | --- | --- | --- | --- | --- |
-| `serde-format-u8-hundreds` | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
-| `serde-format-u8-tens` | discriminated | credited | limited | propagation_unknown | abstained | none |
-| `semver-caret-minor-ge` | discriminated | credited | limited | no_static_path | abstained | none |
-| `semver-tilde-pre-ge` | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `semver-less-pre` | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `semver-greater-patch` | discriminated | credited | limited | no_static_path | abstained | none |
-| `semver-digit-upper` | partially_discriminated | gap | limited | infection_unknown | abstained | none |
-| `semver-max-comparators` | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `semver-caret-zero-minor` | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `hex-from-hex-odd-variant` | discriminated | credited | gap | reachable_unrevealed, weakly_exposed | false_actionable | none |
-| `hex-decode-slice-odd` | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
-| `hex-decode-slice-length` | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `hex-encode-slice-length` | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `itoa-two-digit-tail` | not_discriminated | gap | limited | no_static_path | abstained | none |
-| `regex-syntax-word-byte` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `regex-syntax-max-scalar-two-byte` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `serde-derive-rename-variant-lower` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `serde-derive-rename-field-upper` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `semver-leading-zero` | discriminated | credited | limited | no_static_path | abstained | none |
-| `semver-op-greater-eq` | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
-| `itoa-four-digit-loop` | not_discriminated | gap | limited | no_static_path | abstained | none |
-| `semver-digit-upper-first-run` | discriminated | credited | limited | infection_unknown | abstained | none |
-| `bytesize-format-unit-first-run` | discriminated | credited | limited | infection_unknown | abstained | none |
-| `rusqlite-singlethreaded-magic` | discriminated | credited | limited | no_static_path, static_unknown | abstained | none |
-| `semver-digits-ten` | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `semver-req-separator` | discriminated | credited | limited | no_static_path | abstained | none |
-| `strsim-sorensen-dice-equal` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `bytesize-as-kib-div` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `bytesize-as-mb-div` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `bytesize-as-kb-div` | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
-| `bytesize-as-mib-div` | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
-| `strsim-jaro-winkler-threshold-shift` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `atuin-ai-history-output-capability` | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
-| `atuin-otel-traces-suffix-not` | not_discriminated | gap | limited | infection_unknown | abstained | none |
-| `pricing-gold-threshold` | discriminated | credited | credited | exposed | ideal | none |
-| `pricing-free-shipping-boundary` | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `pricing-gold-discount-rate` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `pricing-flat-shipping-fee` | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `pricing-tier-label-gold` | discriminated | credited | credited | exposed | ideal | none |
-| `pricing-quote-total-field` | partially_discriminated | gap | credited | exposed | false_exposed | none |
-| `ledger-ship-log-push` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
-| `ledger-receive-refresh-low-stock` | not_discriminated | gap | credited | exposed | false_exposed | none |
-| `ledger-receipt-remaining` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `ledger-insufficient-available` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `ledger-shipped-total` | partially_discriminated | gap | limited | static_unknown | abstained | none |
-| `ledger-stock-insert` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
-| `ledger-ship-exact-stock` | not_discriminated | gap | limited | infection_unknown | abstained | none |
-| `ledger-sku-family-unsafe` | discriminated | credited | credited | exposed, static_unknown | ideal | none |
-| `ledger-sku-variant-unsafe` | partially_discriminated | gap | credited | exposed, static_unknown | false_exposed | none |
-| `config-missing-equals-line` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `config-empty-key-error` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `config-log-level-warn` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
-| `config-bool-false-arm` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `config-port-zero` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `config-default-host` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `config-duplicate-key-case` | not_discriminated | gap | limited | infection_unknown | abstained | none |
-| `ledger-sku-family-end` | discriminated | credited | limited | infection_unknown | abstained | none |
-| `accounts-balance-add` | discriminated | credited | limited | static_unknown | abstained | none |
-| `accounts-trailer-crc` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `accounts-parse-too-long-variant` | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `accounts-last-byte-unchecked` | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `checkout-fee-closure-never-called` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-fee-assert-under-false-flag` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-fee-unpolled-async-assert` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-fee-cfg-disabled-test` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-fee-err-return-guard` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `checkout-withdraw-guarded-match-pin` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `checkout-withdraw-sibling-variant` | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `checkout-refund-matches-variant` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
-| `checkout-deposit-cap-happy-path-only` | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `checkout-tax-self-computed-expected` | not_discriminated | gap | credited | exposed | false_exposed | none |
-| `checkout-daily-limit-imported-const` | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
-| `checkout-minimum-same-file-const` | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
-| `checkout-review-split-boundary-tests` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-bulk-custom-assert-macro` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `checkout-rate-same-method-other-type` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `checkout-region-literal-match-helper` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `checkout-announce-stdout-sink` | not_discriminated | gap | limited | propagation_unknown | abstained | none |
-| `checkout-record-discarded-result` | discriminated | credited | limited | static_unknown | abstained | none |
-| `checkout-persist-swallowed-ok` | discriminated | credited | limited | propagation_unknown | abstained | none |
-| `tokens-scanner-state-arm` | discriminated | credited | credited | exposed | ideal | none |
-| `tokens-recursive-label-arm` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-word-start-helper` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `tokens-normalize-helper-chain` | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
-| `tokens-base-six-hop-chain` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-inner-rate-macro-reach` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-inner-bonus-test-macro-call` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-add-fee-integration-api` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-ext-start-map-or-binding` | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
-| `tokens-fits-binding-predicate` | discriminated | credited | limited | propagation_unknown | abstained | none |
-| `tokens-long-flag-strip-prefix` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-byte-at-unsafe-fn` | discriminated | credited | gap | static_unknown, weakly_exposed | false_actionable | none |
-| `shop-score-imported-across-crates` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `shop-rebate-same-name-other-crate` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-discount-path-dependent-test` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `shop-item-cents-trait-method` | discriminated | credited | credited | exposed | ideal | none |
-| `shop-item-total-associated-vs-free` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-tier-gold-arm-unreached` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-cart-add-other-collection-observed` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-quote-total-result-field` | discriminated | credited | credited | exposed | ideal | none |
-| `shop-cap-literal-only-expected` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-gate-let-bound-input` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `roles-limit-const-value` | discriminated | credited | limited | static_unknown | abstained | none |
-| `roles-cfg-test-helper-input` | discriminated | credited | silent |  | abstained | none |
+| Rate | All cases | Upstream (real repositories) | Authored |
+| --- | --- | --- | --- |
+| False verdicts (all cases) | 37/104 (35.6%) | 10/34 (29.4%) | 27/70 (38.6%) |
+| False actionable (of discriminated) | 33/56 (58.9%) | 10/20 (50.0%) | 23/36 (63.9%) |
+| False exposed (of not fully discriminated) | 4/48 (8.3%) | 0/14 (0.0%) | 4/34 (11.8%) |
+| False silent (of not fully discriminated) | 0/48 (0.0%) | 0/14 (0.0%) | 0/34 (0.0%) |
+| Ideal verdict | 33/104 (31.7%) | 5/34 (14.7%) | 28/70 (40.0%) |
+| Abstained (limited or silent where acceptable) | 34/104 (32.7%) | 19/34 (55.9%) | 15/70 (21.4%) |
+| Findings with a contradiction | 2/138 (1.5%) | not split by origin | not split by origin |
+
+| Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `serde-format-u8-hundreds` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
+| `serde-format-u8-tens` | upstream | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `semver-caret-minor-ge` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `semver-tilde-pre-ge` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `semver-less-pre` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `semver-greater-patch` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `semver-digit-upper` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
+| `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
+| `semver-caret-zero-minor` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
+| `hex-from-hex-odd-variant` | upstream | discriminated | credited | gap | reachable_unrevealed, weakly_exposed | false_actionable | none |
+| `hex-decode-slice-odd` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
+| `hex-decode-slice-length` | upstream | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
+| `hex-encode-slice-length` | upstream | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
+| `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
+| `regex-syntax-word-byte` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `regex-syntax-max-scalar-two-byte` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `serde-derive-rename-variant-lower` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `serde-derive-rename-field-upper` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `semver-leading-zero` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `semver-op-greater-eq` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
+| `itoa-four-digit-loop` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
+| `semver-digit-upper-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
+| `bytesize-format-unit-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
+| `rusqlite-singlethreaded-magic` | upstream | discriminated | credited | limited | no_static_path, static_unknown | abstained | none |
+| `semver-digits-ten` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
+| `semver-req-separator` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `strsim-sorensen-dice-equal` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `bytesize-as-kib-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `bytesize-as-mb-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
+| `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
+| `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `atuin-ai-history-output-capability` | upstream | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
+| `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `pricing-free-shipping-boundary` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `pricing-gold-discount-rate` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `pricing-flat-shipping-fee` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `pricing-quote-total-field` | authored | partially_discriminated | gap | credited | exposed | false_exposed | none |
+| `ledger-ship-log-push` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `ledger-receipt-remaining` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `ledger-insufficient-available` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `ledger-shipped-total` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `ledger-stock-insert` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `ledger-ship-exact-stock` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `ledger-sku-family-unsafe` | authored | discriminated | credited | credited | exposed, static_unknown | ideal | none |
+| `ledger-sku-variant-unsafe` | authored | partially_discriminated | gap | credited | exposed, static_unknown | false_exposed | none |
+| `config-missing-equals-line` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `config-empty-key-error` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-log-level-warn` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `config-bool-false-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-port-zero` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-default-host` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-duplicate-key-case` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `ledger-sku-family-end` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
+| `accounts-balance-add` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `accounts-trailer-crc` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `accounts-last-byte-unchecked` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-unpolled-async-assert` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-fee-err-return-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `checkout-daily-limit-imported-const` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `checkout-minimum-same-file-const` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-bulk-custom-assert-macro` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `checkout-region-literal-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-announce-stdout-sink` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `checkout-record-discarded-result` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `checkout-persist-swallowed-ok` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `tokens-scanner-state-arm` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `tokens-recursive-label-arm` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-word-start-helper` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `tokens-normalize-helper-chain` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `tokens-base-six-hop-chain` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-inner-rate-macro-reach` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-inner-bonus-test-macro-call` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-add-fee-integration-api` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-ext-start-map-or-binding` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
+| `tokens-fits-binding-predicate` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `tokens-long-flag-strip-prefix` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-byte-at-unsafe-fn` | authored | discriminated | credited | gap | static_unknown, weakly_exposed | false_actionable | none |
+| `shop-score-imported-across-crates` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shop-rebate-same-name-other-crate` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-discount-path-dependent-test` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shop-item-cents-trait-method` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `shop-item-total-associated-vs-free` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-tier-gold-arm-unreached` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-cart-add-other-collection-observed` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-quote-total-result-field` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `shop-cap-literal-only-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `roles-cfg-test-helper-input` | authored | discriminated | credited | silent |  | abstained | none |
 
 What the corpus does not claim:
 

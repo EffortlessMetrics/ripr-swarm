@@ -502,8 +502,16 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
     };
     Ok(match id {
         "trust.false_verdict_rate" => {
-            let rate = req_rate(&r.verdicts, "false_verdict_rate", "verdict-corpus")?;
-            first_receipt(rate.rate, "verdict corpus")
+            let rate = origin_rate(&r.verdicts, "upstream", "false_verdict_rate")?;
+            let all = req_rate(&r.verdicts, "false_verdict_rate", "verdict-corpus")?;
+            first_receipt(
+                rate.rate,
+                &format!(
+                    "verdict corpus, upstream cases only; all {} cases: {}",
+                    all.denominator,
+                    percent(all.rate)
+                ),
+            )
         }
         "trust.discriminator_claim_agreement" => first_receipt(
             req_f64(
@@ -679,6 +687,8 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
                 num(scored),
                 num(mutants)
             )
+        } else if id == "trust.false_verdict_rate" {
+            "Wrong verdicts on hand-checked changes from real repositories".to_string()
         } else {
             text(metric, "title")
         };
@@ -877,6 +887,18 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
     }
 }
 
+/// A verdict-corpus rate for one case origin ("upstream" or "authored").
+/// Authored cases were written to fill empty cells, so only the upstream
+/// rates describe tests in real repositories.
+fn origin_rate(verdicts: &Value, origin: &str, key: &str) -> Result<Rate, String> {
+    let ctx = format!("verdict-corpus by_origin {origin}");
+    let by_origin = field(verdicts, "by_origin");
+    if by_origin.get(origin).is_none() {
+        return Err(format!("verdict-corpus is missing by_origin.{origin}"));
+    }
+    req_rate(field(by_origin, origin), key, &ctx)
+}
+
 fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String> {
     page.line("## Where ripr falls short");
     page.blank();
@@ -884,26 +906,36 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
     page.blank();
 
     let rows = req_arr(&r.verdicts, "rows", "verdict-corpus")?;
-    let false_actionable = req_rate(&r.verdicts, "false_actionable_rate", "verdict-corpus")?;
+    let false_actionable = origin_rate(&r.verdicts, "upstream", "false_actionable_rate")?;
+    let authored_false_actionable = origin_rate(&r.verdicts, "authored", "false_actionable_rate")?;
     let false_cases: Vec<String> = rows
         .iter()
-        .filter(|row| text(row, "outcome") == "false_actionable")
+        .filter(|row| {
+            text(row, "outcome") == "false_actionable" && text(row, "origin") == "upstream"
+        })
         .map(|row| format!("`{}`", text(row, "case_id")))
         .collect();
     page.line(format!(
-        "- **Wrong gaps.** On the labeled corpus ripr reported a gap on {} of {} changes whose tests caught every listed mutant ({}): {}.",
+        "- **Wrong gaps.** On changes from real repositories ripr reported a gap on {} of {} whose tests caught every listed mutant ({}): {}. On the authored cases, which were written to fill empty corpus cells, it did so on {} of {} ({}).",
         false_actionable.numerator,
         false_actionable.denominator,
         percent(false_actionable.rate),
-        false_cases.join(", ")
+        false_cases.join(", "),
+        authored_false_actionable.numerator,
+        authored_false_actionable.denominator,
+        percent(authored_false_actionable.rate)
     ));
 
-    let abstention = req_rate(&r.verdicts, "abstention_rate", "verdict-corpus")?;
+    let abstention = origin_rate(&r.verdicts, "upstream", "abstention_rate")?;
+    let authored_abstention = origin_rate(&r.verdicts, "authored", "abstention_rate")?;
     page.line(format!(
-        "- **Mostly unsure.** It abstained on {} of {} corpus cases ({}). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.",
+        "- **Mostly unsure.** On real-repository changes it abstained on {} of {} cases ({}); on the authored cases, {} of {} ({}). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.",
         abstention.numerator,
         abstention.denominator,
-        percent(abstention.rate)
+        percent(abstention.rate),
+        authored_abstention.numerator,
+        authored_abstention.denominator,
+        percent(authored_abstention.rate)
     ));
 
     let families = field(&r.mutation, "scored_families");
@@ -1200,16 +1232,44 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
         ),
         ("contradiction_rate", "Findings with a contradiction"),
     ];
+    page.line("Only the upstream cases come from real repositories. The authored cases were written to fill verdict and probe-family cells the upstream cases leave empty, so their rates are not real-world rates and are shown apart.");
+    page.blank();
+    let cell = |rate: Rate| {
+        format!(
+            "{}/{} ({})",
+            rate.numerator,
+            rate.denominator,
+            percent(rate.rate)
+        )
+    };
     let mut rate_rows = Vec::new();
     for (key, label) in labels {
-        let rate = req_rate(verdicts, key, ctx)?;
+        let split = |origin: &str| {
+            if field(field(verdicts, "by_origin"), origin)
+                .get(key)
+                .is_some()
+            {
+                origin_rate(verdicts, origin, key).map(cell)
+            } else {
+                Ok("not split by origin".to_string())
+            }
+        };
         rate_rows.push(vec![
             label.to_string(),
-            format!("{}/{}", rate.numerator, rate.denominator),
-            percent(rate.rate),
+            cell(req_rate(verdicts, key, ctx)?),
+            split("upstream")?,
+            split("authored")?,
         ]);
     }
-    page.table(&["Rate", "Count", "Share"], &rate_rows);
+    page.table(
+        &[
+            "Rate",
+            "All cases",
+            "Upstream (real repositories)",
+            "Authored",
+        ],
+        &rate_rows,
+    );
     let case_rows: Vec<Vec<String>> = req_arr(verdicts, "rows", ctx)?
         .iter()
         .map(|row| {
@@ -1221,6 +1281,7 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
                 .collect();
             vec![
                 format!("`{}`", text(row, "case_id")),
+                text(row, "origin"),
                 text(row, "truth"),
                 text(row, "ideal_verdict"),
                 text(row, "observed_verdict"),
@@ -1237,6 +1298,7 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
     page.table(
         &[
             "Case",
+            "Origin",
             "Truth",
             "Ideal",
             "Observed",
@@ -1638,7 +1700,12 @@ mod tests {
     #[test]
     fn missing_receipt_field_is_an_error_not_a_blank() -> Result<(), String> {
         let mut receipts = load(&workspace_root())?;
-        if let Some(object) = receipts.verdicts.as_object_mut() {
+        if let Some(object) = receipts
+            .verdicts
+            .get_mut("by_origin")
+            .and_then(|origins| origins.get_mut("upstream"))
+            .and_then(Value::as_object_mut)
+        {
             object.remove("false_actionable_rate");
         }
         let mut page = Page(String::new());
@@ -1797,6 +1864,29 @@ mod tests {
         assert!(status_of(&receipts)? == Status::Failed);
         set_status(&mut receipts, "below_target");
         assert!(status_of(&receipts)? == Status::Below);
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_rates_are_split_by_origin() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let all = req_rate(&receipts.verdicts, "false_verdict_rate", "verdict-corpus")?;
+        let upstream = origin_rate(&receipts.verdicts, "upstream", "false_verdict_rate")?;
+        assert!(
+            upstream.denominator < all.denominator,
+            "upstream must be a subset of all cases"
+        );
+        let mut page = Page(String::new());
+        verdict_section(&mut page, &receipts.verdicts)?;
+        assert!(page.0.contains("Upstream (real repositories)"));
+        let mut broken = receipts.verdicts.clone();
+        if let Some(object) = broken.as_object_mut() {
+            object.remove("by_origin");
+        }
+        assert!(
+            origin_rate(&broken, "upstream", "false_verdict_rate")
+                .is_err_and(|e| e.contains("by_origin.upstream"))
+        );
         Ok(())
     }
 
