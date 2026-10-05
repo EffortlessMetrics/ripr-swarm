@@ -19,12 +19,16 @@ use std::sync::mpsc;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+#[cfg(test)]
+pub(super) type RecordedThread = (std::thread::ThreadId, Option<String>);
+
 pub(super) struct AnalysisThread {
     sender: Mutex<Option<mpsc::Sender<Job>>>,
-    /// Names of the threads that ran each job, so backend tests can prove
-    /// refreshes reach this thread rather than the blocking pool (#6632).
+    /// Identity and name of the thread that ran each job, so backend tests
+    /// can prove refreshes reach this one thread rather than the blocking
+    /// pool (#6632).
     #[cfg(test)]
-    job_threads: std::sync::Arc<Mutex<Vec<Option<String>>>>,
+    job_threads: std::sync::Arc<Mutex<Vec<RecordedThread>>>,
 }
 
 impl Default for AnalysisThread {
@@ -50,8 +54,11 @@ impl AnalysisThread {
         let job_threads = std::sync::Arc::clone(&self.job_threads);
         self.submit(Box::new(move || {
             #[cfg(test)]
-            lock_ignoring_poison(&job_threads)
-                .push(std::thread::current().name().map(str::to_owned));
+            {
+                let current = std::thread::current();
+                lock_ignoring_poison(&job_threads)
+                    .push((current.id(), current.name().map(str::to_owned)));
+            }
             // The receiver is gone only when the refresh was dropped; there
             // is nobody left to tell.
             let _ = result_sender.send(job());
@@ -64,9 +71,9 @@ impl AnalysisThread {
         })
     }
 
-    /// Thread names recorded for every job that has started, in order.
+    /// Threads recorded for every job that has started, in order.
     #[cfg(test)]
-    pub(super) fn job_threads_for_test(&self) -> Vec<Option<String>> {
+    pub(super) fn job_threads_for_test(&self) -> Vec<RecordedThread> {
         lock_ignoring_poison(&self.job_threads).clone()
     }
 
