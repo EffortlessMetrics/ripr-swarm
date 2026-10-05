@@ -555,12 +555,37 @@ fn remove_replaced_generation_files(
             continue;
         }
         if let Ok(path) = resolve_sharded_cache_file(sharded_dir, &shard.file) {
+            if !has_no_symlinked_ancestor(sharded_dir, &path) {
+                continue;
+            }
             let _ = std::fs::remove_file(&path);
             if let Some(parent) = path.parent().filter(|parent| *parent != sharded_dir) {
                 let _ = std::fs::remove_dir(parent);
             }
         }
     }
+}
+
+/// True when no directory between `root` (exclusive) and `path` (exclusive) is a
+/// symlink, so a delete through `path` cannot leave the cache. An unreadable
+/// component counts as unsafe: cleanup is best effort, so it skips.
+fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        if components.peek().is_none() {
+            return true;
+        }
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 struct UnpublishedGeneration {
@@ -1841,6 +1866,45 @@ mod tests {
             );
         }
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-symlink");
+        ignore_remove_dir_all(&dir);
+        let outside = isolated_dir("cleanup-symlink-outside");
+        ignore_remove_dir_all(&outside);
+        let real = dir.join("g1-1-0");
+        std::fs::create_dir_all(&real).map_err(|err| err.to_string())?;
+        std::fs::write(real.join("shard-00000.json"), b"old").map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, dir.join("g2-2-0")).map_err(|err| err.to_string())?;
+        let refs = ["g1-1-0/shard-00000.json", "g2-2-0/victim.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 2, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "3-3-0");
+        assert!(
+            !real.join("shard-00000.json").exists(),
+            "a file in a real generation directory is still removed"
+        );
+        assert!(
+            outside.join("victim.json").exists(),
+            "a file reached through a symlinked generation directory must survive"
+        );
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&outside);
         Ok(())
     }
 

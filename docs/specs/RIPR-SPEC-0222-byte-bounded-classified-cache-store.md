@@ -81,7 +81,9 @@ proving a universal RSS threshold.
   current manifest does not reference once they are older than one
   hour (a terminated or superseded writer leaves them). The previous
   manifest is integrity-validated before any of its files are deleted,
-  and only files under `g*/` are ever deleted.
+  and only files under `g*/` are ever deleted. A listed path with a
+  symlinked directory component is skipped, so a delete cannot leave the
+  cache.
 - If one classified seam cannot fit under the configured byte ceiling,
   the store returns `skipped_oversized_record_index_{i}_ceiling_{n}`
   (`skipped_oversized_metadata_ceiling_{n}` when the metadata around the
@@ -179,6 +181,7 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_generations_are_swept_only_when_old_and_unreferenced`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_only_deletes_files_inside_generation_directories`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::tampered_previous_manifest_never_deletes_the_live_manifest`
 - Existing `crates/ripr/src/analysis/seam_cache.rs` integrity, missing-shard,
   and sharded warm-hit tests
