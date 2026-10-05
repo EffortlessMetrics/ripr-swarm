@@ -847,8 +847,13 @@ mod tests {
         // #5988: the diff-check identity block used to be byte-equal across a
         // ripr.toml change that flips findings — config_identity stayed null
         // and input_identity is only the diff digest. A loaded config must
-        // now contribute the same canonical fingerprint the check-artifact
-        // reuse gate enforces, while a defaults-only run stays null.
+        // now contribute the fingerprint of the exact loaded text, so any
+        // loaded-config change moves the block (#6777 review: settings the
+        // check-artifact allowlist classifies CapturedElsewhere — mode,
+        // include_unchanged_tests, enabled languages — are recorded in
+        // separate artifact fields but have no outcome sibling, so only the
+        // text fingerprint closes every escape). A defaults-only run stays
+        // null.
         let defaults = RiprConfig::default();
         let without_config = check_workspace_with_config(sample_diff_input(), &defaults)?;
         let plain_identity = without_config
@@ -886,10 +891,13 @@ mod tests {
             .ok_or_else(|| "diff run must project an analysis outcome".to_string())?
             .identity
             .clone();
+        let loaded_text = generated
+            .source_text()
+            .ok_or_else(|| "fixture must set the loaded config text".to_string())?;
         assert_eq!(
             generated_identity.config_identity.as_deref(),
-            Some(crate::config::check_artifact_config_identity_hash(&generated).as_str()),
-            "a loaded config publishes the canonical finding-affecting fingerprint"
+            Some(crate::config::config_fingerprint(loaded_text).as_str()),
+            "a loaded config publishes the fingerprint of its exact text"
         );
         assert_ne!(
             plain_identity, generated_identity,
@@ -905,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn loaded_config_identity_requires_an_actually_loaded_file() {
+    fn loaded_config_identity_requires_an_actually_loaded_file_and_tracks_the_text() {
         // No ripr.toml: null, even though the default fields still analyze.
         assert_eq!(
             crate::config::loaded_config_identity(&RiprConfig::default()),
@@ -918,8 +926,21 @@ mod tests {
         let identity = crate::config::loaded_config_identity(&loaded);
         assert_eq!(
             identity.as_deref(),
-            Some(crate::config::check_artifact_config_identity_hash(&loaded).as_str()),
-            "any loaded file publishes the fingerprint, even an empty one"
+            Some(crate::config::config_fingerprint("").as_str()),
+            "any loaded file publishes the fingerprint of its text, even an empty one"
+        );
+        // Any change to the loaded text moves the identity — including the
+        // CapturedElsewhere settings (mode, include_unchanged_tests, enabled
+        // languages) that the finding-affecting allowlist alone would miss
+        // (#6777 review).
+        let enabled_languages = RiprConfig {
+            source_text: Some("[languages]\nenabled = [\"rust\", \"python\"]".to_string()),
+            ..RiprConfig::default()
+        };
+        let other = crate::config::loaded_config_identity(&enabled_languages);
+        assert_ne!(
+            identity, other,
+            "a different loaded config text must publish a different identity"
         );
     }
 

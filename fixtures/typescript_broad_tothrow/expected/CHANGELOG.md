@@ -571,3 +571,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_broad_tothrow (14)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_broad_tothrow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

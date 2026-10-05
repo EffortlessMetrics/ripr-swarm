@@ -336,3 +336,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_no_verify_command (12)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless ts_no_verify_command --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

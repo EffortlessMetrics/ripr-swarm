@@ -722,10 +722,17 @@ fn inspect_cache_dir_attributed(
             if file_type.is_symlink() {
                 continue;
             }
-            let child_owned = if is_top_level && let Some(names) = owned_layer_names {
-                names.iter().any(|name| entry.file_name() == *name)
-            } else {
-                owned
+            let entry_name = entry.file_name();
+            // Root-mode attribution must match what `cache clear` can remove
+            // (#6777 review): only a recognized top-level DIRECTORY is an
+            // owned layer, because the clear planner accepts named layers
+            // only as directories and removes nothing otherwise. A regular
+            // file wearing a layer name is foreign, not an owned entry.
+            let child_owned = match owned_layer_names {
+                Some(names) if is_top_level => {
+                    file_type.is_dir() && names.iter().any(|name| entry_name == *name)
+                }
+                _ => owned,
             };
             if file_type.is_dir() {
                 stack.push((entry.path(), child_owned, false));

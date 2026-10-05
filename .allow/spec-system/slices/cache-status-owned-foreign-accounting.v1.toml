@@ -7,17 +7,19 @@ design_reference = "issue:5987#suggested-direction"
 change_class = "behavior_change"
 
 claim_boundary = """
-`ripr cache status` counts and sizes only the recognized ripr cache layers —
-the same set `ripr cache clear` removes — so status and clear describe the
-same owned set when they say "entries", and a post-clear status reports zero
-owned entries. Files anywhere else under the cache root (foreign layers,
-stray notes, stale-schema orphans) are disclosed separately as
-`foreign_entry_count` / `foreign_total_size_bytes` and stay preserved by
-clear. The status report schema moves 0.1 -> 0.2 because the meaning of
-`entry_count` / `total_size_bytes` changes. Claims no change to clear's
-removal set, its preserve-siblings design, or the cache producers; the
-retained per-layer inspector keeps its everything-is-owned semantics for
-clear's plan.
+`ripr cache status` counts and sizes only the recognized ripr cache layer
+directories — the set `ripr cache clear` removes — so status and clear
+describe the same owned set when they say "entries", and a post-clear status
+reports zero owned entries. A regular file wearing a recognized layer name is
+disclosed as foreign, not owned (review repair: the clear planner accepts
+named layers only as directories and removes nothing in that state). Files
+anywhere else under the cache root (foreign layers, stray notes,
+stale-schema orphans) are disclosed separately as `foreign_entry_count` /
+`foreign_total_size_bytes` and stay preserved by clear. The status report
+schema moves 0.1 -> 0.2 because the meaning of `entry_count` /
+`total_size_bytes` changes. Claims no change to clear's removal set, its
+preserve-siblings design, or the cache producers; the retained per-layer
+inspector keeps its everything-is-owned semantics for clear's plan.
 """
 
 non_goals = [

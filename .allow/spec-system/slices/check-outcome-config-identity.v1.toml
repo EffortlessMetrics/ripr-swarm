@@ -8,13 +8,16 @@ change_class = "behavior_change"
 
 claim_boundary = """
 The diff-check outcome identity block (`ripr check` JSON,
-`analysis_outcome.outcome.identity.config_identity`) publishes the canonical
-finding-affecting config fingerprint — the same
-`check_artifact_config_identity_hash` value the `--write-artifact` reuse gate
-enforces — exactly when a `ripr.toml` was actually loaded for the run. A
-defaults-only run (no config file, or a bound `--candidate-tree` subject that
-must ignore the worktree config) keeps `null`. Two runs whose loaded config
-differs in a finding-affecting way never share an identity block, even when
+`analysis_outcome.outcome.identity.config_identity`) publishes the
+fingerprint of the exact `ripr.toml` text loaded for the run exactly when a
+config file was actually loaded. A defaults-only run (no config file, or a
+bound `--candidate-tree` subject that must ignore the worktree config) keeps
+`null`. Any change to the loaded config content therefore moves the identity
+block — the finding-affecting allowlist fields, and equally the mode /
+unchanged-test / enabled-language settings the check-artifact identity
+records in separate fields (review repair: a narrow finding-affecting hash
+alone let those finding-changing settings share one block). Two runs whose
+loaded config text differs never share an identity block, even when
 `input_identity` (the diff digest alone) is equal. Additive field population
 in the git_candidate_subject house style: no outcome schema_version bump, and
 `schemas/ripr/check.schema.json` already declares `config_identity` as a

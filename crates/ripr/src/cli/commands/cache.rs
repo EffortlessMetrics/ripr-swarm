@@ -23,11 +23,12 @@ otherwise target/ripr/cache under the Cargo workspace root).
             (those carry their own version in their directory names).
 
 `entry_count` and `total_size_bytes` count only the recognized ripr cache
-layers, the same set `ripr cache clear` removes; files anywhere else under
-the cache root are reported separately as unrecognized entries and are
-always preserved by clear. A cache base reached through a symlink or
-junction is resolved to the real directory (via_symlink/real_cache_dir),
-matching what `ripr check` reads and writes.
+layer directories, the same set `ripr cache clear` removes; files anywhere
+else under the cache root — including a regular file wearing a layer name —
+are reported separately as unrecognized entries and are always preserved by
+clear. A cache path reached through a symlink or junction (leaf or ancestor)
+is resolved to the real directory (via_symlink/real_cache_dir), matching
+what `ripr check` reads and writes.
 
 The cache is disposable: deleting it only costs a slower next run. Use
 `ripr cache clear` to remove it.
@@ -113,26 +114,28 @@ fn cache_dir_for_current_dir(
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
 
-/// Resolve a symlinked (or junctioned) cache base to its real directory for
-/// the read-only status report (#5989). `ripr check` reads and writes the
+/// Resolve a cache base that traverses a symlink or junction (as the leaf or
+/// through any ancestor component) to its real directory for the read-only
+/// status report (#5989, #6777 review). `ripr check` reads and writes the
 /// cache through such an alias, so status must inspect the directory the
 /// analysis actually uses instead of reporting `unavailable` for a cache in
-/// active use. Returns the directory to inspect and, when the configured base
-/// was an alias, the resolved real directory for the disclosure. A dangling
-/// alias has no target to inspect; the alias itself is returned and the walk
-/// classifies it honestly.
+/// active use — and the alias disclosure must fire for an ancestor alias too,
+/// the layout where `cache clear` refuses with a symlinked-ancestor error.
+/// Returns the directory to inspect and, when any component of the configured
+/// path is a symlink and the path resolves, the real directory. A dangling
+/// alias has no target to inspect; the configured path itself is returned and
+/// the walk classifies it honestly.
 fn resolve_status_base(cache_dir: &Path) -> (PathBuf, Option<PathBuf>) {
-    let is_symlink = std::fs::symlink_metadata(cache_dir)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false);
-    if !is_symlink {
+    let traverses_alias = cache_dir.ancestors().any(|component| {
+        std::fs::symlink_metadata(component)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+    });
+    if !traverses_alias {
         return (cache_dir.to_path_buf(), None);
     }
     match std::fs::canonicalize(cache_dir) {
-        Ok(real) => {
-            let resolved = real.clone();
-            (real, Some(resolved))
-        }
+        Ok(real) => (real.clone(), Some(real)),
         Err(_) => (cache_dir.to_path_buf(), None),
     }
 }
@@ -1024,6 +1027,49 @@ mod tests {
     }
 
     #[test]
+    fn impostor_layer_file_counts_as_foreign_and_clear_refuses_it() -> Result<(), String> {
+        // #6777 review (devin #2 / codex P2): a regular file wearing a
+        // recognized layer name must not report as an owned entry — the clear
+        // planner accepts named layers only as directories and removes
+        // nothing in this state, so the file belongs on the preserved side.
+        let root = temp_dir("impostor-layer");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join("repo-file-facts"), b"abcd").map_err(|error| error.to_string())?;
+        let layer = root.join("repo-seam-facts");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+
+        let status = inspect_cache_root(&root);
+        if status.entry_count != 1
+            || status.total_size_bytes != 2
+            || status.foreign_entry_count != 1
+            || status.foreign_total_size_bytes != 4
+        {
+            remove_base(&root)?;
+            return Err(format!("impostor file was not foreign: {status:?}"));
+        }
+        // Clear refuses the non-directory layer entirely and preserves both.
+        let refused = clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let preserved =
+            root.join("repo-file-facts").is_file() && layer.join("entry.json").is_file();
+        remove_base(&root)?;
+        match refused {
+            Ok(message) => Err(format!("clear accepted an impostor layer file: {message}")),
+            Err(error) if !error.contains("not a directory") => {
+                Err(format!("unexpected impostor refusal: {error}"))
+            }
+            Err(_) if !preserved => Err("clear deleted files beside an impostor layer".to_string()),
+            Err(_) => Ok(()),
+        }
+    }
+
+    #[test]
     fn status_render_discloses_foreign_and_alias_fields() -> Result<(), String> {
         let status = CacheStatus {
             state: "ok",
@@ -1232,6 +1278,57 @@ mod tests {
             return Err("the disclosed real path was not clearable".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn cache_below_an_alias_ancestor_discloses_the_resolution() -> Result<(), String> {
+        // #6777 review (devin #3): with RIPR_CACHE_DIR below a symlinked
+        // ANCESTOR, status counts the in-use cache either way, and the alias
+        // disclosure must still fire — this is exactly the layout where clear
+        // refuses with a symlinked-ancestor error naming the alias component.
+        let base = temp_dir("alias-ancestor");
+        let real_parent = base.join("real-parent");
+        let cache = real_parent.join("ripr-cache");
+        let layer = cache.join("repo-file-facts");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        let alias_parent = base.join("alias-parent");
+        if !create_filesystem_alias(&real_parent, &alias_parent)? {
+            remove_base(&base)?;
+            return Ok(());
+        }
+        let through_alias = alias_parent.join("ripr-cache");
+
+        let (inspect_dir, real_dir) = resolve_status_base(&through_alias);
+        let status = inspect_cache_root(&inspect_dir);
+        let resolved_real = fs::canonicalize(&cache).map_err(|error| error.to_string())?;
+        let safe = status.state == "ok"
+            && status.entry_count == 1
+            && real_dir.as_deref() == Some(resolved_real.as_path());
+        // Clear keeps refusing through the alias ancestor, naming the alias
+        // component; the disclosed real path stays clearable.
+        let refused = clear_cache_dir(
+            &through_alias,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let preserved = layer.join("entry.json").is_file();
+        remove_base(&base)?;
+        if !safe {
+            return Err(format!(
+                "ancestor-alias status did not resolve to {resolved_real:?}: {status:?} / {real_dir:?}"
+            ));
+        }
+        match refused {
+            Ok(message) => Err(format!("clear followed the alias ancestor: {message}")),
+            Err(error) if !error.contains("symlink") => {
+                Err(format!("ancestor-alias refusal drifted: {error}"))
+            }
+            Err(_) if !preserved => Err("clear deleted through the alias ancestor".to_string()),
+            Err(_) => Ok(()),
+        }
     }
 
     #[cfg(unix)]
