@@ -2313,6 +2313,7 @@ pub(crate) fn strongest_family_matching_oracle(
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
+    error_facts: &ErrorChangeFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -2322,13 +2323,25 @@ pub(crate) fn strongest_family_matching_oracle(
             continue;
         }
         for assertion in &candidate.test.assertions {
-            if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family) {
+            let (kind, strength) = match &assertion.error_payload {
+                Some(payload)
+                    if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
+                        && !error_payload_credits(payload, error_facts) =>
+                {
+                    (OracleKind::BroadError, OracleStrength::Weak)
+                }
+                _ => (
+                    assertion.oracle_kind.clone(),
+                    assertion.oracle_strength.clone(),
+                ),
+            };
+            if !ts_oracle_kind_matches_seam(&kind, probe_family) {
                 continue;
             }
-            let rank = assertion.oracle_strength.rank();
+            let rank = strength.rank();
             if rank > best_rank {
                 best_rank = rank;
-                best_kind = assertion.oracle_kind.clone();
+                best_kind = kind;
             }
         }
     }
@@ -2371,6 +2384,7 @@ pub(crate) fn classify_change(
         file,
         line,
         line_text,
+        None,
         owners,
         all_tests,
         workspace_root,
@@ -2386,12 +2400,13 @@ pub(crate) fn classify_change(
 /// config) instead of telling the user to enable a flag that is already on.
 #[allow(
     clippy::too_many_arguments,
-    reason = "9 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "10 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_change_with_alias_state(
     file: &Path,
     line: usize,
     line_text: &str,
+    old_line_text: Option<&str>,
     owners: &[TypeScriptOwner],
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
@@ -2523,12 +2538,16 @@ pub(crate) fn classify_change_with_alias_state(
     // slice) and filter each assertion by `ts_oracle_kind_matches_seam`. This
     // lets a multi-assertion test contribute its family-matching assertion even
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
+    // RIPR-SPEC-0234 rule 4: an error payload that passes on both versions
+    // of the changed line reads `broad_error` / weak for this change.
+    let error_facts = ErrorChangeFacts::read(old_line_text, line_text);
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,
         owner,
         alias_map,
         workspace_root,
+        &error_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 

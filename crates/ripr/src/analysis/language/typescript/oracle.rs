@@ -186,7 +186,13 @@ fn assertion_from_expression_any(
     context: &AssertionContext<'_>,
 ) -> Option<TypeScriptAssertion> {
     chai_expect_assertion_from_expression(expr, source, context.bindings)
-        .or_else(|| expect_assertion_from_expression(expr, source))
+        .or_else(|| {
+            context
+                .bindings
+                .runner_expect_reachable()
+                .then(|| expect_assertion_from_expression(expr, source))
+                .flatten()
+        })
         .or_else(|| {
             context
                 .receiver
@@ -469,7 +475,27 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_expects: Vec<String>,
     /// Identifiers bound to the chai module (`chai.expect`, `chai.assert`).
     chai_modules: Vec<String>,
+    /// What the bare name `expect` reaches (RIPR-SPEC-0234 rule 3).
+    expect_binding: ExpectBinding,
 }
+
+/// What the identifier `expect` names in a test body (RIPR-SPEC-0234 rule 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExpectBinding {
+    /// Not bound in the file: the runner global.
+    #[default]
+    Global,
+    /// Imported from a test runner, or destructured from the Vitest test
+    /// context parameter.
+    Runner,
+    /// Bound to anything else: a local declaration, another parameter, or an
+    /// import from another module (chai's `expect` is read by its own step).
+    Other,
+}
+
+/// Modules whose `expect` export is the Jest/Vitest-style matcher API.
+const RUNNER_EXPECT_MODULES: [&str; 4] =
+    ["vitest", "@jest/globals", "@playwright/test", "bun:test"];
 
 impl TypeScriptAssertionBindings {
     /// Collect the assertion-library bindings of a file from its extracted
@@ -488,6 +514,19 @@ impl TypeScriptAssertionBindings {
                 import.namespace,
                 &import.local,
             );
+            if import.local == "expect" {
+                bindings.expect_binding = if !import.namespace
+                    && import.imported.as_deref() == Some("expect")
+                    && RUNNER_EXPECT_MODULES.contains(&import.source.as_str())
+                {
+                    ExpectBinding::Runner
+                } else {
+                    ExpectBinding::Other
+                };
+            }
+        }
+        if statements.iter().any(statement_declares_expect) {
+            bindings.expect_binding = ExpectBinding::Other;
         }
         for stmt in statements {
             let Statement::VariableDeclaration(decl) = stmt else {
@@ -580,7 +619,25 @@ impl TypeScriptAssertionBindings {
                 .filter(|local| !is_shadowed(local))
                 .cloned()
                 .collect(),
+            expect_binding: if is_shadowed("expect") {
+                ExpectBinding::Other
+            } else {
+                self.expect_binding
+            },
         }
+    }
+
+    /// These bindings with `expect` destructured from the Vitest test
+    /// context parameter (`test("x", ({ expect }) => ...)`).
+    pub(crate) fn with_context_expect(mut self) -> Self {
+        self.expect_binding = ExpectBinding::Runner;
+        self
+    }
+
+    /// Whether a bare `expect(...)` call reaches the Jest/Vitest matcher API
+    /// (RIPR-SPEC-0234 rule 3).
+    pub(crate) fn runner_expect_reachable(&self) -> bool {
+        self.expect_binding != ExpectBinding::Other
     }
 
     /// Whether `name` is the local name of any recorded binding.
@@ -749,9 +806,24 @@ pub(crate) fn module_assert_assertion_from_expression(
         }
         _ => return None,
     };
-    let (oracle_kind, oracle_strength) = oracle_for_assert_method(method, flavor);
+    let (mut oracle_kind, mut oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
+    }
+    // RIPR-SPEC-0234 rule 10: `node:assert` `throws` / `rejects` whose
+    // second argument is an anchored regex or an all-literal object with a
+    // string `message` pins the error. chai's `assert.throws` signature
+    // differs and keeps the broad reading.
+    let error_payload = match method {
+        "throws" | "rejects" if flavor != AssertFlavor::Chai => call
+            .arguments
+            .get(1)
+            .and_then(|arg| node_assert_error_payload(method == "rejects", arg, source)),
+        _ => None,
+    };
+    if error_payload.is_some() {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        oracle_strength = OracleStrength::Strong;
     }
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
@@ -769,6 +841,10 @@ pub(crate) fn module_assert_assertion_from_expression(
         expected_argument_metadata(expected_arg, source);
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
+    let rendered_call = match &error_payload {
+        Some(payload) => format!("{callee_text}(..., {})", payload.expected),
+        None => format!("{callee_text}(...)"),
+    };
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
@@ -776,13 +852,130 @@ pub(crate) fn module_assert_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: Some(format!("{callee_text}(...)")),
+        rendered_call: Some(rendered_call),
     })
+}
+
+/// The exact error payload of a `node:assert` `throws` / `rejects` second
+/// argument (RIPR-SPEC-0234 rule 10): a regex literal anchored with `^` and
+/// `$` and no top-level alternation, or an all-literal object whose
+/// `message` is a string literal. Anything else stays broad.
+fn node_assert_error_payload(
+    rejects: bool,
+    arg: &Argument<'_>,
+    source: &str,
+) -> Option<TypeScriptErrorPayload> {
+    if let Some(expected) = anchored_regex_payload_text(arg, source) {
+        return Some(TypeScriptErrorPayload {
+            expected,
+            kind: if rejects {
+                TypeScriptErrorPayloadKind::AssertRejectsRegex
+            } else {
+                TypeScriptErrorPayloadKind::AssertThrowsRegex
+            },
+        });
+    }
+    let Argument::ObjectExpression(object) = arg else {
+        return None;
+    };
+    let has_message = object.properties.iter().any(|property| match property {
+        ObjectPropertyKind::ObjectProperty(property) => {
+            property.key.static_name().as_deref() == Some("message")
+                && matches!(property.value, Expression::StringLiteral(_))
+        }
+        ObjectPropertyKind::SpreadProperty(_) => false,
+    });
+    if !has_message {
+        return None;
+    }
+    let expected = safe_error_object_payload_text(arg, source)?;
+    Some(TypeScriptErrorPayload {
+        expected,
+        kind: if rejects {
+            TypeScriptErrorPayloadKind::AssertRejectsObject
+        } else {
+            TypeScriptErrorPayloadKind::AssertThrowsObject
+        },
+    })
+}
+
+/// Source text of a regex literal argument whose pattern is anchored with
+/// `^` and an unescaped `$`, carries no unescaped `|` outside a character
+/// class, and has no flags other than `u` (RIPR-SPEC-0234 rule 10). A flag
+/// such as `i` would let the regex admit text ripr does not compare.
+pub(crate) fn anchored_regex_payload_text(arg: &Argument<'_>, source: &str) -> Option<String> {
+    let Argument::RegExpLiteral(_) = arg else {
+        return None;
+    };
+    let text = source_text_for_argument(arg, source)?;
+    let (pattern, flags) = split_regex_literal(&text)?;
+    if !flags.chars().all(|flag| flag == 'u') || !regex_pattern_is_anchored(pattern) {
+        return None;
+    }
+    Some(text)
+}
+
+/// Split `/pattern/flags` into its pattern and flags.
+pub(crate) fn split_regex_literal(text: &str) -> Option<(&str, &str)> {
+    let body = text.strip_prefix('/')?;
+    let close = body.rfind('/')?;
+    Some((&body[..close], &body[close + 1..]))
+}
+
+/// Whether a regex pattern starts with `^`, ends with an unescaped `$`, and
+/// has no unescaped `|` outside a character class.
+fn regex_pattern_is_anchored(pattern: &str) -> bool {
+    let Some(inner) = pattern
+        .strip_prefix('^')
+        .and_then(|rest| rest.strip_suffix('$'))
+    else {
+        return false;
+    };
+    let mut escaped = false;
+    let mut in_class = false;
+    for ch in inner.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '|' if !in_class => return false,
+            _ => {}
+        }
+    }
+    // A trailing lone backslash would escape the closing `$`.
+    !escaped
+}
+
+/// Whether a top-level statement declares the name `expect` (`const`,
+/// `let`, `var`, `function` or `class`).
+fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::VariableDeclaration(decl) => decl.declarations.iter().any(|declarator| {
+            declarator
+                .id
+                .get_binding_identifiers()
+                .iter()
+                .any(|ident| ident.name.as_str() == "expect")
+        }),
+        Statement::FunctionDeclaration(function) => function
+            .id
+            .as_ref()
+            .is_some_and(|id| id.name.as_str() == "expect"),
+        Statement::ClassDeclaration(class) => class
+            .id
+            .as_ref()
+            .is_some_and(|id| id.name.as_str() == "expect"),
+        _ => false,
+    }
 }
 
 /// `(expected literal text, is dynamic)` for an optional expected argument.
@@ -878,10 +1071,27 @@ pub(crate) fn chai_expect_assertion_from_expression(
     let expect_text = bindings.chai_expect_text(&expect_call.callee)?;
     chain.reverse();
     let negated = chain.contains(&"not");
-    let (oracle_kind, oracle_strength) =
+    let (mut oracle_kind, mut oracle_strength) =
         oracle_for_chai_terminal(terminal, terminal_call.is_some(), negated);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
+    }
+    // RIPR-SPEC-0234 rule 10: a non-negated chai `throw` with exactly one
+    // string-literal argument matches the message as a substring, as Jest's
+    // `toThrow("...")` does, so it pins the error the same way.
+    let error_payload = terminal_call
+        .filter(|call| {
+            !negated && matches!(oracle_kind, OracleKind::BroadError) && call.arguments.len() == 1
+        })
+        .and_then(|call| call.arguments.first())
+        .and_then(|arg| safe_error_literal_payload_text(arg, source))
+        .map(|expected| TypeScriptErrorPayload {
+            expected,
+            kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
+        });
+    if error_payload.is_some() {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        oracle_strength = OracleStrength::Strong;
     }
     let observed_expression = expect_call
         .arguments
@@ -905,7 +1115,11 @@ pub(crate) fn chai_expect_assertion_from_expression(
     }
     rendered.push('.');
     rendered.push_str(terminal);
-    if terminal_call.is_some() {
+    if let Some(payload) = &error_payload {
+        rendered.push('(');
+        rendered.push_str(&payload.expected);
+        rendered.push(')');
+    } else if terminal_call.is_some() {
         rendered.push_str("(...)");
     }
     let span_start = terminal_call.map_or(terminal_member.span.start, |call| call.span.start);
@@ -916,7 +1130,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
@@ -1290,11 +1504,13 @@ pub(crate) fn assertion_oracle_text(assertion: &TypeScriptAssertion) -> String {
     if let Some(mock_payload) = &assertion.mock_payload {
         return mock_payload.oracle_text();
     }
-    if let Some(error_payload) = &assertion.error_payload {
-        return error_payload.oracle_text();
-    }
+    // chai and `node:assert` render their own call (with its real receiver
+    // and any rule-10 payload); only the Jest shape leaves it unset.
     if let Some(rendered_call) = &assertion.rendered_call {
         return rendered_call.clone();
+    }
+    if let Some(error_payload) = &assertion.error_payload {
+        return error_payload.oracle_text();
     }
     if is_execution_context_assertion_matcher(&assertion.matcher) {
         return format!("t.{}(...)", assertion.matcher);

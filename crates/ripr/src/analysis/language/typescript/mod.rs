@@ -55,6 +55,7 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+mod error_payload_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod module_entries;
@@ -90,6 +91,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use error_payload_guard::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
@@ -489,10 +491,16 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
+                let old_line_text = changed
+                    .removed_lines
+                    .iter()
+                    .find(|removed| removed.new_side_line == added.line)
+                    .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
                     added.line,
                     &added.text,
+                    old_line_text,
                     &all_owners,
                     &all_tests,
                     Some(&options.root),

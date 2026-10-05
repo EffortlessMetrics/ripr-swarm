@@ -418,6 +418,17 @@ impl TypeScriptErrorPayload {
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+                format!("expect(...).to.throw({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsObject => {
+                format!("assert.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsObject => {
+                format!("await assert.rejects(..., {})", self.expected)
+            }
         }
     }
 }
@@ -441,4 +452,14 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.
     RejectsMatchObject,
+    /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0234 rule 10).
+    ChaiThrowLiteral,
+    /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0234 rule 10).
+    AssertThrowsRegex,
+    /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0234 rule 10).
+    AssertThrowsObject,
+    /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0234 rule 10).
+    AssertRejectsRegex,
+    /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0234 rule 10).
+    AssertRejectsObject,
 }

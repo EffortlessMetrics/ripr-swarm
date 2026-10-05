@@ -636,3 +636,151 @@ test('receiver', (t) => {
     assert_eq!(assertions[0].matcher, "is");
     assert_eq!(assertions[0].oracle_kind, OracleKind::ExactValue);
 }
+
+/// RIPR-SPEC-0234 rule 10 (example 14): a non-negated chai `throw` with one
+/// string literal pins the error; a class, no argument, or `not` stays broad.
+#[test]
+fn chai_throw_string_literal_is_exact_error_variant() {
+    let assertions = only_assertions(
+        "test/parse.test.ts",
+        r#"
+import { expect } from "chai";
+import { parse } from "../src/parse";
+
+it("parse", () => {
+  expect(() => parse("")).to.throw("blank");
+  expect(() => parse("")).to.throw(TypeError);
+  expect(() => parse("")).to.throw();
+  expect(() => parse("x")).to.not.throw("blank");
+});
+"#,
+    );
+    assert_eq!(assertions.len(), 4, "{assertions:?}");
+    assert_oracle(
+        &assertions[0],
+        OracleKind::ExactErrorVariant,
+        OracleStrength::Strong,
+        "expect(...).to.throw(\"blank\")",
+    );
+    for broad in &assertions[1..] {
+        assert_eq!(broad.oracle_kind, OracleKind::BroadError, "{broad:?}");
+        assert_eq!(broad.oracle_strength, OracleStrength::Weak, "{broad:?}");
+        assert!(broad.error_payload.is_none(), "{broad:?}");
+    }
+}
+
+/// RIPR-SPEC-0234 rule 10 (examples 34, 35): `node:assert` `throws` with an
+/// anchored regex and `rejects` with a literal `message` object pin the
+/// error; an unanchored or alternating regex, an object without `message`
+/// and a string second argument (the assertion's own message) stay broad.
+#[test]
+fn node_assert_anchored_regex_and_message_object_are_exact_error_variants() {
+    let assertions = only_assertions(
+        "test/parse.test.ts",
+        r#"
+import test from "node:test";
+import assert from "node:assert";
+import { parse, charge } from "../src/parse";
+
+test("parse", async () => {
+  assert.throws(() => parse(""), /^Error: blank$/);
+  await assert.rejects(charge(-1), { message: "charge must be positive" });
+  assert.throws(() => parse(""), /blank/);
+  assert.throws(() => parse(""), /^Error: (empty|blank)$/);
+  await assert.rejects(charge(-1), { name: "Error" });
+  assert.throws(() => parse(""), "blank");
+  assert.throws(() => parse(""), /^Error: blank$/i);
+});
+"#,
+    );
+    assert_eq!(assertions.len(), 7, "{assertions:?}");
+    assert_oracle(
+        &assertions[0],
+        OracleKind::ExactErrorVariant,
+        OracleStrength::Strong,
+        "assert.throws(..., /^Error: blank$/)",
+    );
+    assert_oracle(
+        &assertions[1],
+        OracleKind::ExactErrorVariant,
+        OracleStrength::Strong,
+        "assert.rejects(..., { message: \"charge must be positive\" })",
+    );
+    for broad in &assertions[2..] {
+        assert_eq!(broad.oracle_kind, OracleKind::BroadError, "{broad:?}");
+        assert!(broad.error_payload.is_none(), "{broad:?}");
+    }
+}
+
+/// chai's `assert.throws(fn, "msg")` has a different signature: rule 10
+/// does not apply to it.
+#[test]
+fn chai_assert_throws_stays_broad() {
+    let assertions = only_assertions(
+        "test/parse.test.ts",
+        r#"
+import { assert } from "chai";
+import { parse } from "../src/parse";
+
+it("parse", () => {
+  assert.throws(() => parse(""), /^blank$/);
+});
+"#,
+    );
+    assert_eq!(assertions.len(), 1, "{assertions:?}");
+    assert_eq!(assertions[0].oracle_kind, OracleKind::BroadError);
+}
+
+/// RIPR-SPEC-0234 rule 3 (examples 7, 8, 9): a bare `expect` is read as the
+/// Jest/Vitest matcher API only when it is the runner's.
+#[test]
+fn only_a_test_runner_expect_reads_jest_matchers() {
+    let count = |source: &str| only_assertions("test/lib.test.ts", source).len();
+    // Unbound global and a runner import: read.
+    assert_eq!(
+        count(
+            "import { price } from \"../src/lib\";\ntest(\"p\", () => { expect(price(150)).toBe(130); });\n"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "import { expect, test } from \"vitest\";\nimport { price } from \"../src/lib\";\ntest(\"p\", () => { expect(price(150)).toBe(130); });\n"
+        ),
+        1
+    );
+    // Vitest test-context destructuring: read.
+    assert_eq!(
+        count(
+            "import { test } from \"vitest\";\nimport { price } from \"../src/lib\";\ntest(\"p\", ({ expect }) => { expect(price(150)).toBe(130); });\n"
+        ),
+        1
+    );
+    // File-level local `expect`: not read.
+    assert_eq!(
+        count(
+            "import { price } from \"../src/lib\";\nconst expect = (x: unknown) => ({ toBe(_: unknown) {} });\ntest(\"p\", () => { expect(price(150)).toBe(999); });\n"
+        ),
+        0
+    );
+    // chai's `expect` has no `toBe`: not read through the Jest table.
+    assert_eq!(
+        count(
+            "import { expect } from \"chai\";\nimport { price } from \"../src/lib\";\nit(\"p\", () => { expect(price(150)).toBe(130); });\n"
+        ),
+        0
+    );
+    // A test-body declaration and another parameter shadow it too.
+    assert_eq!(
+        count(
+            "import { price } from \"../src/lib\";\ntest(\"p\", () => { const expect = (x: unknown) => x; expect(price(150)).toBe(130); });\n"
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            "import { price } from \"../src/lib\";\ntest(\"p\", (expect) => { expect(price(150)).toBe(130); });\n"
+        ),
+        0
+    );
+}

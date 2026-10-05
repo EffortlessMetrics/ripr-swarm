@@ -1467,6 +1467,30 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
     }
 }
 
+/// Whether a test callback's first parameter is an object pattern that binds
+/// `expect` under its own name (`({ expect }) => ...`).
+fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) -> bool {
+    let params = match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return false,
+    };
+    let Some(first) = params.items.first() else {
+        return false;
+    };
+    let oxc_ast::ast::BindingPattern::ObjectPattern(object) = &first.pattern else {
+        return false;
+    };
+    object.properties.iter().any(|property| {
+        property.key.static_name().as_deref() == Some("expect")
+            && matches!(
+                &property.value,
+                oxc_ast::ast::BindingPattern::BindingIdentifier(ident)
+                    if ident.name.as_str() == "expect"
+            )
+    })
+}
+
 fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
@@ -1575,6 +1599,19 @@ pub(crate) fn test_name_and_assertions_from_call(
             || body_declarations.iter().any(|declared| declared == name)
             || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
     });
+    // RIPR-SPEC-0234 rule 3: Vitest's `test("x", ({ expect }) => ...)`
+    // destructures the runner `expect` from the test context, unless the body
+    // re-declares it.
+    let bindings = if first_parameter_destructures_expect(callback)
+        && !body_declarations
+            .iter()
+            .any(|declared| declared == "expect")
+        && !super::related_tests::local_identifier_declared_in_test_body(call_text, "expect")
+    {
+        bindings.with_context_expect()
+    } else {
+        bindings
+    };
     let bindings = &bindings;
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
