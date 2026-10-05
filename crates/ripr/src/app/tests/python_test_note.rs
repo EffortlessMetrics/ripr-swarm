@@ -100,6 +100,12 @@ fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
         .ok_or_else(|| "human output must record the Python tests".to_string())?;
     assert_eq!(python.count, 1);
     assert_eq!(python.example, "tests/test_f.py");
+    let python = Some(python);
+    assert_eq!(
+        run(OutputFormat::HumanFull)?.unlinked_python_tests,
+        python,
+        "human-full renders the same note"
+    );
     assert_eq!(
         run(OutputFormat::Json)?.unlinked_python_tests,
         None,
