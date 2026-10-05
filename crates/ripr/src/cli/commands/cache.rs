@@ -1072,7 +1072,7 @@ mod tests {
         {
             return Err(format!("JSON status fields drifted: {json}"));
         }
-        let alias_real = Path::new("F:/cache-real");
+        let alias_real = Path::new("resolved-cache-target");
         let aliased = render_status(cache_dir, Some(alias_real), &owned_only, true)?;
         let alias_value: serde_json::Value =
             serde_json::from_str(&aliased).map_err(|error| error.to_string())?;
@@ -1083,12 +1083,12 @@ mod tests {
             || alias_value
                 .get("real_cache_dir")
                 .and_then(serde_json::Value::as_str)
-                != Some("F:/cache-real")
+                != Some("resolved-cache-target")
         {
             return Err(format!("alias disclosure drifted: {aliased}"));
         }
         let aliased_human = render_status(cache_dir, Some(alias_real), &owned_only, false)?;
-        if !aliased_human.contains("Real dir: F:/cache-real") {
+        if !aliased_human.contains("Real dir: resolved-cache-target") {
             return Err(format!("human alias disclosure drifted: {aliased_human}"));
         }
         Ok(())
