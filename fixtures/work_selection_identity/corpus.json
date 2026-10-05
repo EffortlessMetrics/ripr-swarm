@@ -11,7 +11,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -40,7 +40,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -73,7 +75,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -107,7 +109,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -140,7 +144,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9106:start-build",
+            "selection_id": "selection:start_build:issue:9106",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9106",
             "issue": {
@@ -163,7 +167,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9105
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -196,7 +202,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:1693:start-build",
+            "selection_id": "selection:start_build:issue:1693",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:1693",
             "issue": {
@@ -253,7 +259,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -282,7 +288,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -315,7 +323,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9101:repair-review",
+            "selection_id": "selection:repair_review:issue:9101",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9101",
             "issue": {
@@ -406,7 +414,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -435,7 +443,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -468,7 +478,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -520,6 +530,18 @@
           "expect": "fail",
           "expect_violations": [
             {
+              "law": "action_identity",
+              "route": "reconcile_selection"
+            },
+            {
+              "law": "overlap_visibility",
+              "route": "reconcile_selection"
+            },
+            {
+              "law": "overlap_visibility",
+              "route": "reconcile_selection"
+            },
+            {
               "law": "overlap_visibility",
               "route": "reconcile_selection"
             }
@@ -535,7 +557,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "SomeoneElse/other-repo",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -564,7 +586,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -595,7 +619,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:999999:start-build",
+            "selection_id": "selection:start_build:issue:999999",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:999999",
             "issue": {
@@ -643,7 +667,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:9105:resume-pr",
+            "selection_id": "selection:resume_pr:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -666,7 +690,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -697,7 +723,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -720,7 +746,9 @@
             "basis_sha": "0000000000000000000000000000000000000000000000000000000000000000",
             "expected_head": null,
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -751,7 +779,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:9101:repair-review",
+            "selection_id": "selection:repair_review:issue:9101",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9101",
             "issue": {
@@ -816,7 +844,7 @@
         },
         {
           "packet": {
-            "selection_id": "selection:issue:9105:start-build",
+            "selection_id": "selection:start_build:issue:9105",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9105",
             "issue": {
@@ -839,7 +867,9 @@
             "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
             "expected_head": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             "overlaps": {
-              "issues": [],
+              "issues": [
+                9106
+              ],
               "pull_requests": [],
               "claims": [],
               "worktrees": [],
@@ -867,6 +897,62 @@
             }
           ],
           "plan_disposition": "root_portfolio_decision_required"
+        },
+        {
+          "packet": {
+            "selection_id": "selection:start_build:issue:9104",
+            "repository": "EffortlessMetrics/ripr-swarm",
+            "candidate_id": "candidate:issue:9105",
+            "issue": {
+              "number": 9105,
+              "identity": "issue:9105"
+            },
+            "work_item": null,
+            "pull_request": null,
+            "lifecycle_action": "start_build",
+            "accepted_requirements": [],
+            "spec_refs": [],
+            "implementation_slices": [],
+            "campaign_refs": [
+              {
+                "id": "campaign-rust-repair",
+                "relation": "member",
+                "source": "campaigns.json"
+              }
+            ],
+            "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+            "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+            "overlaps": {
+              "issues": [
+                9106
+              ],
+              "pull_requests": [],
+              "claims": [],
+              "worktrees": [],
+              "resources": []
+            },
+            "role_context_budget": {
+              "role": "writer",
+              "context_profile": "bounded-candidate",
+              "budget": "single-agent",
+              "single_agent": false
+            },
+            "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+            "stop_conditions": [
+              "acceptance rows covered or explicitly omitted with reasons"
+            ],
+            "legacy_active_goal_ref": null,
+            "legacy_current_work_item_ref": null
+          },
+          "legacy_packet": null,
+          "expect": "fail",
+          "expect_violations": [
+            {
+              "law": "subject_identity",
+              "route": "reconcile_selection"
+            }
+          ],
+          "plan_disposition": "root_portfolio_decision_required"
         }
       ]
     },
@@ -877,7 +963,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9109:verify-current-head",
+            "selection_id": "selection:verify_current_head:issue:9109",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9109",
             "issue": {
@@ -937,7 +1023,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9102:resume-pr",
+            "selection_id": "selection:resume_pr:issue:9102",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9102",
             "issue": {
@@ -1003,7 +1089,7 @@
       "cases": [
         {
           "packet": {
-            "selection_id": "selection:issue:9202:start-build",
+            "selection_id": "selection:start_build:issue:9202",
             "repository": "EffortlessMetrics/ripr-swarm",
             "candidate_id": "candidate:issue:9202",
             "issue": {

@@ -12676,6 +12676,11 @@ tests = [
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_command_mutate_nothing_mutation_negative",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_basis_completeness_reflects_sources",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_subject_binding_laws_fail_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_markdown_renders_wire_names",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte",
 ]
 fixtures = [
   "fixtures/work_selection_identity",

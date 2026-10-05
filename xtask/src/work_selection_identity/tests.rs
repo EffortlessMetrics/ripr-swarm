@@ -70,9 +70,9 @@ fn work_selection_identity_committed_corpus_twelve_scenarios_hold() -> Result<()
             view.counts.scenarios
         ));
     }
-    if view.counts.cases != 18 || view.counts.passed != 18 || view.counts.failed != 0 {
+    if view.counts.cases != 19 || view.counts.passed != 19 || view.counts.failed != 0 {
         return Err(format!(
-            "expected 18/18 passed cases, got {:?}",
+            "expected 19/19 passed cases, got {:?}",
             view.counts
         ));
     }
@@ -80,8 +80,8 @@ fn work_selection_identity_committed_corpus_twelve_scenarios_hold() -> Result<()
 }
 
 /// Acceptance 8 + fixture 9: wrong repository, issue, action, basis,
-/// worktree and head identities each fail visibly with their exact
-/// recompile/reconcile route.
+/// worktree, head and selection-id identities each fail visibly with their
+/// exact recompile/reconcile route.
 #[test]
 fn work_selection_identity_wrong_identities_fail_visibly_with_exact_routes() -> Result<(), String> {
     let view = committed_check()?;
@@ -116,6 +116,11 @@ fn work_selection_identity_wrong_identities_fail_visibly_with_exact_routes() -> 
             WorkSelectionLawV1::HeadIdentity,
             WorkSelectionRouteV1::ReconcileHead,
         ),
+        (
+            6,
+            WorkSelectionLawV1::SubjectIdentity,
+            WorkSelectionRouteV1::ReconcileSelection,
+        ),
     ];
     for (index, law, route) in expected {
         has_violation(
@@ -130,6 +135,19 @@ fn work_selection_identity_wrong_identities_fail_visibly_with_exact_routes() -> 
             return Err(format!("wrong-identity case {index} must fail visibly"));
         }
     }
+    // Case 6 pins the selection-id law specifically: the id named another
+    // issue while every other identity stayed clean.
+    let selection_detail = case(&view, "scenario-09-wrong-identities-fail-visibly", 6)?
+        .violations
+        .iter()
+        .find(|violation| violation.law == WorkSelectionLawV1::SubjectIdentity)
+        .map(|violation| violation.detail.clone())
+        .ok_or_else(|| "missing selection-id violation detail".to_string())?;
+    if !selection_detail.contains("selection id") {
+        return Err(format!(
+            "selection-id violation must name the selection id: {selection_detail}"
+        ));
+    }
     // A stale basis routes recompilation, never silent release or takeover.
     let detail = case(&view, "scenario-09-wrong-identities-fail-visibly", 3)?
         .violations
@@ -140,6 +158,214 @@ fn work_selection_identity_wrong_identities_fail_visibly_with_exact_routes() -> 
     if !detail.contains("recompile the basis") {
         return Err(format!(
             "basis violation must name the recompile route: {detail}"
+        ));
+    }
+    Ok(())
+}
+
+/// Review hardening: subject-binding laws fail closed. A pull-request
+/// subject linked to different work, a bare work-item subject, an invented
+/// scope reference and a selection id naming another issue each fail
+/// `subject_identity`, and duplicate-family siblings must stay visible.
+#[test]
+fn work_selection_identity_subject_binding_laws_fail_closed() -> Result<(), String> {
+    let captured = load_work_captured_dir(&workspace_path("fixtures/work_portfolio/corpus"))?;
+    let snapshot = compile_work_portfolio(&captured, None)?;
+    let basis = build_portfolio_basis(&snapshot, "explicit-root-selection", "v1");
+    let corpus = committed_corpus()?;
+    let clean = corpus
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.id == "scenario-05-existing-open-pr-selected-for-repair")
+        .and_then(|scenario| scenario.cases.first())
+        .and_then(|case| case.packet.clone())
+        .ok_or_else(|| "committed corpus must carry the scenario 5 packet".to_string())?;
+    if !check_packet(&clean, &basis, &snapshot, &captured)
+        .violations
+        .is_empty()
+    {
+        return Err("the clean scenario 5 packet must pass every law".to_string());
+    }
+
+    // A PR opened for different work cannot carry the selection.
+    let mut wrong_pr = clean.clone();
+    wrong_pr.pull_request = Some(8802);
+    let evaluation = check_packet(&wrong_pr, &basis, &snapshot, &captured);
+    if !evaluation
+        .violations
+        .iter()
+        .any(|row| row.law == WorkSelectionLawV1::SubjectIdentity)
+    {
+        return Err("a PR linked to another issue must fail subject_identity".to_string());
+    }
+
+    // A bare work-item subject has no captured source of record.
+    let mut bare_work_item = clean.clone();
+    bare_work_item.issue = None;
+    bare_work_item.pull_request = None;
+    bare_work_item.work_item = Some(SelectedWorkItemIdentityV1 {
+        id: "durable-1".to_string(),
+        identity: work_item_identity("durable-1"),
+    });
+    let evaluation = check_packet(&bare_work_item, &basis, &snapshot, &captured);
+    if !evaluation
+        .violations
+        .iter()
+        .any(|row| row.law == WorkSelectionLawV1::SubjectIdentity)
+    {
+        return Err("a bare work-item subject must fail subject_identity".to_string());
+    }
+
+    // Scope references must stay source-linked.
+    let mut invented_scope = clean.clone();
+    invented_scope.accepted_requirements = vec!["REQ-invented".to_string()];
+    let evaluation = check_packet(&invented_scope, &basis, &snapshot, &captured);
+    if !evaluation
+        .violations
+        .iter()
+        .any(|row| row.law == WorkSelectionLawV1::SubjectIdentity)
+    {
+        return Err("an invented requirement must fail subject_identity".to_string());
+    }
+
+    // A selection id naming another issue contradicts the packet.
+    let mut wrong_selection = clean.clone();
+    wrong_selection.selection_id = "selection:repair_review:issue:9102".to_string();
+    let evaluation = check_packet(&wrong_selection, &basis, &snapshot, &captured);
+    if !evaluation
+        .violations
+        .iter()
+        .any(|row| row.law == WorkSelectionLawV1::SubjectIdentity)
+    {
+        return Err("a wrong selection id must fail subject_identity".to_string());
+    }
+
+    // Duplicate-family siblings are live overlaps: dropping 9106 from the
+    // scenario 5-style overlap set of a 9105 packet must surface
+    // overlap_visibility.
+    let mut hidden_sibling = clean.clone();
+    hidden_sibling.issue = Some(SelectedIssueIdentityV1 {
+        number: 9105,
+        identity: issue_identity(9105),
+    });
+    hidden_sibling.candidate_id = candidate_identity(9105);
+    hidden_sibling.lifecycle_action = WorkCandidateKindV1::StartBuild;
+    hidden_sibling.selection_id = selection_identity(WorkCandidateKindV1::StartBuild, 9105);
+    hidden_sibling.pull_request = None;
+    hidden_sibling.overlaps.issues = Vec::new();
+    let evaluation = check_packet(&hidden_sibling, &basis, &snapshot, &captured);
+    if !evaluation
+        .violations
+        .iter()
+        .any(|row| row.law == WorkSelectionLawV1::OverlapVisibility)
+    {
+        return Err("a hidden duplicate-family sibling must fail overlap_visibility".to_string());
+    }
+    Ok(())
+}
+
+/// The human Markdown projection renders the same wire names as the JSON
+/// projection, never the Rust `Debug` spellings.
+#[test]
+fn work_selection_identity_markdown_renders_wire_names() -> Result<(), String> {
+    let view = committed_check()?;
+    let markdown = work_selection_check_markdown(&view);
+    for debug_name in [
+        "RepositoryIdentity",
+        "SubjectIdentity",
+        "ActionIdentity",
+        "BasisIdentity",
+        "HeadIdentity",
+        "WorktreeIdentity",
+        "CampaignRefIdentity",
+        "LegacyCompatibility",
+        "OverlapVisibility",
+        "RecompileBasis",
+        "ReconcileSelection",
+        "ReconcileResources",
+        "ReconcileHead",
+        "RejectLegacyAuthority",
+        "Complete",
+        "Partial",
+    ] {
+        if markdown.contains(debug_name) {
+            return Err(format!(
+                "markdown must render wire names, found Debug spelling `{debug_name}`"
+            ));
+        }
+    }
+    for wire_name in ["overlap_visibility", "reconcile_selection"] {
+        if !markdown.contains(wire_name) {
+            return Err(format!("markdown must render the `{wire_name}` wire name"));
+        }
+    }
+    Ok(())
+}
+
+/// Scenario captured directories resolve corpus-locally first, fall back to
+/// the repository fixtures root, and fail closed on traversal, absolute and
+/// backslash spellings on every host platform.
+#[test]
+fn work_selection_identity_scenario_captured_resolution() -> Result<(), String> {
+    let corpus_root = workspace_path(DEFAULT_WORK_SELECTION_CORPUS_DIR);
+    let local = resolve_scenario_captured(&corpus_root, "multi-campaign")?;
+    if !local.is_dir() || !local.ends_with(Path::new("captured").join("multi-campaign")) {
+        return Err(format!(
+            "corpus-local captured variant must resolve under the corpus: {}",
+            local.display()
+        ));
+    }
+    let fallback = resolve_scenario_captured(&corpus_root, "work_portfolio/corpus")?;
+    if fallback != workspace_path("fixtures").join("work_portfolio/corpus") {
+        return Err(format!(
+            "foreign captured paths must fall back to the fixtures root: {}",
+            fallback.display()
+        ));
+    }
+    for bad in ["../escape", "a/../../escape", "/abs/corpus", "a\\b", ""] {
+        if resolve_scenario_captured(&corpus_root, bad).is_ok() {
+            return Err(format!("captured path `{bad}` must fail closed"));
+        }
+    }
+    Ok(())
+}
+
+/// Spec-ref wire shape: exactly `RIPR-SPEC-` + four digits, optionally a
+/// `-<slug>` suffix; anything else fails closed.
+#[test]
+fn work_selection_identity_spec_ref_wire_shape() -> Result<(), String> {
+    for accepted in ["RIPR-SPEC-0202", "RIPR-SPEC-0235-selected-work-identity"] {
+        if !spec_ref_has_canonical_shape(accepted) {
+            return Err(format!(
+                "`{accepted}` must satisfy the canonical wire shape"
+            ));
+        }
+    }
+    for rejected in [
+        "RIPR-SPEC-202",
+        "RIPR-SPEC-02025",
+        "RIPR-SPEC-0202x",
+        "SPEC-0202",
+        "RIPR-SPEC-0202-",
+        "ripr-spec-0202",
+    ] {
+        if spec_ref_has_canonical_shape(rejected) {
+            return Err(format!("`{rejected}` must fail the canonical wire shape"));
+        }
+    }
+    Ok(())
+}
+
+/// The committed provenance covers every corpus byte: the shared validator
+/// must report no violation for the committed corpus (digests bind, no
+/// unlisted fixture file bypasses the gate).
+#[test]
+fn work_selection_identity_committed_provenance_covers_every_corpus_byte() -> Result<(), String> {
+    let mut violations = Vec::new();
+    validate_work_selection_identity_fixture_corpus(&mut violations);
+    if !violations.is_empty() {
+        return Err(format!(
+            "committed corpus validation failed: {violations:?}"
         ));
     }
     Ok(())
@@ -624,7 +850,14 @@ fn work_selection_identity_provenance_fails_closed() -> Result<(), String> {
             ]
         }}"##
     );
-    for path in ["/abs/corpus.json", "../corpus.json", "", "corpus.json"] {
+    for path in [
+        "/abs/corpus.json",
+        "../corpus.json",
+        "",
+        "..\\corpus.json",
+        "captured\\multi-campaign\\corpus.json",
+        "corpus.json",
+    ] {
         let body = template.replace("@PATH@", path);
         let parsed = load_work_selection_provenance(&body);
         if path == "corpus.json" {

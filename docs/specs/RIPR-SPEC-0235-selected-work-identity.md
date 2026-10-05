@@ -79,7 +79,9 @@ policy plus version.
 ### SelectedWorkIdentity
 
 `SelectedWorkIdentityV1` binds exactly one root-selected transition: the
-selection id, repository, candidate id, issue / work-item / pull-request
+selection id in the stable derived form `selection:<action>:issue:<n>` (the
+selection id is derived from the packet's own action and issue binding, never
+free-typed), repository, candidate id, issue / work-item / pull-request
 subject identities in stable string forms (`issue:<n>`, `work-item:<id>`,
 `candidate:issue:<n>`), the selected lifecycle action (the closed
 RIPR-SPEC-0234 candidate-kind vocabulary, not a parallel taxonomy),
@@ -96,14 +98,50 @@ no progress percentage; `deny_unknown_fields` rejects any such addition.
 
 Every law violation carries its law and its exact recovery route: wrong
 repository or stale basis SHA routes `recompile_basis`; wrong issue,
-work-item, pull request, action, campaign reference or hidden overlap
-routes `reconcile_selection`; an unknown claimed worktree routes
-`reconcile_resources`; a mismatched expected head routes `reconcile_head`.
-Overlap visibility requires every live PR, claim, worktree and semantic
-resource the portfolio shows for the selected issue to be recorded in the
-packet before any mutation. Campaign references are context only: zero
-campaigns is valid standalone work, and no reference grants execution
-authority.
+work-item, pull request, action, campaign reference, selection id,
+scope reference or hidden overlap routes `reconcile_selection`; an unknown
+claimed worktree routes `reconcile_resources`; a mismatched expected head
+routes `reconcile_head`. Subject binding is strict: a pull-request subject
+must resolve in the captured pull-request source (the compiled snapshot
+drops PRs whose only linked issues are standalone) and, when an issue
+subject is also bound, must link that issue — a PR opened for different
+work cannot carry the selection. A bare work-item subject has no captured
+source of record and cannot make the subject known. The selection id must
+equal the canonical derived form for the packet's own action and issue; an
+id naming another issue or action contradicts the packet.
+Scope-reference identity stays source-linked: accepted requirements and
+implementation slices must resolve in the captured cargo-allow graph when
+that source is present (a slice must also list the selected issue), and a
+spec ref pins the canonical `RIPR-SPEC-NNNN` wire shape — optionally a
+`-<slug>` suffix — plus membership of the bound requirements; when the
+graph is absent only the wire shape is pinned, never invented membership.
+Overlap visibility requires every live PR, claim, worktree, semantic
+resource and duplicate-family sibling issue the portfolio shows for the
+selected issue to be recorded in the packet before any mutation.
+Campaign references are context only: zero campaigns is valid standalone
+work, and no reference grants execution authority.
+
+Negative corpus cases pin the exact law/route pair multiset: an actual
+violation set that is a strict superset or subset of the pinned pairs fails
+the case, so a regression that adds a spurious violation to a wrong packet
+cannot stay green.
+
+### Corpus-local captured inputs
+
+A `--corpus` directory may carry its own captured inputs under
+`<corpus>/captured/`; a scenario's captured path resolves there first and
+falls back to the repository `fixtures/` root (the committed corpus mixes
+both). Captured paths must be plain relative paths on every host platform:
+absolute paths, `..` segments or backslash spellings fail closed instead of
+escaping the fixture boundary.
+
+### Fixture provenance coverage
+
+`provenance.json` binds every corpus JSON byte by SHA-256 in both
+directions: a listed file whose digest drifts fails closed, and any corpus
+JSON file not listed in the provenance fails closed too, so unlisted
+fixture bytes cannot bypass the digest gate. Provenance paths reject
+absolute, parent-relative and backslash spellings on every host platform.
 
 ### Legacy compatibility
 
@@ -155,10 +193,18 @@ disposition at schema/fixture level; PR C consumes the enum.
   completeness degrades to `partial`.
 - A packet that does not record the newly introduced open PR `8899` fails
   with `overlap_visibility`/`reconcile_selection` naming PR `8899`.
+- A packet whose selection id names another issue fails
+  `subject_identity`/`reconcile_selection` while every other identity stays
+  clean.
+- A pull-request subject linked to a different issue, a bare work-item
+  subject, an invented accepted requirement and an unrecorded
+  duplicate-family sibling each fail with the pinned law/route pairs.
 - A legacy packet with `attempted_authorities: ["writer"]` fails with
   `legacy_compatibility`/`reject_legacy_authority`.
 - Wrong repository, issue, action, basis, worktree and head packets each
   fail with the exact law/route pairs pinned in scenario 9.
+- The human Markdown projection renders the same snake_case wire names as
+  the JSON projection; `Debug` spellings never appear.
 
 ## Non-Goals
 
@@ -196,6 +242,11 @@ support.
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_command_mutate_nothing_mutation_negative`
 - `xtask/src/work_selection_identity.rs::tests::work_selection_identity_basis_completeness_reflects_sources`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_subject_binding_laws_fail_closed`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_markdown_renders_wire_names`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape`
+- `xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte`
 
 ## Implementation Mapping
 

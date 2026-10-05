@@ -17,7 +17,14 @@ def load_captured(rel):
     root = FIXTURES / rel
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     out = {"manifest": manifest}
-    for name in ["issues", "pull_requests", "claims", "campaigns"]:
+    for name in [
+        "issues",
+        "pull_requests",
+        "claims",
+        "campaigns",
+        "local_state",
+        "cargo_allow",
+    ]:
         out[name] = json.loads((root / f"{name}.json").read_text(encoding="utf-8"))
     return out
 
@@ -29,6 +36,24 @@ def compile_snapshot(captured):
     claims = captured["claims"]["claims"]
     campaigns = {c["id"]: c for c in captured["campaigns"]["campaigns"]}
     return issues, prs, claims, campaigns
+
+
+def duplicate_family_issues(number, issues, captured):
+    """Mirror of the compiled duplicate-family edges: a requirement whose
+    spec refs are accepted by two or more open issues groups those issues."""
+    siblings = set()
+    for requirement in captured["cargo_allow"]["requirements"]:
+        members = [
+            n
+            for n, issue in issues.items()
+            if issue["state"] == "open"
+            and set(issue.get("accepted_contracts", []))
+            & set(requirement.get("spec_refs", []))
+        ]
+        if len(members) < 2 or number not in members:
+            continue
+        siblings.update(n for n in members if n != number)
+    return sorted(siblings)
 
 
 def candidate_kind(number, issues, prs, claims):
@@ -55,8 +80,14 @@ def candidate_kind(number, issues, prs, claims):
     return "start_build"
 
 
-def live_overlaps(number, prs, claims, issues):
-    o = {"pull_requests": [], "claims": [], "worktrees": [], "resources": []}
+def live_overlaps(number, prs, claims, issues, captured):
+    o = {
+        "issues": duplicate_family_issues(number, issues, captured),
+        "pull_requests": [],
+        "claims": [],
+        "worktrees": [],
+        "resources": [],
+    }
     for p in prs:
         if p["state"] == "open" and number in p["linked_issues"]:
             o["pull_requests"].append(p["number"])
@@ -82,7 +113,27 @@ def portable(path, root):
     return norm
 
 
-def check_packet(packet, basis_sha, repo, issues, prs, claims, campaigns):
+def spec_ref_has_canonical_shape(value):
+    rest = value.removeprefix("RIPR-SPEC-")
+    if rest == value:
+        return False
+    digits = 0
+    for ch in rest:
+        if ch.isdigit() and digits < 4:
+            digits += 1
+        else:
+            break
+    if digits != 4:
+        return False
+    remainder = rest[digits:]
+    if not remainder:
+        return True
+    return remainder.startswith("-") and len(remainder) > 1 and all(
+        ch.isalnum() or ch == "-" for ch in remainder[1:]
+    )
+
+
+def check_packet(packet, basis_sha, repo, issues, prs, claims, campaigns, captured):
     v = []
     sha = basis_sha
     if packet["repository"] != repo:
@@ -95,8 +146,52 @@ def check_packet(packet, basis_sha, repo, issues, prs, claims, campaigns):
         v.append(("subject_identity", "reconcile_selection"))
     if packet["work_item"] and packet["work_item"]["identity"] != f"work-item:{packet['work_item']['id']}":
         v.append(("subject_identity", "reconcile_selection"))
-    if packet["pull_request"] and not any(p["number"] == packet["pull_request"] for p in prs):
+    if (
+        packet["issue"] is None
+        and packet["work_item"] is not None
+        and packet["pull_request"] is None
+    ):
         v.append(("subject_identity", "reconcile_selection"))
+    pr_row = None
+    if packet["pull_request"]:
+        pr_row = next(
+            (p for p in prs if p["number"] == packet["pull_request"]), None
+        )
+        if pr_row is None:
+            v.append(("subject_identity", "reconcile_selection"))
+        elif number is not None and number not in pr_row["linked_issues"]:
+            v.append(("subject_identity", "reconcile_selection"))
+    if number is not None:
+        derived = f"selection:{packet['lifecycle_action']}:issue:{number}"
+        if packet["selection_id"] != derived:
+            v.append(("subject_identity", "reconcile_selection"))
+    requirements = captured["cargo_allow"]["requirements"]
+    accepted_specs = set()
+    for requirement_id in packet["accepted_requirements"]:
+        row = next((r for r in requirements if r["id"] == requirement_id), None)
+        if row is None:
+            v.append(("subject_identity", "reconcile_selection"))
+        else:
+            accepted_specs.update(row.get("spec_refs", []))
+    for spec_ref in packet["spec_refs"]:
+        if not spec_ref_has_canonical_shape(spec_ref):
+            v.append(("subject_identity", "reconcile_selection"))
+        elif packet["accepted_requirements"] and spec_ref not in accepted_specs:
+            v.append(("subject_identity", "reconcile_selection"))
+    for slice_id in packet["implementation_slices"]:
+        row = next(
+            (
+                s
+                for r in requirements
+                for s in r["slices"]
+                if s["id"] == slice_id
+            ),
+            None,
+        )
+        if row is None:
+            v.append(("subject_identity", "reconcile_selection"))
+        elif number is not None and number not in row["issue_refs"]:
+            v.append(("subject_identity", "reconcile_selection"))
     if known:
         kind = candidate_kind(number, issues, prs, claims)
         if packet["candidate_id"] != f"candidate:issue:{number}":
@@ -110,6 +205,8 @@ def check_packet(packet, basis_sha, repo, issues, prs, claims, campaigns):
     if packet["expected_head"] and packet["expected_head"] != sha:
         v.append(("head_identity", "reconcile_head"))
     known_wt = set()
+    for worktree in captured["local_state"]["worktrees"]:
+        known_wt.add(portable(worktree["path"], captured["local_state"]["root"]))
     for c in claims:
         if c.get("worktree"):
             known_wt.add(portable(c["worktree"], ROOT_SPELL))
@@ -138,8 +235,14 @@ def check_packet(packet, basis_sha, repo, issues, prs, claims, campaigns):
     if legacy_wi and legacy_wi != (f"issue:{number}" if number is not None else None):
         v.append(("legacy_compatibility", "reconcile_selection"))
     if known:
-        live = live_overlaps(number, prs, claims, issues)
-        for key, law in [("pull_requests", "overlap_visibility"), ("claims", "overlap_visibility"), ("worktrees", "overlap_visibility"), ("resources", "overlap_visibility")]:
+        live = live_overlaps(number, prs, claims, issues, captured)
+        for key, law in [
+            ("issues", "overlap_visibility"),
+            ("pull_requests", "overlap_visibility"),
+            ("claims", "overlap_visibility"),
+            ("worktrees", "overlap_visibility"),
+            ("resources", "overlap_visibility"),
+        ]:
             for item in live[key]:
                 if item not in packet["overlaps"][key]:
                     v.append((law, "reconcile_selection"))
@@ -171,15 +274,22 @@ def main():
             if case["packet"]:
                 violations = check_packet(
                     case["packet"], manifest["default_branch_sha"], manifest["repository"],
-                    issues, prs, claims, campaigns,
+                    issues, prs, claims, campaigns, captured,
                 )
             else:
                 violations = check_legacy(case["legacy_packet"], campaigns)
             if case["expect"] == "pass":
                 passed = not violations
             else:
-                expected = {(e["law"], e["route"]) for e in case["expect_violations"]}
-                passed = bool(violations) and expected.issubset(set(violations))
+                # Exact law/route pair multiset, mirroring the Rust engine:
+                # every pinned occurrence must match, so an added spurious
+                # violation turns a negative case red.
+                from collections import Counter
+
+                expected = Counter(
+                    (e["law"], e["route"]) for e in case["expect_violations"]
+                )
+                passed = bool(violations) and Counter(violations) == expected
             status = "PASS" if passed else "FAIL"
             if not passed:
                 failures += 1

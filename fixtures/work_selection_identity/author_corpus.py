@@ -109,7 +109,6 @@ def campaign_ref(campaign_id, relation):
 
 
 def packet(
-    selection_id,
     number,
     action,
     campaign_refs,
@@ -121,6 +120,7 @@ def packet(
     specs=None,
     slices=None,
     overlaps=None,
+    overlap_issues=None,
     role="writer",
     context_profile="bounded-candidate",
     budget="single-agent",
@@ -130,8 +130,12 @@ def packet(
     legacy_active_goal_ref=None,
     legacy_current_work_item_ref=None,
 ):
+    # The selection id is derived, never free-typed: the packet's own action
+    # and issue binding fix the canonical `selection:<action>:issue:<n>` form
+    # (RIPR-SPEC-0235 acceptance 8), so a packet cannot carry an id naming
+    # another issue or action.
     return {
-        "selection_id": selection_id,
+        "selection_id": "selection:{}:issue:{}".format(action, number),
         "repository": REPOSITORY,
         "candidate_id": "candidate:issue:{}".format(number),
         "issue": {"number": number, "identity": "issue:{}".format(number)},
@@ -150,7 +154,7 @@ def packet(
         "expected_head": expected_head,
         "overlaps": overlaps
         or {
-            "issues": [],
+            "issues": overlap_issues or [],
             "pull_requests": [],
             "claims": [],
             "worktrees": [],
@@ -190,13 +194,13 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9105"],
+                        overlap_issues=[9106],
                     ),
                     disposition="append_to_named_campaign",
                 )
@@ -209,7 +213,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [
@@ -219,6 +222,7 @@ def build_corpus():
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9105"],
+                        overlap_issues=[9106],
                     ),
                     disposition="multi_pr_campaign",
                 )
@@ -231,13 +235,13 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9106:start-build",
                         9106,
                         "start_build",
                         [],
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9106"],
+                        overlap_issues=[9105],
                     ),
                     disposition="standalone_issue_work",
                 )
@@ -250,7 +254,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:1693:start-build",
                         1693,
                         "start_build",
                         [campaign_ref("campaign-editor-ux", "member")],
@@ -269,13 +272,13 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9105"],
+                        overlap_issues=[9106],
                     ),
                     disposition="single_scoped_pr",
                 ),
@@ -288,7 +291,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9101:repair-review",
                         9101,
                         "repair_review",
                         [campaign_ref("campaign-rust-repair", "member")],
@@ -333,13 +335,13 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9105"],
+                        overlap_issues=[9106],
                     ),
                     disposition="append_to_named_campaign",
                 )
@@ -352,7 +354,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
@@ -362,7 +363,10 @@ def build_corpus():
                     ),
                     expect="fail",
                     violations=[
-                        {"law": "overlap_visibility", "route": "reconcile_selection"}
+                        {"law": "action_identity", "route": "reconcile_selection"},
+                        {"law": "overlap_visibility", "route": "reconcile_selection"},
+                        {"law": "overlap_visibility", "route": "reconcile_selection"},
+                        {"law": "overlap_visibility", "route": "reconcile_selection"},
                     ],
                     disposition="root_portfolio_decision_required",
                 )
@@ -375,13 +379,13 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         requirements=["REQ-dup-family"],
                         specs=["RIPR-SPEC-0202"],
                         slices=["slice-9105"],
+                        overlap_issues=[9106],
                     )
                     | {"repository": "SomeoneElse/other-repo"},
                     expect="fail",
@@ -392,7 +396,6 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:999999:start-build",
                         999999,
                         "start_build",
                         [],
@@ -403,10 +406,10 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:9105:resume-pr",
                         9105,
                         "resume_pr",
                         [campaign_ref("campaign-rust-repair", "member")],
+                        overlap_issues=[9106],
                     ),
                     expect="fail",
                     violations=[{"law": "action_identity", "route": "reconcile_selection"}],
@@ -414,12 +417,12 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         basis_sha="0" * 64,
                         expected_head=None,
+                        overlap_issues=[9106],
                     ),
                     expect="fail",
                     violations=[{"law": "basis_identity", "route": "recompile_basis"}],
@@ -427,7 +430,6 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:9101:repair-review",
                         9101,
                         "repair_review",
                         [campaign_ref("campaign-rust-repair", "member")],
@@ -449,14 +451,28 @@ def build_corpus():
                 ),
                 case(
                     packet(
-                        "selection:issue:9105:start-build",
                         9105,
                         "start_build",
                         [campaign_ref("campaign-rust-repair", "member")],
                         expected_head="f" * 64,
+                        overlap_issues=[9106],
                     ),
                     expect="fail",
                     violations=[{"law": "head_identity", "route": "reconcile_head"}],
+                    disposition="root_portfolio_decision_required",
+                ),
+                case(
+                    packet(
+                        9105,
+                        "start_build",
+                        [campaign_ref("campaign-rust-repair", "member")],
+                        overlap_issues=[9106],
+                    )
+                    | {"selection_id": "selection:start_build:issue:9104"},
+                    expect="fail",
+                    violations=[
+                        {"law": "subject_identity", "route": "reconcile_selection"}
+                    ],
                     disposition="root_portfolio_decision_required",
                 ),
             ],
@@ -468,7 +484,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9109:verify-current-head",
                         9109,
                         "verify_current_head",
                         [campaign_ref("campaign-rust-repair", "member")],
@@ -493,7 +508,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9102:resume-pr",
                         9102,
                         "resume_pr",
                         [campaign_ref("campaign-rust-repair", "historical")],
@@ -520,7 +534,6 @@ def build_corpus():
             "cases": [
                 case(
                     packet(
-                        "selection:issue:9202:start-build",
                         9202,
                         "start_build",
                         [campaign_ref("campaign-editor-ux", "member")],

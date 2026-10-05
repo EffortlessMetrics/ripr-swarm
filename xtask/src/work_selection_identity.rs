@@ -23,15 +23,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::work_portfolio::{
-    WorkCandidateKindV1, WorkCapturedDirV1, WorkCapturedIssueV1, WorkConfidenceV1, WorkIssueV1,
-    WorkPortfolioSnapshotV1, WorkRepositoryIdentityV1, WorkSourceFreshnessV1,
-    WorkSourceObservationV1, classify_captured_issue, compile_work_portfolio,
-    load_work_captured_dir, portable_identity, portable_path, work_portfolio_json, workspace_path,
+    WorkCandidateKindV1, WorkCapturedDirV1, WorkCapturedIssueV1, WorkConfidenceV1,
+    WorkConflictEdgeKindV1, WorkIssueV1, WorkPortfolioSnapshotV1, WorkRepositoryIdentityV1,
+    WorkSourceFreshnessV1, WorkSourceObservationV1, classify_captured_issue,
+    compile_work_portfolio, load_work_captured_dir, portable_identity, portable_path,
+    work_portfolio_json, workspace_path,
 };
 
 pub(crate) const WORK_SELECTION_IDENTITY_CORPUS_SCHEMA_VERSION: &str =
@@ -238,6 +239,32 @@ pub(crate) fn candidate_identity(number: u64) -> String {
 /// Stable identity string for one selection.
 pub(crate) fn selection_identity(action: WorkCandidateKindV1, number: u64) -> String {
     format!("selection:{}:issue:{number}", action.wire_name())
+}
+
+/// Canonical spec-ref wire shape: `RIPR-SPEC-` plus exactly four digits, with
+/// nothing or a `-<slug>` suffix. Resolution against the spec corpus is a
+/// consumer concern; this pins only the identity shape the captured bytes can
+/// honestly enforce.
+fn spec_ref_has_canonical_shape(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("RIPR-SPEC-") else {
+        return false;
+    };
+    let digits: usize = rest.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digits != 4 {
+        return false;
+    }
+    let mut remainder = rest.chars().skip(digits);
+    match remainder.next() {
+        None => true,
+        Some('-') => {
+            let slug: Vec<char> = remainder.collect();
+            !slug.is_empty()
+                && slug
+                    .iter()
+                    .all(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+        }
+        Some(_) => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -506,10 +533,38 @@ fn captured_issue(captured: &WorkCapturedDirV1, number: u64) -> Option<&WorkCapt
         .and_then(|body| body.issues.iter().find(|issue| issue.number == number))
 }
 
+/// Sibling issues in the same duplicate family as `number`, from the
+/// compiled conflict edges. Edge subjects carry the `candidate:issue:<n>`
+/// identity form, so membership parses from the edge itself; an issue in no
+/// duplicate family yields an empty set, never invented relatives.
+fn duplicate_family_issues(snapshot: &WorkPortfolioSnapshotV1, number: u64) -> Vec<u64> {
+    let self_identity = candidate_identity(number);
+    let mut siblings = BTreeSet::new();
+    for edge in &snapshot.conflict_edges {
+        if edge.kind != WorkConflictEdgeKindV1::DuplicateFamily
+            || !edge
+                .subjects
+                .iter()
+                .any(|subject| subject == &self_identity)
+        {
+            continue;
+        }
+        for subject in &edge.subjects {
+            if let Some(rest) = subject.strip_prefix("candidate:issue:")
+                && let Ok(sibling) = rest.parse::<u64>()
+                && sibling != number
+            {
+                siblings.insert(sibling);
+            }
+        }
+    }
+    siblings.into_iter().collect()
+}
+
 /// Compute the live overlap set for one issue from the compiled snapshot.
 fn live_overlaps(snapshot: &WorkPortfolioSnapshotV1, number: u64) -> LiveOverlapSetV1 {
     let mut overlaps = LiveOverlapSetV1 {
-        issues: Vec::new(),
+        issues: duplicate_family_issues(snapshot, number),
         pull_requests: Vec::new(),
         claims: Vec::new(),
         worktrees: Vec::new(),
@@ -542,10 +597,16 @@ fn live_overlaps(snapshot: &WorkPortfolioSnapshotV1, number: u64) -> LiveOverlap
 /// Compute the live overlap set for a standalone issue straight from the
 /// captured sources, because the RIPR-SPEC-0234 snapshot only surfaces
 /// campaign-member issues. Worktree spellings relativize exactly as the
-/// compiler renders them.
-fn live_overlaps_captured(captured: &WorkCapturedDirV1, number: u64) -> LiveOverlapSetV1 {
+/// compiler renders them. Duplicate-family siblings still come from the
+/// compiled conflict edges: edges are built from the captured issue set, so
+/// they cover standalone members the candidate list does not surface.
+fn live_overlaps_captured(
+    snapshot: &WorkPortfolioSnapshotV1,
+    captured: &WorkCapturedDirV1,
+    number: u64,
+) -> LiveOverlapSetV1 {
     let mut overlaps = LiveOverlapSetV1 {
-        issues: Vec::new(),
+        issues: duplicate_family_issues(snapshot, number),
         pull_requests: Vec::new(),
         claims: Vec::new(),
         worktrees: Vec::new(),
@@ -676,19 +737,174 @@ fn check_packet(
                 ),
             ));
         }
-        subject_known = true;
+        // A work-item subject is only known when it binds alongside an issue
+        // or pull-request subject the captured sources can resolve; a bare
+        // work-item id has no captured source of record, so it cannot make
+        // the subject known (unknown stays unknown, never invented).
     }
-    if let Some(pr) = packet.pull_request
-        && !snapshot.pull_requests.iter().any(|row| row.number == pr)
-    {
+    if packet.issue.is_none() && packet.work_item.is_some() && packet.pull_request.is_none() {
         evaluation.violations.push(violation(
             WorkSelectionLawV1::SubjectIdentity,
             WorkSelectionRouteV1::ReconcileSelection,
-            format!(
-                "pull request `#{pr}` does not exist in the captured portfolio; \
-                     recompile the portfolio and reselect"
-            ),
+            "a bare work-item subject cannot be resolved against the captured sources; \
+             reselect with an issue or pull-request subject the portfolio can recompile"
+                .to_string(),
         ));
+    }
+    if let Some(pr) = packet.pull_request {
+        // The pull-request subject resolves from the captured pull-request
+        // source first (the compiled snapshot drops PRs whose only linked
+        // issues are standalone), then the snapshot; when both the PR row and
+        // an issue subject are available, the PR must link that issue, so a
+        // PR opened for different work cannot be claimed for this selection.
+        let captured_row = captured
+            .pull_requests
+            .as_ref()
+            .and_then(|body| body.pull_requests.iter().find(|row| row.number == pr));
+        let known =
+            captured_row.is_some() || snapshot.pull_requests.iter().any(|row| row.number == pr);
+        if !known {
+            evaluation.violations.push(violation(
+                WorkSelectionLawV1::SubjectIdentity,
+                WorkSelectionRouteV1::ReconcileSelection,
+                format!(
+                    "pull request `#{pr}` exists in neither the captured pull-request source \
+                     nor the compiled portfolio; recompile the portfolio and reselect"
+                ),
+            ));
+        } else if let (Some(row), Some(issue)) = (captured_row, &packet.issue)
+            && !row.linked_issues.contains(&issue.number)
+        {
+            evaluation.violations.push(violation(
+                WorkSelectionLawV1::SubjectIdentity,
+                WorkSelectionRouteV1::ReconcileSelection,
+                format!(
+                    "pull request `#{pr}` is not linked to issue `#{}` in the captured source; \
+                     it records different work and cannot carry this selection",
+                    issue.number
+                ),
+            ));
+        }
+    }
+
+    // Selection identity: the recorded selection id must be the canonical
+    // derived form for the packet's own action and issue binding; a
+    // selection id naming another issue or action contradicts the packet.
+    if let Some(issue) = &packet.issue {
+        let derived = selection_identity(packet.lifecycle_action, issue.number);
+        if packet.selection_id != derived {
+            evaluation.violations.push(violation(
+                WorkSelectionLawV1::SubjectIdentity,
+                WorkSelectionRouteV1::ReconcileSelection,
+                format!(
+                    "selection id `{}` is not the canonical derived form `{derived}` for \
+                     action `{}` on issue `#{}`",
+                    packet.selection_id,
+                    packet.lifecycle_action.wire_name(),
+                    issue.number
+                ),
+            ));
+        }
+    }
+
+    // Scope-reference identity: accepted requirements and implementation
+    // slices must resolve in the captured cargo-allow graph when that source
+    // is present; a spec ref pins the canonical `RIPR-SPEC-NNNN` wire shape
+    // and, once requirements are bound, must belong to one of them. When the
+    // graph source is absent the resolution evidence is unavailable: only
+    // the wire shape is pinned, never invented membership.
+    if let Some(graph) = &captured.cargo_allow {
+        let mut accepted_specs: BTreeSet<&str> = BTreeSet::new();
+        for requirement_id in &packet.accepted_requirements {
+            match graph
+                .requirements
+                .iter()
+                .find(|row| &row.id == requirement_id)
+            {
+                Some(row) => {
+                    accepted_specs.extend(row.spec_refs.iter().map(String::as_str));
+                }
+                None => {
+                    evaluation.violations.push(violation(
+                        WorkSelectionLawV1::SubjectIdentity,
+                        WorkSelectionRouteV1::ReconcileSelection,
+                        format!(
+                            "accepted requirement `{requirement_id}` is not recorded in the \
+                             captured cargo-allow graph; scope references must stay source-linked"
+                        ),
+                    ));
+                }
+            }
+        }
+        for spec_ref in &packet.spec_refs {
+            if !spec_ref_has_canonical_shape(spec_ref) {
+                evaluation.violations.push(violation(
+                    WorkSelectionLawV1::SubjectIdentity,
+                    WorkSelectionRouteV1::ReconcileSelection,
+                    format!(
+                        "spec ref `{spec_ref}` is not the canonical `RIPR-SPEC-NNNN` wire form"
+                    ),
+                ));
+            } else if !packet.accepted_requirements.is_empty()
+                && !accepted_specs.contains(spec_ref.as_str())
+            {
+                evaluation.violations.push(violation(
+                    WorkSelectionLawV1::SubjectIdentity,
+                    WorkSelectionRouteV1::ReconcileSelection,
+                    format!(
+                        "spec ref `{spec_ref}` is not a spec of the accepted requirements \
+                         {reqs:?}; reconcile the pinned scope",
+                        reqs = packet.accepted_requirements
+                    ),
+                ));
+            }
+        }
+        for slice_id in &packet.implementation_slices {
+            match graph
+                .requirements
+                .iter()
+                .flat_map(|row| row.slices.iter())
+                .find(|slice| &slice.id == slice_id)
+            {
+                Some(slice) => {
+                    if let Some(issue) = &packet.issue
+                        && !slice.issue_refs.contains(&issue.number)
+                    {
+                        evaluation.violations.push(violation(
+                            WorkSelectionLawV1::SubjectIdentity,
+                            WorkSelectionRouteV1::ReconcileSelection,
+                            format!(
+                                "implementation slice `{slice_id}` records issues {:?} and does \
+                                 not list issue `#{}`; it cannot carry this selection",
+                                slice.issue_refs, issue.number
+                            ),
+                        ));
+                    }
+                }
+                None => {
+                    evaluation.violations.push(violation(
+                        WorkSelectionLawV1::SubjectIdentity,
+                        WorkSelectionRouteV1::ReconcileSelection,
+                        format!(
+                            "implementation slice `{slice_id}` is not recorded in the captured \
+                             cargo-allow graph; scope references must stay source-linked"
+                        ),
+                    ));
+                }
+            }
+        }
+    } else {
+        for spec_ref in &packet.spec_refs {
+            if !spec_ref_has_canonical_shape(spec_ref) {
+                evaluation.violations.push(violation(
+                    WorkSelectionLawV1::SubjectIdentity,
+                    WorkSelectionRouteV1::ReconcileSelection,
+                    format!(
+                        "spec ref `{spec_ref}` is not the canonical `RIPR-SPEC-NNNN` wire form"
+                    ),
+                ));
+            }
+        }
     }
 
     // Action identity: the selected lifecycle action must be exactly the
@@ -798,10 +1014,16 @@ fn check_packet(
     }
 
     // Worktree identity: every claimed worktree must exist in the captured
-    // local state (via claims or PRs in the captured sources).
+    // local state — the captured worktree list itself, plus worktrees
+    // recorded on claims and PRs in the captured sources.
     if !packet.overlaps.worktrees.is_empty() {
         let mut known_worktrees: BTreeSet<String> = BTreeSet::new();
         let root = captured.manifest.root.as_str();
+        if let Some(body) = &captured.local_state {
+            for worktree in &body.worktrees {
+                known_worktrees.insert(portable_path(&worktree.path, &body.root));
+            }
+        }
         if let Some(body) = &captured.claims {
             for claim in &body.claims {
                 if let Some(worktree) = &claim.worktree {
@@ -934,7 +1156,7 @@ fn check_packet(
         && subject_known
     {
         let live = if standalone_issue {
-            live_overlaps_captured(captured, issue.number)
+            live_overlaps_captured(snapshot, captured, issue.number)
         } else {
             live_overlaps(snapshot, issue.number)
         };
@@ -987,6 +1209,20 @@ fn check_packet(
                         "semantic resource `{resource}` overlaps issue `#{}` but is not \
                              recorded in the packet overlaps; reconcile the selection before \
                              any mutation",
+                        issue.number
+                    ),
+                ));
+            }
+        }
+        for overlap_issue in &live.issues {
+            if !packet.overlaps.issues.contains(overlap_issue) {
+                evaluation.violations.push(violation(
+                    WorkSelectionLawV1::OverlapVisibility,
+                    WorkSelectionRouteV1::ReconcileSelection,
+                    format!(
+                        "duplicate-family issue `#{overlap_issue}` overlaps issue `#{}` but is \
+                             not recorded in the packet overlaps; reconcile the selection \
+                             before any mutation",
                         issue.number
                     ),
                 ));
@@ -1113,11 +1349,41 @@ fn corpus_root(corpus_dir: &str) -> std::path::PathBuf {
     }
 }
 
+/// Resolve a scenario's captured directory. A corpus may carry its own
+/// captured inputs under `<corpus>/captured/`; when the scenario's captured
+/// path exists there it wins, otherwise the path stays relative to the
+/// repository `fixtures/` root (the committed corpus mixes both). Paths must
+/// be plain relative paths on every host platform: absolute paths, `..` or
+/// backslash segments fail closed instead of escaping the fixture boundary.
+fn resolve_scenario_captured(corpus_root: &Path, captured: &str) -> Result<PathBuf, String> {
+    let path = Path::new(captured);
+    if captured.trim().is_empty() || path.is_absolute() || captured.contains('\\') {
+        return Err(format!(
+            "scenario captured path `{captured}` is not a plain relative path"
+        ));
+    }
+    for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(format!(
+                "scenario captured path `{captured}` contains a forbidden component"
+            ));
+        }
+    }
+    let local = corpus_root.join("captured").join(path);
+    if local.is_dir() {
+        Ok(local)
+    } else {
+        Ok(workspace_path("fixtures").join(path))
+    }
+}
+
 fn run_scenario(
     scenario: &WorkSelectionScenarioV1,
     corpus: &WorkSelectionIdentityCorpusV1,
+    corpus_root: &Path,
 ) -> Result<WorkSelectionScenarioResultV1, String> {
-    let captured_root = workspace_path("fixtures").join(&scenario.captured);
+    let captured_root = resolve_scenario_captured(corpus_root, &scenario.captured)
+        .map_err(|error| format!("scenario `{}`: {error}", scenario.id))?;
     let captured = load_work_captured_dir(&captured_root)
         .map_err(|error| format!("scenario `{}`: {error}", scenario.id))?;
     let snapshot = compile_work_portfolio(&captured, None)
@@ -1161,12 +1427,24 @@ fn run_scenario(
         let passed = match case.expect {
             WorkSelectionExpectV1::Pass => evaluation.violations.is_empty(),
             WorkSelectionExpectV1::Fail => {
-                !evaluation.violations.is_empty()
-                    && case.expect_violations.iter().all(|expected| {
-                        evaluation.violations.iter().any(|actual| {
-                            actual.law == expected.law && actual.route == expected.route
-                        })
-                    })
+                // Exact match on the law/route pair multiset: a negative
+                // case pins every occurrence. A superset or subset pass
+                // would let a regression that adds a spurious violation to
+                // a wrong packet stay green, claiming discrimination the
+                // corpus does not actually hold.
+                let mut actual_pairs: Vec<(WorkSelectionLawV1, WorkSelectionRouteV1)> = evaluation
+                    .violations
+                    .iter()
+                    .map(|row| (row.law, row.route))
+                    .collect();
+                let mut expected_pairs: Vec<(WorkSelectionLawV1, WorkSelectionRouteV1)> = case
+                    .expect_violations
+                    .iter()
+                    .map(|expected| (expected.law, expected.route))
+                    .collect();
+                actual_pairs.sort();
+                expected_pairs.sort();
+                !actual_pairs.is_empty() && actual_pairs == expected_pairs
             }
         };
         results.push(WorkSelectionCaseResultV1 {
@@ -1203,8 +1481,9 @@ pub(crate) fn run_work_selection_check(
     let mut results = Vec::new();
     let mut passed = 0_u64;
     let mut cases_total = 0_u64;
+    let root = corpus_root(corpus_dir);
     for scenario in &corpus.scenarios {
-        let result = run_scenario(scenario, corpus)?;
+        let result = run_scenario(scenario, corpus, &root)?;
         for case in &result.cases {
             cases_total += 1;
             if case.status == "passed" {
@@ -1244,6 +1523,16 @@ pub(crate) fn work_selection_check_json(view: &WorkSelectionCheckViewV1) -> Resu
     work_portfolio_json(view)
 }
 
+/// Render a serde-enum value by its stable wire name, never the Rust `Debug`
+/// spelling, so the human Markdown projection matches the JSON wire forms
+/// exactly and cannot drift from the corpus vocabulary.
+fn selection_wire_name<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 pub(crate) fn work_selection_check_markdown(view: &WorkSelectionCheckViewV1) -> String {
     let mut out = String::new();
     out.push_str("# Selected-work identity check\n\n");
@@ -1272,11 +1561,10 @@ pub(crate) fn work_selection_check_markdown(view: &WorkSelectionCheckViewV1) -> 
     out.push_str("Plan dispositions (frozen vocabulary pinned per case):\n\n");
     for disposition in WorkPlanDispositionV1::all() {
         let count = disposition_counts.get(&disposition).copied().unwrap_or(0);
-        let wire = serde_json::to_value(disposition)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
-        out.push_str(&format!("- `{wire}`: {count}\n"));
+        out.push_str(&format!(
+            "- `{}`: {count}\n",
+            selection_wire_name(&disposition)
+        ));
     }
     out.push('\n');
     out.push_str("| scenario | captured | completeness | acceptance | cases |\n");
@@ -1288,10 +1576,10 @@ pub(crate) fn work_selection_check_markdown(view: &WorkSelectionCheckViewV1) -> 
             .filter(|case| case.status == "passed")
             .count();
         out.push_str(&format!(
-            "| {} | {} | {:?} | {} | {}/{} |\n",
+            "| {} | {} | {} | {} | {}/{} |\n",
             scenario.scenario_id,
             scenario.captured,
-            scenario.snapshot_completeness,
+            selection_wire_name(&scenario.snapshot_completeness),
             scenario.acceptance_state,
             cases_passed,
             scenario.cases.len()
@@ -1309,8 +1597,10 @@ pub(crate) fn work_selection_check_markdown(view: &WorkSelectionCheckViewV1) -> 
             ));
             for row in &case.violations {
                 out.push_str(&format!(
-                    "- `{:?}` → `{:?}`: {}\n",
-                    row.law, row.route, row.detail
+                    "- `{}` → `{}`: {}\n",
+                    selection_wire_name(&row.law),
+                    selection_wire_name(&row.route),
+                    row.detail
                 ));
             }
             out.push('\n');
@@ -1438,10 +1728,12 @@ pub(crate) fn load_work_selection_provenance(
 
 /// Fail closed on provenance paths that could escape the corpus root:
 /// absolute paths, `..` components, empty segments or empty strings, on
-/// every host platform.
+/// every host platform. Backslash is rejected everywhere (not only on
+/// Windows) so a path authored for one platform can never silently bypass
+/// the gate on another.
 fn reject_unsafe_selection_path(value: &str) -> Result<(), String> {
     let path = Path::new(value);
-    if value.trim().is_empty() || path.is_absolute() {
+    if value.trim().is_empty() || path.is_absolute() || value.contains('\\') {
         return Err(format!(
             "work selection identity provenance path `{value}` is not a relative path"
         ));
@@ -1525,6 +1817,38 @@ pub(crate) fn validate_work_selection_identity_fixture_corpus(violations: &mut V
                 crate::blind_journey::sha256_hex(&bytes)
             ));
         }
+    }
+    // Reverse direction: every corpus byte must be listed in the provenance,
+    // or an unlisted file would bypass the digest gate entirely.
+    let listed: BTreeSet<&str> = provenance
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    match crate::collect_files(&root) {
+        Ok(on_disk) => {
+            for path in on_disk {
+                if path == provenance_path
+                    || path.extension().and_then(|ext| ext.to_str()) != Some("json")
+                {
+                    continue;
+                }
+                let Ok(relative) = path.strip_prefix(&root) else {
+                    continue;
+                };
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if !listed.contains(relative.as_str()) {
+                    violations.push(format!(
+                        "fixtures/work_selection_identity: {} is not listed in provenance.json; \
+                         unlisted fixture bytes bypass the digest gate",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        Err(error) => violations.push(format!(
+            "fixtures/work_selection_identity: corpus directory is unreadable: {error}"
+        )),
     }
     let corpus_body = match fs::read_to_string(root.join("corpus.json")) {
         Ok(body) => body,
