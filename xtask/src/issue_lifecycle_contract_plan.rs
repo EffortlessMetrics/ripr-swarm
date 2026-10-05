@@ -849,7 +849,13 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
                     row.id
                 ));
             }
-            if row.attempt.contract_decision.decision_rationale.trim().is_empty() {
+            if row
+                .attempt
+                .contract_decision
+                .decision_rationale
+                .trim()
+                .is_empty()
+            {
                 failures.push(format!(
                     "row `{}` embedded attempt records no contract decision rationale; the frozen decision must justify the root contract state",
                     row.id
@@ -1156,7 +1162,10 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
     for (section, emptied) in [
         ("work items", row.planning.work_items.is_empty()),
         ("edit cages", row.planning.edit_cages.is_empty()),
-        ("semantic conflict resources", row.planning.conflict_resources.is_empty()),
+        (
+            "semantic conflict resources",
+            row.planning.conflict_resources.is_empty(),
+        ),
         ("proof commands", row.planning.proof_commands.is_empty()),
         ("stop conditions", row.planning.stop_conditions.is_empty()),
         ("non-goals", row.planning.non_goals.is_empty()),
@@ -2299,8 +2308,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_root_result_identity_must_be_distinct_and_complete(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_root_result_identity_must_be_distinct_and_complete()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let mut aliased = row_by_category(&corpus, "contract_required")?.clone();
         let contract = aliased
@@ -2345,8 +2354,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_contract_state_bound_to_embedded_attempt() -> Result<(), String>
-    {
+    fn issue_lifecycle_contract_plan_pilot_contract_state_bound_to_embedded_attempt()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "contract_required")?;
         // Mutating only the outer committed state must fail.
@@ -2357,10 +2366,9 @@ mod tests {
             .ok_or_else(|| "the contract case must carry contract evidence".to_string())?
             .contract_state = IssueLifecycleContractStateV1::Rejected;
         let failures = assess_contract_plan_row(&outer);
-        if !failures
-            .iter()
-            .any(|failure| failure.contains("disagrees with the embedded attempt root contract state"))
-        {
+        if !failures.iter().any(|failure| {
+            failure.contains("disagrees with the embedded attempt root contract state")
+        }) {
             return Err(format!(
                 "an outer contract state drift must fail the law, got {failures:?}"
             ));
@@ -2369,10 +2377,9 @@ mod tests {
         let mut inner = row.clone();
         inner.attempt.contract_decision.root_disposition = Some("rejected".to_string());
         let failures = assess_contract_plan_row(&inner);
-        if !failures
-            .iter()
-            .any(|failure| failure.contains("disagrees with the embedded attempt root contract state"))
-        {
+        if !failures.iter().any(|failure| {
+            failure.contains("disagrees with the embedded attempt root contract state")
+        }) {
             return Err(format!(
                 "an embedded attempt state drift must fail the law, got {failures:?}"
             ));
@@ -2405,8 +2412,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_control_names_bound_to_named_behavior() -> Result<(), String>
-    {
+    fn issue_lifecycle_contract_plan_pilot_control_names_bound_to_named_behavior()
+    -> Result<(), String> {
         let (_corpus, controls, _provenance) = load_committed()?;
         let narrow_clean = control_by_id(&controls, "control_narrow_bug_gets_no_spec")?.clone();
         let contract_clean =
@@ -2472,8 +2479,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_unmeasured_or_missing_retrieval_step_fails_closed(
-    ) -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_unmeasured_or_missing_retrieval_step_fails_closed()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let mut not_measured = corpus.rows[0].clone();
         not_measured.retrieval_steps[0].bytes = IssueLifecycleIntakeBytesV1::NotMeasured;
@@ -2583,25 +2590,28 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_emptied_plan_sections_fail_closed() -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_emptied_plan_sections_fail_closed() -> Result<(), String>
+    {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "narrow_accepted_contract_bug")?.clone();
         let mutations: [(&str, fn(&mut IssueLifecycleContractPlanRowV1)); 9] = [
             ("work items", |row| row.planning.work_items.clear()),
             ("edit cages", |row| row.planning.edit_cages.clear()),
-            (
-                "semantic conflict resources",
-                |row| row.planning.conflict_resources.clear(),
-            ),
+            ("semantic conflict resources", |row| {
+                row.planning.conflict_resources.clear()
+            }),
             ("proof commands", |row| row.planning.proof_commands.clear()),
-            ("stop conditions", |row| row.planning.stop_conditions.clear()),
+            ("stop conditions", |row| {
+                row.planning.stop_conditions.clear()
+            }),
             ("non-goals", |row| row.planning.non_goals.clear()),
             ("acceptance", |row| row.planning.acceptance_covered.clear()),
-            ("shape rationale", |row| row.planning.shape_rationale.clear()),
-            (
-                "portfolio placement",
-                |row| row.planning.portfolio_placement.clear(),
-            ),
+            ("shape rationale", |row| {
+                row.planning.shape_rationale.clear()
+            }),
+            ("portfolio placement", |row| {
+                row.planning.portfolio_placement.clear()
+            }),
         ];
         let expected = |section: &str| match section {
             "acceptance" => "covers no acceptance row".to_string(),
@@ -2624,10 +2634,11 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_duplicate_observation_key_rejected() -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_duplicate_observation_key_rejected() -> Result<(), String>
+    {
         let path = contract_plan_root().join("corpus.json");
-        let body = fs::read_to_string(&path)
-            .map_err(|error| format!("read committed corpus: {error}"))?;
+        let body =
+            fs::read_to_string(&path).map_err(|error| format!("read committed corpus: {error}"))?;
         let mut value: serde_json::Value = serde_json::from_str(&body)
             .map_err(|error| format!("parse committed corpus: {error}"))?;
         let rows = value
@@ -2654,8 +2665,7 @@ mod tests {
                 .ok_or_else(|| "the second row carries no attempt".to_string())?,
         )
         .map_err(|error| format!("parse the aliased attempt: {error}"))?;
-        attempt.row_digest =
-            crate::issue_lifecycle_attempt::issue_lifecycle_row_digest(&attempt)?;
+        attempt.row_digest = crate::issue_lifecycle_attempt::issue_lifecycle_row_digest(&attempt)?;
         rows[1]["attempt"] = serde_json::to_value(&attempt)
             .map_err(|error| format!("serialize the aliased attempt: {error}"))?;
         let mutated = serde_json::to_string(&value)
@@ -2670,8 +2680,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_real_row_timeline_snapshot_required() -> Result<(), String>
-    {
+    fn issue_lifecycle_contract_plan_pilot_real_row_timeline_snapshot_required()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let mut no_path = corpus.rows[0].clone();
         no_path.snapshot.timeline_path = None;
@@ -2693,8 +2703,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_snapshot_bytes_bound_to_named_issue() -> Result<(), String>
-    {
+    fn issue_lifecycle_contract_plan_pilot_snapshot_bytes_bound_to_named_issue()
+    -> Result<(), String> {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row_6225 = corpus
             .rows
