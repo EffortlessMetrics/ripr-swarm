@@ -91,6 +91,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Windows: `ripr agent card --json` now reports `selected_target.file`
+  with portable `/` separators for both existing and proposed targets,
+  instead of leaking native backslashes. `allowed_files` and
+  `forbidden_files` already used the shared normalized renderer and are
+  unchanged (#5440).
 - Discarded Rust `matches!` computations no longer count as assertion oracles
   in parser, lexical or registered-harness facts. Actual asserting wrappers
   retain pattern credit, including the weak whole-wildcard boundary from
