@@ -699,10 +699,10 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
     }
     // `let` patterns: the text between `let` and its `=` or `;`.
     for (at, _) in inner.match_indices("let") {
-        if !inner[..at]
+        if inner[..at]
             .chars()
             .next_back()
-            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         {
             continue;
         }
@@ -736,10 +736,7 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
         let pipes: Vec<usize> = line
             .match_indices('|')
             .map(|(index, _)| index)
-            .filter(|index| {
-                line[..*index].chars().next_back() != Some('|')
-                    && line[index + 1..].chars().next() != Some('|')
-            })
+            .filter(|index| !line[..*index].ends_with('|') && !line[index + 1..].starts_with('|'))
             .collect();
         for pair in pipes.chunks(2) {
             if let [left, right] = pair
