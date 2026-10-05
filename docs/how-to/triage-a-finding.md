@@ -66,8 +66,8 @@ already supplies the discriminator.
 | `why` reads | `miss` value | What to do |
 | --- | --- | --- |
 | no call to the changed code found | `no_call_path` | The test is linked by name or file location only. Check that it is the right test; if it is, call the owner from it. |
-| has no assertion | `no_assertion` | Add an assertion on the changed value. |
-| asserts, but not on the changed value | `assertion_not_observing` | Move or add the assertion so it observes the changed value, error or field. |
+| has no assertion | `no_assertion` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then add an assertion on the changed value. If it does not reach the owner, fix the call or use the test that does. |
+| asserts, but not on the changed value | `assertion_not_observing` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then move or add the assertion so it observes the changed value, error or field. If it does not reach the owner, fix the call or use the test that does. |
 | assertion not credited: ripr could not establish that it runs as the standard macro | `assertion_not_credited` | An assertion exists, but ripr could not confirm it is the standard `assert!` family (a same-named local macro, for example), and it does not yet say whether the assertion is inert. Read the macro. If it expands to a real check, file an analyzer follow-up; if not, use the standard macro. |
 | assertion too weak to tell the old behavior from the new | `weak_assertion` | Replace `is_ok`, `unwrap` or a broad comparison with the exact expected value. |
 | ripr could not confirm that this assertion observes the changed behavior | `observation_unconfirmed` | This is an unknown, not a found miss: an assertion may already exist. Check by hand whether it observes the changed value before changing the test; if it does, treat it as an analyzer gap and file a follow-up. |
