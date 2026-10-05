@@ -3665,6 +3665,7 @@ fn workflow_step_block(text: &str, name: &str) -> Option<String> {
 /// the summary only through the step environment (#6723). Each setting is
 /// checked against the same run without it, so a summary that stops
 /// reading the environment fails here.
+#[cfg(unix)]
 #[test]
 fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), Box<dyn Error>> {
     let root = replay::unique_temp_dir("ci-summary-env")?;
