@@ -129,6 +129,16 @@ const NO_TESTS_INFECTION_SUMMARY: &str =
 const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
     "No statically reachable test path was found, so activation/infection cannot be estimated";
 
+/// The `diff_scope_oversized` refusal for an index of `files` Rust files.
+fn diff_scope_oversized_error(files: usize, scope_limit: usize) -> String {
+    format!(
+        "diff_scope_oversized: {files} indexed Rust files exceed the \
+         {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to \
+         protect runner memory. Repair route: reduce the diff scope, run a narrower \
+         mode, or raise the limit via {DIFF_INDEX_FILE_LIMIT_ENV}=<number>."
+    )
+}
+
 fn diff_index_file_limit() -> Result<usize, String> {
     diff_index_file_limit_from_env(diff_limit_env(DIFF_INDEX_FILE_LIMIT_ENV))
 }
@@ -1455,6 +1465,11 @@ impl RustAdapter {
                     &core_roots,
                     &manifest_dir_prefixes,
                 );
+                // Narrowing keeps the changed packages whole, so a core over
+                // the hard limit is refused before its index is built.
+                if core_files.len() > scope_limit {
+                    return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
+                }
                 if core_files.len() < index_files.len() {
                     let query = dependent_scope::admission_query(
                         &options.root,
@@ -1487,13 +1502,7 @@ impl RustAdapter {
         // constrained runner's memory (#1023): a too-large index is a named
         // limited state with a repair route, not an analysis result.
         if index_files.len() > scope_limit {
-            return Err(format!(
-                "diff_scope_oversized: {} indexed Rust files exceed the \
-                 {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to \
-                 protect runner memory. Repair route: reduce the diff scope, run a narrower \
-                 mode, or raise the limit via {DIFF_INDEX_FILE_LIMIT_ENV}=<number>.",
-                index_files.len()
-            ));
+            return Err(diff_scope_oversized_error(index_files.len(), scope_limit));
         }
         // Load files into memory and use the content-addressed per-file fact
         // cache. This avoids re-parsing unchanged files with ra_ap_syntax on
@@ -3277,6 +3286,37 @@ mod tests {
             Err(error) => assert!(is_diff_scope_oversized(&error), "{error}"),
             Ok(_) => return Err("a 1-file guard must refuse the run".to_string()),
         }
+        Ok(())
+    }
+
+    /// A changed package over the memory guard is refused before narrowing
+    /// builds its core index: narrowing keeps the changed packages whole, so
+    /// no admission can make them fit.
+    #[test]
+    fn auto_refuses_a_core_over_the_guard_before_building_it() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-core-over-guard")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+        write(
+            &root.join("a/src/extra.rs"),
+            "pub fn extra() -> u8 {\n    2\n}\n",
+        )?;
+
+        let refused = with_forced_diff_limit_env(&[(DIFF_INDEX_FILE_LIMIT_ENV, "1")], || {
+            scoped_findings(&root, DependentScopeMode::Auto)
+        });
+        match refused {
+            Err(error) => assert!(
+                is_diff_scope_oversized(&error) && error.starts_with("diff_scope_oversized: 2 "),
+                "{error}"
+            ),
+            Ok(_) => return Err("a two-file core must not fit a 1-file guard".to_string()),
+        }
+        assert_eq!(
+            dependent_scope::observed_main_files(),
+            None,
+            "the refusal must come before dependent admission runs"
+        );
         Ok(())
     }
 
