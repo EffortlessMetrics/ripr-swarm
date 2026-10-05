@@ -303,7 +303,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.38`: combine #5713 Err/block/wrapper ownership with landed #6701
 /// contradiction handling and debug equality extraction. Either lineage
 /// lacks part of the combined semantics and must miss.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.38";
+/// `1.39`: landed #6633 changes match-arm confirmation beside an
+/// owner-reaching test; combined classified entries must not replay
+/// predecessor proximity-only confirmation after that semantic change.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.39";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -380,7 +383,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.38";
 /// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.44";
+/// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -459,7 +463,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.44";
 /// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.44";
+/// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -604,7 +609,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.27`: landed #6701 recognizes debug equality operands in the shared
 /// extractor. Duplicate debug equality now stores Weak/RelationalCheck
 /// OracleFact values instead of Strong/ExactValue; warm raw facts must miss.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.27";
+/// `1.22`: file-level `calls` are no longer stored (#5415 step 3); the
+/// wire derives them from per-function calls, ignoring any legacy copy.
+/// `1.28`: combine the #5713/#6701 oracle facts with landed #6820
+/// derived file-call storage. Retained per-function calls are authoritative;
+/// either predecessor family must rebuild this combined file-fact shape.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.28";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3877,7 +3887,10 @@ mod tests {
         // 1.23: combine span wire with the independent #5713 1.21/1.22
         // discarded matcher refusal and consumed terminal guard facts.
         // 1.24: balanced terminal guards and actual first-failure refusal.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.27");
+        // 1.21 -> 1.22: file-level `calls` are derived, not stored
+        // (#5415 step 3); legacy payloads carry a dead copy.
+        // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.28");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3932,7 +3945,7 @@ mod tests {
         // 1.33 -> 1.34: a statically contradicted exact-value assertion
         // keeps at most weak oracle credit and keeps the gap open (#6026).
         // 1.38: compose #5713 with landed #6701; refuse both predecessors.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.38");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.39");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3964,8 +3977,8 @@ mod tests {
         // 0.39 -> 0.40: same statically-contradicted-exact-value transition
         // as the outer cache (#6026).
         // 0.44: same combined #5713/#6701 transition as full 1.38.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.44");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.44");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
     }
 
     #[test]
@@ -4092,6 +4105,53 @@ mod tests {
     }
 
     #[test]
+    fn file_fact_entry_with_legacy_stored_file_calls_loads_derived() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #5415 step 3: a 1.21-shaped payload (stored file-level `calls`)
+        // placed at a 1.22 entry path must still load, with the stored copy
+        // ignored: derivation from per-function calls is authoritative. The
+        // legacy bytes below contradict the functions on purpose, so a load
+        // that trusted them would surface the phantom call.
+        let scratch = integrity_scratch("legacy-stored-file-calls")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "fn f(x: u32) -> u32 { helper(x) }\nfn helper(y: u32) -> u32 { y }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        if facts.functions.iter().all(|f| f.calls.is_empty()) {
+            return Err("fixture must produce per-function calls".to_owned());
+        }
+        let expected = facts.file_calls();
+        if expected.is_empty() {
+            return Err("fixture must derive file-level calls".to_owned());
+        }
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)) {
+            return Err("seeded file facts must warm hit".to_owned());
+        }
+        let entry = cache.entry_path(&key);
+        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        envelope["file_facts"]["calls"] = serde_json::json!([{
+            "line": 999,
+            "name": "phantom",
+            "text": "phantom()",
+        }]);
+        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        match cache.load_file_facts(&key) {
+            CacheLoad::Hit(loaded) if loaded.file_calls() == expected => {}
+            other => {
+                return Err(format!(
+                    "legacy stored calls must load derived from functions, got {other:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn empty_macro_call_predecessor_from_another_build_misses_and_current_reuses()
     -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -4129,7 +4189,6 @@ mod tests {
                 call.text = old_line.clone();
             }
         };
-        restore_old_text(&mut favorable.calls);
         for function in &mut favorable.functions {
             restore_old_text(&mut function.calls);
         }
@@ -4214,6 +4273,7 @@ mod tests {
             ("1.35", "0.41"),
             ("1.36", "0.42"),
             ("1.37", "0.43"),
+            ("1.38", "0.44"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -4283,7 +4343,9 @@ mod tests {
 
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
-        for previous in ["0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43"] {
+        for previous in [
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+        ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
                 let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
@@ -8120,7 +8182,7 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26"] {
+        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27"] {
             let previous_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 analyzer_version: crate::build_identity::cache_identity().to_string(),
