@@ -260,6 +260,19 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
     config_fingerprint(&pairs.join("\n"))
 }
 
+/// The config identity published in the diff-check outcome identity block
+/// (#5988): the same fingerprint the check-artifact reuse gate enforces, so a
+/// config edit that flips findings is visible in the block agents compare.
+/// `Some` exactly when a `ripr.toml` was actually loaded for the run
+/// ([`RiprConfig::source_text`] is present); a defaults-only run — no config
+/// file, or a bound Git-candidate subject that must ignore the worktree
+/// config — keeps `null`.
+pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
+    config
+        .source_text()
+        .map(|_| check_artifact_config_identity_hash(config))
+}
+
 /// The exact `ripr.toml` fields the repo-exposure producer (the seam
 /// inventory in `crates/ripr/src/analysis/seam_inventory.rs`) consumes
 /// semantically. Verified against the producer: the seam walker is Rust-only

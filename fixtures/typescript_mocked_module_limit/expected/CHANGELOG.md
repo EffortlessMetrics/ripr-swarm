@@ -539,3 +539,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — typescript_mocked_module_limit (11)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_mocked_module_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

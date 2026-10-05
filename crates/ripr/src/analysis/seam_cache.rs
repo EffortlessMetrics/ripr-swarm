@@ -621,11 +621,18 @@ pub(crate) fn cache_base_dir(workspace_root: &std::path::Path) -> PathBuf {
 }
 
 /// Read-only summary of a cache directory for status and diagnostics.
+///
+/// `entry_count` / `total_size_bytes` cover the entries `cache clear`
+/// would remove (#5987); `foreign_entry_count` / `foreign_total_size_bytes`
+/// cover files the same traversal found outside the recognized layers, so
+/// status and clear describe the same owned set when they say "entries".
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CacheStatus {
     pub(crate) state: &'static str,
     pub(crate) total_size_bytes: u64,
     pub(crate) entry_count: usize,
+    pub(crate) foreign_entry_count: usize,
+    pub(crate) foreign_total_size_bytes: u64,
 }
 
 /// Inspect a cache directory without following symlinks or fabricating counts.
@@ -636,7 +643,28 @@ pub(crate) struct CacheStatus {
 /// reported total stale. Symlink entries are skipped and traversal failures
 /// are surfaced as `partial`; callers must not use this report to authorize
 /// access or make security decisions.
+///
+/// This is the per-layer inspector `cache clear` plans with: every regular
+/// file under the inspected directory belongs to the layer being removed, so
+/// nothing is reported as foreign (#5987).
 pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
+    inspect_cache_dir_attributed(cache_dir, None)
+}
+
+/// Inspect a cache root, splitting the counts the way `cache clear` removes
+/// (#5987): files under a recognized top-level layer in `CACHE_LAYER_NAMES`
+/// are owned entries; every other file — foreign layers, stray notes, stale
+/// schemas — is disclosed separately as foreign. Clear's preserve-siblings
+/// design stays the authority; this report just stops counting files clear
+/// will never remove as cache entries.
+pub(crate) fn inspect_cache_root(cache_dir: &Path) -> CacheStatus {
+    inspect_cache_dir_attributed(cache_dir, Some(CACHE_LAYER_NAMES))
+}
+
+fn inspect_cache_dir_attributed(
+    cache_dir: &Path,
+    owned_layer_names: Option<&[&str]>,
+) -> CacheStatus {
     let metadata = match std::fs::symlink_metadata(cache_dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -644,6 +672,8 @@ pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
                 state: "not_found",
                 total_size_bytes: 0,
                 entry_count: 0,
+                foreign_entry_count: 0,
+                foreign_total_size_bytes: 0,
             };
         }
         Err(_) => {
@@ -651,6 +681,8 @@ pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
                 state: "unavailable",
                 total_size_bytes: 0,
                 entry_count: 0,
+                foreign_entry_count: 0,
+                foreign_total_size_bytes: 0,
             };
         }
     };
@@ -659,14 +691,20 @@ pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
             state: "unavailable",
             total_size_bytes: 0,
             entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
         };
     }
 
     let mut total_size_bytes = 0u64;
     let mut entry_count = 0usize;
+    let mut foreign_total_size_bytes = 0u64;
+    let mut foreign_entry_count = 0usize;
     let mut partially_readable = false;
-    let mut stack = vec![cache_dir.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    // (directory, owned, is_top_level). `owned_layer_names == None` means the
+    // per-layer/full inspection: every descendant is owned.
+    let mut stack = vec![(cache_dir.to_path_buf(), true, true)];
+    while let Some((dir, owned, is_top_level)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             partially_readable = true;
             continue;
@@ -684,11 +722,21 @@ pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
             if file_type.is_symlink() {
                 continue;
             }
+            let child_owned = if is_top_level && let Some(names) = owned_layer_names {
+                names.iter().any(|name| entry.file_name() == *name)
+            } else {
+                owned
+            };
             if file_type.is_dir() {
-                stack.push(entry.path());
+                stack.push((entry.path(), child_owned, false));
             } else if file_type.is_file() {
-                total_size_bytes = total_size_bytes.saturating_add(metadata.len());
-                entry_count = entry_count.saturating_add(1);
+                let (sizes, counts) = if child_owned {
+                    (&mut total_size_bytes, &mut entry_count)
+                } else {
+                    (&mut foreign_total_size_bytes, &mut foreign_entry_count)
+                };
+                *sizes = sizes.saturating_add(metadata.len());
+                *counts = counts.saturating_add(1);
             }
         }
     }
@@ -697,6 +745,8 @@ pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
         state: if partially_readable { "partial" } else { "ok" },
         total_size_bytes,
         entry_count,
+        foreign_entry_count,
+        foreign_total_size_bytes,
     }
 }
 
