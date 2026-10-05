@@ -1223,7 +1223,7 @@ fn test_mocks_owner_module(
 /// an unknown root errs toward withholding the relation (#4294). A query
 /// (`?raw`), empty and `.` segments are dropped first, so `//src/./cart`
 /// reads as `src/cart`; a `..` segment makes the path unknowable and matches.
-fn root_relative_mock_names_module(source: &str, module: &str) -> bool {
+pub(crate) fn root_relative_mock_names_module(source: &str, module: &str) -> bool {
     let source = source.replace('\\', "/");
     let Some(rooted) = source.strip_prefix('/') else {
         return false;

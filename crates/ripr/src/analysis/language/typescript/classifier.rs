@@ -2484,15 +2484,7 @@ pub(crate) fn classify_change_with_alias_state(
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
     let mock_paths =
         collect_related_mock_paths(owner, all_tests, workspace_root, reexport_index, alias_map);
-    let static_limit = static_limit_for_change(line_text, owner, &mock_paths);
-
-    // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
-    // These are ADDITIVE evidence lines; existing `static_limit_kind` is unchanged.
-    let named_limitations_from_static: Vec<TypeScriptNamedLimitation> = static_limit
-        .as_ref()
-        .and_then(|limit| named_limitation_for_static_limit(limit, file, line))
-        .into_iter()
-        .collect();
+    let mut static_limit = static_limit_for_change(line_text, owner, &mock_paths);
     // Ownership-resolution limitations (RIPR-SPEC-0085 §PR6):
     // Emitted when a cross-package test references the owner by name but is
     // excluded by the package-local filter — the target is unresolvable.
@@ -2642,88 +2634,132 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         );
 
-    let (class, reach_state, observe_state, discriminate_state, mut missing) = if related.is_empty()
-    {
-        (
-            ExposureClass::NoStaticPath,
-            StageState::No,
-            StageState::No,
-            StageState::No,
-            // #4550: an uncredited owner import through an unresolved
-            // alias is the more specific no-reach cause; name it instead of
-            // claiming no test references the owner.
-            vec![match &alias_gap {
-                Some(gap) => gap.no_static_path_missing(&owner.name),
-                None => no_static_path_missing(owner),
-            }],
-        )
-    } else if !has_oracle_eligible_relation {
-        (
-            ExposureClass::WeaklyExposed,
-            StageState::Weak,
-            StageState::Weak,
-            StageState::Weak,
-            vec![format!(
-                "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
-                owner.name
-            )],
-        )
-    } else if reach_only_through_module_entry {
-        (
-            ExposureClass::WeaklyExposed,
-            StageState::Yes,
-            StageState::Weak,
-            StageState::Weak,
-            vec![module_entry_reach_summary(
-                owner,
-                &related_candidates,
-                reexport_index,
-                alias_map,
-                workspace_root,
-            )],
-        )
-    } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
-        (
-            ExposureClass::Exposed,
-            StageState::Yes,
-            StageState::Yes,
-            StageState::Yes,
-            vec![format!(
-                "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
-                owner.name,
-                strongest_kind.as_str()
-            )],
-        )
-    } else if strongest_strength >= OracleStrength::Strong.rank() {
-        // Strong oracle exists but observation guard failed: downgrade to
-        // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
-        // predicate boundary is not witnessed (RIPR-SPEC-0027).
-        let named_limitation = if boundary_witnessed {
-            ts_observation_guard_limitation(&probe_shape, line_text)
+    let (mut class, reach_state, mut observe_state, mut discriminate_state, mut missing) =
+        if related.is_empty() {
+            (
+                ExposureClass::NoStaticPath,
+                StageState::No,
+                StageState::No,
+                StageState::No,
+                // #4550: an uncredited owner import through an unresolved
+                // alias is the more specific no-reach cause; name it instead of
+                // claiming no test references the owner.
+                vec![match &alias_gap {
+                    Some(gap) => gap.no_static_path_missing(&owner.name),
+                    None => no_static_path_missing(owner),
+                }],
+            )
+        } else if !has_oracle_eligible_relation {
+            (
+                ExposureClass::WeaklyExposed,
+                StageState::Weak,
+                StageState::Weak,
+                StageState::Weak,
+                vec![format!(
+                    "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                    owner.name
+                )],
+            )
+        } else if reach_only_through_module_entry {
+            (
+                ExposureClass::WeaklyExposed,
+                StageState::Yes,
+                StageState::Weak,
+                StageState::Weak,
+                vec![module_entry_reach_summary(
+                    owner,
+                    &related_candidates,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )],
+            )
+        } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
+            (
+                ExposureClass::Exposed,
+                StageState::Yes,
+                StageState::Yes,
+                StageState::Yes,
+                vec![format!(
+                    "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                    owner.name,
+                    strongest_kind.as_str()
+                )],
+            )
+        } else if strongest_strength >= OracleStrength::Strong.rank() {
+            // Strong oracle exists but observation guard failed: downgrade to
+            // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
+            // predicate boundary is not witnessed (RIPR-SPEC-0027).
+            let named_limitation = if boundary_witnessed {
+                ts_observation_guard_limitation(&probe_shape, line_text)
+            } else {
+                ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
+            };
+            (
+                ExposureClass::WeaklyExposed,
+                StageState::Yes,
+                StageState::Weak,
+                StageState::Weak,
+                vec![named_limitation],
+            )
         } else {
-            ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
+            (
+                ExposureClass::WeaklyExposed,
+                StageState::Yes,
+                StageState::Weak,
+                StageState::Weak,
+                vec![weak_oracle_missing_summary(
+                    &owner.name,
+                    &strongest_kind,
+                    &probe_shape.family,
+                    mock_payload_oracle.as_deref(),
+                )],
+            )
         };
-        (
-            ExposureClass::WeaklyExposed,
-            StageState::Yes,
-            StageState::Weak,
-            StageState::Weak,
-            vec![named_limitation],
+    // RIPR-SPEC-0234 rule 8: an `exposed` ladder result whose exposing test
+    // files all mock a module the changed line calls reads `static_unknown`;
+    // the mock can replace the changed value before any assertion sees it.
+    let mocked_changed_callee = if matches!(class, ExposureClass::Exposed) {
+        ts_rule8_mocked_changed_callee(
+            &probe_shape,
+            line_text,
+            owner,
+            &related_candidates,
+            alias_map,
+            workspace_root,
         )
     } else {
-        (
-            ExposureClass::WeaklyExposed,
-            StageState::Yes,
-            StageState::Weak,
-            StageState::Weak,
-            vec![weak_oracle_missing_summary(
-                &owner.name,
-                &strongest_kind,
-                &probe_shape.family,
-                mock_payload_oracle.as_deref(),
-            )],
-        )
+        None
     };
+    if let Some(callee) = &mocked_changed_callee {
+        let limit = match static_limit.take() {
+            Some(limit) if limit.kind == StaticLimitKind::MockedModule => Some(limit),
+            _ => mocked_module_limit(&mock_paths),
+        };
+        if let Some(mut limit) = limit {
+            limit.evidence.push(callee.evidence_line());
+            static_limit = Some(limit);
+            class = ExposureClass::StaticUnknown;
+            observe_state = StageState::Unknown;
+            discriminate_state = StageState::Unknown;
+            missing = vec![callee.missing_summary(&owner.name)];
+        }
+    }
+    let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown);
+    // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
+    // These are ADDITIVE evidence lines; existing `static_limit_kind` is
+    // unchanged. Outside rule 8 a static limit is advisory: an `exposed`
+    // finding does not carry `typescript_mock_only_observer`, whose text says
+    // the observed behavior is opaque (RIPR-SPEC-0234).
+    let named_limitations_from_static: Vec<TypeScriptNamedLimitation> = static_limit
+        .as_ref()
+        .and_then(|limit| named_limitation_for_static_limit(limit, file, line))
+        .filter(|limitation| {
+            !(matches!(class, ExposureClass::Exposed)
+                && limitation.name == "typescript_mock_only_observer")
+        })
+        .into_iter()
+        .collect();
     if let Some(limit) = &static_limit {
         missing.push(limit.missing.clone());
     }
@@ -2807,9 +2843,9 @@ pub(crate) fn classify_change_with_alias_state(
         strongest_strength
     );
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if strongest_strength >= OracleStrength::Strong.rank()
-        && observation_confirmed
-    {
+    let discriminate_summary = if static_unknown_by_mock {
+        "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0234 rule 8).".to_string()
+    } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
             "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
             strongest_kind.as_str()
@@ -2984,7 +3020,11 @@ pub(crate) fn classify_change_with_alias_state(
             observed_values: Vec::new(),
             missing_discriminators,
         },
-        stop_reasons: Vec::new(),
+        stop_reasons: if static_unknown_by_mock {
+            vec![StopReason::StaticProbeUnknown]
+        } else {
+            Vec::new()
+        },
         related_tests_matched_total: None,
         related_tests: related,
         recommended_next_step: Some(recommended),
@@ -2999,6 +3039,85 @@ pub(crate) fn classify_change_with_alias_state(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })
+}
+
+/// RIPR-SPEC-0234 rule 8 over the related candidates of an `exposed` ladder
+/// result: the changed-line callee every exposing test file mocks.
+///
+/// A test file exposes the change when its own candidates satisfy ladder
+/// rule 4 (oracle-eligible reach not only through a module entry, a
+/// family-matched strong assertion, a witnessed predicate boundary and a
+/// passing observation guard). When no single file does (the aggregate
+/// result combined evidence from several files), any contributing
+/// oracle-eligible file that mocks the callee is enough (fail closed).
+fn ts_rule8_mocked_changed_callee(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<MockedChangedCallee> {
+    let mut files: Vec<&Path> = Vec::new();
+    for candidate in candidates {
+        if !files.contains(&candidate.test.file.as_path()) {
+            files.push(candidate.test.file.as_path());
+        }
+    }
+    let mut exposing: Vec<&TypeScriptTest> = Vec::new();
+    let mut contributing: Vec<&TypeScriptTest> = Vec::new();
+    for file in files {
+        let subset: Vec<TypeScriptRelatedCandidate<'_>> = candidates
+            .iter()
+            .filter(|candidate| candidate.test.file.as_path() == file)
+            .copied()
+            .collect();
+        let Some(representative) = subset
+            .iter()
+            .find(|candidate| candidate.relation.uses_oracle())
+            .map(|candidate| candidate.test)
+        else {
+            continue;
+        };
+        contributing.push(representative);
+        let only_module_entry = subset
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
+        let (strength, _) = strongest_family_matching_oracle(
+            &probe_shape.family,
+            &subset,
+            owner,
+            alias_map,
+            workspace_root,
+        );
+        if !only_module_entry
+            && strength >= OracleStrength::Strong.rank()
+            && ts_predicate_boundary_is_witnessed(
+                probe_shape,
+                line_text,
+                owner,
+                &subset,
+                alias_map,
+                workspace_root,
+            )
+            && ts_changed_value_is_observed(probe_shape, line_text, &owner.name, &subset)
+        {
+            exposing.push(representative);
+        }
+    }
+    if exposing.is_empty() {
+        return contributing.into_iter().find_map(|test| {
+            changed_line_callee_mocked_by_every_file(
+                line_text,
+                owner,
+                &[test],
+                alias_map,
+                workspace_root,
+            )
+        });
+    }
+    changed_line_callee_mocked_by_every_file(line_text, owner, &exposing, alias_map, workspace_root)
 }
 
 fn observed_evidence_label(related: &[RelatedTest]) -> &'static str {

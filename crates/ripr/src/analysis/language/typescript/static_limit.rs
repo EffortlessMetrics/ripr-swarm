@@ -960,23 +960,8 @@ pub(crate) fn static_limit_for_change(
             repair_route: "Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet.".to_string(),
         });
     }
-    if !mock_paths.is_empty() {
-        let preview: String = mock_paths
-            .iter()
-            .map(|path| display_mock_path(path))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Some(TypeScriptStaticLimit {
-            kind: StaticLimitKind::MockedModule,
-            evidence: mock_paths
-                .iter()
-                .map(|path| format!("static_limit mocked_module: {}", display_mock_path(path)))
-                .collect(),
-            missing: format!(
-                "Static limit `mocked_module`: related test file mocks {preview} via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet."
-            ),
-            repair_route: "Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.".to_string(),
-        });
+    if let Some(limit) = mocked_module_limit(mock_paths) {
+        return Some(limit);
     }
     if let Some(import) = imported_symbol_call(trimmed, &owner.imports) {
         let symbol = if import.namespace {
@@ -997,6 +982,198 @@ pub(crate) fn static_limit_for_change(
         });
     }
     None
+}
+
+/// The `mocked_module` static limit over the related tests' mock paths, or
+/// `None` when no related test file mocks anything.
+pub(crate) fn mocked_module_limit(mock_paths: &[String]) -> Option<TypeScriptStaticLimit> {
+    if mock_paths.is_empty() {
+        return None;
+    }
+    let preview: String = mock_paths
+        .iter()
+        .map(|path| display_mock_path(path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(TypeScriptStaticLimit {
+        kind: StaticLimitKind::MockedModule,
+        evidence: mock_paths
+            .iter()
+            .map(|path| format!("static_limit mocked_module: {}", display_mock_path(path)))
+            .collect(),
+        missing: format!(
+            "Static limit `mocked_module`: related test file mocks {preview} via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet."
+        ),
+        repair_route: "Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.".to_string(),
+    })
+}
+
+/// A changed-line callee whose module a test file mocks (RIPR-SPEC-0234
+/// rule 8): the changed line calls `symbol`, imported by the owner file from
+/// `source`, and the test file `test_file` mocks that module with `mock`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MockedChangedCallee {
+    pub(crate) symbol: String,
+    pub(crate) source: String,
+    pub(crate) mock: String,
+    pub(crate) test_file: PathBuf,
+}
+
+impl MockedChangedCallee {
+    /// The rule-8 evidence line.
+    pub(crate) fn evidence_line(&self) -> String {
+        format!(
+            "static_limit mocked_module: changed line calls `{}` from `{}`, which {} mocks as {}",
+            self.symbol,
+            self.source,
+            normalized_path(&self.test_file),
+            display_mock_path(&self.mock)
+        )
+    }
+
+    /// The rule-8 `missing` summary that replaces the exposure summary.
+    pub(crate) fn missing_summary(&self, owner_name: &str) -> String {
+        format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but every test file whose assertion would credit the change mocks the module the changed line calls (`{}` from `{}`); the mock can replace the changed value, so static evidence cannot say the assertion observes the change.",
+            self.symbol, self.source
+        )
+    }
+}
+
+/// RIPR-SPEC-0234 rule 8: the first changed-line callee whose module each of
+/// `test_files` mocks, or `None` when some test file mocks no module the
+/// changed line calls (or `test_files` is empty).
+///
+/// `test_files` holds one test per test file (`mocks_in_file` is per file).
+/// The changed line's callees are the owner file's imports it calls
+/// (`imported_symbol_call`, every match rather than the first). A mock
+/// specifier resolves from the test file and an import source from the owner
+/// file; [`mock_names_import_module`] decides whether both name one module.
+pub(crate) fn changed_line_callee_mocked_by_every_file(
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    test_files: &[&TypeScriptTest],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<MockedChangedCallee> {
+    let trimmed = line_text.trim();
+    let callees: Vec<&TypeScriptImport> = owner
+        .imports
+        .iter()
+        .filter(|import| imported_symbol_call(trimmed, std::slice::from_ref(*import)).is_some())
+        .collect();
+    if callees.is_empty() || test_files.is_empty() {
+        return None;
+    }
+    let mut first: Option<MockedChangedCallee> = None;
+    for test in test_files {
+        let matched = callees.iter().find_map(|import| {
+            test.mocks_in_file
+                .iter()
+                .find(|mock| {
+                    mock_names_import_module(
+                        mock,
+                        &test.file,
+                        import,
+                        &owner.file,
+                        alias_map,
+                        workspace_root,
+                    )
+                })
+                .map(|mock| MockedChangedCallee {
+                    symbol: if import.namespace {
+                        format!("{}.*", import.local)
+                    } else {
+                        import.local.clone()
+                    },
+                    source: import.source.clone(),
+                    mock: mock.clone(),
+                    test_file: test.file.clone(),
+                })
+        });
+        match matched {
+            Some(callee) => {
+                if first.is_none() {
+                    first = Some(callee);
+                }
+            }
+            None => return None,
+        }
+    }
+    first
+}
+
+/// `true` when the mock specifier `mock` (written in `test_file`) may name
+/// the module `import` (written in `owner_file`) loads. Fail-closed: an
+/// unreadable specifier matches; an unresolved non-relative specifier
+/// matches a resolved import whose last path segment it ends with, or an
+/// unresolved import with the same text; a root-relative specifier matches
+/// any whole-segment suffix (the runner's root is not modelled).
+pub(crate) fn mock_names_import_module(
+    mock: &str,
+    test_file: &Path,
+    import: &TypeScriptImport,
+    owner_file: &Path,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if mock == UNRESOLVED_MOCK_SPECIFIER {
+        return true;
+    }
+    let mocked = normalized_relative_import_module(test_file, mock, alias_map, workspace_root);
+    let imported =
+        normalized_relative_import_module(owner_file, &import.source, alias_map, workspace_root);
+    match (mocked, imported) {
+        (Some(mocked), Some(imported)) => {
+            // A mock of a directory replaces its `index` module, and the
+            // owner may import the directory the test mocks by `index`.
+            mocked == imported
+                || imported.strip_suffix("/index") == Some(mocked.as_str())
+                || mocked.strip_suffix("/index") == Some(imported.as_str())
+        }
+        (None, Some(imported)) => {
+            root_relative_mock_names_module(mock, &imported)
+                || imported
+                    .strip_suffix("/index")
+                    .is_some_and(|module| root_relative_mock_names_module(mock, module))
+                || (!mock.starts_with('/') && unresolved_specifier_tail_matches(mock, &imported))
+        }
+        (None, None) => specifier_text(mock) == specifier_text(&import.source),
+        // A relative mock path names a workspace file; an unresolved
+        // non-relative import (a package) is not one.
+        (Some(_), None) => false,
+    }
+}
+
+/// `true` when the last path segment of an unresolved non-relative
+/// specifier (`@/fees`, `~lib/fees.js`) names the resolved module's file or
+/// directory (`src/fees`, `src/fees/index`).
+fn unresolved_specifier_tail_matches(mock: &str, module: &str) -> bool {
+    let text = specifier_text(mock);
+    let Some(tail) = text.rsplit('/').find(|segment| !segment.is_empty()) else {
+        return false;
+    };
+    let tail = strip_module_extension(tail);
+    let module = module.strip_suffix("/index").unwrap_or(module);
+    module.rsplit('/').next() == Some(tail)
+}
+
+/// A specifier with `\` separators, query and fragment normalized away.
+fn specifier_text(specifier: &str) -> String {
+    let text = specifier.replace('\\', "/");
+    text.split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn strip_module_extension(segment: &str) -> &str {
+    for suffix in [".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
+        if let Some(stripped) = segment.strip_suffix(suffix) {
+            return stripped;
+        }
+    }
+    segment
 }
 
 pub(crate) fn contains_metaprogramming(text: &str) -> bool {
