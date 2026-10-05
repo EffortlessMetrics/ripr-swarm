@@ -1582,22 +1582,45 @@ Point RIPR_CACHE_DIR at a writable directory or free space there."
 }
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
-/// one could. Probes the nearest existing ancestor with a short-lived
-/// exclusive file so doctor does not create the cache directory itself.
-/// When the base exists, every layer directory that already exists beneath
-/// it is probed too (entries are written there, not in the base); missing
-/// layers are left uncreated because the writer creates them under the base.
+/// one could. For the base and every directory a production cache writes
+/// entries into, probes the nearest existing ancestor with a short-lived
+/// exclusive file, so doctor never creates the cache or any layer itself. A
+/// regular file anywhere on one of those paths is reported by name.
 fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
-    let mut probe_dir = cache_dir;
+    let mut targets = vec![cache_dir.to_path_buf()];
+    targets.extend(analysis::seam_cache::production_entry_dirs(cache_dir));
+    let mut probed: Vec<PathBuf> = Vec::new();
+    for target in &targets {
+        let probe_dir = match nearest_existing_dir(target) {
+            Ok(Some(dir)) => dir,
+            Ok(None) => continue,
+            Err(reason) => return Some(reason),
+        };
+        if probed.contains(&probe_dir) {
+            continue;
+        }
+        if let Some(reason) = probe_writable(&probe_dir) {
+            return Some(reason);
+        }
+        probed.push(probe_dir);
+    }
+    None
+}
+
+/// The nearest existing directory at or above `path`; an error naming the
+/// component that blocks it (a file, a dangling symlink, an unreadable
+/// entry). Only a missing component walks up to its parent.
+fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
+    let mut probe_dir = path;
     loop {
         match std::fs::metadata(probe_dir) {
-            Ok(metadata) if metadata.is_dir() => break,
-            Ok(_) => return Some(format!("{} is not a directory", probe_dir.display())),
+            Ok(metadata) if metadata.is_dir() => return Ok(Some(probe_dir.to_path_buf())),
+            Ok(_) => return Err(format!("{} is not a directory", probe_dir.display())),
             Err(error)
                 if error.kind() == std::io::ErrorKind::NotFound
                     && std::fs::symlink_metadata(probe_dir).is_ok() =>
             {
-                return Some(format!("{} is a dangling symlink", probe_dir.display()));
+                return Err(format!("{} is a dangling symlink", probe_dir.display()));
             }
             Err(error)
                 if !matches!(
@@ -1605,43 +1628,17 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                return Some(format!("cannot inspect {}: {error}", probe_dir.display()));
+                return Err(format!("cannot inspect {}: {error}", probe_dir.display()));
             }
             Err(_) => match probe_dir.parent() {
                 Some(parent) if parent.as_os_str().is_empty() => {
                     probe_dir = Path::new(".");
                 }
                 Some(parent) => probe_dir = parent,
-                None => return None,
+                None => return Ok(None),
             },
         }
     }
-    if let Some(reason) = probe_writable(probe_dir) {
-        return Some(reason);
-    }
-    if probe_dir != cache_dir {
-        return None;
-    }
-    analysis::seam_cache::CACHE_LAYER_NAMES.iter().find_map(
-        |layer| match std::fs::symlink_metadata(cache_dir.join(layer)) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => Some(format!(
-                "cannot inspect {}: {error}",
-                cache_dir.join(layer).display()
-            )),
-            Ok(_) => match std::fs::metadata(cache_dir.join(layer)) {
-                Ok(metadata) if metadata.is_dir() => probe_writable(&cache_dir.join(layer)),
-                Ok(_) => Some(format!(
-                    "{} is not a directory",
-                    cache_dir.join(layer).display()
-                )),
-                Err(error) => Some(format!(
-                    "cannot inspect {}: {error}",
-                    cache_dir.join(layer).display()
-                )),
-            },
-        },
-    )
 }
 
 /// Creates and removes one exclusive probe file in `dir`; the error when
@@ -2069,6 +2066,23 @@ mod tests {
                 |text| text.contains("repo-file-facts") && text.contains("is not a directory")
             ),
             "{layer_reason:?}"
+        );
+        // A regular file at a versioned entry directory blocks that cache
+        // even though its layer directory is writable.
+        std::fs::remove_file(base.join("repo-file-facts")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(base.join("repo-file-facts")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            base.join("repo-file-facts")
+                .join(analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION),
+            "file",
+        )
+        .map_err(|error| error.to_string())?;
+        let version_reason = cache_unwritable_reason(&base);
+        assert!(
+            version_reason.as_deref().is_some_and(|text| text
+                .contains(analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION)
+                && text.contains("is not a directory")),
+            "{version_reason:?}"
         );
         // A relative cache path with no parent component probes the cwd.
         assert_eq!(

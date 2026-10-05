@@ -90,8 +90,12 @@ impl Fixture {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|error| format!("result is not UTF-8: {error}"))?;
+        // JSON escapes a Windows path's backslashes, so mask that spelling
+        // first; on Unix both spellings are the same string.
+        let base = self.base.display().to_string();
         Ok(text
-            .replace(&self.base.display().to_string(), "<fixture>")
+            .replace(&base.replace('\\', "\\\\"), "<fixture>")
+            .replace(&base, "<fixture>")
             .into_bytes())
     }
 

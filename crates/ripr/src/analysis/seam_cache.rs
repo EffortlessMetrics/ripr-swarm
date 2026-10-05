@@ -119,6 +119,39 @@ fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
     cache_base_dir(workspace_root).join(layer.name())
 }
 
+/// The directories production caches write entries into, under an already
+/// resolved cache `base`. `ripr doctor` probes these for writability, so
+/// they must match each cache's `at` constructor; a test pins that.
+pub(crate) fn production_entry_dirs(base: &Path) -> Vec<PathBuf> {
+    let classified = |family: ClassifiedCacheFamily, schema_version: &str| {
+        let (layer, sharded_layer) = family.layers();
+        [
+            base.join(layer.name()).join(schema_version),
+            base.join(sharded_layer.name())
+                .join(schema_version)
+                .join(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+        ]
+    };
+    let mut dirs = Vec::new();
+    dirs.extend(classified(
+        ClassifiedCacheFamily::SeamFacts,
+        CACHE_SCHEMA_VERSION,
+    ));
+    dirs.extend(classified(
+        ClassifiedCacheFamily::CompactClassifiedSeams,
+        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
+    ));
+    dirs.push(
+        base.join(CacheLayer::CorpusFingerprint.name())
+            .join(CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION),
+    );
+    dirs.push(
+        base.join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION),
+    );
+    dirs
+}
+
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
 /// `#[serde(default)]` ensures old cache entries without this field deserialize
@@ -7926,6 +7959,22 @@ mod generation_transition_tests {
             file_facts.dir
         );
         Ok(())
+    }
+
+    #[test]
+    fn production_entry_dirs_match_every_production_cache_constructor() {
+        let root = Path::new("/ws");
+        let full = RepoSeamFactCache::at(root);
+        let compact = RepoSeamFactCache::at_compact_classified(root);
+        let constructed = vec![
+            full.dir,
+            full.sharded_dir,
+            compact.dir,
+            compact.sharded_dir,
+            RepoCorpusFingerprintCache::at(root).dir,
+            RepoFileFactCache::at(root).dir,
+        ];
+        assert_eq!(production_entry_dirs(&cache_base_dir(root)), constructed);
     }
 
     /// Analyzer identities another build of this same package version could
