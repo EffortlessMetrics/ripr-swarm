@@ -29,7 +29,8 @@ Updated:
 ## Pending — error_path_operand_error_lexeme (3)
 
 Reason:
-RIPR-SPEC-0224, #5508: combined tree of #5255 and #5578; the operand-lexeme twin's strong row is observation_unconfirmed under #5578's producer. No verdict change.
+RIPR-SPEC-0108: re-bless operand-lexeme twin to the #5578 unconfirmed-observation wording inherited from main; classification unchanged (weakly_exposed / observation_unverified), formatting-only wording drift
+RIPR-SPEC-0224, #5508: align this fixture with the b2f2a2154 observation_unconfirmed sentence; blessed pre-reword, pins the retired miss sentence. formatting_only 1-line flip per surface; no verdict change.
 
 Command:
 `cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
