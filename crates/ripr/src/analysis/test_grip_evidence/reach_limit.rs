@@ -1065,7 +1065,7 @@ mod tests {
             (true, true)
         );
         assert_eq!(
-            format_placeholders("let p = r\"C:\\\"; let s = format!(\"{:?}\", p);"),
+            format_placeholders("let p = r\"dir\\\"; let s = format!(\"{:?}\", p);"),
             (false, true)
         );
         assert_eq!(format_placeholders("let b = br\"{x}\";"), (true, false));
