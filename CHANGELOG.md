@@ -99,7 +99,11 @@ are scoped or reviewed.
   Balanced groups retain quoted/struct/block operands and a body opener on a
   later row; quoted return text and recovered Err expressions cannot
   manufacture a guard's assertion twin.
-  File-fact generation 1.24 and classified generations 1.35/0.41 invalidate
+  Wrapped discarded matcher statements cannot borrow a sibling assertion;
+  actual observers inside pure block scrutinees keep their own coordinates.
+  Negated block conditions and first whole panic/bail failure statements retain
+  their consumed assertion twins without importing failure payload tokens.
+  File-fact generation 1.25 and classified generations 1.36/0.42 invalidate
   favorable or guard-blind predecessor facts
   (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
   existing honesty corpus, preserving absent, weak and strong observer

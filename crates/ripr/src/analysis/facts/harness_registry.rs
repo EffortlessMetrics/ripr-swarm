@@ -1157,8 +1157,15 @@ fn inline_terminal_guard_end(
     while index < trial_close_index {
         match tokens[index].kind() {
             ra_ap_syntax::SyntaxKind::L_CURLY => {
-                return matching_group_close(tokens, index)
-                    .filter(|close| *close < trial_close_index);
+                let close = matching_group_close(tokens, index)
+                    .filter(|close| *close < trial_close_index)?;
+                if previous_significant(tokens, index).is_some_and(|previous| {
+                    tokens[previous].kind() == ra_ap_syntax::SyntaxKind::BANG
+                }) {
+                    index = next_significant(tokens, close + 1)?;
+                } else {
+                    return Some(close);
+                }
             }
             ra_ap_syntax::SyntaxKind::L_PAREN | ra_ap_syntax::SyntaxKind::L_BRACK => {
                 let close = matching_group_close(tokens, index)

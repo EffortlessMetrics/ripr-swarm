@@ -36,6 +36,13 @@ owner's source role.
   comes from that assertion operand, without importing the failure body's
   `Err` constructor or diagnostics. A discarded matcher computation has
   no twin and remains outside assertion admission (RIPR-SPEC-0001, #5713).
+- The same bounded twin admits a whole first `panic!(...)` or `bail!(...)`
+  statement in the guard body (#5713). These conventional failure macros are
+  recognized only with parenthesized arguments and a statement/body terminator;
+  preceding statements, quoted/commented invocations and surrounding recovery
+  expressions are refused. Classification and observed tokens come only from
+  the condition. This is a narrow extension of the Err-return grammar, without
+  general body-divergence analysis or macro expansion.
 - Repo-mode probe seeding filters shapes whose owning function carries
   the test/evidence role (`FunctionFact::source_role`, the typed
   function source role), mirroring the diff
@@ -75,6 +82,13 @@ owner's source role.
   routes (#5713). Named subjects and owner calls are required; condition
   continuation rows belong to the guard, while body and sibling assertions
   keep their distinct coordinates. Discarded computations stay non-crediting.
+- Negated block conditions retain their real inline guard boundary. Wrapped
+  discarded matcher statements cannot borrow sibling assertions; known pure
+  block wrappers retain actual scrutinee observers and their line padding.
+  Panic/bail guards retain exact literal and weak wildcard twins, with
+  nonfirst, quoted and recovered invocation controls. Independent compiled
+  controls separate discarded booleans, consuming assertions and a locally
+  resolved bail macro; static fixture recognition adds no runtime claim.
 - The repo-mode leak reproduction (cfg(test) helper shapes seeded repo
   probes on main; none after the owner filter) with the production
   shapes still seeding.
@@ -113,8 +127,11 @@ leak + production control); `analysis/syntax/ra.rs`
 `cfg_all_test_tests` (role pin); fixtures `assertion_form_parity_*`.
 
 `analysis/extract/oracles/discarded_matches_tests.rs` pins lexical/parsed
-layout parity and condition ownership; `analysis/facts/harness_registry/tests.rs`
-pins inline/helper twins, discarded/opaque controls and inert macro input.
+layout parity, wrapped-statement ownership, first failure macro refusal and
+independent runtime controls; `analysis/facts/harness_registry/tests.rs`
+pins inline/helper twins, negated block boundaries, discarded/opaque controls
+and inert macro input. The exact behavior test names are mapped in
+`.ripr/traceability.toml`.
 
 ## Non-Goals
 

@@ -167,10 +167,16 @@ fn matcher_computation_expression(statement: &str) -> &str {
 /// contains no assertion. This is statement ownership, not oracle admission.
 pub(super) fn starts_discarded_matcher_computation(statement: &str) -> bool {
     let mut expression = matcher_computation_expression(statement);
-    while let Some(inner) = expression.strip_prefix('(') {
+    for _ in 0..16 {
+        let Some(inner) = expression.strip_prefix(['(', '{']) else {
+            return macro_argument_open(expression, "matches!").is_some();
+        };
         expression = inner.trim_start();
+        if expression.is_empty() {
+            return true;
+        }
     }
-    macro_argument_open(expression, "matches!").is_some()
+    false
 }
 
 /// A complete standalone, let-bound or assigned matcher computes a boolean without
@@ -178,8 +184,23 @@ pub(super) fn starts_discarded_matcher_computation(statement: &str) -> bool {
 pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
     let original = statement;
     let mut expression = matcher_computation_expression(statement);
-    while let Some(inner) = parenthesized_contents(expression) {
-        expression = inner.trim();
+    for _ in 0..16 {
+        if let Some(inner) = parenthesized_contents(expression) {
+            expression = inner.trim();
+        } else if expression.starts_with('{') {
+            let body = delimited_contents_at(expression, 0)?;
+            if !mask_comments_and_strings(&expression[body.len() + 2..])
+                .trim()
+                .is_empty()
+            {
+                return None;
+            }
+            // Keep a borrowed source slice: an owned projection cannot bind
+            // the actual observer's byte offset or line padding below.
+            expression = expression[1..body.len() + 1].trim();
+        } else {
+            break;
+        }
     }
     let scrutinee = complete_macro_arguments(expression, "matches!")?
         .into_iter()
