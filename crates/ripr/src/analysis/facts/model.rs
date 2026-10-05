@@ -176,6 +176,13 @@ fn filesystem_fingerprint(root: &Path, relative: &Path) -> String {
     let source = root.join(relative);
     append_metadata_fingerprint(&mut fingerprint, &source);
     append_entry_fingerprint(&mut fingerprint, &source);
+    // Where the path resolves, through every symlink in the chain: a link
+    // retargeted further along (`a -> b`, `b` moved outside the root) leaves
+    // the source entry and the followed file unchanged (#5478).
+    match source.canonicalize() {
+        Ok(resolved) => fingerprint.push_str(&format!("=>{};", resolved.display())),
+        Err(error) => fingerprint.push_str(&format!("=>{:?};", error.kind())),
+    }
     let mut cursor = source.parent().map(Path::to_path_buf);
     while let Some(directory) = cursor {
         append_entry_fingerprint(&mut fingerprint, &directory);
@@ -1453,6 +1460,80 @@ mod tests {
             "fixture must keep the mtime"
         );
         assert_eq!(followed.len(), test_source.len() as u64);
+
+        assert!(!authority.validates_target(test, source, test_source));
+        Ok(())
+    }
+
+    /// #5478 review: the test file links to an intermediate link that points
+    /// at an in-root file. Moving that file outside (same inode, size, mtime)
+    /// and retargeting the intermediate link changes neither the test file's
+    /// entry nor the followed file, only where the chain resolves.
+    #[cfg(unix)]
+    #[test]
+    fn chained_symlink_retarget_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-authority-symlink-chain-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        let _cleanup = FixtureCleanup(base.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::create_dir_all(&outside)?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let test_source = "#[test]\nfn source_test() { assert_eq!(1, 1); }\n";
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (PathBuf::from("pkg/tests/lib.rs"), test_source),
+        ];
+        std::fs::write(root.join(&sources[0].0), sources[0].1)?;
+        let real = root.join("pkg/src/real.rs");
+        std::fs::write(&real, test_source)?;
+        let intermediate = root.join("pkg/src/intermediate.rs");
+        std::os::unix::fs::symlink(&real, &intermediate)?;
+        std::os::unix::fs::symlink(&intermediate, root.join(&sources[1].0))?;
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, test_source));
+
+        let moved = outside.join("real.rs");
+        std::fs::rename(&real, &moved)?;
+        std::fs::remove_file(&intermediate)?;
+        std::os::unix::fs::symlink(&moved, &intermediate)?;
+        assert!(
+            std::fs::canonicalize(root.join(test))?.starts_with(&outside),
+            "fixture must resolve outside the root"
+        );
 
         assert!(!authority.validates_target(test, source, test_source));
         Ok(())
