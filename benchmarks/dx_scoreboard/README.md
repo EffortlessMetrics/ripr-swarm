@@ -17,9 +17,10 @@ target, margin, or corpus pin is a reviewed edit to that file.
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (read from `fixtures/rust-verdict-corpus/expected/report.json`), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
-| `first_run` | The new-developer journey from install to first useful result | time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
+| `first_run` | The new-developer journey from install to first useful result | install seconds (source build), time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 | `agent` | Whether an agent using only ripr's help closes a real test gap quickly and without being misled | fix success, mutants caught, ripr commands and tool steps to fix, false weak findings left after the fix, stale re-checks, white-box tests written only for ripr, and how many of the stub calls `check` suggested produced a stub (ingested from the agent-as-user harness); share of `ripr agent stub` tests that compile and fail at their own todo, share of gap locations that get a stub, and `observer_required` refusals (ingested from the stub evaluation, source `agent-stub`) |
 | `corpus` | Whether ripr keeps working on the shared pinned Rust corpus | per repository: whether the diff-scoped `ripr check` reached `analyzed`, and its wall time (ingested from `cargo xtask rust-corpus smoke`) |
+| `ranking` | Whether `ripr pilot` sends people to the right places first | pooled top-5 and top-10 precision, confirmed and refuted counts, top-10 scored share, top-10 distinct-function share and top-10 pick count of pilot's picks against the checked-in mutation answer key (ingested from `cargo xtask pilot-ranking score`; see `benchmarks/pilot_ranking/README.md`) |
 
 The rollup counts metrics that meet their target, fall below it, are not
 measured, have a failed instrument, or regressed. A per-repository view groups
@@ -115,7 +116,10 @@ These native receipts are also accepted as-is:
   changed verdict list is printed under "For review" and never fails the gate.
 - `ripr-mutation-spot-check-v1` from the mutation spot-check: the agreement
   rate of the `claims_discriminator` and `claims_no_discriminator` families,
-  and join coverage as `seam_precise` pairings over all mutants. These compare
+  join coverage as `seam_precise` pairings over all mutants, and the
+  precision of `ripr pilot`'s top ten recommendations per repository (a
+  recommendation is confirmed when a mutant on its line, or else in its
+  function's body, was missed). These compare
   static claims with real mutation outcomes on a sample; they are evidence
   about ripr's calibration, not a mutation result for the corpus.
 - `ripr-rust-corpus-smoke-v1` from `cargo xtask rust-corpus smoke`: per
@@ -125,6 +129,24 @@ These native receipts are also accepted as-is:
   could not run (`not_fetched`, `spawn_failed`) is incomplete on every
   metric, so against a baseline that analyzed it the gate reports lost
   completion rather than a pass.
+- `ripr-pilot-ranking-v1` from `cargo xtask pilot-ranking score`: the
+  pooled `ranking` rows, tagged with the corpus version as their repository so
+  a baseline from another corpus version is uncompared. A run that could not fetch or score one of the
+  pinned crates, or scored only a `--repo` subset, marks every row incomplete, so the gate reports lost
+  completion instead of comparing a different population.
+
+### The ranking lane
+
+`.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
+pull request touching pilot ranking, seam grading or the answer key leaves
+draft. It never runs cargo-mutants; the labels are committed:
+
+```bash
+cargo xtask pilot-ranking fetch --allow-network
+cargo xtask pilot-ranking score --ripr target/release/ripr
+cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ranking.json \
+  --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate
+```
 
 ### The corpus lane
 

@@ -42,8 +42,12 @@ pub(crate) fn render_check_with_config_and_progress(
     progress: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     match format {
-        OutputFormat::Human => Ok(human::render_bounded_with_config(output, config)),
-        OutputFormat::HumanFull => Ok(human::render_full_with_config(output, config)),
+        OutputFormat::Human => Ok(human::terminal_safe(human::render_bounded_with_config(
+            output, config,
+        ))),
+        OutputFormat::HumanFull => Ok(human::terminal_safe(human::render_full_with_config(
+            output, config,
+        ))),
         OutputFormat::Json => {
             // Fail-closed budget resolution (#5203): an unparseable
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
@@ -182,7 +186,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let (causal_projection, causal_projection_warning) =
                     CausalDeltaArtifact::load_optional(&output.root);
                 if let Some(warning) = causal_projection_warning {
-                    eprintln!("ripr agent packets: {warning}");
+                    eprintln!(
+                        "{}",
+                        human::terminal_safe(format!("ripr agent packets: {warning}"))
+                    );
                 }
                 Ok(
                     agent_seam_packets::render_agent_seam_packets_json_with_causal_and_outcome(
@@ -230,11 +237,11 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     progress: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     match format {
-        OutputFormat::Human => Ok(human::render_bounded_with_config_and_navigation(
-            output, config, drill_in,
+        OutputFormat::Human => Ok(human::terminal_safe(
+            human::render_bounded_with_config_and_navigation(output, config, drill_in),
         )),
-        OutputFormat::HumanFull => Ok(human::render_full_with_config_and_navigation(
-            output, config, drill_in,
+        OutputFormat::HumanFull => Ok(human::terminal_safe(
+            human::render_full_with_config_and_navigation(output, config, drill_in),
         )),
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }
@@ -461,7 +468,10 @@ fn ripr_plus_summary_from_disk(
             "missing {}; provide test-efficiency JSON before requesting a measured ripr+ badge; see docs/BADGE_ADOPTION.md",
             report_path.display()
         );
-        eprintln!("ripr: {warning}; rendering neutral ripr+ badge");
+        eprintln!(
+            "{}",
+            human::terminal_safe(format!("ripr: {warning}; rendering neutral ripr+ badge"))
+        );
         return Ok((
             missing_test_efficiency_badge_summary(repo_scope, config, warning),
             None,
@@ -1319,6 +1329,7 @@ fn happy_path_passes() {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
