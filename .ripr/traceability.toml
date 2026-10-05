@@ -12486,6 +12486,14 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_merge_ready_requires_fresh_evidence_and_clear_claims",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_missing_ownership_sources_lower_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_completed_issue_with_open_pr_stays_in_flight",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_slice_requires_requirement_membership",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_cross_issue_branch_claim_stays_conflict_visible",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_candidate_metadata_arrays_are_canonical",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_timestamp_freshness_parses_instants",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_memberships_derive_from_campaign_records",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_collision_subjects_match_exact_issue_identity",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_retrieval_commands_escape_arguments",
 ]
 fixtures = [
   "fixtures/work_portfolio",

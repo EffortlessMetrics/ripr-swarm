@@ -990,6 +990,84 @@ impl WorkCompileContext {
     }
 }
 
+/// Parse an RFC 3339 timestamp into UTC epoch nanoseconds. Accepts the
+/// full profile (`YYYY-MM-DDTHH:MM:SS[.frac](Z|±HH:MM)`); any deviation
+/// returns `None` so callers fail closed instead of trusting a malformed
+/// stamp.
+fn parse_rfc3339_utc(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 20 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
+        return None;
+    }
+    let year: i64 = text.get(0..4)?.parse().ok()?;
+    let month: u32 = text.get(5..7)?.parse().ok()?;
+    let day: u32 = text.get(8..10)?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    if bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+    {
+        return None;
+    }
+    let hour: i64 = text.get(11..13)?.parse().ok()?;
+    let minute: i64 = text.get(14..16)?.parse().ok()?;
+    let second: i64 = text.get(17..19)?.parse().ok()?;
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let mut index = 19;
+    let mut nanos: i64 = 0;
+    let mut fraction_digits = 0;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let start = index;
+        while bytes.get(index).is_some_and(|byte| byte.is_ascii_digit()) {
+            if fraction_digits < 9 {
+                nanos = nanos * 10 + i64::from(*bytes.get(index)? - b'0');
+                fraction_digits += 1;
+            }
+            index += 1;
+        }
+        if index == start {
+            return None;
+        }
+        for _ in fraction_digits..9 {
+            nanos *= 10;
+        }
+    }
+    let offset_seconds = match bytes.get(index) {
+        Some(b'Z') if index + 1 == bytes.len() => 0,
+        Some(sign @ (b'+' | b'-')) if index + 6 == bytes.len() => {
+            if bytes.get(index + 3) != Some(&b':') {
+                return None;
+            }
+            let offset_hour: i64 = text.get(index + 1..index + 3)?.parse().ok()?;
+            let offset_minute: i64 = text.get(index + 4..index + 6)?.parse().ok()?;
+            if offset_hour > 23 || offset_minute > 59 {
+                return None;
+            }
+            let magnitude = offset_hour * 3600 + offset_minute * 60;
+            if *sign == b'-' {
+                -magnitude
+            } else {
+                magnitude
+            }
+        }
+        _ => return None,
+    };
+    let era = if month <= 2 { year - 1 } else { year };
+    let epoch_year = if era >= 0 { era } else { era - 399 } / 400;
+    let year_of_era = era - epoch_year * 400;
+    let shifted_month = if month > 2 { month - 3 } else { month + 9 } as i64;
+    let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = epoch_year * 146097 + day_of_era - 719468;
+    let seconds = days * 86400 + hour * 3600 + minute * 60 + second - offset_seconds;
+    seconds.checked_mul(1_000_000_000)?.checked_add(nanos)
+}
+
 fn build_observations(
     manifest: &WorkCapturedManifestV1,
 ) -> Result<
@@ -1001,17 +1079,25 @@ fn build_observations(
 > {
     let mut observations = Vec::new();
     let mut freshness = BTreeMap::new();
+    let captured_at = parse_rfc3339_utc(&manifest.captured_at);
     for kind in WorkCapturedSourceKindV1::all() {
         let Some(source) = manifest.sources.iter().find(|entry| entry.source == kind) else {
             return Err(format!("manifest is missing source `{}`", kind.wire_name()));
         };
         let value = match source.state {
-            WorkCapturedSourceStateV1::Observed => match source.observed_at.as_deref() {
-                Some(observed_at) if observed_at >= manifest.captured_at.as_str() => {
+            WorkCapturedSourceStateV1::Observed => {
+                let current = match (source.observed_at.as_deref(), captured_at) {
+                    (Some(observed_at), Some(captured)) => {
+                        parse_rfc3339_utc(observed_at).is_some_and(|observed| observed >= captured)
+                    }
+                    _ => false,
+                };
+                if current {
                     WorkSourceFreshnessV1::Current
+                } else {
+                    WorkSourceFreshnessV1::Stale
                 }
-                _ => WorkSourceFreshnessV1::Stale,
-            },
+            }
             WorkCapturedSourceStateV1::Stale => WorkSourceFreshnessV1::Stale,
             WorkCapturedSourceStateV1::Missing | WorkCapturedSourceStateV1::Unavailable => {
                 WorkSourceFreshnessV1::Unknown
@@ -1065,15 +1151,6 @@ fn classify_candidate(
     pull_requests_fresh: bool,
     current_main: &str,
 ) -> (WorkCandidateKindV1, String) {
-    if issue
-        .lifecycle_disposition
-        .is_some_and(|disposition| disposition == IssueLifecycleDispositionV1::Completed)
-    {
-        return (
-            WorkCandidateKindV1::Complete,
-            "no transition: the issue is complete and stays visible in the portfolio".to_string(),
-        );
-    }
     if let Some(pr) = open_prs.first() {
         if pr.review_state == "changes_requested" || pr.unresolved_review_findings > 0 {
             return (
@@ -1105,6 +1182,15 @@ fn classify_candidate(
         return (
             WorkCandidateKindV1::ResumePr,
             next_transition_for_open_pr(pr),
+        );
+    }
+    if issue
+        .lifecycle_disposition
+        .is_some_and(|disposition| disposition == IssueLifecycleDispositionV1::Completed)
+    {
+        return (
+            WorkCandidateKindV1::Complete,
+            "no transition: the issue is complete and stays visible in the portfolio".to_string(),
         );
     }
     if !merged_prs.is_empty() {
@@ -1498,6 +1584,92 @@ fn issues_by_campaign(captured: &WorkCapturedDirV1) -> BTreeMap<String, Vec<u64>
     map
 }
 
+/// A slice only proves build readiness when it sits under a requirement the
+/// issue structurally references; a stale cross-reference into another
+/// requirement is incomplete evidence and must not promote the candidate.
+fn issue_has_accepted_slice(graph: &WorkCapturedCargoAllowV1, issue: &WorkCapturedIssueV1) -> bool {
+    graph.requirements.iter().any(|requirement| {
+        issue.requirement_refs.contains(&requirement.id)
+            && requirement
+                .slices
+                .iter()
+                .any(|slice| slice.issue_refs.contains(&issue.number))
+    })
+}
+
+/// A PR's branch is genuinely claimed only when the active claim on that
+/// branch belongs to one of the PR's own linked issues; a claim by a
+/// different issue on the reused branch is itself the collision the lane
+/// must surface.
+fn same_issue_branch_claim_exists(
+    pr: &WorkCapturedPullRequestV1,
+    claims: &[WorkCapturedClaimV1],
+) -> bool {
+    claims.iter().any(|claim| {
+        claim.branch == pr.head_branch
+            && claim.state == "active"
+            && claim.issue.is_some_and(|issue| pr.linked_issues.contains(&issue))
+    })
+}
+
+/// Candidate campaign memberships derive from the campaign records (the
+/// same map that decided portfolio inclusion), never from the issue's own
+/// list, so the two views cannot contradict each other.
+fn campaign_memberships(campaign_map: &BTreeMap<String, Vec<u64>>, issue: u64) -> Vec<String> {
+    let mut memberships: Vec<String> = campaign_map
+        .iter()
+        .filter(|(_, members)| members.contains(&issue))
+        .map(|(campaign, _)| campaign.clone())
+        .collect();
+    memberships.sort();
+    memberships.dedup();
+    memberships
+}
+
+/// Semantically unordered string metadata is canonicalized so input ordering
+/// can never change normalized JSON, ranking text or portable identity.
+fn canonical_strings(values: &[String]) -> Vec<String> {
+    let mut canonical = values.to_vec();
+    canonical.sort();
+    canonical.dedup();
+    canonical
+}
+
+/// Semantically unordered blocker metadata is canonicalized by structural
+/// identity so reordered captured inputs stay byte-stable.
+fn canonical_blockers(values: &[WorkCapturedBlockerV1]) -> Vec<WorkCapturedBlockerV1> {
+    let mut canonical = values.to_vec();
+    canonical.sort_by(|left, right| {
+        (&left.kind, &left.reference, &left.description)
+            .cmp(&(&right.kind, &right.reference, &right.description))
+    });
+    canonical.dedup_by(|left, right| {
+        left.kind == right.kind
+            && left.reference == right.reference
+            && left.description == right.description
+    });
+    canonical
+}
+
+/// The collision edge advertised by a lane must match a member's exact
+/// candidate identity; prefix substrings (issues 91 vs 910) must not leak a
+/// collision across lanes.
+fn lane_collision_edge(edges: &[WorkConflictEdgeV1], members: &[u64]) -> Option<String> {
+    edges
+        .iter()
+        .find(|edge| {
+            matches!(
+                edge.kind,
+                WorkConflictEdgeKindV1::ClaimCollision | WorkConflictEdgeKindV1::BranchCollision
+            ) && edge.subjects.iter().any(|subject| {
+                members
+                    .iter()
+                    .any(|member| subject == &format!("candidate:issue:{member}"))
+            })
+        })
+        .map(|edge| edge.id.clone())
+}
+
 /// Compile the loaded captured directory into the versioned snapshot. This
 /// function is pure: it reads the already-loaded DTOs and mutates nothing.
 pub(crate) fn compile_work_portfolio(
@@ -1873,9 +2045,7 @@ pub(crate) fn compile_work_portfolio(
         if !touches_portfolio {
             continue;
         }
-        let registered_elsewhere = claims
-            .iter()
-            .any(|claim| claim.branch == pr.head_branch && claim.state == "active");
+        let registered_elsewhere = same_issue_branch_claim_exists(pr, claims);
         if !local_branches.contains(&pr.head_branch) || registered_elsewhere {
             continue;
         }
@@ -2021,20 +2191,7 @@ pub(crate) fn compile_work_portfolio(
         } else {
             WorkLaneStateV1::Available
         };
-        let collision_edge = edges
-            .iter()
-            .find(|edge| {
-                matches!(
-                    edge.kind,
-                    WorkConflictEdgeKindV1::ClaimCollision
-                        | WorkConflictEdgeKindV1::BranchCollision
-                ) && edge.subjects.iter().any(|subject| {
-                    members
-                        .iter()
-                        .any(|member| subject.contains(&format!("issue:{member}")))
-                })
-            })
-            .map(|edge| edge.id.clone());
+        let collision_edge = lane_collision_edge(&edges, &members);
         lanes.push(WorkLaneV1 {
             lane,
             state,
@@ -2071,14 +2228,10 @@ pub(crate) fn compile_work_portfolio(
             .collect();
         let has_claim_collision = claim_collision_by_issue.contains(&issue.number);
         let has_branch_collision = branch_collision_by_issue.contains_key(&issue.number);
-        let has_slice = captured.cargo_allow.as_ref().is_some_and(|graph| {
-            graph.requirements.iter().any(|requirement| {
-                requirement
-                    .slices
-                    .iter()
-                    .any(|slice| slice.issue_refs.contains(&issue.number))
-            })
-        });
+        let has_slice = captured
+            .cargo_allow
+            .as_ref()
+            .is_some_and(|graph| issue_has_accepted_slice(graph, issue));
         let (kind, next_transition) = classify_candidate(
             issue,
             &open_prs,
@@ -2118,9 +2271,10 @@ pub(crate) fn compile_work_portfolio(
         } else {
             WorkConfidenceV1::Complete
         };
-        let mut memberships = issue.campaigns.clone();
-        memberships.sort();
-        memberships.dedup();
+        let memberships = campaign_memberships(&campaign_map, issue.number);
+        let accepted_contracts = canonical_strings(&issue.accepted_contracts);
+        let blockers = canonical_blockers(&issue.blocked_by);
+        let regression_risks = canonical_strings(&issue.regression_risks);
         let mut conflict_resources = issue.conflict_resources.clone();
         conflict_resources.sort();
         conflict_resources.dedup();
@@ -2147,7 +2301,7 @@ pub(crate) fn compile_work_portfolio(
             issue: issue.number,
             issue_identity: format!("issue:{}", issue.number),
             campaigns: memberships,
-            accepted_contracts: issue.accepted_contracts.clone(),
+            accepted_contracts,
             lifecycle_stage: issue
                 .lifecycle_disposition
                 .unwrap_or(IssueLifecycleDispositionV1::NotRun),
@@ -2168,11 +2322,7 @@ pub(crate) fn compile_work_portfolio(
                         .and_then(|claim| claim.worktree.as_deref())
                         .map(|path| portable_path(path, &local_root))
                 }),
-            dependencies: issue
-                .blocked_by
-                .iter()
-                .map(dependency_from_blocker)
-                .collect(),
+            dependencies: blockers.iter().map(dependency_from_blocker).collect(),
             conflict_edges: candidate_edge_membership
                 .get(&candidate_id)
                 .cloned()
@@ -2190,7 +2340,7 @@ pub(crate) fn compile_work_portfolio(
                     "readiness contribution sourced from the explicit accepted artifact `{source}`; advisory only and never gate-shaped"
                 ),
             }),
-            regression_risks: issue.regression_risks.clone(),
+            regression_risks,
             ranking_factors: Vec::new(),
             confidence,
             confidence_reasons: confidence_reasons
@@ -2538,6 +2688,20 @@ fn campaign_surfaces(snapshot: &WorkPortfolioSnapshotV1, campaign: &str) -> Vec<
         .unwrap_or_default()
 }
 
+/// Shell-escape one argument for the generated retrieval commands. Simple
+/// portable tokens stay bare so committed output stays byte-stable; anything
+/// else is single-quoted so the advertised command replays exactly.
+fn shell_escape_arg(value: &str) -> String {
+    let bare = !value.is_empty()
+        && value.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '=' | '+')
+        });
+    if bare {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Build the bounded candidates view. Filters narrow the rendered rows only;
 /// candidate identity, classification, ranking and authority never change.
 pub(crate) fn build_candidates_view(
@@ -2583,19 +2747,19 @@ pub(crate) fn build_candidates_view(
     if omitted > 0 {
         let mut command = "cargo xtask work candidates".to_string();
         if let Some(captured) = captured {
-            command.push_str(&format!(" --captured {captured}"));
+            command.push_str(&format!(" --captured {}", shell_escape_arg(captured)));
         }
         if let Some(campaign) = campaign {
-            command.push_str(&format!(" --campaign {campaign}"));
+            command.push_str(&format!(" --campaign {}", shell_escape_arg(campaign)));
         }
         if let Some(surface) = surface {
-            command.push_str(&format!(" --surface {surface}"));
+            command.push_str(&format!(" --surface {}", shell_escape_arg(surface)));
         }
         command.push_str(&format!(" --limit {}", total as usize));
         retrieval_commands.push(command);
         let mut portfolio_command = "cargo xtask work portfolio".to_string();
         if let Some(captured) = captured {
-            portfolio_command.push_str(&format!(" --captured {captured}"));
+            portfolio_command.push_str(&format!(" --captured {}", shell_escape_arg(captured)));
         }
         portfolio_command.push_str(" --json");
         retrieval_commands.push(portfolio_command);
@@ -4358,6 +4522,268 @@ mod tests {
             return Err(format!(
                 "missing claim source must lower confidence for an uncaptured claim: {reasons:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// An open PR on a lifecycle-completed issue keeps the lane in flight:
+    /// unresolved findings or pending checks must never be hidden behind a
+    /// terminal `complete` disposition.
+    #[test]
+    fn work_portfolio_completed_issue_with_open_pr_stays_in_flight() -> Result<(), String> {
+        let issue = WorkCapturedIssueV1 {
+            number: 7003,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: Some(IssueLifecycleDispositionV1::Completed),
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: Vec::new(),
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: Vec::new(),
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: None,
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        let pr = WorkCapturedPullRequestV1 {
+            number: 7901,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            head_branch: "feat/synthetic".to_string(),
+            base_branch: "main".to_string(),
+            linked_issues: vec![7003],
+            review_state: "changes_requested".to_string(),
+            unresolved_review_findings: 1,
+            checks_state: "success".to_string(),
+            registered_claim: None,
+            worktree_path: None,
+        };
+        let (kind, _transition) = classify_candidate(
+            &issue,
+            &[&pr],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            "abcdef0123456789abcdef0123456789abcdef01",
+        );
+        if kind == WorkCandidateKindV1::Complete {
+            return Err(
+                "an open PR with unresolved findings on a completed issue must stay in flight"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// A cargo-allow slice only promotes `start_build` when it sits under a
+    /// requirement the issue structurally references; a slice listed under
+    /// another requirement is incomplete evidence.
+    #[test]
+    fn work_portfolio_slice_requires_requirement_membership() -> Result<(), String> {
+        let requirement = |id: &str, issue: u64| WorkCapturedRequirementV1 {
+            id: id.to_string(),
+            spec_refs: Vec::new(),
+            slices: vec![WorkCapturedSliceV1 {
+                id: format!("slice-{issue}"),
+                delta_id: "DELTA-x".to_string(),
+                issue_refs: vec![issue],
+            }],
+        };
+        let graph = WorkCapturedCargoAllowV1 {
+            schema_version: "work_cargo_allow.v1".to_string(),
+            requirements: vec![requirement("REQ-owned", 7004), requirement("REQ-other", 7004)],
+        };
+        let mut issue = WorkCapturedIssueV1 {
+            number: 7004,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: None,
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: vec!["REQ-owned".to_string()],
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: Vec::new(),
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: None,
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        if !issue_has_accepted_slice(&graph, &issue) {
+            return Err("the referenced requirement's slice must count".to_string());
+        }
+        issue.requirement_refs = vec!["REQ-absent".to_string()];
+        if issue_has_accepted_slice(&graph, &issue) {
+            return Err(
+                "a slice under an unreferenced requirement must not count as accepted evidence"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// A PR is only exempt from branch-collision handling when the active
+    /// claim on its branch belongs to one of the PR's own linked issues.
+    #[test]
+    fn work_portfolio_cross_issue_branch_claim_stays_conflict_visible() -> Result<(), String> {
+        let pr = WorkCapturedPullRequestV1 {
+            number: 7902,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            head_branch: "feat/shared".to_string(),
+            base_branch: "main".to_string(),
+            linked_issues: vec![7005],
+            review_state: "none".to_string(),
+            unresolved_review_findings: 0,
+            checks_state: "pending".to_string(),
+            registered_claim: None,
+            worktree_path: None,
+        };
+        let make_claim = |issue: Option<u64>| WorkCapturedClaimV1 {
+            id: "claim-x".to_string(),
+            issue,
+            branch: "feat/shared".to_string(),
+            worktree: None,
+            exclusive: true,
+            state: "active".to_string(),
+        };
+        if !same_issue_branch_claim_exists(&pr, &[make_claim(Some(7005))]) {
+            return Err("a same-issue claim must exempt the PR".to_string());
+        }
+        if same_issue_branch_claim_exists(&pr, &[make_claim(Some(7006))]) {
+            return Err(
+                "a different issue's claim on the same branch must stay conflict-visible"
+                    .to_string(),
+            );
+        }
+        if same_issue_branch_claim_exists(&pr, &[make_claim(None)]) {
+            return Err("an issue-less claim must not exempt the PR".to_string());
+        }
+        Ok(())
+    }
+
+    /// Reordered semantically-unordered metadata canonicalizes to identical
+    /// bytes, so normalized JSON and portable identity stay stable.
+    #[test]
+    fn work_portfolio_candidate_metadata_arrays_are_canonical() -> Result<(), String> {
+        let strings = |values: &[&str]| values.iter().map(|value| value.to_string()).collect();
+        let left: Vec<String> = strings(&["b-risk", "a-risk", "b-risk"]);
+        let right: Vec<String> = strings(&["a-risk", "b-risk"]);
+        if canonical_strings(&left) != right {
+            return Err("string metadata must sort and dedup".to_string());
+        }
+        let blocker = |reference: &str| WorkCapturedBlockerV1 {
+            kind: "external_dependency".to_string(),
+            reference: reference.to_string(),
+            description: "d".to_string(),
+        };
+        let left_blockers = vec![blocker("b"), blocker("a"), blocker("b")];
+        let right_blockers = vec![blocker("a"), blocker("b")];
+        if canonical_blockers(&left_blockers) != right_blockers {
+            return Err("blocker metadata must sort and dedup by structural identity".to_string());
+        }
+        Ok(())
+    }
+
+    /// Freshness compares parsed instants, not lexicographic text: offset
+    /// timestamps that predate the capture in UTC and malformed stamps both
+    /// fail closed to stale instead of reading as current.
+    #[test]
+    fn work_portfolio_timestamp_freshness_parses_instants() -> Result<(), String> {
+        if parse_rfc3339_utc("2026-10-05T12:00:00Z")
+            != parse_rfc3339_utc("2026-10-05T14:00:00+02:00")
+        {
+            return Err("equivalent instants must parse equal".to_string());
+        }
+        // 13:00+02:00 == 11:00Z, strictly before the 12:00Z capture.
+        if parse_rfc3339_utc("2026-10-05T13:00:00+02:00")
+            >= parse_rfc3339_utc("2026-10-05T12:00:00Z")
+        {
+            return Err("an earlier instant must not compare current".to_string());
+        }
+        for malformed in [
+            "2026-10-05T12:00:00",
+            "not-a-timestamp",
+            "2026-10-05T12:00:00Q",
+            "2026-13-05T12:00:00Z",
+        ] {
+            if parse_rfc3339_utc(malformed).is_some() {
+                return Err(format!("malformed stamp `{malformed}` must fail closed"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Memberships derive from the campaign records even when the issue's
+    /// own campaign list disagrees or is empty.
+    #[test]
+    fn work_portfolio_memberships_derive_from_campaign_records() -> Result<(), String> {
+        let campaign_map: BTreeMap<String, Vec<u64>> = BTreeMap::from([
+            ("campaign-a".to_string(), vec![7007]),
+            ("campaign-b".to_string(), vec![7007, 7008]),
+        ]);
+        if campaign_memberships(&campaign_map, 7007) != vec!["campaign-a", "campaign-b"] {
+            return Err("both campaigns listing the issue must be derived".to_string());
+        }
+        if campaign_memberships(&campaign_map, 7008) != vec!["campaign-b"] {
+            return Err("only the listing campaign must be derived".to_string());
+        }
+        Ok(())
+    }
+
+    /// Lane collision edges bind by exact candidate identity: issue 910's
+    /// lane must not advertise issue 9101's edge through prefix matching.
+    #[test]
+    fn work_portfolio_collision_subjects_match_exact_issue_identity() -> Result<(), String> {
+        let edge = WorkConflictEdgeV1 {
+            id: "edge:claim_collision:x".to_string(),
+            kind: WorkConflictEdgeKindV1::ClaimCollision,
+            subjects: vec!["candidate:issue:9101".to_string()],
+            evidence: Vec::new(),
+            note: String::new(),
+        };
+        if lane_collision_edge(&[edge.clone()], &[910]).is_some() {
+            return Err("issue 910 must not inherit issue 9101's collision".to_string());
+        }
+        if lane_collision_edge(&[edge], &[9101]).as_deref() != Some("edge:claim_collision:x") {
+            return Err("issue 9101 must see its own collision edge".to_string());
+        }
+        Ok(())
+    }
+
+    /// Generated retrieval commands shell-escape arguments with spaces or
+    /// metacharacters so the advertised command replays exactly.
+    #[test]
+    fn work_portfolio_retrieval_commands_escape_arguments() -> Result<(), String> {
+        let snapshot = committed()?;
+        let view = build_candidates_view(&snapshot, None, None, 3, Some("/tmp/my corpus"))?;
+        let command = view
+            .retrieval_commands
+            .first()
+            .ok_or_else(|| "a bounded view must advertise a retrieval command".to_string())?;
+        if !command.contains("--captured '/tmp/my corpus'") {
+            return Err(format!("captured dir must be quoted, got: {command}"));
+        }
+        if shell_escape_arg("campaign-rust-repair") != "campaign-rust-repair" {
+            return Err("simple tokens must stay bare for byte-stable output".to_string());
+        }
+        if shell_escape_arg("it's") != "'it'\\''s'" {
+            return Err("embedded quotes must use the single-quote escape".to_string());
         }
         Ok(())
     }
