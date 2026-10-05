@@ -600,7 +600,9 @@ impl Backend {
                 // #4860: the attempt's token, not the error text, says whether
                 // the work stopped because a checkpoint handed it an abort. A
                 // wrapped cancellation is still a cancellation; an ordinary
-                // failure that reads like one is still a failure.
+                // failure that reads like one is still a failure. The observed
+                // abort is sticky: a later unrelated failure in the same
+                // attempt is named by the abort that already stopped the work.
                 let cancelled = request.cancellation.observed_abort().is_some();
                 if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(

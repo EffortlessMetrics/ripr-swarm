@@ -148,8 +148,10 @@ impl AnalysisCancellationToken {
     /// recorded abort, but only once a checkpoint handed it to the work.
     /// Consumers decide cancellation here instead of parsing the error's
     /// rendered text, so a wrapped cancellation stays a cancellation and an
-    /// ordinary failure that merely reads like one stays a failure. Pure:
-    /// it never expires a budget.
+    /// ordinary failure that merely reads like one stays a failure. A few
+    /// best-effort walks swallow a checkpoint error and stop early; that still
+    /// counts as observed, so a later failure in the same attempt is named by
+    /// the abort that truncated it. Pure: it never expires a budget.
     pub(crate) fn observed_abort(&self) -> Option<AnalysisAbortKind> {
         if self.0.observed.load(Ordering::Acquire) {
             self.abort_kind()
