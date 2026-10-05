@@ -3735,7 +3735,7 @@ mod tests {
             Ok(())
         })();
 
-        restore();
+        let _ = restore();
         let _ = fs::remove_dir_all(&sandbox);
         result
     }
