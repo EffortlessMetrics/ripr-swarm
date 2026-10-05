@@ -796,6 +796,41 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
     )
 }
 
+/// The typed outcome for a seam inventory that cannot run because its
+/// configuration switches are off (#6001). The default `actionable` profile
+/// lands here in every default-profile session, so the wire must carry the
+/// concrete enable route — a bare `recovery: null` gives an agent consumer
+/// no path to the switch, which only `ripr lsp --help` prose names. The
+/// message names the actual blocking condition so the recovery string is
+/// never a guess about which switch is off.
+fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOutcome {
+    if config.diagnostic_profile != LspDiagnosticProfile::Full {
+        ComponentOutcome::unavailable_recoverable(
+            AnalysisComponent::SeamInventory,
+            "seam_diagnostics_not_enabled",
+            format!(
+                "seam diagnostics require the full diagnostic profile (current: {})",
+                config.diagnostic_profile.as_str()
+            ),
+            "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
+        )
+    } else if !config.enable_seam_diagnostics {
+        ComponentOutcome::unavailable_recoverable(
+            AnalysisComponent::SeamInventory,
+            "seam_diagnostics_not_enabled",
+            "seam diagnostics are disabled by configuration",
+            "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
+        )
+    } else {
+        ComponentOutcome::unavailable_recoverable(
+            AnalysisComponent::SeamInventory,
+            "seam_diagnostics_not_enabled",
+            "seam diagnostics require the rust language to be enabled",
+            "enable the rust language in the [languages] configuration, then run ripr.refresh",
+        )
+    }
+}
+
 /// Progress-sink-bearing variant of
 /// [`workspace_diagnostics_with_config_and_open_rust_paths`]. The LSP
 /// work-done bridge (#4811) observes the same producer-owned stage
@@ -952,13 +987,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             ),
         )
     } else if !seam_inventory_enabled {
-        (
-            Vec::new(),
-            ComponentOutcome::unavailable(
-                AnalysisComponent::SeamInventory,
-                "seam_diagnostics_not_enabled",
-            ),
-        )
+        (Vec::new(), seam_inventory_not_enabled_outcome(config))
     } else {
         match inventory_classified_seams_at_with_config(&root, config.repo_config()) {
             Ok((seams, _)) => (
@@ -5045,9 +5074,11 @@ mod diagnostic_policy_tests {
                 "interactive_refresh_deferral",
                 "run ripr.refreshDiagnostics for the full seam inventory",
             ),
-            ComponentOutcome::unavailable(
+            ComponentOutcome::unavailable_recoverable(
                 AnalysisComponent::SeamInventory,
                 "seam_diagnostics_not_enabled",
+                "seam diagnostics require the full diagnostic profile (current: actionable)",
+                "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
             ),
         ];
         let run_status = derive_run_status(&[], &[], &[], false, false, &disclosed);
@@ -5060,6 +5091,77 @@ mod diagnostic_policy_tests {
         if run_status != "seams_deferred" {
             return Err(format!(
                 "deferred seam inventory without degradation must stay seams_deferred, got {run_status}"
+            ));
+        }
+        Ok(())
+    }
+
+    // Test 9 (#6001): the `seam_diagnostics_not_enabled` outcome must carry
+    // the concrete enable route on the wire. The default `actionable` profile
+    // makes this the default-session state, and a `recovery: null` gives an
+    // agent consumer no path to the switch.
+    #[test]
+    fn seam_not_enabled_outcome_names_the_enable_route() -> Result<(), String> {
+        // Default profile: the recovery names the profile switch and the
+        // message names the current profile, so the agent can see it is not
+        // "full".
+        let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
+        let payload = outcome.status_payload(Some("snapshot:1"));
+        if payload["state"].as_str() != Some("unavailable")
+            || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
+        {
+            return Err(format!("unexpected seam payload: {payload}"));
+        }
+        let Some(recovery) = payload["recovery"].as_str() else {
+            return Err(format!(
+                "seam_diagnostics_not_enabled must carry a recovery route: {payload}"
+            ));
+        };
+        if !recovery.contains("diagnostic_profile = \"full\"") || !recovery.contains("ripr.refresh")
+        {
+            return Err(format!(
+                "default-profile recovery must name the enable route: {recovery}"
+            ));
+        }
+        if payload["message"].as_str()
+            != Some("seam diagnostics require the full diagnostic profile (current: actionable)")
+        {
+            return Err(format!(
+                "message must name the current profile so the agent sees it is not full: {payload}"
+            ));
+        }
+        if outcome.is_degraded() {
+            return Err("a not-enabled seam inventory must stay non-degraded".to_string());
+        }
+
+        // Full profile with the flag explicitly off: the recovery names the
+        // flag switch instead, not the profile.
+        let config = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            enable_seam_diagnostics: false,
+            ..LspAnalysisConfig::default()
+        };
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let recovery = payload["recovery"].as_str().unwrap_or_default();
+        if !recovery.contains("seam_diagnostics = true") {
+            return Err(format!(
+                "flag-disabled recovery must name the flag switch: {recovery}"
+            ));
+        }
+
+        // Full profile, flag on, Rust disabled: the recovery names the
+        // language switch. (A change here must keep some recovery string on
+        // the wire — every branch of this outcome is recoverable.)
+        let mut config = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let recovery = payload["recovery"].as_str().unwrap_or_default();
+        if !recovery.contains("rust") {
+            return Err(format!(
+                "rust-disabled recovery must name the language switch: {recovery}"
             ));
         }
         Ok(())

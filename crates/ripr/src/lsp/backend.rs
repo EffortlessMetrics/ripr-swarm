@@ -2003,15 +2003,20 @@ impl Backend {
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
                     withheld_unknown_summary(value),
+                    value.partial_scope.clone(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary) =
+        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
             match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld)) => {
-                    (identity, components, analysis_outcome, withheld)
-                }
-                None => (None, Vec::new(), None, None),
+                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
+                    identity,
+                    components,
+                    analysis_outcome,
+                    withheld,
+                    partial_scope,
+                ),
+                None => (None, Vec::new(), None, None, None),
             };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
@@ -2083,6 +2088,35 @@ impl Backend {
             .last_success_at
             .and_then(|generated_at| generated_at.elapsed().ok())
             .map(|duration| duration.as_millis() as u64);
+        // #5999: for a budget-bound `limited_partial_scope` run, `ripr.refresh`
+        // provably re-runs the identical limited partition, so the retry
+        // pointer must not advertise it as the remedy. `retry_recovery` names
+        // the only route that widens the partition: raise the budget override
+        // the selector names, then restart the sidecar so the new environment
+        // is read. Every other run status keeps `retry_command: ripr.refresh`
+        // — refresh genuinely lifts `seams_deferred` and `stale` snapshots.
+        let run_status = health.run_status();
+        let budget_recovery = if run_status == crate::analysis::PartialDiffScope::RUN_STATUS {
+            let detail = match partial_scope.as_ref() {
+                Some(scope) => format!(
+                    "{}, then restart the language server so the raised environment is read",
+                    scope.budget_raise_instruction()
+                ),
+                None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or \
+                             RIPR_PARTIAL_DIFF_LINE_BUDGET, then restart the language server so \
+                             the raised environment is read"
+                    .to_string(),
+            };
+            Some(serde_json::json!({
+                "kind": "increase_configured_limit",
+                "detail": format!(
+                    "ripr.refresh re-runs the identical limited partition and cannot widen it; {}",
+                    detail
+                ),
+            }))
+        } else {
+            None
+        };
         serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -2120,7 +2154,16 @@ impl Backend {
             "pending_attempt_id": health.pending_attempt_id.map(|id| id.to_string()),
             "pending_reason": health.pending_reason,
             "pending_scope": health.pending_scope,
-            "retry_command": REFRESH_COMMAND,
+            // #5999: null exactly when the binding limitation is a process
+            // budget refresh cannot lift; `retry_recovery` then names the
+            // env-var + restart route. Every refresh-liftable state keeps the
+            // command pointer.
+            "retry_command": if budget_recovery.is_some() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(REFRESH_COMMAND.to_string())
+            },
+            "retry_recovery": budget_recovery.unwrap_or(serde_json::Value::Null),
             "repair_actions_available": health.allows_current_repairs()
                 && root.allows_analysis(),
             "root_state": root.state.as_str(),
@@ -6029,7 +6072,15 @@ impl Backend {
     /// saved-state diagnostics as current for a dirty buffer. Identities
     /// are SHA-256 digests of saved content only; unsaved buffer text is
     /// never included.
-    fn open_document_statuses_json(&self) -> serde_json::Value {
+    ///
+    /// #5998: a document whose changed lines sit outside the committed
+    /// snapshot's analyzed partition is reported `not_analyzed` — never
+    /// `clean`/`served` — with the budget raise and sidecar restart as the
+    /// recovery, so "no diagnostics" can never read as "analyzed and clean".
+    fn open_document_statuses_json(
+        &self,
+        snapshot: Option<&AnalysisSnapshot>,
+    ) -> serde_json::Value {
         let Ok(documents) = self.documents.lock() else {
             return serde_json::json!([]);
         };
@@ -6038,13 +6089,45 @@ impl Backend {
             .values()
             .map(|state| {
                 let quarantined = state.is_quarantined();
+                let outside_partition = snapshot
+                    .and_then(|snapshot| {
+                        super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
+                    })
+                    .is_some_and(|relative| {
+                        snapshot
+                            .and_then(|snapshot| snapshot.partial_scope.as_ref())
+                            .is_some_and(|scope| scope.changed_outside_partition(&relative))
+                    });
                 serde_json::json!({
                     "uri": state.uri.as_str(),
                     "path": state.path.display().to_string(),
                     "version": state.version,
-                    "state": if quarantined { "quarantined" } else { "clean" },
+                    "state": if quarantined {
+                        "quarantined"
+                    } else if outside_partition {
+                        "not_analyzed"
+                    } else {
+                        "clean"
+                    },
                     "diagnostics_authority": "saved_workspace",
-                    "line_local_diagnostics": if quarantined { "withdrawn" } else { "served" },
+                    "line_local_diagnostics": if quarantined {
+                        "withdrawn"
+                    } else if outside_partition {
+                        "not_analyzed"
+                    } else {
+                        "served"
+                    },
+                    "not_analyzed_reason": if outside_partition {
+                        serde_json::Value::String("outside_analyzed_partition".to_string())
+                    } else {
+                        serde_json::Value::Null
+                    },
+                    "not_analyzed_recovery": match (outside_partition, snapshot) {
+                        (true, Some(snapshot)) => serde_json::Value::String(
+                            outside_partition_recovery(snapshot.partial_scope.as_ref()),
+                        ),
+                        _ => serde_json::Value::Null,
+                    },
                     "staleness_reason": state
                         .quarantine
                         .as_ref()
@@ -6062,7 +6145,7 @@ impl Backend {
         let health = self.analysis_health_snapshot();
         let authority = self.workspace_root_authority();
         let latest_analysis = self.latest_analysis.lock().ok()?.clone();
-        let open_documents = self.open_document_statuses_json();
+        let open_documents = self.open_document_statuses_json(latest_analysis.as_deref());
         let snapshot = match latest_analysis {
             None => {
                 let top_limitation = top_limitation_dto(&health, None, &authority).into_json();
@@ -6817,6 +6900,23 @@ fn workspace_status_receipt_summary(
     })
 }
 
+/// #5998: the recovery route an opened document outside the analyzed
+/// partition carries on the workspace status payload. Refreshing inside the
+/// session re-runs the identical limited partition, so the route names the
+/// budget override the selector computed plus the sidecar restart that makes
+/// it effective — the same route the run-level disclosures name (#5999).
+fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDiffScope>) -> String {
+    match partial_scope {
+        Some(scope) => format!(
+            "{}, then restart the language server so the raised environment is read",
+            scope.budget_raise_instruction()
+        ),
+        None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET, then \
+                 restart the language server so the raised environment is read"
+            .to_string(),
+    }
+}
+
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
     super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
@@ -7413,6 +7513,7 @@ mod top_limitation_selection_tests {
             line_budget: 10,
             budget_disclosures: Vec::new(),
             selected_files: vec!["src/lib.rs".to_string()],
+            unselected_files: vec!["src/mod_cap.rs".to_string()],
             selected_changed_lines: 4,
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 6,

@@ -287,6 +287,7 @@ mod tests {
                 "RIPR_PARTIAL_DIFF_LINE_BUDGET=2001 exceeds the effective analysis-cost limit (2000); clamped to 2000".to_string(),
             ],
             selected_files: vec!["src/a.rs".to_string()],
+            unselected_files: vec!["src/b.rs".to_string()],
             selected_changed_lines: 60,
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 120,

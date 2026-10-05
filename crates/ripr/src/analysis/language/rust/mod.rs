@@ -422,6 +422,13 @@ pub struct PartialDiffScope {
     /// Exact selected file paths (normalized, forward-slash, repo-relative),
     /// in deterministic selection order.
     pub selected_files: Vec<String>,
+    /// Exact changed file paths (same normalization) that the diff contained
+    /// but the selected partition did NOT analyze (#5998). The per-document
+    /// LSP status needs the names, not only the lower-bound counts, to report
+    /// an opened document outside the partition as `not_analyzed` instead of
+    /// silently `clean`/`served`. Mirrors `selected_files` sizing: it holds
+    /// only what the parsed diff already retained, and no renderer lists it.
+    pub unselected_files: Vec<String>,
     /// Changed-line count across the selected partition.
     pub selected_changed_lines: usize,
     /// Lower-bound count of changed-line files that were NOT inspected.
@@ -447,13 +454,22 @@ impl PartialDiffScope {
     pub const GATE_ELIGIBILITY: &'static str = "ineligible";
     /// The widen instruction every partial-result surface shares: the
     /// smallest budget values that admit the next file, stopping budget
+    /// first, then the CLI-shaped "re-run" tail. See
+    /// [`Self::budget_raise_instruction`] for the budget assignment itself.
+    pub(crate) fn widen_instruction(&self) -> String {
+        format!("{}, then re-run", self.budget_raise_instruction())
+    }
+
+    /// The budget-raise instruction every partial-result surface shares: the
+    /// smallest budget values that admit the next file, stopping budget
     /// first. Raising a budget only just above its current value can select
     /// the same partition again, so the minimums come from the selector:
     /// one more file than was selected, and the selected line count plus the
     /// next file's lines. When no enabled file was left out (an oversized
     /// first file analyzed alone), the line minimum is the selected line
-    /// count, which makes the run complete.
-    pub(crate) fn widen_instruction(&self) -> String {
+    /// count, which makes the run complete. No run-shape tail: the caller
+    /// names the route (a CLI re-run, or an LSP sidecar restart, #5999).
+    pub(crate) fn budget_raise_instruction(&self) -> String {
         let next_lines = self.next_file_changed_lines.unwrap_or(0);
         let file_min = self
             .selected_files
@@ -475,12 +491,12 @@ impl PartialDiffScope {
         if raises.is_empty() {
             // Unreachable for a selector-built scope; keep a usable route.
             return format!(
-                "raise {} above {}, then re-run",
+                "raise {} above {}",
                 self.stop_reason.budget_env(),
                 self.stopping_budget()
             );
         }
-        format!("raise {}, then re-run", raises.join(" and "))
+        format!("raise {}", raises.join(" and "))
     }
 
     /// Disclosure naming the only continuation route (decision 6): raise the
@@ -517,6 +533,16 @@ impl PartialDiffScope {
     pub(crate) fn selects(&self, path: &Path) -> bool {
         let normalized = normalize_changed_path(path);
         self.selected_files.contains(&normalized)
+    }
+
+    /// Whether `path` (any spelling) names a changed file the run left
+    /// outside the selected partition (#5998): the file has changed lines
+    /// this analysis never inspected, so "no diagnostics" for it is not a
+    /// clean result. `false` for paths the diff did not change — an opened
+    /// unchanged file legitimately has no line-local findings.
+    pub(crate) fn changed_outside_partition(&self, path: &Path) -> bool {
+        let normalized = normalize_changed_path(path);
+        !self.selected_files.contains(&normalized) && self.unselected_files.contains(&normalized)
     }
 }
 
@@ -807,6 +833,18 @@ fn select_partial_diff_partition_with_identity(
         .iter()
         .map(|candidate| candidate.normalized_path.clone())
         .collect();
+    // The complement of the selection over the parsed diff (#5998): every
+    // changed file the partition did NOT analyze, by name, so per-document
+    // status can report an opened file outside the partition honestly.
+    // Selection never duplicates candidates, so a membership test over the
+    // selected names yields the exact complement in selector order.
+    let selected_set: std::collections::BTreeSet<&str> =
+        selected_files.iter().map(|path| path.as_str()).collect();
+    let unselected_files: Vec<String> = candidates
+        .iter()
+        .filter(|candidate| !selected_set.contains(candidate.normalized_path.as_str()))
+        .map(|candidate| candidate.normalized_path.clone())
+        .collect();
     let mut selected_sorted = selected_files.clone();
     selected_sorted.sort();
     let diff_identity = diff_identity_from_changed_files(identity_files);
@@ -823,6 +861,7 @@ fn select_partial_diff_partition_with_identity(
         line_budget: budgets.line_budget,
         budget_disclosures: budgets.disclosures.clone(),
         selected_files,
+        unselected_files,
         selected_changed_lines: selected_lines,
         uninspected_files_lower_bound: total_files.saturating_sub(selected.len()),
         uninspected_changed_lines_lower_bound: total_lines.saturating_sub(selected_lines),
