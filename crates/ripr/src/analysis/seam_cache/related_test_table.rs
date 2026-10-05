@@ -192,6 +192,7 @@ impl PrettyTableSizer {
     pub(super) fn measure(&self, classified: &ClassifiedSeam) -> Result<MeasuredSeam, String> {
         let seam_tests = &classified.evidence.related_tests;
         let mut new_tests: Vec<Vec<u8>> = Vec::new();
+        let mut pending: HashMap<Vec<u8>, usize> = HashMap::new();
         let mut new_test_bytes = 0usize;
         let mut indices = Vec::with_capacity(seam_tests.len());
         for test in seam_tests {
@@ -199,14 +200,15 @@ impl PrettyTableSizer {
             let index = match self.index_of.get(&key) {
                 Some(index) => *index,
                 None => {
-                    let pending = new_tests.iter().position(|seen| *seen == key);
-                    let offset = match pending {
-                        Some(offset) => offset,
+                    let offset = match pending.get(&key) {
+                        Some(offset) => *offset,
                         None => {
                             new_test_bytes =
                                 new_test_bytes.saturating_add(pretty_item_bytes(test)?);
+                            let offset = new_tests.len();
+                            pending.insert(key.clone(), offset);
                             new_tests.push(key);
-                            new_tests.len().saturating_sub(1)
+                            offset
                         }
                     };
                     u32::try_from(self.tests.saturating_add(offset))
@@ -260,7 +262,7 @@ fn pretty_item_bytes<T: Serialize>(value: &T) -> Result<usize, String> {
             self.bytes = self.bytes.saturating_add(buf.len());
             self.newlines = self
                 .newlines
-                .saturating_add(buf.iter().filter(|byte| **byte == b'\n').count());
+                .saturating_add(buf.iter().filter(|&&byte| byte == b'\n').count());
             Ok(buf.len())
         }
 
