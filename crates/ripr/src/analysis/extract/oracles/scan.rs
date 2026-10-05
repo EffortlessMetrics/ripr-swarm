@@ -4093,8 +4093,12 @@ mod err_guard_parity_tests {
         };
         // This independent executed-Rust control establishes that the quoted
         // text cannot distinguish the original and wrong values.
-        assert!(quoted_body(2).is_ok());
-        assert!(quoted_body(3).is_ok());
+        for value in [2, 3] {
+            match quoted_body(value) {
+                Ok(()) => {}
+                Err(()) => panic!("quoted diagnostic unexpectedly failed for {value}"),
+            }
+        }
         for statement in [
             "if !matches!(value, 2) { let message = \"{returnErr(\"; let _ = message; }",
             "if !matches!(value, 2) { /* {returnErr( */ }",
