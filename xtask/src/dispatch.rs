@@ -42,6 +42,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::FirstRun(args) => super::first_run::run(&args),
+        XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
@@ -67,6 +68,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::IssueLifecycleIntakeScorecard(args) => {
             super::issue_lifecycle_intake::issue_lifecycle_intake_scorecard(&args)
+        }
+        XtaskCommand::IssueLifecycleContractPlanScorecard(args) => {
+            super::issue_lifecycle_contract_plan::issue_lifecycle_contract_plan_scorecard(&args)
         }
         XtaskCommand::RustJudgedPanel(args) => super::rust_judged_panel::run(&args),
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
