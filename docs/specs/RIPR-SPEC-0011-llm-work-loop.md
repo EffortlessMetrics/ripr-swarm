@@ -133,6 +133,13 @@ The review summary should answer:
 - what the reviewer should inspect;
 - which static limits remain.
 
+The executable status command embedded in a review-summary surface uses the
+native selected root for both its `--root` argument and anchored redirect.
+It shares command authority with the top-level continuation even though the
+report's `root` field and analysis-outcome presentation key retain display
+formatting. Unix literal filename backslashes remain distinct from Windows
+separators (#6313).
+
 ## JSON Shape
 
 The status report uses schema version `0.1`:

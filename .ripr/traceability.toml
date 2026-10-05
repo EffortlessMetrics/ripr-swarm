@@ -1235,6 +1235,8 @@ code = [
   "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/app/agent_status.rs",
   "crates/ripr/src/app/agent_review_summary.rs",
+  "crates/ripr/src/app/agent_review_summary/report.rs",
+  "crates/ripr/src/app/agent_review_summary/artifacts.rs",
   "crates/ripr/src/app/agent_workflow.rs",
   "crates/ripr/src/output/agent_workflow.rs",
   "crates/ripr/src/output/agent_seam_packets.rs",

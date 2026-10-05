@@ -988,7 +988,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let legacy = super::artifacts::agent_status_surface(&report(Vec::new()), ".");
+        let legacy = super::artifacts::agent_status_surface(&report(Vec::new()), Path::new("."));
         assert!(
             legacy
                 .summary
@@ -997,7 +997,8 @@ mod tests {
             legacy.summary
         );
 
-        let repair = super::artifacts::agent_status_surface(&report(vec![attempt("a")]), ".");
+        let repair =
+            super::artifacts::agent_status_surface(&report(vec![attempt("a")]), Path::new("."));
         assert!(
             repair
                 .summary
