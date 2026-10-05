@@ -6500,7 +6500,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "pretty_assertions_path_qualified_assert_eq",
-      "hard_case": "The integration test calls `pretty_assertions::assert_eq!(total(&lines), 1500)` by path. ripr now reads it as an exact assertion, but the owner-return pin trusts only bare macro names, so the line stays a gap.",
+      "hard_case": "The integration test calls `pretty_assertions::assert_eq!(total(&lines), 1500)` by path. ripr now reads it as an assertion, but the qualified `assert_eq!` goes through the RIPR-SPEC-0197 admission and is refused (assertion_not_credited); the gap comes from the `assert_ne!` sibling test.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",

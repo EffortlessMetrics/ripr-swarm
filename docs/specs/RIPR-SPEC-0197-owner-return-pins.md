@@ -78,11 +78,15 @@ rule only for an assertion whose context was admitted.
    test's outer attributes admit only `#[test]` and the `serial_test` locks
    `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
    body unchanged. A lock is admitted path-qualified (`serial_test::serial`)
-   or bare when the file has a `use serial_test::..` item, and only with no
-   arguments or bare lock keys; `inner_attrs`, `crate`, `path` or any other
-   argument shape refuses it. Every other attribute (`ignore`, async runtime
-   tests, parameterizing macros such as `rstest` or `test_case`) and every
-   inner attribute refuses the pin. The parser must match the exact indexed function body and the assertion's
+   or bare when a `use serial_test::<lock>` item (optionally renamed) binds
+   that exact name, and only with no arguments or bare lock keys;
+   `inner_attrs`, `crate`, `path` or any other argument shape refuses it. The
+   binding scan is file-wide and fails closed: a name another `use` also
+   binds, or any bare lock when a glob other than `super::*`, `self::*` or
+   `crate::*` is present (`serial_test::*` included), refuses. Every other
+   attribute (`ignore`, async runtime tests, parameterizing macros such as
+   `rstest` or `test_case`) and every inner attribute refuses the pin. The
+   parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the
    source file, never an enclosing function, block, closure or impl. Module

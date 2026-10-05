@@ -563,6 +563,10 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         "#[test]\n#[serial_test::serial(env)]",
         "#[test]\n#[serial_test::file_serial]",
         "use serial_test::parallel;\n#[test]\n#[parallel]",
+        "use serial_test::{parallel, serial};\n#[test]\n#[serial]",
+        "use ::serial_test::serial as locked;\n#[test]\n#[locked]",
+        "use serial_test::file_serial;\n#[test]\n#[file_serial(db)]",
+        "use super::*;\nuse serial_test::serial;\n#[test]\n#[serial]",
     ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
@@ -582,6 +586,15 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         "#[test]\n#[serial_test::file_serial(path => \"/tmp/lock\")]",
         // A mention outside a `use` item does not import the macro.
         "// serial_test is not used here\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        // Importing another serial_test item does not bind `serial`.
+        "use serial_test::parallel;\nuse my_macros::serial;\n#[test]\n#[serial]",
+        "use serial_test::parallel;\n#[test]\n#[serial]",
+        // A competing binding of the same name anywhere in the file wins.
+        "use serial_test::serial;\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        // A foreign glob could bind any lock name.
+        "use serial_test::serial;\nuse my_macros::*;\n#[test]\n#[serial]",
+        "use serial_test::serial as _;\n#[test]\n#[serial]",
+        "use serial_test::*;\n#[test]\n#[serial]",
     ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
