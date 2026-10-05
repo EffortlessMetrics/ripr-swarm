@@ -927,7 +927,7 @@ fn b6_superseding_finish_keeps_first_attempt_byte_identical() -> Result<(), Stri
     append_test_fn(
         &journey_a.root,
         "equality_boundary_second_case",
-        "assert_eq!(discounted_total(50, 50), 45);",
+        "assert_eq!(discounted_total(50, 50), 40);",
     )?;
     let after_b = run_after_attempt(&journey_a.root, &journey_a.root_arg, &attempt_b)?;
     if !after_b.status.success() {
