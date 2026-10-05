@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0225-wv-functional-update-default",
+  "subject_id": "authored-spec0225-7",
+  "diff": "cases/spec0225-wv-functional-update-default.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_functional_update",
+  "test_shape": "struct_literal_with_default_base",
+  "hard_case": "Runtime truth is discriminated while RIPR-SPEC-0225 expects not exposed. The spec withholds static credit for this shape, so ripr reads weakly_exposed and the report scores it false_actionable: a wrong actionable gap against discriminated truth. To keep the test passing the Default impl is manual and supplies retries: 4, so the functional-update base still pins retries at runtime.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: n + 2,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::builds_config",
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: n,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::builds_config",
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The manual Default supplies retries: 4 through ..Config::default(), and derived equality compares it. Spec cells: RIPR-SPEC-0225 example 7.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

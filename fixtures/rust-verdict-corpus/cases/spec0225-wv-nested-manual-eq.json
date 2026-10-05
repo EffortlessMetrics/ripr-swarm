@@ -1,0 +1,49 @@
+{
+  "case_id": "spec0225-wv-nested-manual-eq",
+  "subject_id": "authored-spec0225-16a",
+  "diff": "cases/spec0225-wv-nested-manual-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_manual_eq",
+  "test_shape": "nested_field_type_manual_partialeq",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: Retries { n: Count(n + 2) },",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: Retries { n: Count(n) },",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Count has an always-true PartialEq, so the nested retries value never affects equality. Spec cells: RIPR-SPEC-0225 example 16 (manual Count impl).",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

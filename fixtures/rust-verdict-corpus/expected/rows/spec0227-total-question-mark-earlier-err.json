@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0227-total-question-mark-earlier-err",
+  "subject_id": "authored-spec0227-13",
+  "origin": "authored",
+  "anchor": "src/lib.rs:24",
+  "behavior_family": "question_mark_propagation",
+  "test_shape": "is_err_on_earlier_err",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

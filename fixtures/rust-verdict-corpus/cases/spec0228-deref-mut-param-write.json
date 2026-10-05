@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0228-deref-mut-param-write",
+  "subject_id": "authored-spec0228-7",
+  "diff": "cases/spec0228-deref-mut-param-write.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "deref_mut_param_assign",
+  "test_shape": "free_fn_mut_ref_then_assert_eq",
+  "hard_case": "ripr reads static_unknown with no static_limit_kind; spec example 7 expects static_unknown with the proposed rust_mut_reference_alias_unresolved. Class agrees, the named limit is missing. ripr emits two findings on line 2: one for the new and one for the removed expression.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "*p = v + 1;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::store_writes_through_the_reference",
+        "equivalence_review": "not equivalent: x becomes 6"
+      },
+      {
+        "replacement": "*p = 0;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::store_writes_through_the_reference",
+        "equivalence_review": "not equivalent: x stays 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "store_writes_through_the_reference passes &mut x, then asserts x == 5. Spec cells: RIPR-SPEC-0228 example 7.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

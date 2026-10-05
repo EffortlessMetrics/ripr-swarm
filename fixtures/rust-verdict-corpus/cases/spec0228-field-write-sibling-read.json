@@ -1,0 +1,49 @@
+{
+  "case_id": "spec0228-field-write-sibling-read",
+  "subject_id": "authored-spec0228-4",
+  "diff": "cases/spec0228-field-write-sibling-read.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_compound_assign",
+  "test_shape": "owner_call_then_assert_eq_sibling_field",
+  "hard_case": "ripr reads static_unknown with no FieldValue missing discriminator; spec example 4 expects weakly_exposed with a FieldValue missing discriminator for count.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.count += 2;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: count becomes 2, but the test reads only label"
+      },
+      {
+        "replacement": "self.count += 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: count stays 0, but the test reads only label"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "raise_keeps_the_label asserts only label, a sibling field. Spec cells: RIPR-SPEC-0228 example 4.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

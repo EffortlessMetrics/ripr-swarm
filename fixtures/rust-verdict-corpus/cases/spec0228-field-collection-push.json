@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0228-field-collection-push",
+  "subject_id": "authored-spec0228-8",
+  "diff": "cases/spec0228-field-collection-push.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_collection_push",
+  "test_shape": "owner_call_then_assert_eq_vec_field",
+  "hard_case": "ripr reads exposed (call_deletion and side_effect), matching spec example 8.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.items.push(x + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_pushes_the_item",
+        "equivalence_review": "not equivalent: items is [5]"
+      },
+      {
+        "replacement": "self.items.push(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_pushes_the_item",
+        "equivalence_review": "not equivalent: items is [0]"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "add_pushes_the_item asserts items == vec![4] after add(4). Spec cells: RIPR-SPEC-0228 example 8, RIPR-SPEC-0094.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

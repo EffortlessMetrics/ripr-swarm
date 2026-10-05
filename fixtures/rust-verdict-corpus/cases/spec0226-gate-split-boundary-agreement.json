@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0226-gate-split-boundary-agreement",
+  "subject_id": "authored-spec0226-1",
+  "diff": "cases/spec0226-gate-split-boundary-agreement.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "split_boundary_call_and_far_assert",
+  "hard_case": "RIPR-SPEC-0226 expects the predicate weakly_exposed and the return value exposed, both relating {boundary, far}. ripr relates the same set to both findings and reads return_value exposed, but reads the predicate propagation_unknown, not weakly_exposed. Its discriminate text names same_test_pairing_missing, which is the right reason.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub fn gate(input: u32) -> bool { input > 10 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gate(10) turns false"
+      },
+      {
+        "replacement": "pub fn gate(input: u32) -> bool { input < 10 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::far",
+        "equivalence_review": "not equivalent: the comparison is inverted, so gate(100) turns false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "far asserts gate(100) is true, which catches the inverted comparison; boundary calls gate(10) and gate(9) without asserting, so moving the edge back to input > 10 survives. Spec cells: RIPR-SPEC-0226 example 1, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

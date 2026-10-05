@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0225-wv-literal-derived",
+  "subject_id": "authored-spec0225-1",
+  "diff": "cases/spec0225-wv-literal-derived.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_whole_value",
+  "test_shape": "assert_eq_owner_call_vs_struct_literal",
+  "hard_case": "Measured defect: RIPR-SPEC-0225 expects exposed; ripr reads weakly_exposed with a FieldValue missing discriminator although the whole-value literal names the field.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: n + 2,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::builds_config",
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: n,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::builds_config",
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_eq! compares build(3) with a literal naming retries: 4; Config derives PartialEq. Spec cells: RIPR-SPEC-0225 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

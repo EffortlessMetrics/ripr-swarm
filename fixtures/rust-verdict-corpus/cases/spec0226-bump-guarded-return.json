@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0226-bump-guarded-return",
+  "subject_id": "authored-spec0226-4",
+  "diff": "cases/spec0226-bump-guarded-return.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "guarded_early_return",
+  "test_shape": "single_far_input_exact_assert",
+  "hard_case": "Rule 4 holds: the predicate is weakly_exposed, not no_static_path, and both findings relate {t}. ripr reads return_value weakly_exposed (observation_unverified) although t's exact assert_eq! kills the x + 2 mutant.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if a >= b { return x + 1 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: bump(1, 1, x) returns x + 1"
+      },
+      {
+        "replacement": "if a < b { return x + 1 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::t",
+        "equivalence_review": "not equivalent: bump(2, 1, 7) returns 7"
+      },
+      {
+        "replacement": "if a > b { return x + 2 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::t",
+        "equivalence_review": "not equivalent: bump(2, 1, 7) returns 9"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "t asserts bump(2, 1, 7) == 8, which catches an inverted guard and a wrong bump amount, but 2 versus 1 is not the edge, so a >= b survives. Spec cells: RIPR-SPEC-0226 example 4, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

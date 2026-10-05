@@ -1,0 +1,49 @@
+{
+  "case_id": "spec0225-wv-expected-reads-result-field",
+  "subject_id": "authored-spec0225-12",
+  "diff": "cases/spec0225-wv-expected-reads-result-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_tautology",
+  "test_shape": "expected_literal_reads_owner_result_field",
+  "hard_case": "Measured defect: ripr reads exposed (FieldValue cleared because the assertion reads c.retries on the owner result) but the expected literal copies the owner's own value, so the comparison is a tautology and no mutant fails; RIPR-SPEC-0225 rule 2 expects not exposed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: n + 2,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: n,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The literal copies c.retries from the result, so the comparison holds for any retries value. Spec cells: RIPR-SPEC-0225 example 12.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

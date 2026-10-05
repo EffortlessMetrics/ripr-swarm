@@ -1,0 +1,50 @@
+{
+  "case_id": "spec0228-field-write-getter-read",
+  "subject_id": "authored-spec0228-2",
+  "diff": "cases/spec0228-field-write-getter-read.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_compound_assign",
+  "test_shape": "owner_call_then_assert_eq_getter",
+  "hard_case": "ripr reads static_unknown; spec example 2 expects exposed through a resolved inherent getter. ripr also relates other_starts_at_zero, a same-crate test that reads other() and never calls advance().",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.count += 2;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::advance_reads_back_through_the_getter",
+        "equivalence_review": "not equivalent: count() returns 2"
+      },
+      {
+        "replacement": "self.count += 0;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::advance_reads_back_through_the_getter",
+        "equivalence_review": "not equivalent: count() returns 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "count() returns self.count directly, and the test asserts count() == 1 after advance(). Spec cells: RIPR-SPEC-0228 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

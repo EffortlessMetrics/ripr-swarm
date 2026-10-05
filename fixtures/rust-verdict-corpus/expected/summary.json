@@ -1,100 +1,100 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 104,
+  "cases_total": 147,
   "by_truth": {
-    "discriminated": 56,
-    "not_discriminated": 32,
-    "partially_discriminated": 16
+    "discriminated": 72,
+    "not_discriminated": 53,
+    "partially_discriminated": 22
   },
   "by_outcome": {
-    "abstained": 34,
-    "false_actionable": 33,
-    "false_exposed": 4,
-    "ideal": 33
+    "abstained": 44,
+    "false_actionable": 42,
+    "false_exposed": 6,
+    "ideal": 55
   },
   "by_observed_verdict": {
-    "credited": 10,
-    "gap": 60,
-    "limited": 33,
+    "credited": 14,
+    "gap": 89,
+    "limited": 43,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 37,
-    "denominator": 104,
-    "rate": "0.3558"
+    "numerator": 48,
+    "denominator": 147,
+    "rate": "0.3265"
   },
   "false_actionable_rate": {
-    "numerator": 33,
-    "denominator": 56,
-    "rate": "0.5893"
+    "numerator": 42,
+    "denominator": 72,
+    "rate": "0.5833"
   },
   "false_exposed_rate": {
-    "numerator": 4,
-    "denominator": 48,
-    "rate": "0.0833"
+    "numerator": 6,
+    "denominator": 75,
+    "rate": "0.0800"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 48,
+    "denominator": 75,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 33,
-    "denominator": 104,
-    "rate": "0.3173"
+    "numerator": 55,
+    "denominator": 147,
+    "rate": "0.3741"
   },
   "abstention_rate": {
-    "numerator": 34,
-    "denominator": 104,
-    "rate": "0.3269"
+    "numerator": 44,
+    "denominator": 147,
+    "rate": "0.2993"
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 138,
-    "rate": "0.0145"
+    "denominator": 198,
+    "rate": "0.0101"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "by_origin": {
     "authored": {
-      "cases_total": 70,
+      "cases_total": 113,
       "by_observed_verdict": {
-        "credited": 10,
-        "gap": 45,
-        "limited": 14,
+        "credited": 14,
+        "gap": 74,
+        "limited": 24,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 27,
-        "denominator": 70,
-        "rate": "0.3857"
+        "numerator": 38,
+        "denominator": 113,
+        "rate": "0.3363"
       },
       "false_actionable_rate": {
-        "numerator": 23,
-        "denominator": 36,
-        "rate": "0.6389"
+        "numerator": 32,
+        "denominator": 52,
+        "rate": "0.6154"
       },
       "false_exposed_rate": {
-        "numerator": 4,
-        "denominator": 34,
-        "rate": "0.1176"
+        "numerator": 6,
+        "denominator": 61,
+        "rate": "0.0984"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 34,
+        "denominator": 61,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 28,
-        "denominator": 70,
-        "rate": "0.4000"
+        "numerator": 50,
+        "denominator": 113,
+        "rate": "0.4425"
       },
       "abstention_rate": {
-        "numerator": 15,
-        "denominator": 70,
-        "rate": "0.2143"
+        "numerator": 25,
+        "denominator": 113,
+        "rate": "0.2212"
       }
     },
     "upstream": {
