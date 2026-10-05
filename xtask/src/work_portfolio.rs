@@ -2447,9 +2447,21 @@ fn confidence_reasons_for(
                 .to_string(),
         );
     }
+    if primary_pr.is_none() && !context.fresh(WorkCapturedSourceKindV1::GithubPullRequests) {
+        reasons.push(
+            "partial: no pull request is captured for this issue while the pull-request source is not current; existing PR work may be uncaptured"
+                .to_string(),
+        );
+    }
     if !issue_claims.is_empty() && !context.fresh(WorkCapturedSourceKindV1::GithubClaims) {
         reasons.push(
             "partial: the captured claim source is not current for the linked claim".to_string(),
+        );
+    }
+    if issue_claims.is_empty() && !context.fresh(WorkCapturedSourceKindV1::GithubClaims) {
+        reasons.push(
+            "partial: no durable claim is captured for this issue while the claim source is not current; existing ownership may be uncaptured"
+                .to_string(),
         );
     }
     if (primary_pr.is_some() || !issue_claims.is_empty())
@@ -4285,6 +4297,65 @@ mod tests {
                 "a --captured typo must fail closed, not read the default corpus".to_string(),
             );
         };
+        Ok(())
+    }
+
+    /// Missing PR or claim sources must degrade a candidate that shows no
+    /// captured ownership: absence of the source never reports complete
+    /// confidence for a fresh-build recommendation.
+    #[test]
+    fn work_portfolio_missing_ownership_sources_lower_confidence() -> Result<(), String> {
+        let mut freshness = BTreeMap::new();
+        for kind in WorkCapturedSourceKindV1::all() {
+            freshness.insert(kind, WorkSourceFreshnessV1::Current);
+        }
+        freshness.insert(
+            WorkCapturedSourceKindV1::GithubPullRequests,
+            WorkSourceFreshnessV1::Unknown,
+        );
+        freshness.insert(
+            WorkCapturedSourceKindV1::GithubClaims,
+            WorkSourceFreshnessV1::Unknown,
+        );
+        let context = WorkCompileContext { freshness };
+        let issue = WorkCapturedIssueV1 {
+            number: 7002,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: None,
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: Vec::new(),
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: Vec::new(),
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: None,
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        let no_claims: Vec<&WorkCapturedClaimV1> = Vec::new();
+        let reasons = confidence_reasons_for(&context, &issue, None, &no_claims, Vec::new(), &[]);
+        if !reasons
+            .iter()
+            .any(|reason| reason.contains("pull-request source is not current"))
+        {
+            return Err(format!(
+                "missing PR source must lower confidence for an uncaptured PR: {reasons:?}"
+            ));
+        }
+        if !reasons
+            .iter()
+            .any(|reason| reason.contains("claim source is not current"))
+        {
+            return Err(format!(
+                "missing claim source must lower confidence for an uncaptured claim: {reasons:?}"
+            ));
+        }
         Ok(())
     }
 

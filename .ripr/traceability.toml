@@ -12485,6 +12485,7 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_merge_ready_requires_fresh_evidence_and_clear_claims",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_missing_ownership_sources_lower_confidence",
 ]
 fixtures = [
   "fixtures/work_portfolio",
