@@ -190,7 +190,11 @@ pub(crate) fn mint_bound_receipt(
     let receipt = json!({
         "schema_version": crate::output::agent_receipt::AGENT_RECEIPT_SCHEMA_VERSION,
         "status": "advisory",
+        "analysis_outcome_status": "complete",
+        "analysis_outcome_error": Value::Null,
+        "analysis_outcome": {"analysis_complete": true},
         "provenance": {
+            "seam_id": manifest.seam_id,
             "movement": movement,
             "verify_artifact": {
                 "path": crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,

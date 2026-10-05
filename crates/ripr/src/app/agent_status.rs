@@ -11,13 +11,13 @@ use crate::agent::loop_commands::{
     check_repo_exposure_command, display_path, shell_arg,
 };
 use crate::app::repair_attempt::{
-    AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
+    AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, diverged_head_recovery, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
-    repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
-    validate_issued_receipt_evidence,
+    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair, diverged_head_recovery,
+    inventory_repair_attempts_from, load_attempt_terminal_receipt,
+    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
+    repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -530,15 +530,28 @@ fn legacy_workflow_attempt_receipt(
             };
         }
     };
-    match validate_issued_receipt_evidence(root, manifest, receipt, &verify_bytes) {
-        Ok(()) => AgentStatusAttemptReceipt::Issued {
-            path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
-            reading: AgentReceiptReading::from_value(receipt),
-        },
-        Err(reason) => AgentStatusAttemptReceipt::Unavailable {
+    if let Err(reason) = validate_issued_receipt_evidence(root, manifest, receipt, &verify_bytes) {
+        return AgentStatusAttemptReceipt::Unavailable {
             path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
             reason,
-        },
+        };
+    }
+    // Opportunistic canonical admission, shared with the retained loader:
+    // when the named snapshots are present, the workflow verify document
+    // must be their canonical render, defeating never-promoted and jointly
+    // rewritten projections. A historical pair (snapshots gone) or an
+    // unknown HEAD keeps the validator-only reading.
+    if let CanonicalAdmission::Refused { reason } =
+        canonically_admit_terminal_pair(root, &verify_bytes)
+    {
+        return AgentStatusAttemptReceipt::Unavailable {
+            path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
+            reason,
+        };
+    }
+    AgentStatusAttemptReceipt::Issued {
+        path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+        reading: AgentReceiptReading::from_value(receipt),
     }
 }
 
