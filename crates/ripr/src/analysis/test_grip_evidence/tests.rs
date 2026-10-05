@@ -17048,3 +17048,39 @@ mod tests {
     }
     Ok(())
 }
+
+#[test]
+fn given_crate_root_owner_when_grip_associates_then_only_its_own_inline_tests_relate()
+-> Result<(), String> {
+    // #5395: a crate root has no module stem, so `lib.rs` must not pair
+    // with another crate's `lib.rs` by name, yet its own inline tests
+    // still relate by exact path. Test bodies stay free of owner
+    // identifiers so SameTestFile is the only reason that can fire.
+    let own_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                       { if amount >= threshold { amount - 10 } else { amount } }\n\
+                   #[cfg(test)] mod tests { #[test] fn own_smoke() { assert_eq!(1, 1); } }\n";
+    let other_src = "#[cfg(test)] mod tests { #[test] fn other_smoke() { assert_eq!(2, 2); } }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("crates/a/src/lib.rs"), own_src),
+        (PathBuf::from("crates/b/src/lib.rs"), other_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("crates/a/src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["own_smoke"] {
+        return Err(format!(
+            "expected only own_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
+    Ok(())
+}

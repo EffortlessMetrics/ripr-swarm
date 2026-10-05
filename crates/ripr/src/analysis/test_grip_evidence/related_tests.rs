@@ -53,6 +53,9 @@ pub(super) struct OwnerContext {
     name: String,
     name_lower: String,
     file_stem: String,
+    /// Set only when the owner file has no module stem (a crate root), so
+    /// its inline tests still relate by exact path (#5395).
+    crate_root_file: Option<String>,
     module_path: Option<String>,
     prefix: Option<String>,
     fixture_names: Arc<BTreeSet<String>>,
@@ -69,6 +72,11 @@ impl OwnerContext {
         // Module identity, as in the finding-level relation (#5395):
         // `serialize/mod.rs` is `serialize`, and a crate root has none.
         let file_stem = owner_file.and_then(module_stem).unwrap_or_default();
+        let crate_root_file = if file_stem.is_empty() {
+            owner_file.and_then(context::crate_root_file_key)
+        } else {
+            None
+        };
         let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
@@ -80,6 +88,7 @@ impl OwnerContext {
             name,
             name_lower,
             file_stem,
+            crate_root_file,
             module_path,
             prefix,
             fixture_names,
@@ -372,6 +381,19 @@ pub(super) fn match_same_test_file(
     owner: &OwnerContext,
 ) {
     if owner.file_stem.is_empty() {
+        let indices = owner
+            .crate_root_file
+            .as_ref()
+            .and_then(|path| context.tests_by_crate_root_file.get(path));
+        for test_index in indices.into_iter().flatten() {
+            insert_related_candidate(
+                candidates,
+                context,
+                prefix,
+                *test_index,
+                RelationReason::SameTestFile,
+            );
+        }
         return;
     }
     let stems = [
