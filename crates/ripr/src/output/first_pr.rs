@@ -3302,11 +3302,16 @@ mod tests {
         );
         // Issue #3872: the redirect target anchors at the resolved --root, so
         // the expectation builds the same anchored path instead of pinning a
-        // machine directory.
+        // machine directory. The producer binds `options.command_root()`, not
+        // the renderer's `.` (#6842), so the expectation binds it too.
+        let command_root = options.command_root();
         let expected_regeneration = format!(
             "ripr check --root {} --mode instant --format repo-exposure-json > {}",
-            shell_arg(&crate::agent::loop_commands::bound_root(".")),
-            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+            shell_arg(&crate::agent::loop_commands::root_display(&command_root)),
+            shell_arg(&anchored_redirect_target(
+                &command_root,
+                DEFAULT_REPO_EXPOSURE
+            ))
         );
         assert!(
             packet["selected"]["regeneration_command"]
@@ -3412,10 +3417,16 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "repo_exposure");
+        // The producer binds `options.command_root()`, not the renderer's
+        // `.` (#6842), so the expectation binds it too.
+        let command_root = options.command_root();
         let expected_regeneration = format!(
             "ripr check --root {} --mode instant --format repo-exposure-json > {}",
-            shell_arg(&crate::agent::loop_commands::bound_root(".")),
-            shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE))
+            shell_arg(&crate::agent::loop_commands::root_display(&command_root)),
+            shell_arg(&anchored_redirect_target(
+                &command_root,
+                DEFAULT_REPO_EXPOSURE
+            ))
         );
         assert!(
             packet["selected"]["regeneration_command"]
@@ -3674,20 +3685,18 @@ mod tests {
             .as_str()
             .ok_or_else(|| "selected regeneration command missing".to_string())?;
         // Issue #3872: both the redirect target and the paired --check-output
-        // read name the same anchored file.
-        let bound = bound_arg(".");
-        let anchored_check = shell_arg(&anchored_redirect_target(".", DEFAULT_CHECK_OUTPUT));
+        // read name the same anchored file. The producer binds
+        // `options.command_root()`, not the renderer's `.` (#6842).
+        let bound = shell_arg(&options.command_root());
+        let anchored_check = options.anchored_arg(DEFAULT_CHECK_OUTPUT);
         assert!(command.contains(&format!(
             "ripr check --root {bound} --base origin/main --json > {anchored_check}"
         )));
         // #4287: the ledger outputs anchor at --root as well.
         assert!(command.contains(&format!(
             "ripr reports gap-ledger --check-output {anchored_check} --root {bound} --out {} --out-md {}",
-            shell_arg(&anchored_redirect_target(".", DEFAULT_GAP_LEDGER)),
-            shell_arg(&anchored_redirect_target(
-                ".",
-                &with_extension(DEFAULT_GAP_LEDGER, "md")
-            ))
+            options.anchored_arg(DEFAULT_GAP_LEDGER),
+            options.anchored_arg(&with_extension(DEFAULT_GAP_LEDGER, "md"))
         )));
         assert!(!command.contains("--repo-exposure"));
         assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
@@ -4600,7 +4609,8 @@ mod tests {
                 "records": []
             }),
         )?;
-        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        let options = FirstPrOptions::default();
+        let packet = render_start_here_packet(&repo, &options);
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
@@ -4617,9 +4627,14 @@ mod tests {
             .unwrap_or_default();
         let (input, ledger) = next.split_once(" && ").unwrap_or_default();
         // #4287: both halves bind the same root, so `--root` never stays
-        // `.` beside anchored paths.
-        let exposure = anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE);
-        let bound = bound_arg(".");
+        // `.` beside anchored paths. The producer binds
+        // `options.command_root()`, not the renderer's `.` (#6842).
+        let command_root = options.command_root();
+        let exposure = shell_arg(&anchored_redirect_target(
+            &command_root,
+            DEFAULT_REPO_EXPOSURE,
+        ));
+        let bound = shell_arg(&command_root);
         assert!(
             input
                 == format!(
@@ -4633,8 +4648,8 @@ mod tests {
             ledger
                 == format!(
                     "ripr reports gap-ledger --root {bound} --repo-exposure {exposure} --out {} --out-md {}",
-                    anchored_redirect_target(".", DEFAULT_GAP_LEDGER),
-                    anchored_redirect_target(".", &with_extension(DEFAULT_GAP_LEDGER, "md"))
+                    options.anchored_arg(DEFAULT_GAP_LEDGER),
+                    options.anchored_arg(&with_extension(DEFAULT_GAP_LEDGER, "md"))
                 ),
             "{next}"
         );
@@ -5234,10 +5249,13 @@ mod tests {
             }
             report
         };
+        // The producer binds `options.command_root()`, not the renderer's
+        // `.` (#6842), so the expectation binds it too.
+        let options = FirstPrOptions::default();
         let seam_route = format!(
             "ripr review-comments --root {} --base origin/main --head HEAD --out {}",
-            bound_arg("."),
-            shell_arg(&anchored_redirect_target(".", DEFAULT_REVIEW_COMMENTS))
+            shell_arg(&options.command_root()),
+            options.anchored_arg(DEFAULT_REVIEW_COMMENTS)
         );
         for (name, report, state, needle) in [
             (
@@ -6050,16 +6068,15 @@ mod tests {
         // and redirects to a file literally named `=threshold` (PR #3625
         // review round 3, coderabbit).
         // Issue #3872: the packet redirect anchors at the resolved --root.
+        // The producer binds `options.command_root()`, not the renderer's
+        // `.` (#6842), so the expectation binds it too.
         assert_eq!(
             packet["selected"]["agent_packet_command"],
             format!(
                 "ripr agent packet --root {} --gap-ledger {} --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > {}",
-                bound_arg("."),
-                shell_arg(&anchored_redirect_target(".", DEFAULT_GAP_LEDGER)),
-                shell_arg(&anchored_redirect_target(
-                    ".",
-                    "target/ripr/workflow/agent-packet.json"
-                ))
+                shell_arg(&options.command_root()),
+                options.anchored_arg(DEFAULT_GAP_LEDGER),
+                options.anchored_arg("target/ripr/workflow/agent-packet.json")
             )
         );
         let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";

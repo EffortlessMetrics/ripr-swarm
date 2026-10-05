@@ -112,11 +112,18 @@ pub(crate) fn root_display(root: &str) -> String {
 /// A pasted funnel command reproduces the validated write location from any
 /// working directory under both shells and both .NET/provider resolution rules. An
 /// already absolute target passes through (lexically cleaned); a relative target
-/// joins [`bound_root`].
+/// joins [`bound_root`] when the root is absolute. A relative root (including
+/// `.`) analyzes the paste directory, so its redirect stays relative and
+/// follows it: absolutizing here would embed the rendering working directory
+/// and name a different repository whenever guidance renders away from the
+/// selected root (#6842).
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     let out = Path::new(out_path);
     if out.is_absolute() {
         return root_path_display(&lexically_clean(out));
+    }
+    if !Path::new(root).is_absolute() {
+        return display_path(&lexically_clean(out));
     }
     // The root keeps its native characters (#4287); only the root-relative
     // remainder is rendered with stable separators.
@@ -485,25 +492,26 @@ mod tests {
     }
 
     /// Render the expected redirect target for a `--root .` tail: the anchor
-    /// rule resolves through the renderer working directory, so expectations
-    /// build the same absolute path dynamically instead of pinning a machine
-    /// directory (issue #3872).
+    /// rule keeps a relative root's redirect relative to the paste directory
+    /// (#6842), so expectations name the tail verbatim.
     fn anchored_expectation(tail: &str) -> String {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        shell_arg(&display_path(&cwd.join(tail)))
+        shell_arg(&display_path(Path::new(tail)))
     }
 
     #[test]
     fn anchored_redirect_target_roots_relative_outputs_at_root() {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let base = display_path(&cwd);
+        // #6842: a relative `--root` analyzes the paste directory, so its
+        // redirect stays relative and follows it instead of embedding the
+        // rendering working directory.
         assert_eq!(
             anchored_redirect_target(".", "target/ripr/workflow/before.repo-exposure.json"),
-            format!("{base}/target/ripr/workflow/before.repo-exposure.json")
+            "target/ripr/workflow/before.repo-exposure.json"
         );
         assert_eq!(
             anchored_redirect_target("repo root", "target/ripr/work flow/before.json"),
-            format!("{base}/repo root/target/ripr/work flow/before.json")
+            "target/ripr/work flow/before.json"
         );
         let absolute_root = display_path(&cwd.join("workspace-root"));
         assert_eq!(
@@ -513,7 +521,7 @@ mod tests {
         let absolute_out = format!("{base}/elsewhere/out.json");
         assert_eq!(anchored_redirect_target(".", &absolute_out), absolute_out);
         assert!(
-            !anchored_redirect_target(".", "target/out.json").contains("/./"),
+            !anchored_redirect_target(&absolute_root, "target/out.json").contains("/./"),
             "anchored target must not carry a `/./` segment"
         );
         // Review #3938: a leading `..` on a relative path survives
@@ -527,8 +535,12 @@ mod tests {
             cwd.join("b")
         );
         assert!(
-            Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),
-            "anchored target must be absolute"
+            Path::new(&anchored_redirect_target(&absolute_root, "target/out.json")).is_absolute(),
+            "anchored target under an absolute root must be absolute"
+        );
+        assert!(
+            Path::new(&anchored_redirect_target(".", "target/out.json")).is_relative(),
+            "redirect under a relative root must stay relative to the paste directory"
         );
     }
 
@@ -754,14 +766,11 @@ mod tests {
             agent_start_command("repo root", "seam a", "target/ripr/work flow"),
             "ripr agent start --root 'repo root' --seam-id 'seam a' --out 'target/ripr/work flow'"
         );
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let rooted = |tail: &str| shell_arg(&display_path(&cwd.join("repo root").join(tail)));
+        // #6842: a relative root's redirect stays relative to the paste
+        // directory instead of embedding the rendering working directory.
         assert_eq!(
             check_repo_exposure_command("repo root", "draft", "target/ripr/work flow/before.json"),
-            format!(
-                "ripr check --root 'repo root' --mode draft --format repo-exposure-json > {}",
-                rooted("target/ripr/work flow/before.json")
-            )
+            "ripr check --root 'repo root' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
         );
         assert_eq!(
             check_repo_exposure_command_with_base(
@@ -770,10 +779,7 @@ mod tests {
                 "draft",
                 "target/ripr/work flow/before.json",
             ),
-            format!(
-                "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > {}",
-                rooted("target/ripr/work flow/before.json")
-            )
+            "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
         );
         assert_eq!(
             agent_verify_command(
@@ -782,10 +788,7 @@ mod tests {
                 "target/ripr/work flow/after.json",
                 Some("target/ripr/work flow/verify.json"),
             ),
-            format!(
-                "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > {}",
-                rooted("target/ripr/work flow/verify.json")
-            )
+            "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > 'target/ripr/work flow/verify.json'"
         );
         assert_eq!(
             agent_receipt_command(

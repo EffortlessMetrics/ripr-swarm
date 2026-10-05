@@ -1502,10 +1502,18 @@ mod tests {
             return Err(format!("unexpected anchored check-output spec: {spec:?}"));
         }
 
-        // An input or output outside the selected root fails closed.
+        // An input or output outside the selected root fails closed. The
+        // outside display is absolute: relative roots keep their redirects
+        // paste-relative (#6842), so only an absolute spelling can name
+        // outside from a `.` root.
+        let outside_root = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("../ripr-outside-root");
         let outside = shell_arg(&anchored_redirect_target(
-            "../ripr-outside-root",
-            "target/ripr/reports/gap-decision-ledger.json",
+            ".",
+            &outside_root
+                .join("target/ripr/reports/gap-decision-ledger.json")
+                .to_string_lossy(),
         ));
         for display in [
             repo_exposure.replacen(

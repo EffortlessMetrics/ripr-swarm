@@ -7063,8 +7063,12 @@ fn agent_loop_command_payloads_stay_root_anchored_for_platform_roots() -> Result
     // the bound absolute root and target (never a machine directory
     // literally: both build from the same resolution rule).
     let workspace = snapshot.root.to_string_lossy().into_owned();
-    let root = shell_arg(&bound_root(&workspace));
-    let anchored = |tail: &str| shell_arg(&anchored_redirect_target(&workspace, tail));
+    // The producer binds the snapshot root before building (#4001), so the
+    // expectation binds the same root: a relative root's redirect stays
+    // paste-relative (#6842).
+    let bound = bound_root(&workspace);
+    let root = shell_arg(&bound);
+    let anchored = |tail: &str| shell_arg(&anchored_redirect_target(&bound, tail));
     let commands = code_action_commands(&actions)?;
     let expected_commands = [
         (

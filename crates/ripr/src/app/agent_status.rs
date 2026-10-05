@@ -4524,9 +4524,15 @@ mod tests {
         // Issue #3872: the redirect anchors at the resolved root, so the
         // quoted expectation names the anchored absolute target: the quoting
         // under test is the single-quote shell encoding around both values.
-        let command = agent_packet_command("repo root", "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT);
+        // A relative root's redirect stays paste-relative (#6842), so the
+        // spaced root binds absolute first; production callers bind before
+        // building (`command_for_missing_artifact`).
+        let root = bound_root("repo root");
+        let command = agent_packet_command(&root, "seam-a", WORKFLOW_AGENT_PACKET_ARTIFACT);
         assert!(
-            command.starts_with("ripr agent packet --root 'repo root' --seam-id seam-a --json > '"),
+            command.starts_with(&format!(
+                "ripr agent packet --root '{root}' --seam-id seam-a --json > '"
+            )),
             "root and target must stay single-quoted: {command}"
         );
         assert!(

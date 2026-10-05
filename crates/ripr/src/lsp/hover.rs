@@ -1806,9 +1806,13 @@ mod seam_hover_tests {
         // workspace root — `--root` and the redirect target alike — never
         // the language-server process working directory.
         let workspace = snapshot.root.to_string_lossy();
-        let root = loop_commands::shell_arg(&loop_commands::bound_root(&workspace));
+        // The producer binds the snapshot root before building (#4001), so
+        // the expectation binds the same root: a relative root's redirect
+        // stays paste-relative (#6842).
+        let bound = loop_commands::bound_root(&workspace);
+        let root = loop_commands::shell_arg(&bound);
         let anchored = |tail: &str| {
-            loop_commands::shell_arg(&loop_commands::anchored_redirect_target(&workspace, tail))
+            loop_commands::shell_arg(&loop_commands::anchored_redirect_target(&bound, tail))
         };
         for needle in [
             "## Handoff, verify, and receipt commands".to_string(),

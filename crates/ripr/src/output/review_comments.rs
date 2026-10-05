@@ -2438,8 +2438,11 @@ mod tests {
             .pointer("/comments/0/llm_guidance/verify_command")
             .and_then(Value::as_str)
             .ok_or("exact-line card omitted its verify command")?;
+        // #6842: the card is a portable `.`-rooted record, so its redirect
+        // resolves under the invocation root instead of embedding the
+        // rendering working directory.
         if project_cwd_text(verify)
-            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json"
+            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
         {
             return Err(format!(
                 "exact-line card must persist root-anchored verification: {verify}"

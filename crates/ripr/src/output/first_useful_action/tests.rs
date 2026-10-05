@@ -116,10 +116,14 @@ fn first_useful_action_actionable_commands_write_every_file_the_receipt_reads() 
             .map(|(_, target)| target.to_string())
     };
     let verify = commands.verify.as_deref().ok_or("verify command missing")?;
+    // The producer binds the input root before building, so the expectation
+    // binds the same root: a relative root's redirect stays paste-relative
+    // (#6842).
+    let bound = crate::agent::loop_commands::bound_root(root);
     assert_eq!(
         redirect_target(verify),
         Some(crate::agent::loop_commands::anchored_redirect_target(
-            root,
+            &bound,
             verify_json
         )),
         "verify must write the file the receipt reads: {verify}"
@@ -131,7 +135,7 @@ fn first_useful_action_actionable_commands_write_every_file_the_receipt_reads() 
     assert_eq!(
         redirect_target(outcome),
         Some(crate::agent::loop_commands::anchored_redirect_target(
-            root,
+            &bound,
             &outcome_path
         )),
         "analysis outcome must land beside the verify file: {outcome}"
