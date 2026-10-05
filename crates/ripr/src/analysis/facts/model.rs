@@ -1947,9 +1947,9 @@ mod tests {
         Ok(())
     }
 
-    /// #5415 step 3: file-level calls duplicate every per-function call
-    /// (sorted and deduped), costing a full extra copy in memory and in
-    /// cache JSON. The stored copy must go; per-function calls stay.
+    /// #5415 step 3: file-level calls are derived from per-function calls,
+    /// never stored — a stored copy would duplicate every per-function
+    /// call in memory and in cache JSON. Per-function calls stay.
     #[test]
     fn file_level_calls_are_not_stored_in_cache_json() -> Result<(), serde_json::Error> {
         let source: Arc<str> = Arc::from("fn a() {\n    helper();\n}\n");
@@ -1967,7 +1967,7 @@ mod tests {
                 start_line: 1,
                 end_line: 3,
                 body: SourceText::shared_or_owned(&source, 0, "fn a() {\n    helper();\n}"),
-                calls: vec![call.clone()],
+                calls: vec![call],
                 returns: Vec::new(),
                 literals: Vec::new(),
                 source_role: FunctionSourceRole::Production,
