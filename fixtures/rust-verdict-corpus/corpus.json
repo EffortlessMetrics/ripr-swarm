@@ -12085,7 +12085,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "production_debug_assert_as_only_oracle",
-      "hard_case": "The test asserts only the output length. The production debug_assert! on the index is the sole oracle: under the debug test profile a wider mask trips it. rust-base64, url and bytes carry dozens of such debug_asserts on decode paths.",
+      "hard_case": "The test asserts only the output length. The production debug_assert! on the index is the sole oracle: under the debug test profile a wider mask trips it. rust-base64 and url keep such debug_asserts on their decode paths.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -12114,7 +12114,7 @@
           "silent"
         ]
       },
-      "reasoning": "encode_runs_over_every_byte feeds 8 and 255, so either mutant makes the production debug_assert! panic in the debug test profile; the length assert alone would not notice.",
+      "reasoning": "encode_runs_over_every_byte feeds 8 and 255, so either mutant makes the production debug_assert! panic in the debug test profile; the length assert alone would not notice. The label depends on debug assertions being on: under `cargo test --release` both mutants pass.",
       "labeling_observation": {
         "ripr_commit": "f46c5e5",
         "full_checkout_verdict": "limited",
@@ -12285,7 +12285,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value",
       "test_shape": "trait_impl_reached_through_blanket_impl",
-      "hard_case": "The owner is impl Render for f64, and the test calls to_text() from a blanket impl<T: Render> ToText for T. toml_writer formats floats this way; on the real crate ripr reported no_static_path for the f64 impl. Here ripr sees no test calling render.",
+      "hard_case": "The owner is impl Render for f64, and the test calls to_text() from a blanket impl<T: Render> ToText for T. toml_writer formats floats this way; in a mining run on the real crate, ripr reported no_static_path for the f64 impl. Here ripr sees no test calling render.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -12346,13 +12346,13 @@
             "replacement": "        \"gopher\" => Some(71),",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: gopher's default port changes"
+            "equivalence_review": "not equivalent: gopher's default port changes to 71, which matches the table's own gopher row, so only the skip hides it"
           },
           {
             "replacement": "        \"gopher\" => Some(0),",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: gopher's default port changes"
+            "equivalence_review": "not equivalent: gopher has no default port"
           }
         ]
       },
@@ -12384,7 +12384,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "match_arm",
       "test_shape": "table_harness_row_not_allowlisted",
-      "hard_case": "Twin of mined-allowlisted-row-gopher: the same table loop, but ftp is not on the allowlist, so its row is asserted. rust-url's ftp default-port edit fails both the unit test and the WPT harness.",
+      "hard_case": "Twin of mined-allowlisted-row-gopher: the same table loop, but ftp is not on the allowlist, so its row is asserted. In a mining run, rust-url's ftp default-port edit failed both its unit test and its WPT harness.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",

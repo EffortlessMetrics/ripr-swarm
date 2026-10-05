@@ -240,6 +240,18 @@ the distinct codes seen in that case's run.
   only test masks twice and checks the payload comes back, which holds for
   every key, so the truth is `not_discriminated` and ripr's `static_unknown`
   scores `abstained`.
+- authored `mined-debug-assert-only-oracle` (`b & 0x07` rewritten as
+  `b % 8`): the test asserts only the output length, and the production
+  `debug_assert!` on the index is what fails under both mutants, so the truth
+  is `discriminated` under the debug test profile and does not hold under
+  `--release`. ripr's `static_unknown` scores `abstained`.
+- authored `mined-one-line-struct-literal-field` (`version: 1` rewritten as
+  `version: 0x1` inside `Id { counter: .., version: .. }` on one line): the
+  accessor assert pins the edited field, and ripr's field-construction
+  finding asks for a pin of the unedited `counter`, scoring
+  `false_actionable`. Its twin `mined-multi-line-struct-literal-field` makes
+  the same edit with one field per line and reads `exposed`, so the verdict
+  depends on formatting (#6731).
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
   `no_static_path` while naming related tests, recorded as
   `no_static_path_with_related_tests`. semver `op()` at 1.0.23
