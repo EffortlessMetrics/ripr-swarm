@@ -7400,28 +7400,36 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     assert_failure(&after_a);
     let (_, manifest_a) = sole_repair_attempt(&root)?;
     assert_eq!(manifest_a["state"], "failed", "{manifest_a}");
-    // The refused after phase still published its verify document; keep it
-    // for the receipt reruns below.
-    std::fs::rename(
-        root.join("target/ripr/workflow/agent-verify.json"),
-        root.join("target/ripr/workflow/agent-verify-a.json"),
-    )?;
-
-    // With exactly one attempt for the seam — the failed one — the bare
-    // receipt refuses, and the refusal uses the serialized vocabulary the
-    // manifest and verdict carry: `failed`/`violated`, not Debug spellings.
-    let not_ready = receipt_with_attempt(&root, None, "target/ripr/workflow/agent-verify-a.json")?;
-    assert_failure(&not_ready);
-    let stderr = String::from_utf8_lossy(&not_ready.stderr);
+    // #6033: the refused after phase withdraws the shared workflow artifacts
+    // it wrote, so none of them survives beside the terminal attempt.
+    for artifact in [
+        "target/ripr/workflow/agent-verify.json",
+        "target/ripr/workflow/after.repo-exposure.json",
+        "target/ripr/workflow/analysis-outcome.json",
+    ] {
+        assert!(
+            !root.join(artifact).exists(),
+            "a refused after phase must withdraw {artifact}"
+        );
+    }
+    // The refused phase's typed stdout envelope carries the same serialized
+    // vocabulary the manifest and verdict carry — `failed`/`violated`, not
+    // Debug spellings — so the not-receipt-ready refusal is pinned in-band
+    // even though no receipt document can exist for this attempt.
+    let refusal_envelope: serde_json::Value = serde_json::from_slice(&after_a.stdout)?;
+    assert_eq!(refusal_envelope["kind"], "repair_after_failure");
+    assert_eq!(refusal_envelope["attempt_id"], attempt_a);
+    assert_eq!(refusal_envelope["attempt_state"], "failed");
+    assert_eq!(refusal_envelope["edit_cage_verdict"], "violated");
+    let envelope_error = refusal_envelope["error"]
+        .as_str()
+        .ok_or("failure envelope carries the terse error")?;
+    assert!(envelope_error.contains(&format!(
+        "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
+    )), "the envelope must carry the serialized refusal vocabulary: {envelope_error}");
     assert!(
-        stderr.contains(&format!(
-            "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
-        )),
-        "the receipt-ready refusal must use the serialized vocabulary:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("state Failed") && !stderr.contains("verdict Violated"),
-        "the refusal must not leak Debug spellings:\n{stderr}"
+        !envelope_error.contains("state Failed") && !envelope_error.contains("verdict Violated"),
+        "the envelope must not leak Debug spellings: {envelope_error}"
     );
 
     // Attempt B: fresh, prepared after A's committed edit, finished cleanly.
