@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod macro_boundary;
 mod tuple_match;
 
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
@@ -229,6 +230,11 @@ impl ClassifiedProbeEvidence {
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
+        // #6614: an exact pin whose only route to the changed return value
+        // is a macro argument leaves propagation unresolved, not a gap.
+        let propagate =
+            macro_boundary::propagation(context, &propagate, &discriminate, &assertion_admitted)
+                .unwrap_or(propagate);
 
         let ripr = RiprEvidence {
             reach: reach.clone(),
