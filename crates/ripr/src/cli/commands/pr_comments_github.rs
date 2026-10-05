@@ -175,6 +175,7 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     let plan = read_json(&options.root.join(&options.plan), REQUESTS)?;
     let planned = publish_requests(&plan, &options.pull_request, &options.head_sha);
 
+    refuse_linked_out_dir(&options.root, &options.out_dir)?;
     let out_dir = options.root.join(&options.out_dir);
     // Stale request files from an earlier run must never be replayed. Only
     // files this command writes are removed, so a mistyped --out-dir cannot
@@ -230,6 +231,45 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The lexical check in the parser keeps `--out-dir` under `--root` only if
+/// no existing component is a link: a symlink or junction there would send
+/// the cleanup and the writes outside the workspace, so refuse it.
+fn refuse_linked_out_dir(root: &Path, out_dir: &Path) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for part in out_dir.components() {
+        current.push(part);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(format!(
+                    "{REQUESTS} could not inspect {}: {err}",
+                    current.display()
+                ));
+            }
+        };
+        if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+            return Err(format!(
+                "{REQUESTS} --out-dir cannot pass through a link ({} is one); the run replaces request files there",
+                current.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
 /// `requests.tsv` or an `NN-method.json` request file.
 fn is_request_file(name: &str) -> bool {
     if name == REQUESTS_MANIFEST {
@@ -268,7 +308,7 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_request_file, parse_pr_comments_requests_options};
+    use super::{is_request_file, parse_pr_comments_requests_options, pr_comments_requests};
 
     #[test]
     fn only_request_files_are_cleared() {
@@ -319,5 +359,56 @@ mod tests {
         for escaping in ["/tmp/publish", "../sibling", "target/../..", ".", "a\tb"] {
             assert!(parse(escaping).is_err(), "{escaping} was accepted");
         }
+    }
+
+    /// A `publish` symlink to a directory outside --root is refused before
+    /// anything there is removed or written.
+    #[cfg(unix)]
+    #[test]
+    fn requests_refuse_an_out_dir_that_links_outside_the_root() -> Result<(), String> {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!(
+            "ripr-pr-comments-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let root = base.join("root");
+        let external = base.join("external");
+        let review = root.join("target/ripr/review");
+        fs::create_dir_all(&review).map_err(|err| err.to_string())?;
+        fs::create_dir_all(&external).map_err(|err| err.to_string())?;
+        fs::write(review.join("comment-publish-plan.json"), "{}").map_err(|err| err.to_string())?;
+        let sentinel = external.join("requests.tsv");
+        fs::write(&sentinel, "keep\n").map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&external, review.join("publish"))
+            .map_err(|err| err.to_string())?;
+
+        let args: Vec<String> = [
+            "--root",
+            &root.display().to_string(),
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let result = pr_comments_requests(&args);
+        let kept = fs::read_to_string(&sentinel).map_err(|err| err.to_string());
+        let entries = fs::read_dir(&external).map(Iterator::count);
+        let _ = fs::remove_dir_all(&base);
+
+        let err = match result {
+            Ok(()) => return Err("a linked --out-dir was accepted".to_string()),
+            Err(err) => err,
+        };
+        assert!(err.contains("cannot pass through a link"), "{err}");
+        assert_eq!(kept?, "keep\n");
+        assert_eq!(entries.map_err(|err| err.to_string())?, 1);
+        Ok(())
     }
 }
