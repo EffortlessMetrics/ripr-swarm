@@ -97,11 +97,12 @@ fn assertion_observes_boundary_owner_call(
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
     // only when the assertion text names the owner once, and only when
-    // each compared parameter is a literal or identifier. A compound
-    // compared argument can mint a false activation `==` fact from a
-    // buried scalar (#6668); named constants and helper hops keep
-    // identifier / literal compared arguments. An extra unrelated
-    // compound argument (`make_context()`) does not block that path.
+    // each compared parameter is a literal, identifier, or path. A
+    // compound compared argument can mint a false activation `==` fact
+    // from a buried scalar (#6668); named constants (`LIMIT`,
+    // `parcels::BULK_ITEMS`) and helper hops keep identifier / path /
+    // literal compared arguments. An extra unrelated compound argument
+    // (`make_context()`) does not block that path.
     lists.len() == 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
@@ -349,6 +350,17 @@ fn argument_is_direct_pairing_shape(argument: &str) -> bool {
         && (argument_is_plain_identifier(argument) || argument_is_whole_scalar_literal(argument))
 }
 
+/// Identifier or path (`LIMIT`, `parcels::BULK_ITEMS`) that may carry a
+/// named-constant infection `==` fact. Calls such as `std::cmp::max(10, 50)`
+/// are not paths.
+fn argument_is_activation_fallback_shape(argument: &str) -> bool {
+    argument_is_direct_pairing_shape(argument) || argument_is_path_identifier(argument)
+}
+
+fn argument_is_path_identifier(text: &str) -> bool {
+    text.contains("::") && text.split("::").all(argument_is_plain_identifier)
+}
+
 fn owner_call_arguments_admit_activation_fallback(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -378,7 +390,7 @@ fn owner_call_arguments_admit_activation_fallback(
     indices.iter().all(|&idx| {
         arguments
             .get(idx)
-            .is_some_and(|argument| argument_is_direct_pairing_shape(argument.trim()))
+            .is_some_and(|argument| argument_is_activation_fallback_shape(argument.trim()))
     })
 }
 
@@ -789,6 +801,64 @@ mod tests {
     }
 
     #[test]
+    fn path_qualified_named_constant_activation_equality_pairs() {
+        let probe = predicate_probe("items >= BULK_ITEMS");
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::bulk_rate".to_string()),
+            name: "bulk_rate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 6,
+            body:
+                "pub fn bulk_rate(items: u32) -> u32 { if items >= BULK_ITEMS { 90 } else { 100 } }"
+                    .to_string(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
+        };
+        let paired = test_summary(
+            "bulk_rate_boundary",
+            "assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);",
+            vec![call(
+                "bulk_rate",
+                "assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);",
+            )],
+            vec![exact("assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);")],
+            &["90"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90); | argument names constant BULK_ITEMS"
+                    .to_string(),
+                value: "items == BULK_ITEMS".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&paired], &activation),
+            "bulk_rate(parcels::BULK_ITEMS) must pair when infection recorded items == BULK_ITEMS"
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&paired],
+                &ActivationEvidence::default(),
+            ),
+            "parcels::BULK_ITEMS must not pair from the path spelling alone"
+        );
+    }
+
+    #[test]
     fn named_constant_pairs_despite_compound_unrelated_argument() {
         let probe = predicate_probe("input >= 10");
         let owner = FunctionSummary {
@@ -1176,6 +1246,16 @@ mod tests {
             pairing_argument_values(&local, "LIMIT").is_empty(),
             "an unresolved name is not a pairing argument; infection == facts cover named constants"
         );
+        assert!(
+            pairing_argument_values(&local, "parcels::BULK_ITEMS").is_empty(),
+            "a path-qualified constant is not a pairing argument value; infection == facts cover it"
+        );
+        assert!(argument_is_path_identifier("parcels::BULK_ITEMS"));
+        assert!(argument_is_activation_fallback_shape("parcels::BULK_ITEMS"));
+        assert!(!argument_is_path_identifier("std::cmp::max(10, 50)"));
+        assert!(!argument_is_activation_fallback_shape(
+            "std::cmp::max(10, 50)"
+        ));
     }
 
     #[test]

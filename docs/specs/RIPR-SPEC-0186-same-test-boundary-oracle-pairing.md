@@ -131,6 +131,8 @@ relation are out of scope.
   infection `==` fact, when the predicate is classified, then it pairs.
   `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
   also pairs: the extra compound argument is not the compared parameter.
+  `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
+  also pairs: a path-qualified constant is still the named boundary.
 
 ## Test Mapping
 
