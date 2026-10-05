@@ -1862,14 +1862,24 @@ fn first_err_return_argument_open(body: &str) -> Option<usize> {
         .then_some(masked.len() - arguments.len())
 }
 
+/// The Err constructor must be the entire returned expression. Recovery
+/// chains such as `Err(()).or(Ok(()))` return success and cannot establish an
+/// assertion twin. Trivia may precede the statement or guard terminator.
+fn terminal_err_return_end(body: &str) -> Option<usize> {
+    let open = first_err_return_argument_open(body)?;
+    let arguments = delimited_contents_at(body, open)?;
+    let end = open + arguments.len() + 2;
+    let masked = mask_comments_and_strings(body);
+    matches!(masked[end..].trim_start().chars().next(), Some(';' | '}')).then_some(end)
+}
+
 /// Keep source after the recognized header row's first Err-return expression.
 /// The shared delimiter helper masks trivia and strings, so payload text cannot
 /// move the suffix. Body and post-guard observers retain their actual text.
 fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
     let body = statement[brace + 1..].lines().next()?;
-    let open = first_err_return_argument_open(body)?;
-    let arguments = delimited_contents_at(body, open)?;
-    let tail = body.get(open + arguments.len() + 2..)?;
+    let end = terminal_err_return_end(body)?;
+    let tail = body.get(end..)?;
     Some(
         tail.trim_start_matches(|character: char| {
             character.is_whitespace() || matches!(character, ';' | '}')
@@ -1939,9 +1949,10 @@ where
 /// other condition returns `None` — exactness is never inferred from
 /// messages or names.
 ///
-/// Two fail-closed gates: the Err return must be the guard body's first
+/// Fail-closed gates: the Err return must be the guard body's first
 /// statement (actual `return Err(` tokens - a commented-out
-/// or string-embedded `return Err(` never credits), and the condition
+/// or string-embedded `return Err(` never credits), its constructor must be
+/// the complete returned expression, and the condition
 /// must not carry a top-level `&&`/`||` (a compound's correct negation is
 /// not a single assert twin, so it stays unrecognized rather than
 /// mis-twinned).
@@ -1949,8 +1960,7 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
     let brace = terminal_guard_body_open(line).ok()??;
     let condition = line[..brace].trim().strip_prefix("if")?.trim();
     let body = &line[brace + 1..];
-    let open = first_err_return_argument_open(body)?;
-    delimited_contents_at(body, open)?;
+    terminal_err_return_end(body)?;
     if condition.is_empty() || has_top_level_boolean_operator(condition) {
         return None;
     }
@@ -4185,6 +4195,49 @@ mod err_guard_parity_tests {
         let ordinary_call = "if !matches!(value, 2) { returnErr(()); }";
         assert!(err_return_guard_assertion(ordinary_call).is_none());
         assert!(terminal_err_return_guard_oracle(ordinary_call, 6).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_err_return_is_not_a_failure_oracle() -> Result<(), String> {
+        let recovered_body = |value: i32| -> Result<(), ()> {
+            if !matches!(value, 2) {
+                return Err(()).or(Ok(()));
+            }
+            Ok(())
+        };
+        // Execute the actual Rust recovery operation before asking the source
+        // recognizers: both original and wrong values succeed independently.
+        for value in [2, 3] {
+            if recovered_body(value).is_err() {
+                return Err(format!("recovered Err unexpectedly failed for {value}"));
+            }
+        }
+        for statement in [
+            "if !matches!(value, 2) { return Err(()).or(Ok(())); }",
+            "if !matches!(value, 2) { return Err(()).or(Ok(())) }",
+        ] {
+            assert!(
+                err_return_guard_assertion(statement).is_none(),
+                "{statement}"
+            );
+            assert!(
+                terminal_err_return_guard_oracle(statement, 6).is_none(),
+                "{statement}"
+            );
+            assert!(extract_assertions(statement, 6).is_empty(), "{statement}");
+        }
+        // The new expression boundary still permits a genuine terminal return
+        // with either Rust terminator, including comments before that token.
+        for statement in [
+            "if !matches!(value, 2) { return Err(()) /* failure */; }",
+            "if !matches!(value, 2) { return Err(()) /* failure */ }",
+        ] {
+            let fact = terminal_err_return_guard_oracle(statement, 6)
+                .ok_or("genuine terminal Err rejected")?;
+            assert_eq!(fact.kind, OracleKind::ExactValue, "{statement}");
+            assert_eq!(fact.strength, OracleStrength::Strong, "{statement}");
+        }
         Ok(())
     }
 

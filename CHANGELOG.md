@@ -76,7 +76,8 @@ are scoped or reviewed.
   #5410. Consumed multiline lexical and inline Trial Err guards retain their
   assertion twins, with condition ownership and sibling coordinates preserved.
   Balanced groups retain quoted/struct/block operands and a body opener on a
-  later row; quoted return text cannot manufacture a guard's assertion twin.
+  later row; quoted return text and recovered Err expressions cannot
+  manufacture a guard's assertion twin.
   File-fact generation 1.24 and classified generations 1.35/0.41 invalidate
   favorable or guard-blind predecessor facts
   (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
