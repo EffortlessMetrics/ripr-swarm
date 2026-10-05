@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Changed
 
+- Predicate same-test pairing no longer treats a boundary literal buried
+  inside an argument expression as a boundary input. `gate(if false { 10 }
+  else { 50 })` and `gate(std::cmp::max(10, 50))` fall back to
+  `same_test_pairing_missing`; a plain literal, a local bound to it, or an
+  infection `==` fact still pairs, including `gate(LIMIT, make_context())`
+  when infection recorded the named constant and
+  `bulk_rate(parcels::BULK_ITEMS)` when the argument is a path-qualified
+  constant (#6668).
+
 - CI: ub-review selects RIPR's companion configuration and Rust repository
   identity, and requests resolved-candidate receipts under the same PR-specific
   artifact name used for upload. Review remains advisory; artifact retrieval
@@ -61,26 +70,29 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Rust match arms: ripr now reads which arm a related test's owner call
-  selects, from the input it passes at the `match` scrutinee (`self` or a
-  named parameter), as RIPR-SPEC-0229 specifies. A call that selects the
-  changed arm inside an exact assertion confirms it, so glob-imported
-  variants (`LowerCase =>`), `Option`/`Result` constructors and integer or
-  string literal arms can read `exposed`. On the verdict corpus's upstream
-  cases both serde_derive rename cases move from false gaps to credited
-  (false actionable 10/20 to 8/20, false exposed and false silent unchanged
-  at 0/14). When every related test calls the owner with an input that
-  provably selects another arm, by first match and including `_` arms, the
-  finding names the changed arm as its missing discriminator (`None` for
-  `reason(Some(5))`) and infection reads weak. That named arm is what the
-  unknown-not-a-gap rule (#5416) needs to keep `match_arm_blind` and four
-  other sibling-arm fixtures as gaps (#5432). Once the scrutinee is a direct
-  owner input, selection alone confirms the arm, so a sibling variant on an
-  assertion's expected side no longer reads `exposed`. The arm is left
-  unjudged, neither named nor credited, when the test reaches the owner
-  through a helper, a closure of the same name or a foreign import, when
-  the match may be skipped, when the diff changed the arm's pattern (credit
-  only), or for guards, ranges, tuples and refutable payloads.
+- `ripr swarm ingest` no longer fails the packet's forbidden-edit guard open
+  on path spellings. `SRC/PRICING.py`, absolute or verbatim `\\?\` paths
+  under the root, symlinked-root spellings, drive-relative forms, and
+  `..` segments canonicalize before the comparison — directly named absolute
+  or drive-prefixed entries resolve against the filesystem when they exist,
+  root-relative entries that name an existing file resolve against the
+  selected root (so a symlinked spelling anchors to the file it writes
+  through), and everything else matches lexically case-insensitively — so a
+  forbidden production edit can no longer classify `closed`/`resolved`.
+  Entries that do not resolve inside the root surface as
+  `evidence.edited_files_outside_root` instead of passing silently
+  (#5984). The OUTPUT_SCHEMA ingest example now shows the pinned
+  `forbidden_edit` reason token the binary emits instead of prose (#5986).
+- `ripr swarm queue` no longer emits a runnable refresh route a check-output
+  gap ledger cannot replay. The route carries the typed
+  `refresh_replayable: false` state with an empty `refresh_commands` array —
+  check output records no `--diff` scope, so the old command silently
+  rebuilt the ledger at a different scope inside Git and truncated the
+  recorded check output through its own redirect outside Git — and the
+  blocked reason names the manual rerun-with-same-`--diff` route.
+  `refresh_replayable` is `true` only for producer-validated repo-exposure
+  sources; records and unidentified kinds keep their repo-exposure recovery
+  commands but no longer advertise them as a replay (#5985).
 - Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
   JSON through the same product importer as `ripr calibrate cargo-mutants`.
   A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
@@ -201,6 +213,12 @@ are scoped or reviewed.
   toolchain step) instead of a bare `cargo: command not found`. When ripr was
   never installed, the advisory summary says so and points at that step's log
   instead of rendering nothing.
+- `ripr zero status` no longer reports `achieved` from a content-free or
+  partial baseline debt delta. Missing or partial counts, items that
+  contradict zero counts, and partial-scope, findings-bounded, or otherwise
+  incomplete producer runs now report `unknown` (or keep `not_yet` when
+  visible debt remains) with the reason carried in warnings, and a failed
+  gate decision blocks every readiness promotion (#5251).
 
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
@@ -293,6 +311,14 @@ are scoped or reviewed.
   this verdict" section: each examined test with the assertion it was judged
   by, what a test would need to change the verdict, and what each stop reason
   means (#5356). No verdict changes.
+- MCP: transport protocol errors (oversize frame, undecodable request) now
+  carry an explicit `"id": null` per JSON-RPC instead of omitting the id;
+  `ripr_workspace_status` goes through the shared response bound with a
+  typed `result_too_large` refusal; the writer backstop admits
+  exactly-at-bound frames like the semantic layers; the refresh
+  limitations text no longer claims a cancelled attempt is never
+  committed; and superseded-attempt tombstones are capped so long
+  sessions stay bounded (#5254 items 2, 3, 4, 5, 7).
 - LSP: `ripr lsp` exits 2 when the `exit` notification arrives without a
   prior `shutdown` request, per LSP §exit. `shutdown` then `exit` still
   exits 0, as do stdin EOF and malformed-frame termination (#5249).
@@ -509,6 +535,16 @@ are scoped or reviewed.
   invented. `ripr check` prints the command under "Write a test for it:"
   for Rust predicate, return-value, error-path and match-arm gaps, and
   unsupported shapes refuse with a typed reason (#5355, #5357).
+- Integration-file stubs from `ripr agent stub --write` keep a crate-root
+  `pub const` comparison as a derived input, rebase `crate::` parameter
+  types to the library crate name, and compile under the printed
+  `cargo test --manifest-path … --test <stem>` command until they stop at
+  the labelled `ripr:` todo. Crate-root `pub const` items are matched from
+  the clean parse, not brace counting, so nested-module constants stay
+  fill-ins even when a string or comment holds `}`. Private, `pub(crate)`,
+  `#[cfg(test)]`, and other cfg-gated constants stay fill-ins because
+  feature and target activation is not established statically; `self::`
+  and `super::` parameter paths still refuse (#5453).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
