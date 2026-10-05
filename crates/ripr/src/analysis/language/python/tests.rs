@@ -4608,6 +4608,110 @@ fn analyze_diff_discloses_per_file_read_cap() -> Result<(), String> {
     Ok(())
 }
 
+/// #6824: a syntax error in a changed file must surface as a named typed
+/// `producer_failure` on the PR-local diff path — the same shape the Rust
+/// twin emits for its unparseable files — never as a silent, limitations-
+/// empty candidate zero. Before the fix the typed
+/// `source_fact_parse_error` row reached repo mode only and was dropped
+/// here.
+#[test]
+fn changed_file_syntax_error_is_a_named_producer_failure_not_a_zero() -> Result<(), String> {
+    let root = unique_test_root("diff-syntax-error");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // The changed file is present but unparseable: the normal mid-edit
+    // state for a coding agent (`>` mutation plus an appended broken def).
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n\ndef broken(:\n",
+    )?;
+    write_repo_file(&root.join("helper.py"), "def helper():\n    return 1\n")?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount >= threshold:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > threshold:".to_string(),
+            new_side_line: 2,
+        }],
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        generous_walk_limits(),
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly one producer failure expected, got {}: {:?}",
+            result.limitations.len(),
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::ProducerFailure);
+    assert_eq!(limitation.producer_stage, AnalysisStage::LanguageAdapter);
+    assert_eq!(limitation.path.as_deref(), Some("pricing.py"));
+    assert_eq!(limitation.affected_items, Some(1));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("pricing.py") && detail.contains("syntax error"),
+        "detail must name the unparseable file: {detail}"
+    );
+    assert_eq!(
+        limitation.recovery.kind,
+        AnalysisRecoveryKind::InspectFailure
+    );
+    assert!(
+        limitation
+            .recovery
+            .detail
+            .contains("Fix the file so it parses as Python"),
+        "recovery must name the fix-then-rerun action: {:?}",
+        limitation.recovery.detail
+    );
+    // The healthy sibling file is still analyzed normally.
+    assert_eq!(result.changed_files, 1);
+    Ok(())
+}
+
+/// Control for #6824: a nesting-budget refusal keeps its single typed
+/// `language_scope_unsupported` promotion and must not gain a second
+/// `producer_failure` row from the same failed parse.
+#[test]
+fn budget_refusal_does_not_duplicate_a_producer_failure() -> Result<(), String> {
+    let root = unique_test_root("diff-budget-no-duplicate");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let mut deep = String::from("value = ");
+    deep.push_str(&"(".repeat(20_000));
+    deep.push('1');
+    deep.push_str(&")".repeat(20_000));
+    deep.push('\n');
+    write_repo_file(&root.join("deep.py"), &deep)?;
+    let options = repo_options(&root);
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly one budget limitation expected, got {}: {:?}",
+            result.limitations.len(),
+            result.limitations
+        ));
+    };
+    assert_eq!(
+        limitation.kind,
+        AnalysisLimitationKind::LanguageScopeUnsupported
+    );
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("parse_budget"),
+        "budget refusal must keep its own shape: {detail}"
+    );
+    Ok(())
+}
+
 /// #5022: when the read caps refuse more files than the disclosure sample
 /// cap, the limitation count stays bounded (a stable-sorted sample plus one
 /// summary entry) while the summary preserves the true refused count —
