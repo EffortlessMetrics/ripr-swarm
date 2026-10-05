@@ -291,3 +291,19 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending - #5713 reviewed discarded-matcher calibration
+
+Reason:
+Reject the discarded theme_summary matches result as an oracle: its two wrapper findings become reachable_unrevealed with unknown/none metadata and the retained no_assertion consumer. Genuine typed/downcast asserting witnesses retain their credit or bounded wrapper limitation. Optional wrapper fields are absent for unrevealed findings; preserve secondary unresolved-binding missing text.
+
+Producer:
+Hosted required run37242804945 at613e800282fbf542435831660e4d23a8fa3a4b5a; immutable artifact11318434713, ZIP SHA2562353af6f2a55a514024683d93fb53d474228bd537e71a77bcd57898400b7b4a7.
+
+Transfer:
+Exact guarded producer-byte replacement after complete semantic review. No local build, rerun, normalization, or blanket blessing.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
