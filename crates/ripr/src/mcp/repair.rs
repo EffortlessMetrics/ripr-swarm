@@ -2145,10 +2145,15 @@ mod tests {
         result.and(cleanup)
     }
 
-    /// Repair-6/7 MCP parity: a jointly rewritten pair with present
-    /// snapshots reads non-improved over MCP (`invalid`) as well as CLI.
+    /// Repair-6/7 MCP parity: a never-promoted jointly rewritten
+    /// projection with present snapshots reads non-improved over MCP
+    /// while CLI reads it unconfirmed. Retained reads are validator-only
+    /// by design; admission is enforced at the promotion boundary. The
+    /// lineage commit below advances HEAD past the evidence head, so MCP
+    /// degrades the pending base to `stale`; the never-`improved` pin is
+    /// the security property either way.
     #[test]
-    fn mcp_joint_forgery_with_present_snapshots_is_invalid() -> Result<(), String> {
+    fn mcp_joint_forgery_with_present_snapshots_is_stale() -> Result<(), String> {
         use crate::testing::fixture_git::fixture_git_ok;
         use crate::testing::verify_fixture::{
             mint_bound_receipt, mint_canonical_verify, mint_repo_exposure_snapshot, snapshot_seam,
@@ -2180,21 +2185,12 @@ mod tests {
             let verify_bytes = verify.into_bytes();
             let digest = format!("sha256:{}", sha256_hex(&verify_bytes));
             let receipt_bytes = mint_bound_receipt(&finished, "unchanged", &digest)?;
-            let retained = retain_forgery_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
             // Joint rewrite: the verify seam change and every receipt verdict
-            // field move to improved together, with the digest and both
-            // manifest entries rebound.
-            let retained_verify = root.join(
-                &find_terminal_artifact_by_role(
-                    &retained,
-                    crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
-                )
-                .ok_or_else(|| "retained pair has no agent_verify".to_string())?
-                .path,
-            );
-            let raw_verify = std::fs::read(&retained_verify).map_err(|error| error.to_string())?;
+            // field move to improved together, with the digest rebound. The
+            // attempt stays unretained: the forged projection lands in the
+            // compatibility files as a never-promoted pending pair.
             let mut forged_verify: Value =
-                serde_json::from_slice(&raw_verify).map_err(|error| error.to_string())?;
+                serde_json::from_slice(&verify_bytes).map_err(|error| error.to_string())?;
             let unchanged = forged_verify["unchanged_seams"]
                 .as_array_mut()
                 .ok_or("retained verify lost unchanged_seams")?
@@ -2211,24 +2207,8 @@ mod tests {
             let mut forged_verify_bytes =
                 serde_json::to_vec_pretty(&forged_verify).map_err(|error| error.to_string())?;
             forged_verify_bytes.push(b'\n');
-            let rebound_verify = rebind_forgery_artifact(
-                &root,
-                &retained,
-                crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
-                &forged_verify_bytes,
-            )?;
-            let retained_receipt = root.join(
-                &find_terminal_artifact_by_role(
-                    &rebound_verify,
-                    crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
-                )
-                .ok_or_else(|| "retained pair has no agent_receipt".to_string())?
-                .path,
-            );
-            let raw_receipt =
-                std::fs::read(&retained_receipt).map_err(|error| error.to_string())?;
             let mut forged_receipt: Value =
-                serde_json::from_slice(&raw_receipt).map_err(|error| error.to_string())?;
+                serde_json::from_slice(&receipt_bytes).map_err(|error| error.to_string())?;
             forged_receipt["seam"]["change"] = Value::String("improved".to_string());
             forged_receipt["provenance"]["movement"] = Value::String("improved".to_string());
             forged_receipt["summary"]["receipt_state"] =
@@ -2240,13 +2220,15 @@ mod tests {
             let mut forged_receipt_bytes =
                 serde_json::to_vec_pretty(&forged_receipt).map_err(|error| error.to_string())?;
             forged_receipt_bytes.push(b'\n');
-            let forged_manifest = rebind_forgery_artifact(
-                &root,
-                &rebound_verify,
-                crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+            write_receipt_fixture(
+                &root.join("target/ripr/reports/agent-receipt.json"),
                 &forged_receipt_bytes,
             )?;
-            let id = forged_manifest.repair_attempt_id.as_str();
+            write_receipt_fixture(
+                &root.join("target/ripr/workflow/agent-verify.json"),
+                &forged_verify_bytes,
+            )?;
+            let id = finished.repair_attempt_id.as_str();
             let cli = forgery_cli_disposition(&root, id)?;
             if cli != "unconfirmed" {
                 return Err(format!(
@@ -2257,10 +2239,8 @@ mod tests {
             if mcp == "improved" {
                 return Err("joint forgery must never claim improvement over MCP".to_string());
             }
-            if mcp != "invalid" {
-                return Err(format!(
-                    "joint forgery must read invalid over MCP, got {mcp}"
-                ));
+            if mcp != "stale" {
+                return Err(format!("joint forgery must read stale over MCP, got {mcp}"));
             }
             Ok(())
         })();

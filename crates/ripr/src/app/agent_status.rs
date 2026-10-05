@@ -536,11 +536,15 @@ fn legacy_workflow_attempt_receipt(
             reason,
         };
     }
-    // Opportunistic canonical admission, shared with the retained loader:
-    // when the named snapshots are present, the workflow verify document
-    // must be their canonical render, defeating never-promoted and jointly
-    // rewritten projections. A historical pair (snapshots gone) or an
-    // unknown HEAD keeps the validator-only reading.
+    // Canonical admission for a never-promoted projection: the pair's
+    // basis is live by construction (it was just minted from these
+    // snapshots or hand-shaped against them), so when the named snapshots
+    // are present the workflow verify document must be their canonical
+    // render. This defeats never-promoted and jointly rewritten
+    // projections at the compatibility fallback. A historical pair
+    // (snapshots gone) or an unknown HEAD keeps the validator-only
+    // reading. Retained pairs are NOT re-admitted here: their basis is
+    // historical and the live snapshots legitimately advance (#5256).
     if let CanonicalAdmission::Refused { reason } =
         canonically_admit_terminal_pair(root, &verify_bytes)
     {

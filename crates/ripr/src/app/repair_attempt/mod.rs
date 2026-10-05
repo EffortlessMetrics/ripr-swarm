@@ -1295,20 +1295,15 @@ fn read_bound_terminal_receipt(
             artifact.path
         )
     })?;
-    // Opportunistic canonical admission (#5256 review): when the named
-    // snapshots are present, the verify document must be their canonical
-    // render, defeating never-promoted and jointly rewritten pairs. A
-    // historical pair (snapshots gone) or an unknown HEAD keeps the
-    // validator-only reading.
-    match canonically_admit_terminal_pair(root, verify_bytes) {
-        CanonicalAdmission::Admitted | CanonicalAdmission::Unavailable { .. } => {}
-        CanonicalAdmission::Refused { reason } => {
-            return Err(format!(
-                "repair attempt terminal receipt {} fails canonical admission: {reason}",
-                artifact.path
-            ));
-        }
-    }
+    // No canonical admission here: a retained pair claims a historical
+    // basis, while admission re-renders from the live shared snapshots,
+    // which a later attempt legitimately advances. Comparing the two
+    // false-refuses an honest earlier attempt after a later finish (the
+    // live basis is no longer this pair's basis). Canonical admission is
+    // enforced where the pair's basis is live by construction: pending
+    // promotion and the never-promoted legacy fallback. A pair admitted
+    // at promotion keeps its validator-only reading here, and retained
+    // storage stays trusted under the manifest digest model (#5256).
     Ok((artifact.path.clone(), value))
 }
 
@@ -5945,11 +5940,15 @@ mod tests {
         Ok(())
     }
 
-    /// #5256 review R6+R7: a joint rewrite of the retained verify document
-    /// (seam change) and receipt (verdict fields), with the receipt's verify
-    /// digest and both manifest entries rebound, passes digest-plus-verdict
-    /// validation — but the rewritten verify is not the canonical render of
-    /// the still-present snapshots, so canonical admission must refuse it.
+    /// #5256 review R6+R7: a joint rewrite of the verify document (seam
+    /// change) and receipt (verdict fields), with the receipt's verify
+    /// digest rebound, passes digest-plus-verdict validation — but the
+    /// rewritten verify is not the canonical render of the still-present
+    /// snapshots, so pending promotion must refuse it and readers must
+    /// stay unconfirmed. Retained reads are validator-only by design: a
+    /// retained pair claims a historical basis the live snapshots
+    /// legitimately advance past, so admission is enforced at the
+    /// promotion boundary, not at retained read.
     #[test]
     fn terminal_pair_joint_forgery_with_present_snapshots_is_refused() -> Result<(), String> {
         let root = test_repo_root("joint-forgery")?;
@@ -5992,12 +5991,10 @@ mod tests {
         let verify_bytes = verify.into_bytes();
         let receipt_bytes =
             mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&verify_bytes))?;
-        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
-        // Positive control: the honest canonical pair is admitted.
-        match load_attempt_terminal_receipt(&root, &retained) {
-            AttemptTerminalReceipt::Issued { .. } => {}
-            other => return Err(format!("honest pair must read issued, got {other:?}")),
-        }
+        // Positive control: the honest canonical pair is admitted. The
+        // attempt stays unretained so the forged projection below can drive
+        // pending promotion (promotion is a no-op once terminal artifacts
+        // exist, which would make the refusal assertion vacuous).
         match canonically_admit_terminal_pair(&root, &verify_bytes) {
             CanonicalAdmission::Admitted => {}
             other => return Err(format!("honest pair must be admitted, got {other:?}")),
@@ -6006,15 +6003,10 @@ mod tests {
         // field move to improved together, with the digest and both manifest
         // entries rebound. Digest-plus-verdict validation passes by
         // construction; only canonical admission can refuse it.
-        let retained_verify_path = root.join(
-            &find_terminal_artifact_by_role(&retained, TERMINAL_VERIFY_ROLE)
-                .ok_or("retained pair has no agent_verify")?
-                .path,
-        );
-        let raw_verify = std::fs::read(&retained_verify_path)
-            .map_err(|error| format!("read retained verify failed: {error}"))?;
-        let mut forged_verify: serde_json::Value = serde_json::from_slice(&raw_verify)
-            .map_err(|error| format!("parse retained verify failed: {error}"))?;
+        // The joint rewrite lands as a never-promoted pending projection
+        // in the compatibility files, not as retained bytes.
+        let mut forged_verify: serde_json::Value = serde_json::from_slice(&verify_bytes)
+            .map_err(|error| format!("parse honest verify failed: {error}"))?;
         let unchanged = forged_verify["unchanged_seams"]
             .as_array_mut()
             .ok_or("retained verify lost unchanged_seams")?
@@ -6032,22 +6024,8 @@ mod tests {
         let mut forged_verify_bytes = serde_json::to_vec_pretty(&forged_verify)
             .map_err(|error| format!("serialize forged verify failed: {error}"))?;
         forged_verify_bytes.push(b'\n');
-        let rebound_verify = rewrite_retained_terminal_artifact(
-            &root,
-            &retained,
-            TERMINAL_VERIFY_ROLE,
-            &forged_verify_bytes,
-        )?;
-        let raw_receipt = std::fs::read(
-            root.join(
-                &find_terminal_artifact_by_role(&rebound_verify, TERMINAL_RECEIPT_ROLE)
-                    .ok_or("retained pair has no agent_receipt")?
-                    .path,
-            ),
-        )
-        .map_err(|error| format!("read retained receipt failed: {error}"))?;
-        let mut forged_receipt: serde_json::Value = serde_json::from_slice(&raw_receipt)
-            .map_err(|error| format!("parse retained receipt failed: {error}"))?;
+        let mut forged_receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse honest receipt failed: {error}"))?;
         forged_receipt["seam"]["change"] = serde_json::Value::String("improved".to_string());
         forged_receipt["provenance"]["movement"] =
             serde_json::Value::String("improved".to_string());
@@ -6060,23 +6038,13 @@ mod tests {
         let mut forged_receipt_bytes = serde_json::to_vec_pretty(&forged_receipt)
             .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
         forged_receipt_bytes.push(b'\n');
-        let forged_manifest = rewrite_retained_terminal_artifact(
-            &root,
-            &rebound_verify,
-            TERMINAL_RECEIPT_ROLE,
-            &forged_receipt_bytes,
-        )?;
         // The validator alone passes: prove the joint rewrite is consistent.
         let forged_value: serde_json::Value = serde_json::from_slice(&forged_receipt_bytes)
             .map_err(|error| format!("parse forged receipt failed: {error}"))?;
-        validate_issued_receipt_evidence(
-            &root,
-            &forged_manifest,
-            &forged_value,
-            &forged_verify_bytes,
-        )
-        .map_err(|error| format!("joint forgery must pass the validator: {error}"))?;
-        // ...but canonical admission refuses it, so readers stay unconfirmed.
+        validate_issued_receipt_evidence(&root, &finished, &forged_value, &forged_verify_bytes)
+            .map_err(|error| format!("joint forgery must pass the validator: {error}"))?;
+        // ...but canonical admission refuses it, so pending promotion must
+        // refuse it and readers stay unconfirmed.
         match canonically_admit_terminal_pair(&root, &forged_verify_bytes) {
             CanonicalAdmission::Refused { .. } => {}
             other => {
@@ -6085,17 +6053,25 @@ mod tests {
                 ));
             }
         }
-        match load_attempt_terminal_receipt(&root, &forged_manifest) {
-            AttemptTerminalReceipt::Unavailable { reason, .. }
-                if reason.contains("fails canonical admission") => {}
-            other => {
-                return Err(format!(
-                    "a jointly forged pair must fail canonical admission, got {other:?}"
-                ));
-            }
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &forged_receipt_bytes)
+            .map_err(|error| format!("write forged receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &forged_verify_bytes,
+        )
+        .map_err(|error| format!("write forged verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a jointly forged projection must not complete retention".to_string());
+        }
+        let manifest = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        if !manifest.terminal_artifacts.is_empty() {
+            return Err("a refused projection must leave terminal_artifacts empty".to_string());
         }
         let (disposition, warned) =
-            cli_disposition_for(&root, forged_manifest.repair_attempt_id.as_str())?;
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
         if disposition == "finished" {
             return Err("a jointly forged pair must never report finished".to_string());
         }
@@ -6106,6 +6082,83 @@ mod tests {
         }
         if !warned {
             return Err("a jointly forged pair must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 CI regression: a retained honest pair keeps its reading after
+    /// a later attempt advances the live shared snapshots. Canonical
+    /// admission is enforced at promotion, never at retained read, so the
+    /// earlier attempt still reports its retained outcome once its
+    /// historical basis is no longer live.
+    #[test]
+    fn retained_honest_pair_survives_later_snapshot_advance() -> Result<(), String> {
+        let root = test_repo_root("retained-advance")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "advance")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_bytes = verify.into_bytes();
+        let receipt_bytes =
+            mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&verify_bytes))?;
+        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => return Err(format!("honest pair must read issued, got {other:?}")),
+        }
+        let (first_disposition, _) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        // A later attempt advances the live shared after snapshot. The
+        // retained pair's basis is historical; the advance must not
+        // un-issue it.
+        let advanced = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "strongly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, advanced.as_bytes())
+            .map_err(|error| format!("advance {} failed: {error}", after_path.display()))?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => {
+                return Err(format!(
+                    "honest pair must stay issued after the snapshots advance, got {other:?}"
+                ));
+            }
+        }
+        let (later_disposition, _) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if later_disposition != first_disposition {
+            return Err(format!(
+                "honest pair must keep disposition {first_disposition} after the snapshots advance, got {later_disposition}"
+            ));
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
