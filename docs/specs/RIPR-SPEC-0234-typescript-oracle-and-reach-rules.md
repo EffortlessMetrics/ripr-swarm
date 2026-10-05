@@ -230,7 +230,11 @@ whole text is `Error` reads `broad_error` / weak, because every thrown
 error is an `Error`. Only bare `Error` changes: `globalThis.Error` already
 reads `broad_error` under the uppercase-first gate, and other PascalCase
 class paths (`TypeError`, `Errors.ParseError`) keep RIPR-SPEC-0097's
-reading.
+reading only when the class is part of the change: the payload's last
+segment must be a changed token of the changed line. On a change that
+leaves the thrown class alone, such as a message-only change, a class
+payload reads `broad_error` / weak, because it passes on both versions.
+A string or object payload is unaffected.
 
 ### Other assertion tables
 
@@ -438,8 +442,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    (`missing_import_graph` alone).
 6. **`toThrow(Error)` (D5).** Adopted: rule 4. RIPR-SPEC-0097 is amended.
    Rejected: drop class payloads entirely, because a specific class does
-   pin the thrown type. A class-only payload on a message-only change
-   stays an open over-credit, filed below with expected-value liveness.
+   pin the thrown type. Rule 4 also closes the class-only payload on a
+   change that leaves the class alone: the class must be a changed token,
+   so a message-only change no longer credits `toThrow(TypeError)`.
+   Rejected: keep it strong, which credits a payload that passes on both
+   versions.
 7. **Jest `.not`.** Adopted: rule 2, mirroring chai `.not` and AVA `t.not`.
    Rejected: keep `.not` unrecognised, which mislabels `expect` as a
    helper.
@@ -533,8 +540,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
 13. Same change; `expect(() => parse("")).toThrow(Error)`: `broad_error` /
     weak, `weakly_exposed` (today `exact_error_variant` / strong,
     `exposed`). `toThrow(globalThis.Error)`: `broad_error` / weak
-    (unchanged). `toThrow(TypeError)`: `exact_error_variant` / strong
-    (unchanged).
+    (unchanged). `toThrow(TypeError)`: `broad_error` / weak (today
+    `exact_error_variant` / strong): `TypeError` is not a changed token.
+    With the change instead from `throw new Error("empty")` to
+    `throw new TypeError("empty")`, `toThrow(TypeError)`:
+    `exact_error_variant` / strong, `exposed` (unchanged).
 14. Same change; `expect(() => parse("")).to.throw("blank")` with chai
     `expect`: `broad_error` / weak, `weakly_exposed` (unchanged).
 15. Base change; only `expect(() => price(150)).toThrow("bad")`: class

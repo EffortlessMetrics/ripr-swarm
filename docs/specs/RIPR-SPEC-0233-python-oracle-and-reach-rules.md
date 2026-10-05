@@ -196,7 +196,8 @@ table.
    empty or is one of `.*`, `.+`, `^`, `$`, `^.*$` or `(?s).*` assigns
    `broad_error` / weak. It pins only the exception class, as the call
    without the pattern does. A literal pattern containing an unescaped
-   `|` also assigns `broad_error` / weak, because an alternation can admit
+   `|` outside a character class (`[...]`) also assigns `broad_error` /
+   weak, because an alternation can admit
    both the old and the new message (`'empty|blank'`). A pattern that is
    not a literal keeps `exact_error_variant` / strong.
 3. **A fluent helper chain is a custom helper.** A call statement whose
@@ -540,7 +541,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Golden drift lists every Python finding whose class, relation or
   `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
   13, 14) and
-  credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13).
+  credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11, 13).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
 
