@@ -4983,7 +4983,7 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
-fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
+fn registered_negated_blocks_keep_twins_and_failure_macros_require_authority()
 -> Result<(), Box<dyn std::error::Error>> {
     for helper_callback in [false, true] {
         for (pattern, kind, strength) in [
@@ -4995,8 +4995,15 @@ fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
                 format!("if !{{ matches!(value, {pattern}) }} {{ return Err(\"bad\".into()); }}"),
                 format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
                 format!("if !matches!(value, {pattern}) {{ bail!(\"unresolved\"); }}"),
+                format!(
+                    "macro_rules! panic {{ ($message:expr) => {{{{ let _ = $message; }}}}; }} if !matches!(value, {pattern}) {{ panic!(\"diagnostic only\"); }}"
+                ),
+                format!(
+                    "macro_rules! bail {{ ($message:expr) => {{{{ let _ = $message; }}}}; }} if !matches!(value, {pattern}) {{ bail!(\"diagnostic only\"); }}"
+                ),
             ] {
-                let deferred_custom_macro = statement.contains("bail!");
+                let deferred_custom_macro =
+                    statement.contains("bail!") || statement.contains("panic!");
                 let root = temp_dir("terminal-block-and-failure")?;
                 let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
                 let source = registered_matcher_control_source(&statement, helper_callback);

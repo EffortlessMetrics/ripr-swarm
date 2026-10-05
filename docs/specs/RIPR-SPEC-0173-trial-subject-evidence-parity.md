@@ -111,18 +111,18 @@ widening directions, each fail-closed:
   groups, literals, identifiers, those keywords, and `.`/`::`
   connectors, and never reaches across a statement boundary.
 
-Inline terminal failure guards reuse SPEC0154's bounded assertion-twin grammar
+Inline terminal Err guards reuse SPEC0154's bounded assertion-twin grammar
 (#5713), including one-line and multiline negated matchers. Only the
 condition determines kind/strength; the failure-body Err constructor cannot
 turn a scalar value pin into an error-variant pin. Guard spans stay inside
 the claimed Trial, and body/sibling assertions retain their own coordinates.
 This adds no general control-flow or execution promise.
-The first failure statement may be a whole Err return or SPEC0154's narrowly
-supported `panic!(...)` invocation; unresolved custom `bail!` guards stay outside
-this bounded authority. Negated condition blocks and
-brace-delimited matcher inputs are balanced before selecting the actual body;
-the Trial closure remains the outer bound. Unknown wrapped discarded matchers
-cannot borrow a sibling observer through the lexical helper fallback.
+Negated condition blocks are balanced before selecting the actual body, with
+pure-block whole-wildcard twins retaining Weak grip. Wrapped discarded matcher
+statements cannot borrow sibling observers through helper fallback, and cloned
+collection preserves nonmatcher observer coordinates. Terminal panic/bail names
+supply no divergence authority; unresolved and local no-op/shadow controls retain
+only actual sibling observations. That macro capability remains a followup.
 
 Macro input is skipped wholesale for method and terminal-guard scanning
 (assertion macros still classify themselves), matching what parsed method-call nodes could

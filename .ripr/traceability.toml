@@ -9593,7 +9593,7 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonmatcher_blocks_keep_their_actual_observer_coordinates",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_cannot_borrow_sibling_observers",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_retain_actual_scrutinee_observers",
-  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_panic_matcher_guards_equal_their_assertion_twins",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_block_matcher_guards_equal_their_assertion_twins",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonfirst_quoted_and_recovered_failure_macros_cannot_pin_a_matcher",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::err_return_guard_is_an_oracle_equal_to_its_assert_twin",
@@ -10059,7 +10059,7 @@ id = "RIPR-SPEC-0173"
 name = "harness trial subject evidence parity"
 spec = "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md"
 tests = [
-  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_negated_blocks_keep_twins_and_failure_macros_require_authority",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed",

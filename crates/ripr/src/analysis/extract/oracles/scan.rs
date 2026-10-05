@@ -101,7 +101,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
     out
 }
 
-/// Scan a function body for bounded terminal failure guards and credit each
+/// Scan a function body for terminal Err-return guards and credit each
 /// as its assertion twin (#3284). Used by the ra parser path, whose
 /// assertion facts come from the AST — joining the guard block here
 /// cannot swallow sibling assertions.
@@ -1876,32 +1876,12 @@ fn terminal_err_return_end(body: &str) -> Option<usize> {
     matches!(masked[end..].trim_start().chars().next(), Some(';' | '}')).then_some(end)
 }
 
-/// Only a whole first failure statement participates in the assertion twin.
-/// Arbitrary body divergence would search past preceding inert statements.
-fn terminal_failure_statement(body: &str) -> Option<(usize, &'static str)> {
-    if let Some(end) = terminal_err_return_end(body) {
-        return Some((end, "return Err(..)"));
-    }
-    let masked = mask_comments_and_strings(body);
-    let first = masked.trim_start();
-    let arguments = first.strip_prefix("panic!")?.trim_start();
-    if !arguments.starts_with('(') {
-        return None;
-    }
-    let open = masked.len() - arguments.len();
-    let contents = delimited_contents_at(body, open)?;
-    let end = open + contents.len() + 2;
-    (invocation_covers_statement(masked[..end].trim(), "panic!")
-        && matches!(masked[end..].trim_start().chars().next(), Some(';' | '}')))
-    .then_some((end, "panic!(..)"))
-}
-
-/// Keep source after the recognized header row's first failure statement.
+/// Keep source after the recognized header row's first Err-return expression.
 /// The shared delimiter helper masks trivia and strings, so payload text cannot
 /// move the suffix. Body and post-guard observers retain their actual text.
 fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
     let body = statement[brace + 1..].lines().next()?;
-    let (end, _) = terminal_failure_statement(body)?;
+    let end = terminal_err_return_end(body)?;
     let tail = body.get(end..)?;
     Some(
         tail.trim_start_matches(|character: char| {
@@ -1912,7 +1892,7 @@ fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
 }
 
 /// Shared by lexical guards and traversed inline-trial guard spans. The
-/// actual first body statement must return Err or invoke panic!; only the assertion twin's
+/// actual first body statement must return Err; only the assertion twin's
 /// condition determines kind, strength and observed tokens.
 pub(crate) fn terminal_err_return_guard_oracle(
     statement: &str,
@@ -1924,13 +1904,12 @@ pub(crate) fn terminal_err_return_guard_oracle(
     if condition.is_empty() {
         return None;
     }
-    let (_, failure) = terminal_failure_statement(&statement[brace + 1..])?;
     let twin = err_return_guard_assertion(statement)?;
     let classification = classify_assertion(&twin);
     let observed_tokens = extract_identifier_tokens(condition);
     Some(OracleFact {
         line: line_number,
-        text: format!("if {condition} {{ {failure} }}"),
+        text: format!("if {condition} {{ return Err(..) }}"),
         kind: classification.kind,
         strength: classification.strength,
         observed_tokens,
@@ -1963,7 +1942,7 @@ where
     })
 }
 
-/// The assertion twin of a bounded terminal failure guard, when the guard's
+/// The assertion twin of a terminal Err-return guard, when the guard's
 /// condition can be structurally negated (#3284).
 ///
 /// `if <lhs> != <rhs> { return Err(...) }` is equivalent to
@@ -1972,8 +1951,8 @@ where
 /// other condition returns `None` — exactness is never inferred from
 /// messages or names.
 ///
-/// Fail-closed gates: a whole Err return or supported panic! invocation
-/// must be the guard body's first statement. Quoted/commented failure text,
+/// Fail-closed gates: a whole Err return must be the guard body's first
+/// statement. Macro names establish no divergence authority. Quoted/commented failure text,
 /// preceding statements and recovery expressions never credit. The condition
 /// must not carry a top-level `&&`/`||` (a compound's correct negation is
 /// not a single assert twin, so it stays unrecognized rather than
@@ -1982,7 +1961,7 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
     let brace = terminal_guard_body_open(line).ok()??;
     let condition = line[..brace].trim().strip_prefix("if")?.trim();
     let body = &line[brace + 1..];
-    terminal_failure_statement(body)?;
+    terminal_err_return_end(body)?;
     if condition.is_empty() || has_top_level_boolean_operator(condition) {
         return None;
     }

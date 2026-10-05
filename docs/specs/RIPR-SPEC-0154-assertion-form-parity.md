@@ -36,15 +36,6 @@ owner's source role.
   comes from that assertion operand, without importing the failure body's
   `Err` constructor or diagnostics. A discarded matcher computation has
   no twin and remains outside assertion admission (RIPR-SPEC-0001, #5713).
-- The same bounded twin admits a whole first `panic!(...)`
-  statement in the guard body (#5713). These conventional failure macros are
-  recognized only with parenthesized arguments and a statement/body terminator;
-  preceding statements, quoted/commented invocations and surrounding recovery
-  expressions are refused. An unresolved custom `bail!` name supplies no
-  divergence authority and remains a separately documented capability gap.
-  Classification and observed tokens come only from
-  the condition. This is a narrow extension of the Err-return grammar, without
-  general body-divergence analysis or macro expansion.
 - Repo-mode probe seeding filters shapes whose owning function carries
   the test/evidence role (`FunctionFact::source_role`, the typed
   function source role), mirroring the diff
@@ -84,20 +75,19 @@ owner's source role.
   routes (#5713). Named subjects and owner calls are required; condition
   continuation rows belong to the guard, while body and sibling assertions
   keep their distinct coordinates. Discarded computations stay non-crediting.
-- Negated block conditions retain their real inline guard boundary. Wrapped
-  discarded matcher statements cannot borrow sibling assertions; known pure
-  block wrappers retain actual scrutinee observers and their line padding.
-  Panic guards retain exact literal and weak wildcard twins, with
-  nonfirst, quoted and recovered invocation controls. Independent compiled
-  controls separate discarded booleans, consuming assertions and a locally
-  resolved bail macro; that declared runtime control does not grant admission
-  to an unresolved static macro name. Static recognition adds no runtime claim.
 - The repo-mode leak reproduction (cfg(test) helper shapes seeded repo
   probes on main; none after the owner filter) with the production
   shapes still seeding.
 - The `cfg(all(test, ..))` role pin with the `cfg(not(test))` control.
 - Existing exact-vs-broad oracle fixtures remain green (the classifier
   is unchanged for recognized forms).
+
+Negated block Err guards retain their real body boundary. Wrapped discarded
+matcher statements cannot borrow sibling assertions; known pure blocks retain
+actual scrutinee observers and coordinates. The shared classifier keeps a whole
+wildcard inside a pure block Weak. Cloned collection leaves nonmatcher blocks
+on their original row traversal. These controls, and explicit unresolved/no-op
+panic and bail refusals, are mapped in `.ripr/traceability.toml` (#5713).
 
 ## Required guards
 
@@ -130,14 +120,18 @@ leak + production control); `analysis/syntax/ra.rs`
 `cfg_all_test_tests` (role pin); fixtures `assertion_form_parity_*`.
 
 `analysis/extract/oracles/discarded_matches_tests.rs` pins lexical/parsed
-layout parity, wrapped-statement ownership, first failure macro refusal and
-independent runtime controls; `analysis/facts/harness_registry/tests.rs`
-pins inline/helper twins, negated block boundaries, discarded/opaque controls
-and inert macro input. The exact behavior test names are mapped in
-`.ripr/traceability.toml`.
+layout parity and condition ownership; `analysis/facts/harness_registry/tests.rs`
+pins inline/helper twins, discarded/opaque controls and inert macro input.
 
 ## Non-Goals
 
+- No expansion of terminal panic/bail macros in this bounded Err-return grammar.
+  Their names alone do not establish divergence: locally shadowed/no-op macros
+  can return success for a wrong value. Actual unshadowed macro authority is a
+  separate capability followup; authored compiled controls contrast consuming
+  assertions, a specifically declared diverging bail and same-name no-op bail. Static
+  controls also pin shadowed/no-op panic refusal.
+  These declarations grant no generic name-only oracle admission.
 - No recognition of `match`-arm Err returns in this spec's bounded twin
   grammar; the guarded Result match is a separate, owner-bound producer
   (RIPR-SPEC-0175, #3709), not an assertion twin.
