@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 154.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 210.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 51/154 | 0.3312 |
-| False actionable (of discriminated) | 45/76 | 0.5921 |
-| False exposed (of not fully discriminated) | 6/78 | 0.0769 |
-| False silent (of not fully discriminated) | 0/78 | 0.0000 |
-| Ideal verdict | 56/154 | 0.3636 |
-| Abstained (limited or silent where acceptable) | 47/154 | 0.3052 |
-| Findings with a contradiction | 2/205 | 0.0098 |
+| False verdicts (all cases) | 75/210 | 0.3571 |
+| False actionable (of discriminated) | 69/110 | 0.6273 |
+| False exposed (of not fully discriminated) | 6/100 | 0.0600 |
+| False silent (of not fully discriminated) | 0/100 | 0.0000 |
+| Ideal verdict | 74/210 | 0.3524 |
+| Abstained (limited or silent where acceptable) | 61/210 | 0.2905 |
+| Findings with a contradiction | 2/285 | 0.0070 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 120 | 41/120 | 35/56 | 6/64 | 0/64 | 51/120 | 28/120 |
+| authored | 176 | 65/176 | 59/90 | 6/86 | 0/86 | 69/176 | 42/176 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -168,6 +168,62 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-boundary-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-boundary-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-boundary-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-boundary-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-boundary-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-equality-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-equality-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-equality-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-equality-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-equality-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-arith-exact` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `grid-arith-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-arith-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-arith-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-arith-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-bool-exact` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-bool-table` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-bool-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-bool-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-bool-none` | authored | not_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | no | none |
+| `grid-returns-exact` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `grid-returns-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-returns-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-returns-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-returns-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-delete-exact` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-delete-table` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-delete-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-delete-helper` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-delete-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-match-exact` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `grid-match-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-match-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-match-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-match-guard` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
+| `grid-loop-exact` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-loop-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-loop-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-loop-helper` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `grid-loop-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `grid-early-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-early-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-early-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-early-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-early-none` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-try-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-try-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-try-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-try-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-iter-exact` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
+| `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `mined-doctest-only-read-u16` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `mined-doctest-ignored-read-u16-le` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `mined-bool-property-read-u32` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
