@@ -21,6 +21,7 @@ use super::{canonical_repository_root, normalize_repo_relative_path};
 pub(crate) use attempt::{
     InlineTargetCopies, InlineTestRegionBaseline, InlineTestRegionObservation,
     capture_attempt_inline_region, observe_attempt_inline_region, read_attempt_inline_target,
+    uncommitted_target_refusal,
 };
 #[cfg(test)]
 pub(crate) use validate::validate_inline_test_region_edit;

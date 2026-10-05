@@ -235,6 +235,9 @@ pub(crate) fn capture_attempt_baseline(
         // capture; the retained before text would not be the baseline's.
         baseline.ambiguous = true;
     }
+    if let Some(region) = &inline_test_region {
+        require_inline_target_at_head(&baseline, &region.path)?;
+    }
     baseline.inline_test_region = inline_test_region;
     Ok(baseline)
 }
@@ -287,6 +290,41 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// The confined selected target must match HEAD in both the worktree and
+/// the index. The region validator compares the after bytes with the captured
+/// before bytes, and the premise gate admits this path because it is the
+/// allowed surface, so an uncommitted production edit outside the module
+/// would otherwise become part of the "before" text and reach the receipt
+/// unseen (#6678 closed the same hole for test-surface targets).
+fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Result<(), String> {
+    let root = &baseline.root;
+    let committed = git_text(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{}:{path}", baseline.head),
+        ],
+    )
+    .ok()
+    .filter(|object| !object.is_empty());
+    let worktree = git_text(root, &["hash-object", "--", path]).ok();
+    let index = baseline
+        .index_entry(path)
+        .and_then(|entry| entry.split_ascii_whitespace().nth(1))
+        .map(str::to_string);
+    match committed {
+        Some(committed)
+            if worktree.as_deref() == Some(committed.as_str())
+                && index.as_deref() == Some(committed.as_str()) =>
+        {
+            Ok(())
+        }
+        _ => Err(inline_test_region::uncommitted_target_refusal(path)),
+    }
 }
 
 /// Observe the confined selected target: the worktree bytes go through the

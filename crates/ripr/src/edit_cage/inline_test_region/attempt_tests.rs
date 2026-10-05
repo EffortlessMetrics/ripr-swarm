@@ -404,3 +404,34 @@ fn a_configured_generated_target_cannot_be_captured() -> Result<(), String> {
     capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
     Ok(())
 }
+
+/// An uncommitted production edit present before the before phase would
+/// otherwise become part of the captured "before" text, so the after-phase
+/// validator and the receipt would never see it. Capture refuses a confined
+/// target whose worktree or index copy differs from HEAD; the clean capture
+/// in `inserting_a_test_function_into_the_governed_inline_module_is_compliant`
+/// is the control.
+#[test]
+fn a_production_edit_made_before_capture_is_refused() -> Result<(), String> {
+    let fixture = fixture("dirty-premise", LIB)?;
+    write_lib(&fixture, &LIB.replace("cents - 10", "cents - 9"))?;
+    let error = match capture_attempt_baseline(&fixture.root, &inline_policy()?) {
+        Ok(_) => return Err("a dirty production premise must not be captured".to_string()),
+        Err(error) => error,
+    };
+    assert!(error.contains("uncommitted changes"), "{error}");
+    assert!(error.contains("No attempt was created"), "{error}");
+
+    // Staged but not committed is refused the same way.
+    git_ok(&fixture.root, &["add", "src/lib.rs"])?;
+    let error = match capture_attempt_baseline(&fixture.root, &inline_policy()?) {
+        Ok(_) => return Err("a staged production premise must not be captured".to_string()),
+        Err(error) => error,
+    };
+    assert!(error.contains("uncommitted changes"), "{error}");
+
+    // Committing the change makes it the premise, and capture proceeds.
+    git_ok(&fixture.root, &["commit", "-qm", "premise"])?;
+    capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    Ok(())
+}

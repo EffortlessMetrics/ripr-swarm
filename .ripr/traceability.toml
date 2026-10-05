@@ -10391,6 +10391,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/edit_cage/inline_test_region/mod.rs",
+  "crates/ripr/src/edit_cage/inline_test_region/attempt.rs",
   "crates/ripr/src/edit_cage/inline_test_region/observe.rs",
   "crates/ripr/src/edit_cage/inline_test_region/validate.rs",
 ]

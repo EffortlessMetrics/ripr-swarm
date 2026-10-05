@@ -177,6 +177,14 @@ fn unique_governed_inline_module(source: &str) -> Result<String, &'static str> {
     }
 }
 
+/// Refusal for a selected inline target whose worktree or index copy differs
+/// from HEAD: the before text must be the committed file.
+pub(crate) fn uncommitted_target_refusal(relative_file: &str) -> String {
+    format!(
+        "selected edit target `{relative_file}` is a production file with uncommitted changes (worktree or index differs from HEAD); a repair confined to its inline `#[cfg(test)]` module starts only from the committed file. No attempt was created. Commit or stash the changes to `{relative_file}` and rerun the before phase"
+    )
+}
+
 fn refusal(relative_file: &str, reason: &str) -> String {
     format!(
         "selected edit target `{relative_file}` is a production file; a repair may edit it only inside exactly one existing inline `#[cfg(test)]` module, but {reason}. No attempt was created. Add the test in a `tests/` file instead, or give the file one inline `#[cfg(test)] mod tests {{ }}` and rerun the before phase"
