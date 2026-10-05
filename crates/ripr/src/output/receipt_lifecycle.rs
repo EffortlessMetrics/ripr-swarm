@@ -110,11 +110,12 @@ pub fn receipt_lifecycle_state_from_receipt_value(receipt: &Value) -> String {
     }
 
     // Canonical `ripr receipt write` artifacts (RIPR-SPEC-0079 schema 0.1)
-    // carry `kind`, `schema_version`, and `verify_status` instead of
-    // legacy `provenance.movement`. Parsing that shape proves presence;
-    // mapping it to RECEIPT_MISSING is a false negative, not #2404
-    // fail-closed conservatism. Absent or unrecognized movement still
-    // defaults to missing below.
+    // carry `kind`, `schema_version`, `verify_status`, and the other
+    // required writer fields instead of legacy `provenance.movement`.
+    // Parsing that complete shape proves presence; mapping it to
+    // RECEIPT_MISSING is a false negative, not #2404 fail-closed
+    // conservatism. Incomplete or unrecognized JSON still defaults to
+    // missing below.
     if canonical_receipt_write_presence(receipt) {
         return RECEIPT_FOUND.to_string();
     }
@@ -122,24 +123,28 @@ pub fn receipt_lifecycle_state_from_receipt_value(receipt: &Value) -> String {
     receipt_lifecycle_state_from_movement(None)
 }
 
-fn canonical_receipt_write_presence(receipt: &Value) -> bool {
-    let Some(kind) = receipt.get("kind").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(schema_version) = receipt.get("schema_version").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(verify_status) = receipt
-        .get("verify_status")
+fn nonempty_field<'a>(receipt: &'a Value, key: &str) -> Option<&'a str> {
+    receipt
+        .get(key)
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|status| !status.is_empty())
-    else {
-        return false;
-    };
-    kind == "receipt"
-        && schema_version == "0.1"
-        && matches!(verify_status, "passed" | "failed" | "not_run" | "unknown")
+        .filter(|value| !value.is_empty())
+}
+
+fn canonical_receipt_write_presence(receipt: &Value) -> bool {
+    // Mirror `app::receipt::validate_receipt_structure` required keys without
+    // depending on the app layer from output. Presence is not `receipt check`
+    // (no SHA/HEAD binding here); missing required writer fields stay missing.
+    receipt.get("kind").and_then(Value::as_str) == Some("receipt")
+        && receipt.get("schema_version").and_then(Value::as_str) == Some("0.1")
+        && receipt.get("tool").and_then(Value::as_str) == Some("ripr")
+        && nonempty_field(receipt, "canonical_gap_id").is_some()
+        && nonempty_field(receipt, "verify_command").is_some()
+        && matches!(
+            receipt.get("verify_status").and_then(Value::as_str),
+            Some("passed" | "failed" | "not_run" | "unknown")
+        )
+        && nonempty_field(receipt, "current_head").is_some()
+        && nonempty_field(receipt, "written_at").is_some()
 }
 
 pub fn receipt_lifecycle_state_is_present(state: &str) -> bool {
@@ -313,6 +318,68 @@ mod tests {
             })),
             RECEIPT_MISSING,
             "unrecognized verify_status must stay fail-closed"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "kind": "receipt",
+                "verify_status": "passed"
+            })),
+            RECEIPT_MISSING,
+            "kind/schema/status without writer required fields is not found"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:5a536229e5ed368b",
+                "verify_command": "cargo test large_order_gets_discount",
+                "verify_status": "passed",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "missing current_head is incomplete, not found"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "verify_command": "cargo test large_order_gets_discount",
+                "verify_status": "passed",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "missing canonical_gap_id is incomplete, not found"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:5a536229e5ed368b",
+                "verify_status": "passed",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "missing verify_command is incomplete, not found"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:5a536229e5ed368b",
+                "verify_command": "cargo test large_order_gets_discount",
+                "verify_status": " passed ",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "whitespace-padded verify_status is not a canonical token"
         );
     }
 }
