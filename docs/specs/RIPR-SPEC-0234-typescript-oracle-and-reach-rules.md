@@ -376,10 +376,13 @@ is appended to `missing` after the class is chosen. Actionability reads
 nothing about the class.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
-When a related test the mock collector selects mocks a module that the
-owner file imports (`TypeScriptOwner.imports`), and the changed line calls
-a symbol imported from that module (`imported_symbol_call`), a ladder
-result of `exposed` reads `static_unknown` instead: reach Yes, observe and
+When the changed line calls a symbol imported (`imported_symbol_call`)
+from a module that the owner file imports (`TypeScriptOwner.imports`),
+and every test file holding an assertion that credits `exposed` mocks that
+module, a ladder result of `exposed` reads `static_unknown` instead. A
+module mock applies to its whole test file and to no other, so it is read
+per file: when one crediting assertion sits in a file with no such mock,
+`exposed` stands, with the limit as advisory below. The result then is: reach Yes, observe and
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
@@ -599,6 +602,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
 32. Same `src/lib.ts` and change; the test mocks `"../src/unrelated"`
     instead: `exposed`, `static_limit_kind: mocked_module`, no
     `typescript_mock_only_observer` (today `exposed` with it).
+33. Same `src/lib.ts` and change, two test files: `tests/a.test.ts`
+    has no mock and `expect(price(150)).toBe(130)`; `tests/b.test.ts`
+    has the example 31 `jest.mock` and `expect(price(150)).toBe(5)`:
+    `exposed`, `static_limit_kind: mocked_module`, no
+    `typescript_mock_only_observer`, because the unmocked file credits on
+    its own (today `exposed` with it). With only `tests/b.test.ts`: as
+    example 31.
 
 ## Test Mapping
 
@@ -618,7 +628,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 16, 18, 19,
-  22, 23, 24, 31, 32), and a verdict corpus holding all 32 examples, each with
+  22, 23, 24, 31, 32, 33), and a verdict corpus holding all 33 examples, each with
   the asserted parsed subject (registered test, collected assertion,
   relation) checked before the class.
 
@@ -642,7 +652,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`static_limit_for_change`, `imported_symbol_call`,
   `named_limitation_for_static_limit`).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_related_mock_paths`, unchanged.
+  `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
+  reads mock paths per test file.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

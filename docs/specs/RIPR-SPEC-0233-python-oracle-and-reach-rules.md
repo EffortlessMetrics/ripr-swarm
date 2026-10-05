@@ -182,7 +182,8 @@ table.
 
 1. **Duplicative equality is not exact.** An `==` comparison, or an
    `assertEqual` or `assertDictEqual` call, whose two compared operands
-   are the same expression after whitespace normalization assigns
+   are the same token sequence, ignoring whitespace outside string
+   literals, assigns
    `relational_check` / weak. It cannot discriminate a change to the code
    both sides run. This mirrors RIPR-SPEC-0231 step 3.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`
@@ -462,6 +463,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    assertion that itself credits. Rejected: port RIPR-SPEC-0107's Rust
    variant-token requirement, because the Python credit branches already
    need the owner name or a changed-line token in that assertion.
+   Rejected: credit a class-only `pytest.raises(KeyError)` when the
+   changed line swaps the exception class, as for `ValueError` to
+   `KeyError`. Whether that discriminates depends on the class
+   hierarchy: a change from `KeyError` to `LookupError` with
+   `raises(LookupError)` passes on both versions, and static evidence
+   does not resolve the hierarchy. It can follow rule 12's route when a
+   corpus case shows the cost.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
    Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
    `with` item to `exact_error_variant` / strong when the test compares
@@ -554,7 +562,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `weakly_exposed` (unchanged).
 6. `assert parse('1') == parse('1')`: `relational_check` / weak,
    `weakly_exposed` (today `exact_value` / strong, `exposed`). The same for
-   `self.assertEqual(parse('1'), parse('1'))`.
+   `self.assertEqual(parse('1'), parse('1'))`. `assert norm('a b') ==
+   norm('ab')` is not a tautology: whitespace inside a string literal is
+   part of the value, so it keeps `exact_value` / strong.
 7. `assert parse('1') == pytest.approx(2.0)`: `exact_value` / strong,
    `exposed` (unchanged).
 8. `self.assertAlmostEqual(parse('1'), 2.0)` only: `exact_value` /
