@@ -4073,6 +4073,39 @@ fn perl_finding_line_stays_on_the_owner_when_the_diff_cannot_settle_it() -> Resu
     Ok(())
 }
 
+/// One producer writes the whole packet, so when two changes settle on
+/// different bases neither reading is trusted and both stay on the owner. A
+/// start line at the top of the range is skipped rather than overflowing.
+#[test]
+fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    let mut other = packet
+        .changes
+        .first()
+        .cloned()
+        .ok_or("real packet has no change")?;
+    other.change_id = "change:file:lib/App/Discount.pm:15:15".to_string();
+    other.range.start_line = 15;
+    packet.changes.push(other);
+    // The first change settles zero-based (adds 9); the second one-based (adds 15).
+    let mixed = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9, 15])]);
+    assert!(mixed.is_empty(), "{mixed:?}");
+    // Both zero-based: 9 and 16.
+    let agreed = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9, 16])]);
+    assert_eq!(agreed.len(), 2, "{agreed:?}");
+    assert_eq!(
+        agreed.get("change:file:lib/App/Discount.pm:15:15"),
+        Some(&16)
+    );
+
+    let mut top = real_producer_packet()?;
+    if let Some(change) = top.changes.first_mut() {
+        change.range.start_line = usize::MAX;
+    }
+    assert!(change_lines_from_diff(&top, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty());
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #5498 — current-v1 Perl related-test misses (RIPR-SPEC-0224).
 //

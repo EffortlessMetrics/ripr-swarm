@@ -3,14 +3,14 @@
     {
       "behavior_hint": "exception_path",
       "change_id": "change:file:lib/Account.pm:43:43",
-      "changed_observable": "Account::Error->new(message => $reason) if $reason",
-      "changed_text_digest": "fnv64:35bd99c42663add6",
+      "changed_observable": "Account::Error->new(message => $reason) if defined($reason)",
+      "changed_text_digest": "fnv64:d34072e2441b53cc",
       "file_id": "file:lib/Account.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-794",
+      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-803",
       "provenance_refs": [],
       "range": {
-        "end_column": 59,
+        "end_column": 68,
         "end_line": 43,
         "start_column": 0,
         "start_line": 43
@@ -20,7 +20,7 @@
   "dynamic_boundaries": [],
   "files": [
     {
-      "digest": "sha256:40ad6769cefc5676d6e653cd56339cb677d87d32b0360154a257fddafe5a44c9",
+      "digest": "sha256:03efb9880cc2e3c3f490c068b17dbb3b508ad250411a9c81ef26ae9311b59011",
       "file_id": "file:lib/Account.pm",
       "package_names": [
         "Account",
@@ -214,7 +214,7 @@
         "start_line": 15
       },
       "strength": "weak_broad",
-      "target_owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-794",
+      "target_owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-803",
       "test_id": "test:t/account.t"
     },
     {
@@ -417,7 +417,7 @@
       "file_id": "file:lib/Account.pm",
       "kind": "sub",
       "name": "freeze",
-      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-794",
+      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-803",
       "package": "Account",
       "provenance_refs": [
         "prov:syntax:file:lib/Account.pm"
@@ -434,7 +434,7 @@
       "file_id": "file:lib/Account.pm",
       "kind": "sub",
       "name": "balance_after",
-      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:796-885",
+      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:805-894",
       "package": "Account",
       "provenance_refs": [
         "prov:syntax:file:lib/Account.pm"
@@ -447,7 +447,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:383acbe6648cab10fdd60cde079691198a2a335bef0ff5025c271ca29d7b66ef",
+  "packet_fingerprint": "sha256:c25d75795bce29b10685cb7f7262500f6e7c222285554eda4e0af442eeab83ae",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -505,10 +505,10 @@
       "change_id": "change:unresolved",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:796-885",
+      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:805-894",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__balance_after_796-885",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__balance_after_805-894",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/account.t"
     },
@@ -527,10 +527,10 @@
       "change_id": "change:file:lib/Account.pm:43:43",
       "confidence": "medium",
       "oracle_id": "oracle:t/account.t:throws_ok:463-554",
-      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-794",
+      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:683-803",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__freeze_683-794:change:file:lib/Account.pm:43:43",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__freeze_683-803:change:file:lib/Account.pm:43:43",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/account.t"
     },

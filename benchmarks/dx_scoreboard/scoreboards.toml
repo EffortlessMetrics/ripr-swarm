@@ -254,67 +254,69 @@ pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; 
 [[metric]]
 id = "trust.perl_verdict_corpus_false_verdict"
 board = "trust"
-title = "Wrong Perl verdicts on the hand-checked Perl verdict corpus"
+title = "Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets)"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.05
-# Perl verdicts come from fact packets; any newly wrong case regresses.
+# Perl metrics read producer-packet cases only: edited packets carry facts the
+# pinned producer does not emit, so they say nothing about what a Perl user
+# gets today. Floors are 0 because each Perl case is a large share of 27.
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_verdict_rate"
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#by_packet_provenance.producer.false_verdict_rate"
 pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]
 id = "trust.perl_verdict_corpus_false_actionable"
 board = "trust"
-title = "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap"
+title = "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets)"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.05
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_actionable_rate"
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#by_packet_provenance.producer.false_actionable_rate"
 pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]
 id = "trust.perl_verdict_corpus_false_exposed"
 board = "trust"
-title = "Hand-checked Perl edits the tests miss that ripr credits as caught"
+title = "Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets)"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_exposed_rate"
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#by_packet_provenance.producer.false_exposed_rate"
 pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]
 id = "trust.perl_verdict_corpus_false_silent"
 board = "trust"
-title = "Hand-checked Perl edits the tests miss that ripr reports as fine"
+title = "Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets)"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_silent_rate"
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#by_packet_provenance.producer.false_silent_rate"
 pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]
 id = "trust.perl_verdict_corpus_abstention"
 board = "trust"
-title = "Hand-checked Perl edits where ripr gives no specific verdict"
+title = "Hand-checked Perl edits where ripr gives no specific verdict (producer packets)"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.2
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/perl-verdict-corpus/expected/report.json#abstention_rate"
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#by_packet_provenance.producer.abstention_rate"
 pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]

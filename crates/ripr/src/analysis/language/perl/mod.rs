@@ -382,16 +382,19 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
 /// SPEC-0064 says packet ranges are one-based, but the real `perl-ripr-facts`
 /// producer emits zero-based lines (`zero_based_coordinates` in
 /// `fixtures/perl_packet_contract_migration`; #3221 owns making the basis
-/// explicit). The packet does not declare which it used, so a change's line is
-/// taken only when exactly one reading of its first line is an added line in
-/// the diff. Otherwise the change is left out and its finding stays on the
-/// owner's declaration, as before. This only places the finding; probe and
-/// gap identity do not use it.
+/// explicit). The packet does not declare which it used, so each change's
+/// first line is read both ways against the diff, and a reading counts only
+/// when exactly one of the two is an added line. One producer writes the whole
+/// packet, so every settled change must agree on the basis: if two disagree,
+/// no change gets a line. A change left out keeps its finding on the owner's
+/// declaration, as before. This only places the finding; probe and gap
+/// identity do not use it.
 fn change_lines_from_diff(
     packet: &PerlFactPacket,
     changed_files: &[ChangedFile],
 ) -> BTreeMap<String, usize> {
-    let mut lines = BTreeMap::new();
+    // The flag is the basis the line was settled on: `true` for zero-based.
+    let mut settled: Vec<(String, usize, bool)> = Vec::new();
     for change in &packet.changes {
         let Some(file) = packet.file(&change.file_id) else {
             continue;
@@ -405,18 +408,23 @@ fn change_lines_from_diff(
         };
         let added: BTreeSet<usize> = diff_file.added_lines.iter().map(|l| l.line).collect();
         let one_based = change.range.start_line;
-        let zero_based = change.range.start_line + 1;
+        let Some(zero_based) = change.range.start_line.checked_add(1) else {
+            continue;
+        };
         match (added.contains(&one_based), added.contains(&zero_based)) {
-            (true, false) => {
-                lines.insert(change.change_id.clone(), one_based);
-            }
-            (false, true) => {
-                lines.insert(change.change_id.clone(), zero_based);
-            }
+            (true, false) => settled.push((change.change_id.clone(), one_based, false)),
+            (false, true) => settled.push((change.change_id.clone(), zero_based, true)),
             _ => {}
         }
     }
-    lines
+    let bases: BTreeSet<bool> = settled.iter().map(|(_, _, zero)| *zero).collect();
+    if bases.len() > 1 {
+        return BTreeMap::new();
+    }
+    settled
+        .into_iter()
+        .map(|(change_id, line, _)| (change_id, line))
+        .collect()
 }
 
 /// [`packet_to_findings`], placing each finding on the line `change_lines`

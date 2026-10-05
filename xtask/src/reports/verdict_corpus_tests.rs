@@ -1045,7 +1045,14 @@ fn validator_holds_perl_packets_to_their_pins_and_provenance() -> Result<(), Str
         (
             "short producer commit",
             Box::new(|raw: &mut Value| raw["fact_producer"]["commit"] = json!("99458fd")),
-            "is not a 40-hex sha",
+            "is not a 40-character lowercase hex sha",
+        ),
+        (
+            "uppercase producer commit",
+            Box::new(|raw: &mut Value| {
+                raw["fact_producer"]["commit"] = json!("99458FDE50B8204ECF7054779BB3670E6B5FDDA5");
+            }),
+            "is not a 40-character lowercase hex sha",
         ),
     ];
     for (name, edit, expected) in cases {

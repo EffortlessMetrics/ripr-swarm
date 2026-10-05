@@ -3,14 +3,14 @@
     {
       "behavior_hint": "return_value",
       "change_id": "change:file:lib/Ledger.pm:38:38",
-      "changed_observable": "$amount / 100",
-      "changed_text_digest": "fnv64:8568b85c2e7783be",
+      "changed_observable": "0.01 * $amount",
+      "changed_text_digest": "fnv64:58cc3606013383f7",
       "file_id": "file:lib/Ledger.pm",
       "missing_discriminator": null,
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-704",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
       "provenance_refs": [],
       "range": {
-        "end_column": 25,
+        "end_column": 26,
         "end_line": 38,
         "start_column": 0,
         "start_line": 38
@@ -20,7 +20,7 @@
   "dynamic_boundaries": [],
   "files": [
     {
-      "digest": "sha256:a5f4aa47e4075d81f4c5a71214e9432130579147ee591692f3a334f8fbb86779",
+      "digest": "sha256:03758565fda2c097e8b5f5a7391bfac095f339ed8248e96f45d3768a4c151b13",
       "file_id": "file:lib/Ledger.pm",
       "package_names": [
         "Ledger"
@@ -241,7 +241,7 @@
       "expected_expression": null,
       "expression": "isnt(Ledger::fee(100), 0, 'fees are charged')",
       "kind": "exact_return_assertion",
-      "observed_sink": "$amount / 100",
+      "observed_sink": "0.01 * $amount",
       "oracle_id": "oracle:t/ledger.t:isnt:469-514",
       "provenance_refs": [
         "prov:oracle_extraction:file:t/ledger.t"
@@ -253,7 +253,7 @@
         "start_line": 15
       },
       "strength": "strong_exact",
-      "target_owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-704",
+      "target_owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
       "test_id": "test:t/ledger.t"
     },
     {
@@ -425,7 +425,7 @@
       "file_id": "file:lib/Ledger.pm",
       "kind": "sub",
       "name": "fee",
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-704",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
       "package": "Ledger",
       "provenance_refs": [
         "prov:syntax:file:lib/Ledger.pm"
@@ -442,7 +442,7 @@
       "file_id": "file:lib/Ledger.pm",
       "kind": "sub",
       "name": "net_change",
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::net_change:706-811",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::net_change:707-812",
       "package": "Ledger",
       "provenance_refs": [
         "prov:syntax:file:lib/Ledger.pm"
@@ -459,7 +459,7 @@
       "file_id": "file:lib/Ledger.pm",
       "kind": "sub",
       "name": "close_month",
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:813-943",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:814-944",
       "package": "Ledger",
       "provenance_refs": [
         "prov:syntax:file:lib/Ledger.pm"
@@ -472,7 +472,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:d01b7ac10dda44ae660382b8e8db96c2f4b8c47813232afe7567ba27445dd05e",
+  "packet_fingerprint": "sha256:90993daf3a9eb32b9e26522eaab521ba4cad190f6c293a724cd9fd823ff32622",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -530,10 +530,10 @@
       "change_id": "change:unresolved",
       "confidence": "medium",
       "oracle_id": null,
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:813-943",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::close_month:814-944",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__close_month_813-943",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__close_month_814-944",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/ledger.t"
     },
@@ -552,10 +552,10 @@
       "change_id": "change:file:lib/Ledger.pm:38:38",
       "confidence": "medium",
       "oracle_id": "oracle:t/ledger.t:isnt:469-514",
-      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-704",
+      "owner_id": "owner:lib/Ledger.pm:sub:Ledger::fee:644-705",
       "provenance_refs": [],
       "reachability_hint": "reachable",
-      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__fee_644-704:change:file:lib/Ledger.pm:38:38",
+      "relation_id": "relation:file:t/ledger.t:lib/Ledger.pm:owner_lib/Ledger.pm_sub_Ledger__fee_644-705:change:file:lib/Ledger.pm:38:38",
       "relation_kind": "direct_owner_call",
       "test_id": "test:t/ledger.t"
     },

@@ -116,13 +116,13 @@
           {
             "replacement": "100 < $amount",
             "outcome": "tests_failed",
-            "failing_test": "t/pricing.t: discount starts at exactly 100",
+            "failing_test": "t/pricing.t: discount starts at exactly 100; t/qualified.t: quote adds shipping to the discounted subtotal",
             "equivalence_review": "not equivalent: 100 no longer earns the discount"
           },
           {
             "replacement": "101 <= $amount",
             "outcome": "tests_failed",
-            "failing_test": "t/pricing.t: discount starts at exactly 100",
+            "failing_test": "t/pricing.t: discount starts at exactly 100; t/qualified.t: quote adds shipping to the discounted subtotal",
             "equivalence_review": "not equivalent: 100 no longer earns the discount"
           },
           {
@@ -1059,13 +1059,13 @@
         "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
         "mutants": [
           {
-            "replacement": "return $amount / 50;",
+            "replacement": "return 0.02 * $amount;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: the fee doubles"
           },
           {
-            "replacement": "return $amount / 1000;",
+            "replacement": "return 0.001 * $amount;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: the fee drops tenfold"
@@ -1090,7 +1090,7 @@
       },
       "perl_facts": {
         "packet": "packets/perl-test2-fee-isnt-zero.json",
-        "sha256": "b4e711e3c6b11f8b319d09a4d821892c8507c8484debcd72f69866a48071ed27",
+        "sha256": "affdde8bdd59ede6e207125e4e1373b1bd93e689cb1a5e8893444b9c9897545c",
         "provenance": "producer"
       }
     },
@@ -1387,13 +1387,13 @@
         "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
         "mutants": [
           {
-            "replacement": "return $balance / 10;",
+            "replacement": "return 0.1 * $balance;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: interest doubles"
           },
           {
-            "replacement": "return $balance * 20;",
+            "replacement": "return 20 * $balance;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: interest is 400 times larger"
@@ -1418,7 +1418,7 @@
       },
       "perl_facts": {
         "packet": "packets/perl-testexception-interest-lives-ok.json",
-        "sha256": "6acb37c6647568b9154465d19e5876ed6d00ee9bd8a7b481b88918a2681e447b",
+        "sha256": "161839c7a1985abce36a3335622c2a58f5511727b7cb1f270b728e1c28e60445",
         "provenance": "producer"
       }
     },
@@ -1441,13 +1441,13 @@
         "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
         "mutants": [
           {
-            "replacement": "die \"frozen\\n\" if $reason;",
+            "replacement": "die \"frozen\\n\" if defined($reason);",
             "outcome": "tests_failed",
             "failing_test": "t/account.t: freezing raises an account error",
             "equivalence_review": "not equivalent: a plain string is not an Account::Error"
           },
           {
-            "replacement": "die Account::Error->new(message => $reason) if !$reason;",
+            "replacement": "die Account::Error->new(message => $reason) if !defined($reason);",
             "outcome": "tests_failed",
             "failing_test": "t/account.t: freezing raises an account error",
             "equivalence_review": "not equivalent: a reason no longer freezes"
@@ -1473,7 +1473,7 @@
       },
       "perl_facts": {
         "packet": "packets/perl-testexception-freeze-class.json",
-        "sha256": "b4e675438c2c992dd6c96b84530a332afd6a732f01bd97a68659849c8011d6d0",
+        "sha256": "9114a2641e2394696f045bc15fbd46a5ca3d69e166b122245c5bd4467b55a056",
         "provenance": "producer"
       }
     },
@@ -1961,7 +1961,7 @@
           "limited"
         ]
       },
-      "reasoning": "The only assertion on tier_label checks 1200 and 50 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr still reports exposed, a false exposed.",
+      "reasoning": "The only assertion on tier_label checks 2000 and 10 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr still reports exposed, a false exposed.",
       "labeling_observation": {
         "ripr_commit": "28e86e6",
         "full_checkout_verdict": "credited",
@@ -2017,7 +2017,7 @@
           "silent"
         ]
       },
-      "reasoning": "is($cart->total, 26) fails under both mutants. Once the packet binds the method_receiver relation to that exact oracle, the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
+      "reasoning": "is($cart->total, 25) fails under both mutants. Once the packet binds the method_receiver relation to that exact oracle, the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
       "labeling_observation": {
         "ripr_commit": "28e86e6",
         "full_checkout_verdict": "gap",

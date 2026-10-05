@@ -806,11 +806,26 @@ static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0238): the default build refuses Perl
-/// packets. It is the same path as [`ripr_fixture_binary`], built with the
-/// default features plus `lang-perl`, so the Rust adapter is unchanged.
+/// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
+/// the Perl build is copied to its own `ripr-lang-perl` name, and when this
+/// process already built the default binary, that build is redone so a later
+/// Rust run never gets the Perl feature set. Only the `ripr` crate recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
-    ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD, &|| {
-        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"]).map(|_status| ())
+    let shared = ripr_debug_binary();
+    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        fs::copy(&shared, &perl).map_err(|err| {
+            format!(
+                "copy {} to {} failed: {err}",
+                shared.display(),
+                perl.display()
+            )
+        })?;
+        if RIPR_BINARY_BUILD.get().is_some() {
+            run("cargo", &["build", "-p", "ripr"])?;
+        }
+        Ok(())
     })
 }
 

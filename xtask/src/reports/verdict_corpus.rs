@@ -1179,9 +1179,14 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 violations.push("`fact_producer` has an empty field".to_string());
             }
             if producer.commit.len() != 40
-                || !producer.commit.chars().all(|c| c.is_ascii_hexdigit())
+                || !producer
+                    .commit
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
             {
-                violations.push("`fact_producer.commit` is not a 40-hex sha".to_string());
+                violations.push(
+                    "`fact_producer.commit` is not a 40-character lowercase hex sha".to_string(),
+                );
             }
         }
         None => {}

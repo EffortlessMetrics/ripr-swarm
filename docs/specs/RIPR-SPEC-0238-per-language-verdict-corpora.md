@@ -120,6 +120,11 @@ projection counts them where other languages count only `candidate_current`
 findings. Each row names its packet provenance, and the report adds
 `by_packet_provenance` rates, so only producer rates describe what a Perl
 user gets now. The Rust report has no provenance field and keeps its bytes.
+The Perl scoreboard metrics read the producer rates only.
+
+No CI lane runs `verdict-corpus check` for any language yet, so verdict
+drift is caught when a contributor runs it or re-blesses; unit tests only hold
+the committed corpus valid and its expected rows consistent with its labels.
 
 Subjects are authored Perl distributions (`authored-perl-<library>-<name>`)
 covering Test::More, Test2::V0 and Test::Exception. Truth is hand-written

@@ -1,5 +1,5 @@
 diff --git a/lib/Account.pm b/lib/Account.pm
-index 1e1ba56..c3f8779 100644
+index 1e1ba56..2fe73fe 100644
 --- a/lib/Account.pm
 +++ b/lib/Account.pm
 @@ -41,7 +41,7 @@ sub interest {
@@ -7,7 +7,7 @@ index 1e1ba56..c3f8779 100644
  sub freeze {
      my ($reason) = @_;
 -    die Account::Error->new(message => $reason) if defined $reason;
-+    die Account::Error->new(message => $reason) if $reason;
++    die Account::Error->new(message => $reason) if defined($reason);
      return 1;
  }
  
