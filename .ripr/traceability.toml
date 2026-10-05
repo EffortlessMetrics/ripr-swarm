@@ -1153,6 +1153,8 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/workflow_directory.rs::relative_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
+  "crates/ripr/tests/cli_smoke/workflow_directory.rs::absolute_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_relative_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_absolute_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
   "crates/ripr/src/agent/artifact.rs::tests::legacy_repo_exposure_has_actionable_rooted_recovery",
@@ -1258,7 +1260,10 @@ tests = [
   "crates/ripr/src/agent/loop_commands.rs::tests::bound_root_keeps_a_unix_backslash_directory_name",
   "crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once",
   "crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory",
-  "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture"
+  "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture",
+  "crates/ripr/src/agent/artifact.rs::tests::head_identity_detects_an_a_b_a_swap_between_reads",
+  "crates/ripr/src/agent/artifact.rs::tests::head_identity_counts_repeated_a_b_a_cycles_apart",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::after_phase_window_reports_an_a_b_a_swap_as_not_current"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -1668,6 +1673,9 @@ tests = [
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_reports_missing_current_input",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_treats_non_object_review_metadata_as_absent",
   "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_matches_mixed_fixture_contract",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_propagates_current_run_limitations",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_omits_limitation_disclosure_for_complete_runs",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_propagates_config_error_gate_status",
   "crates/ripr/src/output/baseline_update.rs::tests::baseline_update_removes_resolved_without_adopting_new_current_debt",
   "crates/ripr/src/output/baseline_update.rs::tests::baseline_update_preserves_refactored_entry_matched_by_canonical_gap_id",
   "crates/ripr/src/output/baseline_update.rs::tests::baseline_update_uses_unique_seam_after_shared_canonical_gap_is_ambiguous",
@@ -1761,6 +1769,11 @@ tests = [
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_when_items_exceed_a_nonzero_count",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_when_a_nonzero_count_carries_no_items",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_surfaces_a_failed_gate_decision",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_for_a_malformed_run_state_disclosure",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_for_a_malformed_disclosure_member",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_for_a_blank_disclosure_discriminator",
+  "crates/ripr/src/output/baseline_delta.rs::tests::zero_status_withholds_achieved_over_self_produced_limited_delta",
+  "crates/ripr/src/output/baseline_delta.rs::tests::zero_status_withholds_achieved_over_config_error_gate_delta",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_requires_inputs_and_rejects_unknown_args",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_writes_json_and_markdown_reports",
@@ -6802,12 +6815,16 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::direct_collection_state_write_requires_complete_witness",
   "crates/ripr/src/analysis/classify/flow.rs::tests::cache_insert_call_deletion_keeps_legacy_syntax_propagation",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/oracle_confirmation_mixed",
   "fixtures/proximity_name_oracle_not_credited",
+  "fixtures/match_arm_proximity_confirmation_not_credited",
+  "fixtures/match_arm_proximity_wrapper_confirms",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
   "fixtures/observation_unverified_field_construction",
@@ -6828,6 +6845,12 @@ outputs = [
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
   "fixtures/proximity_name_oracle_not_credited/expected/check.json",
   "fixtures/proximity_name_oracle_not_credited/expected/human.txt",
+  "fixtures/match_arm_proximity_confirmation_not_credited/expected/check.json",
+  "fixtures/match_arm_proximity_confirmation_not_credited/expected/human.txt",
+  "fixtures/match_arm_proximity_confirmation_not_credited/expected/human-full.txt",
+  "fixtures/match_arm_proximity_wrapper_confirms/expected/check.json",
+  "fixtures/match_arm_proximity_wrapper_confirms/expected/human.txt",
+  "fixtures/match_arm_proximity_wrapper_confirms/expected/human-full.txt",
   "fixtures/observation_unverified_return_value/expected/check.json",
   "fixtures/observation_unverified_return_value/expected/human.txt",
   "fixtures/observation_verified_return_value/expected/check.json",
@@ -7970,6 +7993,8 @@ id = "RIPR-SPEC-0134"
 name = "repair artifact provenance"
 spec = "docs/specs/RIPR-SPEC-0134-repair-artifact-provenance.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/workflow_directory.rs::relative_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
+  "crates/ripr/tests/cli_smoke/workflow_directory.rs::absolute_custom_workflow_directory_keeps_native_producer_and_receipt_identity",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_relative_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
   "crates/ripr/tests/cli_smoke/receipt_recovery_root.rs::missing_absolute_workflow_verify_hint_runs_in_native_root_from_foreign_cwd",
   "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_preserves_exact_empty_and_same_length_checks",
@@ -9590,6 +9615,12 @@ id = "RIPR-SPEC-0154"
 name = "Assertion-form parity"
 spec = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
 tests = [
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonmatcher_blocks_keep_their_actual_observer_coordinates",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_cannot_borrow_sibling_observers",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_retain_actual_scrutinee_observers",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_block_matcher_guards_equal_their_assertion_twins",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonfirst_quoted_and_recovered_failure_macros_cannot_pin_a_matcher",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::err_return_guard_is_an_oracle_equal_to_its_assert_twin",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::guard_conditions_without_structural_equivalence_stay_unrecognized",
   "crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_err_guard_in_test_facts",
@@ -10053,6 +10084,7 @@ id = "RIPR-SPEC-0173"
 name = "harness trial subject evidence parity"
 spec = "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md"
 tests = [
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_negated_blocks_keep_twins_and_failure_macros_require_authority",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed",
@@ -12618,6 +12650,31 @@ outputs = [
 metrics = [
   "rust_field_write_static_unknown",
   "rust_field_write_direct_read_credit",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0233"
+name = "Statically contradicted exact-value oracles keep at most weak credit"
+spec = "docs/specs/RIPR-SPEC-0233-statically-contradicted-exact-value-oracle.md"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs::wrongval_assertion_of_the_mutants_value_is_contradicted",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs::correct_boundary_literal_is_consistent",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs::wrong_assert_ne_is_contradicted_and_correct_ne_is_consistent",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs::owner_that_calls_another_function_is_not_evaluable",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_boundary_assert_does_not_close_the_gap",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::correct_boundary_literal_still_closes_the_gap",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::non_evaluable_owner_keeps_the_prior_credit",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0233-statically-contradicted-exact-value-oracle.md",
+]
+metrics = [
+  "statically_contradicted_exact_value_credit",
 ]
 
 [[behavior]]

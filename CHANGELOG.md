@@ -96,6 +96,27 @@ are scoped or reviewed.
   instead of leaking native backslashes. `allowed_files` and
   `forbidden_files` already used the shared normalized renderer and are
   unchanged (#5440).
+- Discarded Rust `matches!` computations no longer count as assertion oracles
+  in parser, lexical or registered-harness facts. Actual asserting wrappers
+  retain pattern credit, including the weak whole-wildcard boundary from
+  #5410. Consumed multiline lexical and inline Trial Err guards retain their
+  assertion twins, with condition ownership and sibling coordinates preserved.
+  Balanced groups retain quoted/struct/block operands and a body opener on a
+  later row; quoted return text and recovered Err expressions cannot
+  manufacture a guard's assertion twin.
+  Wrapped discarded matcher statements cannot borrow a sibling assertion;
+  actual observers inside pure block scrutinees keep their own coordinates.
+  Negated block conditions retain consumed Err-guard twins and weak wildcard
+  grip. Terminal panic/bail names grant no divergence authority; unresolved or
+  shadowed macros remain outside this bounded Err-return grammar.
+  File-fact generation 1.26 and classified generations 1.37/0.43 invalidate
+  favorable or guard-blind predecessor facts
+  (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
+  existing honesty corpus, preserving absent, weak and strong observer
+  boundaries. Shared-validator negative controls reject strong and weak
+  false credit, missed strong credit, empty findings and removed consumers;
+  the current CLI compares raw JSON and human projections with those reports.
+
 - Agent receipt recovery commands preserve native Unix roots and relative or
   absolute workflow verify output paths when pasted from another directory.
   Custom missing verify inputs still emit no unrelated producer hint (#6684).
