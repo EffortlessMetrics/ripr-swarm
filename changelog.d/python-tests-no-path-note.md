@@ -4,4 +4,5 @@
   `.py` under `tests/` or `test/`): the closing note names how many there are and
   that ripr does not link Python tests to Rust changes, so a change they alone
   cover reads as no static path. Verdicts, classes, JSON, SARIF and gate output
-  are unchanged (#6340).
+  are unchanged. Virtualenvs and tool caches (`.venv`, `venv`, `site-packages`,
+  `.tox`, `__pycache__`) are not counted (#6340).

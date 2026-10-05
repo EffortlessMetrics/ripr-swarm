@@ -192,6 +192,20 @@ pub(crate) struct UnlinkedPythonTests {
     pub(crate) at_least: bool,
 }
 
+/// Directories holding installed third-party Python packages or tool caches,
+/// whose `tests/` folders are not the repository's own tests. Skipped only by
+/// [`discover_python_test_files`].
+const PYTHON_VENDOR_DIRS: &[&str] = &[
+    ".venv",
+    "venv",
+    ".tox",
+    ".nox",
+    "site-packages",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+];
+
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
 
@@ -252,7 +266,7 @@ pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTe
             };
             if kind.is_dir() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if !DEFAULT_IGNORED_DIRS.contains(&name) {
+                if !DEFAULT_IGNORED_DIRS.contains(&name) && !PYTHON_VENDOR_DIRS.contains(&name) {
                     stack.push(path);
                 }
             } else if kind.is_file() {
@@ -391,6 +405,11 @@ mod tests {
         fs::create_dir_all(dir.join("tests"))?;
         fs::create_dir_all(dir.join("src"))?;
         fs::create_dir_all(dir.join("target"))?;
+        fs::create_dir_all(dir.join(".venv/lib/site-packages/pkg/tests"))?;
+        fs::write(
+            dir.join(".venv/lib/site-packages/pkg/tests/test_vendor.py"),
+            "",
+        )?;
         fs::write(dir.join("src/lib.rs"), "")?;
         fs::write(dir.join("tests/test_b.py"), "")?;
         fs::write(dir.join("tests/test_a.py"), "")?;
