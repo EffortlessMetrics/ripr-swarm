@@ -1,9 +1,10 @@
 use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
 use super::gate::{
-    GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings, discloses_blocked_producer_outcome,
-    discloses_incomplete_analysis_outcome, discloses_limited_findings_bound,
-    discloses_limited_partial_scope, incomplete_analysis_outcome_kind,
+    GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings,
+    discloses_blocked_producer_outcome, discloses_incomplete_analysis_outcome,
+    discloses_limited_findings_bound, discloses_limited_partial_scope,
+    incomplete_analysis_outcome_kind,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -646,7 +647,9 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
     }
     if let Some(status) = value.get("current_gate_status")
         && !status.is_null()
-        && status.as_str().is_none_or(|text| text.trim().is_empty())
+        && status.as_str().is_none_or(|text| {
+            text.trim().is_empty() || !GATE_DECISION_KNOWN_STATUSES.contains(&text)
+        })
     {
         malformed_disclosures.push("current_gate_status");
     }
@@ -665,7 +668,9 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
     if let Some(scope) = value.get("analysis_scope")
         && let Some(run_status) = scope.get("run_status")
         && !run_status.is_null()
-        && !run_status.is_string()
+        && run_status
+            .as_str()
+            .is_none_or(|text| text.trim().is_empty())
     {
         malformed_disclosures.push("analysis_scope.run_status");
     }
@@ -677,12 +682,21 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             let Some(entry) = entry.as_object() else {
                 return true;
             };
-            entry
-                .get("run_status")
-                .is_some_and(|status| !status.is_null() && !status.is_string())
-                || entry
-                    .get("category")
-                    .is_some_and(|category| !category.is_null() && !category.is_string())
+            // Blank discriminators are corrupt, not undisclosed: the
+            // predicates match exact vocabulary tokens, so a blank member
+            // would dodge disclosure and read as a complete denominator.
+            // Real entries always name non-blank run_status and category
+            // (output/json bounded-run contract), so an entry without a
+            // usable discriminator is likewise malformed.
+            let usable = |member: Option<&Value>| {
+                member
+                    .is_some_and(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
+            };
+            let run_status = entry.get("run_status");
+            let category = entry.get("category");
+            run_status.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || category.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || (!usable(run_status) && !usable(category))
         })
     {
         malformed_disclosures.push("run_limitations[]");
@@ -2529,6 +2543,61 @@ mod tests {
         );
         assert!(
             rendered.contains("analysis_outcome.analysis_complete"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_blank_disclosure_discriminator() -> Result<(), String>
+    {
+        // Blank discriminators are corrupt, not undisclosed (#6770 review):
+        // the predicates match exact vocabulary tokens, so blank members
+        // dodge disclosure; likewise an entry with no usable discriminator
+        // and an out-of-schema gate status. All fail as Invalid, never as
+        // a complete denominator.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_scope": {"run_status": "  "},
+          "run_limitations": [{"run_status": " "}, {"category": ""}, {}],
+          "current_gate_status": "error"
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
             "{rendered}"
         );
         assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");

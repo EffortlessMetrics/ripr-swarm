@@ -378,7 +378,12 @@ disclosure envelope is present but malformed, including corrupt
 predicate-consumed members such as a non-boolean `analysis_complete`.
 A current side whose `status` is present but not a non-blank string is
 rejected as an unreadable current input: a discarded status would hide a
-failed evaluation behind empty decisions.
+failed evaluation behind empty decisions. A non-blank status outside the
+schema-closed set (`pass`, `advisory`, `acknowledged`, `blocked`,
+`config_error`) is likewise rejected, since only `config_error` withholds
+`achieved` downstream. Disclosure members must name usable (non-blank)
+discriminators: blank `run_status`/`category` strings and entries without
+one never read as a complete denominator.
 
 ## Command Sequence
 
@@ -481,10 +486,11 @@ The implementation adds tests for:
   `run_limitations`) forwarded verbatim into JSON and Markdown, omitted for
   complete runs;
 - current gate status propagation, with zero-status withhold over
-  `config_error` deltas, and rejection of present-but-malformed `status`
-  at parse;
+  `config_error` deltas, and rejection of present-but-malformed or
+  out-of-schema `status` at parse;
 - zero-status rejection of present-but-malformed disclosure envelopes,
-  including corrupt predicate-consumed members.
+  including corrupt predicate-consumed members and blank or missing
+  discriminators.
 
 ## Implementation Mapping
 

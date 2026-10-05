@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
-use crate::output::gate::GATE_STATUS_CONFIG_ERROR;
+use crate::output::gate::{GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR};
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "baseline_debt_delta";
@@ -798,10 +798,28 @@ fn parse_current_decisions(path: &str, json_text: Result<String, String>) -> Cur
         // Absent (or explicit null) stays accepted for older inputs. This
         // deliberately bypasses string_field's blank-to-None mapping: a
         // disclosure carrier fails closed where an identity hint stays lenient.
+        // A non-blank status outside the schema-closed set is likewise
+        // rejected: only config_error withholds achieved downstream, so an
+        // out-of-contract status would otherwise read as completed.
         current_gate_status: match value.get("status") {
             None => None,
             Some(status) if status.is_null() => None,
-            Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
+            Some(Value::String(text))
+                if !text.trim().is_empty()
+                    && GATE_DECISION_KNOWN_STATUSES.contains(&text.as_str()) =>
+            {
+                Some(text.clone())
+            }
+            Some(Value::String(text)) if !text.trim().is_empty() => {
+                return CurrentParse {
+                    unavailable: true,
+                    warnings: vec![format!(
+                        "required current gate-decision input {path} has unknown status `{text}`; status must be one of {}",
+                        GATE_DECISION_KNOWN_STATUSES.join(", ")
+                    )],
+                    ..CurrentParse::default()
+                };
+            }
             Some(_) => {
                 return CurrentParse {
                     unavailable: true,
@@ -1942,6 +1960,11 @@ mod tests {
                 Ok(valid_baseline.to_string()),
                 Ok(r#"{"schema_version":"0.1","decisions":[],"status":"  "}"#.to_string()),
                 "current gate-decision input current.json has malformed status",
+            ),
+            (
+                Ok(valid_baseline.to_string()),
+                Ok(r#"{"schema_version":"0.1","decisions":[],"status":"error"}"#.to_string()),
+                "current gate-decision input current.json has unknown status",
             ),
         ] {
             let report = build_baseline_delta_report(BaselineDeltaInput {

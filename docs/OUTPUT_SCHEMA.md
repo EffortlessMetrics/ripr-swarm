@@ -9700,8 +9700,9 @@ Field contract:
   partial-denominator guard reads; complete runs carry none of them.
   Present-but-malformed envelopes fail the delta as Invalid in zero-status
   reading, including corrupt predicate-consumed members (non-boolean
-  `analysis_complete`, non-string scope `run_status`, malformed limitation
-  entries).
+  `analysis_complete`, non-string or blank scope `run_status`, malformed
+  limitation entries, blank discriminators, entries without a usable
+  discriminator).
 - `current_gate_status` - the current gate decision's `status` verbatim.
   Gate decisions carry no limitation envelope (a limited input is refused
   as `config_error` with empty decisions), so this is the production-live
@@ -9709,7 +9710,8 @@ Field contract:
   complete. Zero status withholds `achieved` over `config_error` deltas.
   A present-but-malformed `status` (non-string or blank) rejects the
   current input as unreadable instead of being discarded; absent stays
-  accepted for older inputs.
+  accepted for older inputs. A non-blank status outside the schema-closed
+  set is rejected as unknown for the same reason.
 - `limits_note` - advisory boundary text for generated CI summaries.
 
 Markdown should fit in a generated CI job summary. It should include the
