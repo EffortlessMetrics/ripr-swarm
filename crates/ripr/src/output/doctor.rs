@@ -43,15 +43,16 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
 /// refuses gets the repository-free scan instead of a command that cannot run
 /// there (#4531); an unusable root (missing, or present but not a directory)
-/// keeps a runnable recovery command naming its lossless root spelling (#5010)
-/// plus `--root` guidance that names the actual filesystem state (#4606
-/// review, #5101), and is never probed for work-tree changes.
+/// recommends its recovery action, which names the actual filesystem state
+/// (#4606 review, #5101), because no check command can run there (#5252 item
+/// 3). The lossless root spelling (#5010) still serves the routes that can
+/// render one. Unusable roots are never probed for work-tree changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DoctorFirstCommand {
-    /// `root_directory` failed while git runs: render the runnable recovery
-    /// command with its lossless root spelling, plus `--root` guidance that
-    /// distinguishes a missing path from an existing non-directory, and never
-    /// probe the work tree (#4531, #5010, #5101).
+    /// `root_directory` failed while git runs: recommend the recovery action
+    /// with `--root` guidance that distinguishes a missing path from an
+    /// existing non-directory, and never probe the work tree (#4531, #5101).
+    /// No check command is named: none can run here (#5252 item 3).
     MissingRoot,
     /// `git_repository` failed while git itself runs: the repository-free scan
     /// is the only route that can run here.
@@ -167,18 +168,15 @@ impl DoctorFirstCommand {
     /// variant renders its own line.
     pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
         match self {
-            // The recovery command names the lossless spelling of the unusable
-            // root exactly as the runnable variants do (#5010); the guidance
-            // line says what to replace it with (#4606 review, #5101).
+            // No check command can run against a root that is not there
+            // (#5252 item 3): naming `ripr check --root <missing>` prescribes
+            // the same failure doctor just diagnosed. The recovery action is
+            // the recommendation. The lossless-spelling machinery (#5010) is
+            // untouched for the routes that can render one.
             Self::MissingRoot => {
-                let mut lines =
-                    Self::recommendation_lines(Self::DefaultCheck.command_line_for_root(root));
-                lines.push(
-                    DoctorRootPath::classify(root)
-                        .recovery_guidance()
-                        .to_string(),
-                );
-                lines
+                let guidance = DoctorRootPath::classify(root).recovery_guidance();
+                let action = guidance.strip_prefix("- ").unwrap_or(guidance);
+                vec![format!("- Recommended first command: {action}")]
             }
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
@@ -1003,6 +1001,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
     report.add_check("root_directory", root_status, Some(root_evidence));
     if let RustToolchainScope::NotInScope(reason) = &rust_scope {
+        report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
+    } else if let Some(reason) = root_path.unusable_skip_reason() {
+        // #5252 item 3: a root that is not there cannot have a manifest;
+        // fail only `root_directory` and skip here like the tool checks.
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
     } else if root.join("Cargo.toml").exists() {
         report.add_check(
@@ -3212,6 +3214,37 @@ mod tests {
         assert!(!denied.evidence.contains("--diff"));
     }
 
+    /// #5252 item 3: a root that is not there cannot have a manifest, so
+    /// the manifest check skips like the tool checks instead of failing
+    /// beside the `root_directory` failure it only restates.
+    #[test]
+    fn doctor_cargo_toml_check_skips_for_an_unusable_root() -> Result<(), String> {
+        let missing = unique_test_dir("doctor-cargo-toml-skip").join("absent");
+        assert!(!missing.exists(), "fixture root must stay missing");
+        let report = evaluate_doctor_core(&missing, &[]);
+        let manifest = report
+            .checks
+            .iter()
+            .find(|check| check.name == "cargo_toml")
+            .ok_or_else(|| "missing cargo_toml check".to_string())?;
+        assert_eq!(
+            manifest.status,
+            DoctorCheckStatus::Skipped,
+            "a missing root must skip the manifest check, not fail it: {report:?}"
+        );
+        let root = report
+            .checks
+            .iter()
+            .find(|check| check.name == "root_directory")
+            .ok_or_else(|| "missing root_directory check".to_string())?;
+        assert_eq!(
+            root.status,
+            DoctorCheckStatus::Fail,
+            "the root failure stays the one real signal: {report:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() -> Result<(), String> {
         let mut probed = false;
@@ -3283,17 +3316,43 @@ mod tests {
                 ],
                 "the repository-free route quotes and translates like the runnable ones"
             );
+            // #5252 item 3: no check command can run against a root that is
+            // not there, so the recovery action is the recommendation. The old
+            // pin named `ripr check --root <missing>`, which fails the same
+            // way doctor just did; the guidance line below it was the only
+            // actionable half.
             assert_eq!(
                 DoctorFirstCommand::MissingRoot
                     .recommendation_lines_for(Path::new("/work/missing")),
                 [
-                    "- Recommended first command: ripr check --root /work/missing",
-                    "- The selected root does not exist; rerun with `--root <path>` naming an \
-                     existing repository directory",
+                    "- Recommended first command: The selected root does not exist; rerun with \
+                     `--root <path>` naming an existing repository directory",
                 ],
-                "the missing-root recovery names the runnable command and the --root guidance"
+                "a missing root recommends its recovery action, not a failing check"
             );
         }
+        // Host-independent twin of the Unix pin above: a missing root
+        // recommends its recovery action on every platform (#5252 item 3).
+        let missing = unique_test_dir("missing-root-guidance").join("absent");
+        assert!(!missing.exists(), "fixture root must stay missing");
+        let lines = DoctorFirstCommand::MissingRoot.recommendation_lines_for(&missing);
+        assert_eq!(
+            lines.len(),
+            1,
+            "a missing root recommends one recovery line, not a command plus guidance: {lines:?}"
+        );
+        assert!(
+            lines[0].starts_with("- Recommended first command: "),
+            "unexpected recommendation shape: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("does not exist") && lines[0].contains("rerun with `--root <path>`"),
+            "the recovery line must name the state and the fix: {lines:?}"
+        );
+        assert!(
+            !lines[0].contains("ripr check"),
+            "no check command can run against a missing root: {lines:?}"
+        );
         let file_root_dir = unique_test_dir("missing-root-guidance-file");
         std::fs::create_dir_all(&file_root_dir)
             .map_err(|error| format!("create file-root fixture: {error}"))?;
