@@ -202,6 +202,9 @@ fn rule6_whole_identifier_reference_boundaries() {
     assert!(!ts_references_identifier("address", "add"));
     assert!(!ts_references_identifier("totalAmount", "amount"));
     assert!(!ts_references_identifier("$price", "price"));
+    // Non-ASCII identifier characters are part of the identifier too.
+    assert!(!ts_references_identifier("éprice", "price"));
+    assert!(!ts_references_identifier("priceé", "price"));
     assert!(!ts_references_identifier("price_", "price"));
     assert!(!ts_references_identifier("price", ""));
     assert!(ts_references_identifier("ns.price(150)", "price"));

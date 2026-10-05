@@ -344,7 +344,8 @@ fn string_literal_value(text: &str) -> Option<String> {
 fn object_message_value(text: &str) -> Option<String> {
     let tokens = tokenize(text)?;
     let position = tokens.windows(2).position(|pair| {
-        matches!(&pair[0], LineToken::Other(key) if key == "message")
+        // A key may be bare or quoted (`{ "message": "..." }`).
+        matches!(&pair[0], LineToken::Other(key) | LineToken::Literal(key) if key == "message")
             && matches!(&pair[1], LineToken::Other(colon) if colon == ":")
     })?;
     literal_value(tokens.get(position + 2)?).map(str::to_string)
@@ -571,6 +572,11 @@ mod tests {
         ));
         assert!(!error_payload_credits(
             &payload(Kind::AssertRejectsObject, r#"{ message: "other" }"#),
+            &facts
+        ));
+        // A quoted `message` key reads the same as a bare one.
+        assert!(error_payload_credits(
+            &payload(Kind::AssertRejectsObject, r#"{ "message": "blank" }"#),
             &facts
         ));
         // Not a message-only change: anchored regexes keep their credit.

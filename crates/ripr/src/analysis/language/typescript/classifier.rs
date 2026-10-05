@@ -422,18 +422,23 @@ fn ts_observed_local_aliases_owner(
 /// rule 6). A member segment counts (`ns.price(` references `price`);
 /// `address` does not reference `add`. An empty `ident` never matches.
 pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
-    fn is_ident_byte(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    // JavaScript identifiers may hold non-ASCII letters, so the boundary
+    // check reads whole characters, not bytes.
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
     }
     if ident.is_empty() {
         return false;
     }
-    let bytes = text.as_bytes();
     text.match_indices(ident).any(|(at, _)| {
-        let before_ok = at == 0 || bytes.get(at - 1).is_none_or(|&b| !is_ident_byte(b));
-        let after_ok = bytes
-            .get(at + ident.len())
-            .is_none_or(|&b| !is_ident_byte(b));
+        let before_ok = text
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = text
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
         before_ok && after_ok
     })
 }
