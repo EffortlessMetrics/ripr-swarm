@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -65,7 +65,7 @@ def perr_value_only(text):
+ 
+ def perr_match_and_value(text):
+     if not text:
+-        raise KeyError("empty")
++        raise KeyError("blank")
+     return int(text)
+ 
+ 

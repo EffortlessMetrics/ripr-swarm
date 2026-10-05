@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def parse_exact(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_not_equal(text):

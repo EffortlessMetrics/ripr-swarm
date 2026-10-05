@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -113,7 +113,7 @@ class CartOrthogonal:
+     LIMIT = 6
+ 
+     def total_orthogonal(self):
+-        return 5 + 1
++        return 5 + 2
+ 
+ 
+ class CartBound:

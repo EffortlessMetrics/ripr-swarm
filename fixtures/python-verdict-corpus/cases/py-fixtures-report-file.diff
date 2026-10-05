@@ -1,0 +1,12 @@
+diff --git a/shop/__init__.py b/shop/__init__.py
+--- a/shop/__init__.py
++++ b/shop/__init__.py
+@@ -19,7 +19,7 @@ def handling_fee(amount):
+ 
+ def save_report(path, total):
+     """Write the order total to a report file."""
+-    path.write_text(f"total={total}\n")
++    path.write_text(f"total: {total}\n")
+ 
+ 
+ def greeting():

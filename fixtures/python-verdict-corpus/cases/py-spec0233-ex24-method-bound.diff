@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -118,7 +118,7 @@ class CartOrthogonal:
+ 
+ class CartBound:
+     def total_bound(self):
+-        return 5 + 1
++        return 5 + 2
+ 
+ 
+ def parse_rival(text):

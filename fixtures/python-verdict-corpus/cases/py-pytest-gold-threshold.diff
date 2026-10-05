@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -13,7 +13,7 @@ def shipping_fee(subtotal_cents):
+ 
+ def tier_for_points(points):
+     """Loyalty tier earned by accumulated points."""
+-    if points >= 5000:
++    if points > 4999:
+         return "gold"
+     if points >= 1000:
+         return "silver"

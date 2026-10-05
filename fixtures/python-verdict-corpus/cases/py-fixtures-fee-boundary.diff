@@ -1,0 +1,12 @@
+diff --git a/shop/__init__.py b/shop/__init__.py
+--- a/shop/__init__.py
++++ b/shop/__init__.py
+@@ -14,7 +14,7 @@ class Account:
+ 
+ def handling_fee(amount):
+     """Orders of 100 or more pay no handling fee."""
+-    return 0 if amount >= 100 else 5
++    return 0 if amount > 99 else 5
+ 
+ 
+ def save_report(path, total):

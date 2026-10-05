@@ -404,6 +404,48 @@ fn committed_corpus_is_valid_and_measures_both_error_directions() -> Result<(), 
     Ok(())
 }
 
+#[test]
+fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    let dir = crate::dogfood::repo_rooted_fixture_path(&corpus_dir("python")?.to_string_lossy());
+    let corpus = corpus_for_language(&dir, "python")?;
+    assert!(
+        corpus.cases.len() >= 60,
+        "corpus shrank to {}",
+        corpus.cases.len()
+    );
+    // Every runnable RIPR-SPEC-0233 acceptance example keeps a case; 9 and 10
+    // are left out by `fixtures/python-verdict-corpus/SPEC.md`.
+    for example in (1..=33).filter(|n| ![9, 10].contains(n)) {
+        let prefix = format!("py-spec0233-ex{example:02}-");
+        assert!(
+            corpus.cases.iter().any(|c| c.case_id.starts_with(&prefix)),
+            "no case for RIPR-SPEC-0233 example {example}"
+        );
+    }
+    // Every test library the corpus exists to cover keeps cases in both
+    // error directions: discriminated cases measure false actionable, the
+    // rest measure false exposed and false silent. A library whose subject
+    // stays listed after its cases are dropped fails here.
+    for library in ["pytest", "unittest", "hypothesis"] {
+        let prefix = format!("authored-py-{library}-");
+        let states: Vec<&TruthState> = corpus
+            .cases
+            .iter()
+            .filter(|c| c.subject_id.starts_with(&prefix))
+            .map(|c| &c.truth.state)
+            .collect();
+        assert!(
+            states.iter().any(|s| **s == TruthState::Discriminated),
+            "no discriminated {library} case"
+        );
+        assert!(
+            states.iter().any(|s| **s != TruthState::Discriminated),
+            "no {library} case that is not fully discriminated"
+        );
+    }
+    Ok(())
+}
+
 fn tampered(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
     let dir = repo_corpus_dir();
     let mut raw: Value =
@@ -553,8 +595,18 @@ fn validator_requires_both_truth_directions() -> Result<(), String> {
 
 #[test]
 fn expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
-    let dir = repo_corpus_dir();
-    let corpus = load_corpus(&dir)?;
+    report_rows_agree_with_labels(&repo_corpus_dir())
+}
+
+#[test]
+fn python_expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
+    report_rows_agree_with_labels(&crate::dogfood::repo_rooted_fixture_path(
+        &corpus_dir("python")?.to_string_lossy(),
+    ))
+}
+
+fn report_rows_agree_with_labels(dir: &Path) -> Result<(), String> {
+    let corpus = load_corpus(dir)?;
     let report: Value = serde_json::from_str(&read(&dir.join("expected/report.json"))?)
         .map_err(|err| err.to_string())?;
     let rows = report["rows"].as_array().cloned().unwrap_or_default();
@@ -837,4 +889,96 @@ fn stored_paths_keep_vendored_rust_out_of_the_workspace() {
     assert_eq!(logical_path("LICENSE-MIT").as_deref(), Some("LICENSE-MIT"));
     // A bare `.rs` file under subjects is refused, not silently copied.
     assert_eq!(logical_path("src/lib.rs"), None);
+}
+
+#[test]
+fn a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(corpus.language, "rust");
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let json = render_report_json(&report)?;
+    assert!(!json.contains("\"language\""), "{json}");
+    assert!(render_report_markdown(&report).starts_with("# Rust verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn a_non_rust_corpus_names_its_language_in_both_reports() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let mut raw: Value =
+        serde_json::from_str(&read(&dir.join("corpus.json"))?).map_err(|err| err.to_string())?;
+    raw["language"] = json!("typescript");
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    assert!(validate(&corpus, &dir).is_empty());
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    assert!(render_report_json(&report)?.contains("\"language\": \"typescript\""));
+    assert!(render_report_markdown(&report).starts_with("# TypeScript verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn validator_rejects_an_undeclared_language() -> Result<(), String> {
+    let violations = tampered(|raw| raw["language"] = json!("cobol"))?;
+    assert!(
+        violations
+            .iter()
+            .any(|v: &String| v.contains("language `cobol`")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn each_language_owns_its_corpus_directory_and_run_paths() {
+    assert_eq!(
+        corpus_dir("rust").ok(),
+        Some(PathBuf::from(CORPUS_DIR)),
+        "the Rust corpus keeps its directory"
+    );
+    assert_eq!(
+        corpus_dir("typescript").ok(),
+        Some(PathBuf::from("fixtures/typescript-verdict-corpus"))
+    );
+    let refused = corpus_dir("../rust").err().unwrap_or_default();
+    assert!(refused.contains("is not one of"), "{refused}");
+    assert_eq!(
+        language_path(DEFAULT_OUT, "rust"),
+        PathBuf::from(DEFAULT_OUT)
+    );
+    assert_eq!(
+        language_path(DEFAULT_OUT, "perl"),
+        Path::new(DEFAULT_OUT).join("perl")
+    );
+    assert_eq!(language_flag("rust"), "");
+    assert_eq!(language_flag("python"), " --language python");
+}
+
+#[test]
+fn a_language_directory_must_declare_that_language() -> Result<(), String> {
+    let refused = corpus_for_language(&repo_corpus_dir(), "typescript")
+        .err()
+        .unwrap_or_default();
+    assert!(
+        refused.contains("declares language `rust`, not `typescript`"),
+        "{refused}"
+    );
+    corpus_for_language(&repo_corpus_dir(), "rust")?;
+    Ok(())
+}
+
+fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
+    corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "weakly_exposed",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect()
 }
