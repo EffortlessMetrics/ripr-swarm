@@ -130,10 +130,15 @@ fn nonempty_field<'a>(receipt: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
+fn canonical_current_head(receipt: &Value) -> bool {
+    nonempty_field(receipt, "current_head")
+        .is_some_and(|head| head.len() == 40 && head.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 fn canonical_receipt_write_presence(receipt: &Value) -> bool {
-    // Mirror `app::receipt::validate_receipt_structure` required keys without
-    // depending on the app layer from output. Presence is not `receipt check`
-    // (no SHA/HEAD binding here); missing required writer fields stay missing.
+    // Mirror `app::receipt::validate_receipt_structure` required keys and the
+    // 40-hex `current_head` shape without depending on the app layer.
+    // This is not git HEAD binding; a malformed SHA stays missing.
     receipt.get("kind").and_then(Value::as_str) == Some("receipt")
         && receipt.get("schema_version").and_then(Value::as_str) == Some("0.1")
         && receipt.get("tool").and_then(Value::as_str) == Some("ripr")
@@ -143,7 +148,7 @@ fn canonical_receipt_write_presence(receipt: &Value) -> bool {
             receipt.get("verify_status").and_then(Value::as_str),
             Some("passed" | "failed" | "not_run" | "unknown")
         )
-        && nonempty_field(receipt, "current_head").is_some()
+        && canonical_current_head(receipt)
         && nonempty_field(receipt, "written_at").is_some()
 }
 
@@ -229,7 +234,7 @@ mod tests {
             "packet_id_available": false,
             "verify_command": "cargo test large_order_gets_discount",
             "verify_status": verify_status,
-            "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "written_at": "2026-10-04T23:00:00Z",
             "limits_note": "Static evidence only. Receipt records what was run; does not certify semantic correctness."
         })
@@ -348,7 +353,7 @@ mod tests {
                 "kind": "receipt",
                 "verify_command": "cargo test large_order_gets_discount",
                 "verify_status": "passed",
-                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "written_at": "2026-10-04T23:00:00Z"
             })),
             RECEIPT_MISSING,
@@ -361,7 +366,7 @@ mod tests {
                 "kind": "receipt",
                 "canonical_gap_id": "gap:5a536229e5ed368b",
                 "verify_status": "passed",
-                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "written_at": "2026-10-04T23:00:00Z"
             })),
             RECEIPT_MISSING,
@@ -375,11 +380,25 @@ mod tests {
                 "canonical_gap_id": "gap:5a536229e5ed368b",
                 "verify_command": "cargo test large_order_gets_discount",
                 "verify_status": " passed ",
-                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "current_head": "f0500079aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "written_at": "2026-10-04T23:00:00Z"
             })),
             RECEIPT_MISSING,
             "whitespace-padded verify_status is not a canonical token"
+        );
+        assert_eq!(
+            receipt_lifecycle_state_from_receipt_value(&json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:5a536229e5ed368b",
+                "verify_command": "cargo test large_order_gets_discount",
+                "verify_status": "passed",
+                "current_head": "x",
+                "written_at": "2026-10-04T23:00:00Z"
+            })),
+            RECEIPT_MISSING,
+            "malformed current_head is not a valid receipt write artifact"
         );
     }
 }
