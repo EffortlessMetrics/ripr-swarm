@@ -133,6 +133,18 @@ Updated:
 ## Pending — rust_pyo3_cross_language_limit (12)
 
 Reason:
+RIPR-SPEC-0090: human closing note names the repo's Python test files, human.txt only (#6340)
+
+Command:
+`cargo xtask goldens bless rust_pyo3_cross_language_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_pyo3_cross_language_limit (13)
+
+Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
 
 Command:

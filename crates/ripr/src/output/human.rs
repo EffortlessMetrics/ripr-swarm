@@ -1,6 +1,7 @@
 use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
+pub(crate) use crate::terminal_text::terminal_safe;
 use std::collections::BTreeSet;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
@@ -490,42 +491,6 @@ fn escape_terminal_display(value: &str) -> String {
     out
 }
 
-/// Make a finished human report safe to print to a terminal. Repository text
-/// (assertion source, test names, observed values) reaches the report verbatim,
-/// so a hostile repository could otherwise carry ESC/CSI/OSC sequences (clear
-/// the screen, retitle the window), BEL, a bare CR that overwrites a line, or a
-/// bidi override that reorders what the reader sees. Every control character
-/// except `\n` and `\t`, and the bidi/invisible formatting characters, renders
-/// as `\u{XX}`. Machine formats (JSON, SARIF) keep the raw value, escaped by
-/// their own encoders.
-pub(crate) fn terminal_safe(text: String) -> String {
-    if !text.chars().any(needs_terminal_escape) {
-        return text;
-    }
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if needs_terminal_escape(ch) {
-            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn needs_terminal_escape(ch: char) -> bool {
-    match ch {
-        '\n' | '\t' => false,
-        c if c.is_control() => true,
-        // Arabic letter mark, LRM/RLM, embeddings/overrides (LRE..RLO), and
-        // isolates (LRI..PDI): they reorder text without any visible glyph.
-        '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
-            true
-        }
-        _ => false,
-    }
-}
-
 /// Emit an advisory note when every finding is no-path or unknown (zero
 /// exposed/weakly_exposed/reachable_unrevealed). See RIPR-SPEC-0090.
 ///
@@ -604,10 +569,23 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     } else {
         "add co-located tests that observe the changed behavior"
     };
-    let note = format!(
+    let mut note = format!(
         "Note: ripr found no static test path for any of the {} changed expression(s) in this diff. {} This is not a coverage assessment. A test may already exercise these changes through macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if none does, {}.",
         all_no_path_count, scope_summary, repair
     );
+    // #6340: name the tests ripr cannot link to a Rust change. Human output
+    // only; the verdict and every other format are unchanged.
+    if s.no_static_path > 0
+        && s.changed_rust_files > 0
+        && let Some(python) = &output.unlinked_python_tests
+    {
+        let lower_bound = if python.at_least { "at least " } else { "" };
+        note.push_str(&format!(
+            " This repo also has {lower_bound}{} Python test file(s) (for example {}); ripr does not link Python tests to Rust changes, so a change they alone cover reads as no static path. Check those tests with your Python test runner, or add a Rust test that observes the behavior.",
+            python.count,
+            escape_terminal_display(&python.example)
+        ));
+    }
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));
     out.push('\n');
@@ -880,6 +858,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -921,6 +900,7 @@ mod tests {
                 "Cargo.toml".to_string(),
                 "src/other.rs".to_string(),
             ],
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -965,6 +945,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1000,6 +981,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: true,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1041,6 +1023,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1089,6 +1072,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -1140,6 +1124,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1210,6 +1195,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -1286,6 +1272,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -1351,6 +1338,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1430,6 +1418,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -1474,6 +1463,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1518,6 +1508,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2043,6 +2034,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2087,6 +2079,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2138,6 +2131,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2189,6 +2183,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2218,6 +2213,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2259,6 +2255,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2730,6 +2727,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2829,6 +2827,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2874,6 +2873,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2972,6 +2972,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -3041,6 +3042,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -3093,6 +3095,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -3154,6 +3157,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: suppressed
@@ -3262,6 +3266,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -3312,6 +3317,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -3348,6 +3354,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -3433,6 +3440,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -3539,6 +3547,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -4540,6 +4549,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4698,6 +4708,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4741,6 +4752,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4788,6 +4800,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4828,6 +4841,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4866,6 +4880,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4952,6 +4967,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5041,6 +5057,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5092,6 +5109,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5129,6 +5147,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5167,6 +5186,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5209,6 +5229,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5236,6 +5257,100 @@ mod tests {
             ),
             "expected scope-count disclosure; got:\n{rendered}"
         );
+    }
+
+    fn python_note_output(
+        summary: Summary,
+        python: Option<crate::analysis::UnlinkedPythonTests>,
+    ) -> CheckOutput {
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary,
+            findings: vec![unknown_finding(), unknown_finding()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: python,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        }
+    }
+
+    fn python_tests(at_least: bool) -> Option<crate::analysis::UnlinkedPythonTests> {
+        Some(crate::analysis::UnlinkedPythonTests {
+            count: 124,
+            example: "tests/test_x.py".to_string(),
+            at_least,
+        })
+    }
+
+    fn no_path_summary() -> Summary {
+        Summary {
+            changed_rust_files: 1,
+            probes: 2,
+            findings: 2,
+            no_static_path: 2,
+            ..Summary::default()
+        }
+    }
+
+    /// #6340: the closing note names Python tests ripr does not link.
+    #[test]
+    fn no_path_note_names_python_tests_when_present() {
+        let rendered = render(&python_note_output(no_path_summary(), python_tests(false)));
+        let flat = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains(
+                "This repo also has 124 Python test file(s) (for example tests/test_x.py); ripr does not link Python tests to Rust changes, so a change they alone cover reads as no static path. Check those tests with your Python test runner, or add a Rust test that observes the behavior."
+            ),
+            "{rendered}"
+        );
+        let bounded = render(&python_note_output(no_path_summary(), python_tests(true)));
+        let flat_bounded = bounded.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat_bounded.contains("at least 124 Python test file(s)"),
+            "{bounded}"
+        );
+    }
+
+    /// #6340 negatives: no Python tests, non-no_static_path findings, or no
+    /// changed Rust file leave the note exactly as before.
+    #[test]
+    fn no_path_note_omits_python_sentence_without_the_discriminating_facts() {
+        let baseline = render(&python_note_output(no_path_summary(), None));
+        assert!(!baseline.contains("Python test file"), "{baseline}");
+        assert!(baseline.contains("found no static test path"), "{baseline}");
+
+        let unknown_only = Summary {
+            no_static_path: 0,
+            static_unknown: 2,
+            ..no_path_summary()
+        };
+        let rendered = render(&python_note_output(unknown_only, python_tests(false)));
+        assert!(rendered.contains("found no static test path"), "{rendered}");
+        assert!(!rendered.contains("Python test file"), "{rendered}");
+
+        let no_rust = Summary {
+            changed_rust_files: 0,
+            ..no_path_summary()
+        };
+        let rendered = render(&python_note_output(no_rust, python_tests(false)));
+        assert!(!rendered.contains("Python test file"), "{rendered}");
+
+        // Only the added sentence differs from the baseline.
+        let with = render(&python_note_output(no_path_summary(), python_tests(false)));
+        let flat_with = with.split_whitespace().collect::<Vec<_>>().join(" ");
+        let flat_base = baseline.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat_with.len() > flat_base.len());
+        assert!(!flat_base.contains("Python"), "{baseline}");
     }
 
     #[test]
@@ -5266,6 +5381,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5328,6 +5444,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5378,6 +5495,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5434,6 +5552,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5471,6 +5590,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5505,6 +5625,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5536,6 +5657,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5572,6 +5694,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5607,6 +5730,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5653,6 +5777,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5716,6 +5841,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
