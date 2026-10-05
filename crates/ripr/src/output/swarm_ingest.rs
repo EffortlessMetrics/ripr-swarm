@@ -495,8 +495,8 @@ fn receipt_presence_outcome(facts: &SwarmIngestFacts) -> &'static str {
 /// Windows is a supported platform and agent output arrives from
 /// heterogeneous hosts, so the fold is unconditional; its failure direction
 /// is over-flagging a match, which fails closed.
-fn canonical_compare_key(path: &str, root_segments: Option<&[String]>) -> String {
-    canonical_path(path, root_segments).key
+fn canonical_compare_key(path: &str, root: &Path, root_segments: Option<&[String]>) -> String {
+    canonical_path(path, root, root_segments).key
 }
 
 struct CanonicalPath {
@@ -511,16 +511,13 @@ struct CanonicalPath {
     under_root: bool,
 }
 
-fn canonical_path(path: &str, root_segments: Option<&[String]>) -> CanonicalPath {
+fn canonical_path(path: &str, root: &Path, root_segments: Option<&[String]>) -> CanonicalPath {
     let unix = path.replace('\\', "/");
     // A path that names the filesystem directly — POSIX-absolute, a Windows
     // drive path, or drive-relative — resolves against the actual filesystem
     // when it exists, so symlinked roots, verbatim `\\?\` prefixes, and
     // drive-relative forms anchor to their real location under the
-    // canonicalized root (PR review on #5984). Only direct spellings resolve
-    // here: a bare relative entry is root-relative by packet convention, and
-    // resolving it against the process working directory could match an
-    // unrelated file.
+    // canonicalized root (PR review on #5984).
     let names_filesystem_directly = unix.starts_with('/') || has_windows_drive_prefix(&unix);
     if names_filesystem_directly {
         if let Some(segments) = std::fs::canonicalize(&unix)
@@ -566,6 +563,18 @@ fn canonical_path(path: &str, root_segments: Option<&[String]>) -> CanonicalPath
             under_root: false,
         };
     }
+    // A bare root-relative entry that names an existing file resolves
+    // against the selected root (never the process working directory), so a
+    // symlinked test-file spelling anchors to the forbidden file it actually
+    // writes through (PR review on #6289). A symlink target outside the
+    // root anchors there and surfaces as outside-root evidence.
+    let resolved = (!segments.is_empty())
+        .then(|| std::fs::canonicalize(root.join(&unix)).ok())
+        .flatten()
+        .and_then(|resolved| absolute_unix_segments(&resolved.to_string_lossy()));
+    if let Some(segments) = resolved {
+        return anchor_under_root(segments, root_segments);
+    }
     CanonicalPath {
         key: segments.join("/").to_ascii_lowercase(),
         under_root: true,
@@ -596,13 +605,13 @@ fn edited_forbidden_files(
     let root_segments = resolved_root_segments(root);
     let forbidden: BTreeSet<_> = forbidden_files
         .iter()
-        .map(|file| canonical_compare_key(file, root_segments.as_deref()))
+        .map(|file| canonical_compare_key(file, root, root_segments.as_deref()))
         .collect();
     dedup(
         edited_files
             .iter()
             .filter(|file| {
-                forbidden.contains(&canonical_compare_key(file, root_segments.as_deref()))
+                forbidden.contains(&canonical_compare_key(file, root, root_segments.as_deref()))
             })
             .cloned()
             .collect(),
@@ -617,7 +626,7 @@ fn edited_files_outside_root(edited_files: &[String], root: &Path) -> Vec<String
     dedup(
         edited_files
             .iter()
-            .filter(|file| !canonical_path(file, root_segments.as_deref()).under_root)
+            .filter(|file| !canonical_path(file, root, root_segments.as_deref()).under_root)
             .cloned()
             .collect(),
     )
@@ -1127,6 +1136,38 @@ mod tests {
         );
         std::fs::remove_dir_all(&link).map_err(|error| format!("remove link: {error}"))?;
         std::fs::remove_dir_all(&real).map_err(|error| format!("remove real: {error}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ingest_flags_forbidden_edit_reached_through_a_relative_symlink() -> Result<(), String> {
+        // CodeRabbit review on #6289: editing a test-side symlink writes
+        // through to the production file it targets; a root-relative entry
+        // that names an existing symlink must resolve against the selected
+        // root (never the process working directory) and match the
+        // forbidden entry.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("ripr-ingest-rel-symlink-{nanos}"));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create root: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests: {error}"))?;
+        std::fs::write(root.join("src").join("pricing.py"), "def x(): pass")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        std::os::unix::fs::symlink("../src/pricing.py", root.join("tests").join("link.py"))
+            .map_err(|error| format!("create symlink: {error}"))?;
+        let value =
+            render_value_with_root(&root, &forbidden_edit_repro_json(r#"["tests/link.py"]"#))?;
+        assert_forbidden_edit_witness(&value, &["tests/link.py"]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove root: {error}"))?;
         Ok(())
     }
 

@@ -58,11 +58,14 @@ are scoped or reviewed.
 - `ripr swarm ingest` no longer fails the packet's forbidden-edit guard open
   on path spellings. `SRC/PRICING.py`, absolute or verbatim `\\?\` paths
   under the root, symlinked-root spellings, drive-relative forms, and
-  `..` segments canonicalize before the comparison — filesystem resolution
-  when the entry names an existing file, lexical case-insensitive matching
-  otherwise — so a forbidden production edit can no longer classify
-  `closed`/`resolved`. Entries that do not resolve inside the root surface
-  as `evidence.edited_files_outside_root` instead of passing silently
+  `..` segments canonicalize before the comparison — directly named absolute
+  or drive-prefixed entries resolve against the filesystem when they exist,
+  root-relative entries that name an existing file resolve against the
+  selected root (so a symlinked spelling anchors to the file it writes
+  through), and everything else matches lexically case-insensitively — so a
+  forbidden production edit can no longer classify `closed`/`resolved`.
+  Entries that do not resolve inside the root surface as
+  `evidence.edited_files_outside_root` instead of passing silently
   (#5984). The OUTPUT_SCHEMA ingest example now shows the pinned
   `forbidden_edit` reason token the binary emits instead of prose (#5986).
 - `ripr swarm queue` no longer emits a runnable refresh route a check-output

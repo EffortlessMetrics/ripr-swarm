@@ -14324,13 +14324,16 @@ the receipt.
 
 Edited and forbidden path entries are compared after canonicalization
 (#5984): backslashes fold to `/`, `.` and `..` segments resolve, absolute
-paths under the selected root become root-relative, entries that name an
-existing file resolve against the filesystem (so symlinked-root, verbatim
-`\\?\`, and drive-relative spellings anchor to their real location), and
-comparison folds ASCII case (Windows convention), so `SRC/PRICING.py`, an
-absolute path under the root, or `tests/../src/pricing.py` all match a
-forbidden `src/pricing.py` entry and still classify `edited_forbidden_file`
-before any verify or receipt success. `evidence.edited_files_outside_root`
+paths under the selected root become root-relative, directly named absolute
+or drive-prefixed entries resolve against the filesystem when they exist (so
+symlinked-root, verbatim `\\?\`, and drive-relative spellings anchor to
+their real location), root-relative entries that name an existing file
+resolve against the selected root (so a symlinked spelling anchors to the
+file it writes through), and comparison folds ASCII case (Windows
+convention), so `SRC/PRICING.py`, an absolute path under the root, or
+`tests/../src/pricing.py` all match a forbidden `src/pricing.py` entry and
+still classify `edited_forbidden_file` before any verify or receipt
+success. `evidence.edited_files_outside_root`
 lists edited entries that do not resolve inside the selected root — absolute
 paths not under it, `..` climbs above it, or spellings whose containment
 cannot be established (a drive-relative entry that resolves to nothing) — as
