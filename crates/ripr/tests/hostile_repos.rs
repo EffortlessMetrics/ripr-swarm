@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
 
@@ -663,9 +663,21 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ("GIT_CONFIG_KEY_0", "diff.orderFile"),
         ("GIT_CONFIG_VALUE_0", order_value.as_str()),
     ];
+    // The stimulus probes go through the hardened helper with `-c`,
+    // which sets the same config the env form would; the `ripr` calls
+    // below keep the env form because they simulate ambient user config.
     let diff_args = ["diff", "--name-only", "main", "--"];
-    let default_order = git_stdout(&root2, &diff_args, &[])?;
-    let reordered = git_stdout(&root2, &diff_args, &order_env)?;
+    let default_order = fixture_git_output(&root2, &diff_args)?;
+    let order_arg = format!("diff.orderFile={order_value}");
+    let reordered_args = [
+        "-c",
+        order_arg.as_str(),
+        "diff",
+        "--name-only",
+        "main",
+        "--",
+    ];
+    let reordered = fixture_git_output(&root2, &reordered_args)?;
     if default_order == reordered {
         return Err(format!(
             "orderfile did not reorder the stimulus diff:\n{default_order}"
@@ -682,29 +694,6 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn git_stdout(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String, String> {
-    let mut command = Command::new("git");
-    command
-        .current_dir(dir)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    let output = command
-        .output()
-        .map_err(|e| format!("spawn git failed: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[test]
