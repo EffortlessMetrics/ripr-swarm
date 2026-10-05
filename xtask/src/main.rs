@@ -60,6 +60,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod work_portfolio;
 mod types;
 pub(crate) use types::*;
 mod reports;

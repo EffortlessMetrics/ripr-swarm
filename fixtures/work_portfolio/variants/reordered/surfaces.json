@@ -1,0 +1,21 @@
+{
+  "schema_version": "work_surfaces.v1",
+  "surfaces": [
+    {
+      "id": "surface-ci",
+      "title": "CI surface"
+    },
+    {
+      "id": "surface-rust-cli",
+      "title": "Rust CLI surface"
+    },
+    {
+      "id": "surface-docs",
+      "title": "Docs surface"
+    },
+    {
+      "id": "surface-editor",
+      "title": "Editor surface"
+    }
+  ]
+}

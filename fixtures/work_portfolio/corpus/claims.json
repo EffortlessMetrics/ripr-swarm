@@ -1,0 +1,45 @@
+{
+  "schema_version": "work_claims.v1",
+  "claims": [
+    {
+      "id": "claim-9102",
+      "issue": 9102,
+      "branch": "feat/work-9102",
+      "worktree": "C:\\code\\ripr-swarm\\wt-9102",
+      "exclusive": true,
+      "state": "active"
+    },
+    {
+      "id": "claim-9107-b",
+      "issue": 9107,
+      "branch": "feat/work-9107-b",
+      "worktree": "C:\\code\\ripr-swarm\\wt-9107-b",
+      "exclusive": true,
+      "state": "active"
+    },
+    {
+      "id": "claim-9101",
+      "issue": 9101,
+      "branch": "feat/work-9101",
+      "worktree": "C:\\code\\ripr-swarm\\wt-9101",
+      "exclusive": true,
+      "state": "active"
+    },
+    {
+      "id": "claim-9107-a",
+      "issue": 9107,
+      "branch": "feat/work-9107-a",
+      "worktree": "C:\\code\\ripr-swarm\\wt-9107-a",
+      "exclusive": true,
+      "state": "active"
+    },
+    {
+      "id": "claim-9103",
+      "issue": 9103,
+      "branch": "feat/work-9103",
+      "worktree": "C:\\code\\ripr-swarm\\wt-9103",
+      "exclusive": true,
+      "state": "active"
+    }
+  ]
+}

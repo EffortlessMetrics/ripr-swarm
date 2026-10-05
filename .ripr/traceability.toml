@@ -12463,6 +12463,42 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0233"
+name = "Read-only deterministic multi-campaign work-portfolio compiler"
+spec = "docs/specs/RIPR-SPEC-0233-work-portfolio-compiler.md"
+tests = [
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_multiple_campaigns_and_independent_lanes_one_snapshot",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_no_global_default_campaign_required_or_synthesized",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_every_candidate_explains_stage_blockers_conflicts_capacity_evidence_ranking",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_existing_prs_and_claims_become_resume_states_not_new_builds",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_blockers_collisions_duplicate_family_and_shared_contracts_visible",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_partial_and_unavailable_inputs_lower_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_filters_do_not_change_authority_or_candidate_identity",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_commands_mutate_nothing_mutation_negative",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_deterministic_fixture_and_root_portable_output",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_bounded_wave_retrievable_without_reading_every_body",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_blocked_complete_or_low_ranked_campaign_never_hides_eligible_work",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_explain_view_matches_snapshot_and_fails_closed",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
+]
+fixtures = [
+  "fixtures/work_portfolio",
+]
+code = [
+  "xtask/src/work_portfolio.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0233-work-portfolio-compiler.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+[[behavior]]
 id = "RIPR-SPEC-0225"
 name = "Whole-value equality credit for constructed fields"
 spec = "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md"

@@ -1,0 +1,86 @@
+{
+  "schema_version": "work_local_state.v1",
+  "root": "C:\\code\\ripr-swarm",
+  "branches": [
+    {
+      "name": "feat/work-9107-a",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "feat/work-9103",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "feat/work-9301",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "feat/work-9102",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "feat/work-9107-b",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "feat/work-9101",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": [
+        "crates/ripr/src/output/json/report.rs"
+      ]
+    },
+    {
+      "name": "feat/work-9108",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    },
+    {
+      "name": "main",
+      "head": "9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567",
+      "dirty_paths": []
+    }
+  ],
+  "worktrees": [
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9107-a",
+      "branch": "feat/work-9107-a",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": true
+    },
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9103",
+      "branch": "feat/work-9103",
+      "head": "3333333333333333333333333333333333333333",
+      "dirty": false
+    },
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9101",
+      "branch": "feat/work-9101",
+      "head": "1111111111111111111111111111111111111111",
+      "dirty": true
+    },
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9102",
+      "branch": "feat/work-9102",
+      "head": "2222222222222222222222222222222222222222",
+      "dirty": false
+    },
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9108",
+      "branch": "feat/work-9108",
+      "head": "8888888888888888888888888888888888888888",
+      "dirty": false
+    },
+    {
+      "path": "C:\\code\\ripr-swarm\\wt-9107-b",
+      "branch": "feat/work-9107-b",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "dirty": true
+    }
+  ]
+}
