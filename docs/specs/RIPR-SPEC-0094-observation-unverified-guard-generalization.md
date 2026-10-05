@@ -288,7 +288,9 @@ a lower-case name with no indexed function (a std or trait method can dispatch
 into the owner). It also may when the owner is, or its name path runs through,
 a trait method Rust calls without naming it (`fmt` behind `format!`, `eq` behind `==`,
 `add`, `index`, `deref`, `next`, `drop` and the like), since such a call leaves
-no call fact. Only a test whose calls are all constructors or indexed
+no call fact. Only a trait impl or trait method of that name counts; a free or
+inherent `fn fmt` or `fn clone` is reached by name only, and an unknown
+container (lexical fallback) counts. Only a test whose calls are all constructors or indexed
 functions with no name path to the owner is withheld. When no related test is
 reach-bearing, same-file and same-module tests confirm as before.
 

@@ -16,7 +16,7 @@
 //!   This check only sets `static_limit_kind` to name the limitation.
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
-use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex, TestFact};
+use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -513,10 +513,24 @@ impl<'a> TransitiveReachIndex<'a> {
         // A trait method the language calls without naming it (`format!`
         // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
         // leaves no call fact, so an owner that is one, or is reached from
-        // one, may run under any test.
+        // one, may run under any test. Only a trait method dispatches that
+        // way: a free or inherent `fn clone` is reached by name only. An
+        // unknown container (lexical fallback) fails open.
         let implicit_dispatch = std::iter::once(owner_name)
             .chain(reaching.iter().copied())
-            .any(|name| IMPLICIT_DISPATCH_METHODS.contains(&name));
+            .filter(|name| IMPLICIT_DISPATCH_METHODS.contains(name))
+            .any(|name| {
+                graph.by_name.get(name).is_none_or(|functions| {
+                    functions.iter().any(|function| {
+                        matches!(
+                            function.item.container,
+                            FunctionContainer::TraitImpl { .. }
+                                | FunctionContainer::Trait { .. }
+                                | FunctionContainer::Unknown
+                        )
+                    })
+                })
+            });
         OwnerReach {
             graph,
             owner_name: owner_name.to_string(),
@@ -2209,6 +2223,35 @@ mod tests {
         assert!(
             !display_reach
                 .owner_reach("from_str")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+
+        // A free or inherent `fmt`/`clone` is not implicitly dispatched.
+        let mut free_fmt = make_fn("fmt", vec!["seconds"]);
+        free_fmt.item.container = FunctionContainer::Free;
+        let mut inherent_clone = make_fn("clone", vec!["seconds"]);
+        inherent_clone.item.container = FunctionContainer::Inherent {
+            self_ty: "Unit".to_string(),
+        };
+        let named_only = index_with(
+            vec![make_fn("seconds", vec![]), free_fmt, inherent_clone],
+            Vec::new(),
+        );
+        let named_reach = TransitiveReachIndex::new(&named_only);
+        assert!(
+            !named_reach
+                .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        let mut trait_fmt = make_fn("fmt", vec!["seconds"]);
+        trait_fmt.item.container = FunctionContainer::TraitImpl {
+            trait_path: "fmt::Display".to_string(),
+            self_ty: "Unit".to_string(),
+        };
+        let trait_only = index_with(vec![make_fn("seconds", vec![]), trait_fmt], Vec::new());
+        assert!(
+            TransitiveReachIndex::new(&trait_only)
+                .owner_reach("seconds")
                 .test_may_reach(&make_test("t", Vec::new()))
         );
     }
