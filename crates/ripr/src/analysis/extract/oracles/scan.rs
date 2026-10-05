@@ -4083,7 +4083,8 @@ mod err_guard_parity_tests {
     use crate::domain::{OracleKind, OracleStrength};
 
     #[test]
-    fn quoted_return_text_and_prior_statements_are_not_terminal_failure_prefixes() {
+    fn quoted_return_text_and_prior_statements_are_not_terminal_failure_prefixes()
+    -> Result<(), String> {
         let quoted_body = |value: i32| -> Result<(), ()> {
             if !matches!(value, 2) {
                 let message = "{returnErr(";
@@ -4096,7 +4097,9 @@ mod err_guard_parity_tests {
         for value in [2, 3] {
             match quoted_body(value) {
                 Ok(()) => {}
-                Err(()) => panic!("quoted diagnostic unexpectedly failed for {value}"),
+                Err(()) => {
+                    return Err(format!("quoted diagnostic unexpectedly failed for {value}"));
+                }
             }
         }
         for statement in [
@@ -4113,6 +4116,7 @@ mod err_guard_parity_tests {
                 "quoted or unsupported body credited: {statement}"
             );
         }
+        Ok(())
     }
 
     #[test]
