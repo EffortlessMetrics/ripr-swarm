@@ -4821,7 +4821,7 @@ mod tests {
             evidence: Vec::new(),
             note: String::new(),
         };
-        if lane_collision_edge(&[edge.clone()], &[910]).is_some() {
+        if lane_collision_edge(std::slice::from_ref(&edge), &[910]).is_some() {
             return Err("issue 910 must not inherit issue 9101's collision".to_string());
         }
         if lane_collision_edge(&[edge], &[9101]).as_deref() != Some("edge:claim_collision:x") {
