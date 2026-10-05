@@ -1591,22 +1591,55 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
     // the base itself whenever the base is missing, blocked or still empty,
     // and a read-only base whose entry directories already exist and accept
     // writes does not stop caching.
-    let mut probed: Vec<PathBuf> = Vec::new();
+    let mut probed: Vec<(PathBuf, bool)> = Vec::new();
     for target in &analysis::seam_cache::production_entry_dirs(cache_dir) {
         let probe_dir = match nearest_existing_dir(target) {
             Ok(Some(dir)) => dir,
             Ok(None) => continue,
             Err(reason) => return Some(reason),
         };
-        if probed.contains(&probe_dir) {
+        // A missing entry directory is created by the producer first, and an
+        // ACL (Windows) can allow adding files but deny adding directories.
+        let needs_dir = probe_dir != *target;
+        if probed
+            .iter()
+            .any(|(dir, dir_probed)| *dir == probe_dir && (*dir_probed || !needs_dir))
+        {
             continue;
         }
         if let Some(reason) = probe_writable(&probe_dir) {
             return Some(reason);
         }
-        probed.push(probe_dir);
+        if needs_dir && let Some(reason) = probe_creatable_dir(&probe_dir) {
+            return Some(reason);
+        }
+        probed.push((probe_dir, needs_dir));
     }
     None
+}
+
+/// Creates and removes a short-lived subdirectory, the operation a producer
+/// needs before it can write under a missing entry directory.
+fn probe_creatable_dir(probe_dir: &Path) -> Option<String> {
+    let probe = probe_dir.join(probe_name("dir"));
+    match std::fs::create_dir(&probe) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(&probe);
+            None
+        }
+        Err(error) => Some(format!(
+            "cannot create a directory in {}: {error}",
+            probe_dir.display()
+        )),
+    }
+}
+
+fn probe_name(kind: &str) -> String {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    format!(".ripr-doctor-probe-{kind}-{}-{nonce}", std::process::id())
 }
 
 /// The nearest existing directory at or above `path`; an error naming the
@@ -1646,11 +1679,7 @@ fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
 /// Creates and removes one exclusive probe file in `dir`; the error when
 /// that fails.
 fn probe_writable(probe_dir: &Path) -> Option<String> {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    let probe = probe_dir.join(format!(".ripr-doctor-probe-{}-{nonce}", std::process::id()));
+    let probe = probe_dir.join(probe_name("file"));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

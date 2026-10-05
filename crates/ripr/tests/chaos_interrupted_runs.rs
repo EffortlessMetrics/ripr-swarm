@@ -125,6 +125,19 @@ impl Fixture {
         files
     }
 
+    /// Every cache file with its bytes, so a later run that rewrites or
+    /// adds an entry is visible.
+    fn cache_snapshot(&self) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+        self.cache_files()
+            .into_iter()
+            .map(|path| {
+                let bytes =
+                    fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+                Ok((path, bytes))
+            })
+            .collect()
+    }
+
     /// Temporary files an interrupted atomic write could strand.
     fn stranded_temp_files(&self) -> Vec<PathBuf> {
         let mut files = self.cache_files();
@@ -362,12 +375,40 @@ fn concurrent_runs_on_one_cache_agree_with_the_cold_result() -> Result<(), Strin
             stranded.is_empty(),
             "round {round}: stranded temporary files: {stranded:?}"
         );
-        // And the cache the race left behind is still sound.
+        // And the cache the race left behind is sound as left: snapshot it
+        // before any rerun, because a rerun silently repairs a malformed or
+        // missing entry. Warm reruns of both diffs must agree with the cold
+        // results and leave every entry byte-identical.
+        let raced = fixture.cache_snapshot()?;
+        assert!(!raced.is_empty(), "round {round}: the race left no cache");
         same_result(
             &format!("round {round}, post-race rerun"),
             &cold,
             &fixture.result("ge12.diff")?,
         )?;
+        same_result(
+            &format!("round {round}, post-race rerun of the other diff"),
+            &cold_other,
+            &fixture.result("ge11.diff")?,
+        )?;
+        let rerun = fixture.cache_snapshot()?;
+        let mut changed: Vec<&PathBuf> = raced
+            .iter()
+            .filter(|entry| !rerun.contains(entry))
+            .map(|(path, _)| path)
+            .chain(
+                rerun
+                    .iter()
+                    .filter(|entry| !raced.contains(entry))
+                    .map(|(path, _)| path),
+            )
+            .collect();
+        changed.sort();
+        changed.dedup();
+        assert!(
+            changed.is_empty(),
+            "round {round}: a warm rerun rewrote or added cache entries the race left: {changed:?}"
+        );
     }
     Ok(())
 }
