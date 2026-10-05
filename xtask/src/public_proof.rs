@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::Value;
 
@@ -130,8 +131,13 @@ fn check_receipts(root: &Path) -> Result<(), String> {
 /// the repository, so whoever bumps a scoreboard sees which published numbers
 /// move before committing.
 fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
-    let scratch =
-        std::env::temp_dir().join(format!("ripr-public-proof-preview-{}", std::process::id()));
+    // Unique per call: tests and callers in one process must not share a scratch.
+    static SCRATCH_ID: AtomicUsize = AtomicUsize::new(0);
+    let scratch = std::env::temp_dir().join(format!(
+        "ripr-public-proof-preview-{}-{}",
+        std::process::id(),
+        SCRATCH_ID.fetch_add(1, Ordering::Relaxed)
+    ));
     let receipts = scratch.join(RECEIPTS);
     fs::create_dir_all(&receipts)
         .map_err(|err| format!("failed to create {}: {err}", receipts.display()))?;
@@ -156,20 +162,41 @@ fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
     result
 }
 
-/// Lines only in `old` (`- `) then lines only in `new` (`+ `), in page order.
+/// An ordered line diff, `- old` and `+ new`, in page order. It is a longest
+/// common subsequence diff, so a moved or duplicated line is reported; blank
+/// lines are not shown.
 fn changed_lines(old: &str, new: &str) -> Vec<String> {
-    let old_set: std::collections::HashSet<&str> = old.lines().collect();
-    let new_set: std::collections::HashSet<&str> = new.lines().collect();
-    let removed = old
-        .lines()
-        .filter(|l| !new_set.contains(l) && !l.is_empty());
-    let added = new
-        .lines()
-        .filter(|l| !old_set.contains(l) && !l.is_empty());
-    removed
-        .map(|l| format!("- {l}"))
-        .chain(added.map(|l| format!("+ {l}")))
-        .collect()
+    let a: Vec<&str> = old.lines().collect();
+    let b: Vec<&str> = new.lines().collect();
+    let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] > lcs[i + 1][j]) {
+            if !b[j].is_empty() {
+                out.push(format!("+ {}", b[j]));
+            }
+            j += 1;
+        } else {
+            if !a[i].is_empty() {
+                out.push(format!("- {}", a[i]));
+            }
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Fails with the next step when the page no longer matches its receipts.
@@ -2228,6 +2255,18 @@ mod tests {
         assert!(err.contains("- ") && err.contains(&old_title), "{err}");
         assert!(untouched == original, "the preview must not write receipts");
         Ok(())
+    }
+
+    #[test]
+    fn changed_lines_reports_moved_and_duplicated_lines() {
+        assert!(changed_lines("a\nb\nc", "a\nb\nc").is_empty());
+        assert_eq!(changed_lines("a\nb", "a\nx\nb"), vec!["+ x"]);
+        assert_eq!(changed_lines("a\nb\na", "a\nb"), vec!["- a"]);
+        assert!(!changed_lines("a\nb", "b\na").is_empty());
+        assert_eq!(
+            changed_lines("a\nold\nz", "a\nnew\nz"),
+            vec!["- old", "+ new"]
+        );
     }
 
     #[test]
