@@ -1013,10 +1013,10 @@ mod tests {
 
     #[test]
     fn powershell_command_withholds_ansi_c_quoted_arguments() {
-        // `shell_arg` spells control characters as `$'\x1b'`; PowerShell has no
+        // `shell_arg` spells control characters as `"$(printf '\033')"`; PowerShell has no
         // translation for that form, so no variant is offered (#6309).
         assert_eq!(
-            powershell_command("ripr explain --root $'esc\\x1bdir' --base main"),
+            powershell_command("ripr explain --root 'esc'\"$(printf '\\033')\"'dir' --base main"),
             None
         );
     }

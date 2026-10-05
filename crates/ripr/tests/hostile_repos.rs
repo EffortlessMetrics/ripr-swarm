@@ -837,7 +837,7 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
         .map(str::trim)
         .find(|line| line.starts_with("ripr explain "))
         .ok_or_else(|| format!("no explain command in\n{}", report.stdout))?;
-    if !command.contains("$'") || !command.contains("\\x1b") {
+    if !command.contains("$(printf '\\033')") {
         return Err(format!("drill-in command is not shell-escaped: {command}"));
     }
     // Run the printed command through bash: it must resolve the same root.

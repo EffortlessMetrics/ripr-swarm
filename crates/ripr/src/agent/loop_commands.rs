@@ -407,28 +407,41 @@ pub(crate) fn needs_terminal_escape(ch: char) -> bool {
 
 /// Control and bidi characters cannot be printed raw in a report, and the
 /// report escape would change them inside `'...'` so the pasted command named a
-/// different argument. `$'...'` spells them as escapes bash decodes back to the
-/// exact bytes. PowerShell has no translation for this form, so the variant is
-/// withheld.
+/// different argument. Each such character becomes an adjacent
+/// `"$(printf '\ooo')"` segment, one octal escape per UTF-8 byte; everything
+/// else stays in `'...'` runs. Unlike `$'...'` this is POSIX, so `sh`, dash, bash
+/// and zsh all rebuild the exact bytes. PowerShell has no translation for the
+/// `$(...)` form, so that variant is withheld.
 fn ansi_c_quote(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 3);
-    out.push_str("$'");
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut in_run = false;
     for ch in value.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
-            // One `\xHH` per UTF-8 byte: unlike `\uHHHH` it decodes the same in
-            // every locale.
-            ch if needs_terminal_escape(ch) => {
-                let mut buf = [0u8; 4];
-                for byte in ch.encode_utf8(&mut buf).bytes() {
-                    out.push_str(&format!("\\x{byte:02x}"));
-                }
+        if needs_terminal_escape(ch) {
+            if in_run {
+                out.push('\'');
+                in_run = false;
             }
-            ch => out.push(ch),
+            out.push_str("\"$(printf '");
+            let mut buf = [0u8; 4];
+            for byte in ch.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("\\{byte:03o}"));
+            }
+            out.push_str("')\"");
+            continue;
+        }
+        if !in_run {
+            out.push('\'');
+            in_run = true;
+        }
+        if ch == '\'' {
+            out.push_str(r"'\''");
+        } else {
+            out.push(ch);
         }
     }
-    out.push('\'');
+    if in_run {
+        out.push('\'');
+    }
     out
 }
 
@@ -817,10 +830,43 @@ mod tests {
     #[test]
     fn shell_arg_spells_control_and_bidi_characters_as_escapes() {
         let quoted = shell_arg("a\u{1b}[2Jb'c\\d\u{202e}");
-        assert_eq!(quoted, "$'a\\x1b[2Jb\\'c\\\\d\\xe2\\x80\\xae'");
+        assert_eq!(
+            quoted,
+            r#"'a'"$(printf '\033')"'[2Jb'\''c\d'"$(printf '\342\200\256')""#
+        );
         assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
         // Plain hostile text without control characters keeps `'...'` quoting.
         assert_eq!(shell_arg("it's"), r"'it'\''s'");
+    }
+
+    /// The control-character form must be POSIX, not bash-only: a pasted line
+    /// runs under `/bin/sh` (dash on Debian) as often as under bash.
+    #[cfg(unix)]
+    #[test]
+    fn shell_arg_control_characters_round_trip_through_posix_sh() -> Result<(), String> {
+        let sh = std::path::Path::new("/bin/sh");
+        if !sh.exists() {
+            return Ok(());
+        }
+        for (label, value) in hostile_values() {
+            let script = format!(
+                "set -- {}\nprintf '%s\\n' \"$#\"\nprintf '%s' \"$1\"\n",
+                shell_arg(value)
+            );
+            let output = std::process::Command::new(sh)
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .map_err(|err| format!("{label}: failed to run sh: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let expected = format!("1\n{value}");
+            if !output.status.success() || stdout != expected {
+                return Err(format!(
+                    "{label}: sh gave {stdout:?} for script {script:?}, expected {expected:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]
