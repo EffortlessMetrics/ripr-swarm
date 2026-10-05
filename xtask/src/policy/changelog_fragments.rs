@@ -72,12 +72,21 @@ pub(crate) fn changelog_fragment_violations(
     let policy_path = root.join(POLICY_DOC);
     let policy = fs::read_to_string(&policy_path)
         .map_err(|err| format!("failed to read {POLICY_DOC}: {err}"))?;
+    let documented = documented_sections(&policy);
     for section in ALLOWED_SECTIONS {
-        if !policy.contains(&format!("- `{section}`")) {
+        if !documented.contains(section) {
             violations.push(format!(
                 "{POLICY_DOC} no longer lists section `{section}`; update ALLOWED_SECTIONS in xtask/src/policy/changelog_fragments.rs to match"
             ));
         }
+    }
+    for section in documented
+        .iter()
+        .filter(|section| !ALLOWED_SECTIONS.contains(section))
+    {
+        violations.push(format!(
+            "{POLICY_DOC} lists section `{section}` that fragments cannot use; add it to ALLOWED_SECTIONS in xtask/src/policy/changelog_fragments.rs"
+        ));
     }
 
     let dir = root.join(FRAGMENT_DIR);
@@ -164,6 +173,9 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
         Some(line) if !line.starts_with("- ") => violations.push(format!(
             "{path}: entry must start with a `- ` bullet at column 0, found `{line}`"
         )),
+        Some(line) if line[2..].trim().is_empty() => {
+            violations.push(format!("{path}: the bullet line has no entry text"))
+        }
         Some(_) => {}
     }
     // HTML comments are copied into CHANGELOG.md verbatim at the fold, so a
@@ -186,6 +198,17 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
         ));
     }
     violations
+}
+
+/// The backticked items of the `## Sections` list in the policy doc.
+fn documented_sections(policy: &str) -> Vec<&str> {
+    policy
+        .lines()
+        .skip_while(|line| line.trim() != "## Sections")
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .filter_map(|line| line.trim().strip_prefix("- `")?.strip_suffix('`'))
+        .collect()
 }
 
 fn section_of(line: &str) -> Option<&str> {
@@ -312,6 +335,7 @@ mod tests {
             "- See docs/X.md#3-step for the steps.",
             "- Badge color is now #1f2937.",
             "- Fixed `foo#1` parsing.",
+            "- Fix color `#123456`.",
         ] {
             let text = format!("<!-- section: Fixed -->\n{body}\n");
             let violations = fragment_violations("not-a-ref.md", &text);
@@ -326,6 +350,14 @@ mod tests {
             "<!-- section: Fixed -->\n- x (#1).\n<!-- section: Added -->\n- y (#2).\n";
         let violations = fragment_violations("two.md", two_sections);
         assert_eq!(violations.len(), 1, "{violations:?}");
+    }
+
+    #[test]
+    fn bullet_needs_entry_text() {
+        let text = "<!-- section: Fixed -->\n- \n  (#1).\n";
+        let violations = fragment_violations("empty-bullet.md", text);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("no entry text"));
     }
 
     #[test]
@@ -368,9 +400,8 @@ mod tests {
         let dir = root.join(FRAGMENT_DIR);
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
-        let policy: String = ALLOWED_SECTIONS
-            .iter()
-            .map(|s| format!("- `{s}`\n"))
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
             .collect();
         fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
         fs::write(dir.join(README), "# fragments\n").map_err(|err| err.to_string())?;
@@ -396,15 +427,22 @@ mod tests {
         let root = fresh_root("changelog-policy-drift")?;
         fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
         fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
-        fs::write(root.join(POLICY_DOC), "- `Added`\n").map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(POLICY_DOC),
+            "## Sections\n\n- `Added`\n- `Improved`\n\n## Static Language\n\n- `Docs`\n",
+        )
+        .map_err(|err| err.to_string())?;
         fs::write(root.join(FRAGMENT_DIR).join(README), "x\n").map_err(|err| err.to_string())?;
         let violations = changelog_fragment_violations(&root, false);
         let _ = fs::remove_dir_all(&root);
         let violations = violations?;
-        assert_eq!(
-            violations.len(),
-            ALLOWED_SECTIONS.len() - 1,
-            "{violations:?}"
+        // Six allowed sections are missing from the list (a `Docs` item under
+        // a later heading does not count) and one listed section is unknown.
+        assert_eq!(violations.len(), ALLOWED_SECTIONS.len(), "{violations:?}");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("lists section `Improved` that fragments cannot use"))
         );
         assert!(
             violations
