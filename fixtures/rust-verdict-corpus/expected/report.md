@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.7. Cases: 147.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 152.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 48/147 | 0.3265 |
-| False actionable (of discriminated) | 42/72 | 0.5833 |
+| False verdicts (all cases) | 52/152 | 0.3421 |
+| False actionable (of discriminated) | 46/77 | 0.5974 |
 | False exposed (of not fully discriminated) | 6/75 | 0.0800 |
 | False silent (of not fully discriminated) | 0/75 | 0.0000 |
-| Ideal verdict | 55/147 | 0.3741 |
-| Abstained (limited or silent where acceptable) | 44/147 | 0.2993 |
-| Findings with a contradiction | 2/198 | 0.0101 |
+| Ideal verdict | 55/152 | 0.3618 |
+| Abstained (limited or silent where acceptable) | 45/152 | 0.2961 |
+| Findings with a contradiction | 2/204 | 0.0098 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 113 | 38/113 | 32/52 | 6/61 | 0/61 | 50/113 | 25/113 |
+| authored | 118 | 42/118 | 36/57 | 6/61 | 0/61 | 50/118 | 26/118 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -168,6 +168,11 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spot-code-length-guard-query` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spot-code-digit-helper-ok-or` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | no | none |
+| `spot-window-clone-field-whole-equality` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spot-cap-generic-via-wrapper` | authored | discriminated | credited | limited | propagation_unknown | abstained | no | none |
+| `spot-initials-computed-local-boundary` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 
 Non-claims:
 
