@@ -21920,3 +21920,91 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     );
     Ok(())
 }
+
+/// #5510: the packet-backed Perl finding's rows reach hover, related
+/// information and the diagnostic data with the shared sentence on the
+/// direct row only.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Result<(), String> {
+    use crate::output::related_test_miss::{related_test_miss_label, related_test_miss_reason};
+    let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+    let [direct, advisory] = finding.related_tests.as_slice() else {
+        return Err(format!("expected two rows: {:?}", finding.related_tests));
+    };
+    let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        .ok_or("the direct row should have a reason")?;
+    let label = related_test_miss_label(direct);
+    let explained = format!("{label}: {why}");
+
+    let hover = finding_hover_markdown_for(&finding)?;
+    let hover_row = |name: &str| {
+        hover
+            .lines()
+            .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
+            .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
+    };
+    assert!(
+        hover_row(&direct.name)?.contains(&format!("`{}` {explained}", direct.name)),
+        "{hover}"
+    );
+    let advisory_row = hover_row(&advisory.name)?;
+    assert!(
+        !advisory_row.contains(&why) && !advisory_row.contains(&format!("{label}:")),
+        "{advisory_row}"
+    );
+
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let examined = diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter(|row| row.message.contains(&why))
+        .collect::<Vec<_>>();
+    let [examined] = examined.as_slice() else {
+        return Err(format!("expected one explained row: {examined:?}"));
+    };
+    assert!(
+        examined.message.contains(&format!("`{}`", direct.name))
+            && examined.message.ends_with(&explained),
+        "{}",
+        examined.message
+    );
+    assert_eq!(
+        examined.location.range.start.line,
+        u32::try_from(direct.line.saturating_sub(1)).map_err(|error| error.to_string())?
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .flatten()
+            .all(|row| !row.message.contains(&format!("`{}`", advisory.name)))
+    );
+
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    for rows in [
+        &data["related_tests"],
+        &data["raw_findings"][0]["related_tests"],
+    ] {
+        let row = |name: &str| {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == name)
+                .ok_or_else(|| format!("no data row for `{name}`: {rows}"))
+        };
+        let direct_row = row(&direct.name)?;
+        assert_eq!(direct_row["miss"], "observation_unconfirmed");
+        assert_eq!(direct_row["why"], why.as_str());
+        let advisory_row = row(&advisory.name)?;
+        assert!(advisory_row["miss"].is_null() && advisory_row["why"].is_null());
+    }
+    Ok(())
+}

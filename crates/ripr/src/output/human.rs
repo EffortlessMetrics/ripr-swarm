@@ -5761,4 +5761,38 @@ mod tests {
             );
         }
     }
+
+    /// #5510: the human digest names the first related test with the shared
+    /// sentence when that row owns a miss, and with no reason when the first
+    /// row is the packet-backed finding's advisory row.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn perl_packet_backed_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+        let [direct, advisory] = finding.related_tests.as_slice() else {
+            return Err(format!("expected two rows: {:?}", finding.related_tests));
+        };
+        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+            .ok_or("the direct row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest = super::sections::render_finding_digest_with_config(&finding, &config);
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", direct.name)),
+            "{digest}"
+        );
+        let mut advisory_first = finding.clone();
+        advisory_first.related_tests.reverse();
+        let digest = super::sections::render_finding_digest_with_config(&advisory_first, &config);
+        assert!(
+            digest.contains(&format!(" {}\n", advisory.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        Ok(())
+    }
 }

@@ -4362,3 +4362,556 @@ fn partial_packet_outcome_limitations(
     cleanup?;
     Ok(limitations)
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// #5510 — packet-backed related-test miss matrix (RIPR-SPEC-0224).
+//
+// Every control consumes a frozen packet edited as JSON and re-blessed; no
+// Perl runs. The matrix covers the relation and oracle limits, limitation
+// and unknown packets, row ownership under reordering, determinism, and
+// that the miss changes no decision field. Analysis may not render output,
+// so rendered parity and consumer invariance live beside the projections
+// (`output::related_test_miss`, `output::human`, `lsp`, `mcp::gaps`) and read
+// the findings exported below.
+// ──────────────────────────────────────────────────────────────────────
+
+const THRESHOLD_TEST: &str = "test_discount_threshold";
+const SECOND_TEST: &str = "test_discount_wrapper";
+
+/// Parse a packet, apply `edit`, and serialize it again. The fingerprint is
+/// re-blessed by `findings_from_packet`.
+fn edited_packet(
+    text: &str,
+    edit: impl FnOnce(&mut serde_json::Value) -> Result<(), String>,
+) -> Result<String, String> {
+    let mut packet: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| format!("parse packet: {error}"))?;
+    edit(&mut packet)?;
+    serde_json::to_string_pretty(&packet).map_err(|error| format!("render packet: {error}"))
+}
+
+fn packet_array<'a>(
+    packet: &'a mut serde_json::Value,
+    key: &str,
+) -> Result<&'a mut Vec<serde_json::Value>, String> {
+    packet
+        .get_mut(key)
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| format!("packet has no `{key}` array"))
+}
+
+/// Set one field of the first fact in `key` (the threshold test's fact in
+/// `EXACT_RETURN_PACKET`).
+fn set_first(
+    packet: &mut serde_json::Value,
+    key: &str,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let fact = packet_array(packet, key)?
+        .first_mut()
+        .ok_or_else(|| format!("`{key}` is empty"))?;
+    fact[field] = value;
+    Ok(())
+}
+
+/// Add a second test to a packet built on `EXACT_RETURN_PACKET`, related to
+/// the same change by `relation_kind`. `own_oracle` adds the test's own
+/// `(kind, strength)` oracle; `linked_oracle_id` is the oracle its relation
+/// links, which may be its own, the threshold test's, or none.
+fn with_second_row(
+    text: &str,
+    relation_kind: &str,
+    own_oracle: Option<(&str, &str)>,
+    linked_oracle_id: Option<&str>,
+) -> Result<String, String> {
+    edited_packet(text, |packet| {
+        let test_id = format!("test:t/app.t:{SECOND_TEST}");
+        packet_array(packet, "tests")?.push(serde_json::json!({
+            "test_id": test_id,
+            "file_id": "file:t/app.t",
+            "framework": "Test::More",
+            "name": SECOND_TEST,
+            "range": {"start_line": 14, "start_column": 1, "end_line": 20, "end_column": 2},
+            "runner_hints": ["prove"],
+            "confidence": "medium",
+            "provenance_refs": ["prov:test-discovery:1"]
+        }));
+        if let Some((kind, strength)) = own_oracle {
+            packet_array(packet, "oracles")?.push(serde_json::json!({
+                "oracle_id": "oracle:t/app.t:16:ok",
+                "test_id": test_id,
+                "kind": kind,
+                "strength": strength,
+                "target_owner_id": "perl:lib/My/App.pm::My::App::discount",
+                "expression": "ok(My::App::discount(5))",
+                "range": {"start_line": 16, "start_column": 1, "end_line": 16, "end_column": 26},
+                "confidence": "medium",
+                "provenance_refs": ["prov:oracle:1"]
+            }));
+        }
+        packet_array(packet, "relations")?.push(serde_json::json!({
+            "relation_id": "relation:change:discount-return:test:wrapper",
+            "change_id": "change:lib/My/App.pm:15:return",
+            "owner_id": "perl:lib/My/App.pm::My::App::discount",
+            "test_id": test_id,
+            "oracle_id": linked_oracle_id,
+            "relation_kind": relation_kind,
+            "reachability_hint": "reachable",
+            "confidence": "medium",
+            "provenance_refs": ["prov:relation:1"]
+        }));
+        sort_fact_arrays(packet)
+    })
+}
+
+/// Each fact array and the stable ID it is keyed by.
+const FACT_ARRAY_IDS: [(&str, &str); 8] = [
+    ("files", "file_id"),
+    ("owners", "owner_id"),
+    ("changes", "change_id"),
+    ("tests", "test_id"),
+    ("oracles", "oracle_id"),
+    ("relations", "relation_id"),
+    ("verify_commands", "command_id"),
+    ("provenance", "provenance_id"),
+];
+
+/// Sort every fact array by its stable ID, the order RIPR-SPEC-0064 asks
+/// producers to emit.
+fn sort_fact_arrays(packet: &mut serde_json::Value) -> Result<(), String> {
+    for (key, id) in FACT_ARRAY_IDS {
+        packet_array(packet, key)?.sort_by(|left, right| {
+            left[id]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right[id].as_str().unwrap_or_default())
+        });
+    }
+    Ok(())
+}
+
+/// The two-row finding the surface parity tests share: the threshold test's
+/// direct, strong exact row (observation unconfirmed) first, then an
+/// advisory `package_reference` row with no oracle.
+fn direct_and_advisory_packet() -> Result<String, String> {
+    with_second_row(EXACT_RETURN_PACKET, "package_reference", None, None)
+}
+
+/// Two direct rows with different oracles: the threshold test's strong exact
+/// oracle and the second test's own weak smoke oracle.
+fn two_direct_packet() -> Result<String, String> {
+    with_second_row(
+        EXACT_RETURN_PACKET,
+        "direct_owner_call",
+        Some(("smoke_ok", "weak_smoke")),
+        Some("oracle:t/app.t:16:ok"),
+    )
+}
+
+/// Reverse the named fact arrays; IDs stay stable, only positions move.
+fn reversed_arrays(text: &str, keys: &[&str]) -> Result<String, String> {
+    edited_packet(text, |packet| {
+        for key in keys {
+            packet_array(packet, key)?.reverse();
+        }
+        Ok(())
+    })
+}
+
+/// Every fact array name.
+fn all_fact_arrays() -> [&'static str; 8] {
+    FACT_ARRAY_IDS.map(|(key, _)| key)
+}
+
+/// Replace the change's digest with a concrete, finding-wide discriminator.
+fn with_concrete_discriminator(text: String) -> String {
+    text.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"discriminator:$amount == 100\"",
+    )
+}
+
+/// The packet-backed two-row finding (direct unconfirmed row, then advisory
+/// row) for the surface parity tests in other modules.
+pub(crate) fn perl_direct_and_advisory_finding() -> Result<crate::domain::Finding, String> {
+    findings_from_packet(&direct_and_advisory_packet()?)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "the return change should project a finding".to_string())
+}
+
+/// `(name, miss)` per row, sorted by test name so a row is found by identity
+/// rather than by position.
+fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<RelatedTestMiss>)> {
+    let mut rows = finding
+        .related_tests
+        .iter()
+        .map(|test| (test.name.clone(), test.miss))
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    rows
+}
+
+fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
+    let mut findings = findings_from_packet(text)?;
+    if findings.len() != 1 {
+        return Err(format!("expected one finding, got {}", findings.len()));
+    }
+    findings
+        .pop()
+        .ok_or_else(|| "expected one finding".to_string())
+}
+
+/// Cases 7 and 8: advisory and deferred relation kinds never earn a row
+/// miss, even when the linked oracle is the strong exact owner oracle. Alone
+/// they cap the class; beside a direct row on a weakly exposed finding, with
+/// their own reachable strong exact oracle, they still borrow nothing.
+#[test]
+fn perl_advisory_and_deferred_relation_kinds_keep_no_miss() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    for kind in [
+        "package_reference",
+        "test_name_match",
+        "file_proximity",
+        "fixture_setup",
+        "unknown",
+        "helper_call",
+        "method_receiver",
+    ] {
+        let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "relation_kind", kind.into())
+        })?;
+        assert_eq!(
+            first_finding_misses(&packet)?,
+            (ExposureClass::ReachableUnrevealed, vec![None]),
+            "{kind}"
+        );
+        let beside_direct = with_second_row(
+            EXACT_RETURN_PACKET,
+            kind,
+            Some(("exact_return_assertion", "strong_exact")),
+            Some("oracle:t/app.t:16:ok"),
+        )?;
+        let finding = only_finding(&beside_direct)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{kind}");
+        assert_eq!(
+            rows_by_name(&finding),
+            vec![
+                (
+                    THRESHOLD_TEST.to_string(),
+                    Some(RelatedTestMiss::ObservationUnconfirmed)
+                ),
+                (SECOND_TEST.to_string(), None),
+            ],
+            "{kind}"
+        );
+    }
+    // A direct relation without positive reach is not exact positive reach.
+    let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "relations",
+            "reachability_hint",
+            "weakly_reachable".into(),
+        )
+    })?;
+    assert_eq!(
+        first_finding_misses(&packet)?,
+        (ExposureClass::ReachableUnrevealed, vec![None])
+    );
+    Ok(())
+}
+
+/// Case 9: a direct row with no oracle, or an oracle the schema does not
+/// treat as strong exact on the changed owner, keeps its class and no miss.
+#[test]
+fn perl_direct_row_without_a_strong_owner_oracle_keeps_no_miss() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let mut packets = vec![(
+        "no oracle".to_string(),
+        edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(packet, "relations", "oracle_id", serde_json::Value::Null)
+        })?,
+    )];
+    for strength in ["weak_smoke", "weak_broad", "mention_only", "unknown"] {
+        packets.push((
+            format!("strength {strength}"),
+            edited_packet(EXACT_RETURN_PACKET, |packet| {
+                set_first(packet, "oracles", "strength", strength.into())
+            })?,
+        ));
+    }
+    // A strong strength on a kind that cannot be exact is not strong exact.
+    for kind in [
+        "smoke_ok",
+        "mention_only",
+        "dies_only",
+        "unknown_helper",
+        "dynamic_framework_indirection",
+        "unknown",
+    ] {
+        packets.push((
+            format!("kind {kind}"),
+            edited_packet(EXACT_RETURN_PACKET, |packet| {
+                set_first(packet, "oracles", "kind", kind.into())
+            })?,
+        ));
+    }
+    // The oracle targets no owner, so it is not the changed owner's oracle.
+    packets.push((
+        "untargeted oracle".to_string(),
+        edited_packet(EXACT_RETURN_PACKET, |packet| {
+            set_first(
+                packet,
+                "oracles",
+                "target_owner_id",
+                serde_json::Value::Null,
+            )
+        })?,
+    ));
+    for (case, packet) in packets {
+        assert_eq!(
+            first_finding_misses(&packet)?,
+            (ExposureClass::ReachableUnrevealed, vec![None]),
+            "{case}"
+        );
+    }
+    Ok(())
+}
+
+/// Cases 10 and 11: limitation records, dynamic boundaries and unknown
+/// reach keep their existing class and explain no row. Limitations that block
+/// only actionability keep the weak class, so the missing reason comes from
+/// the admission gate, not from a changed class.
+#[test]
+fn perl_limited_and_unknown_packets_explain_no_row() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    for kind in blocking_limitation_kind_labels() {
+        let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            packet_array(packet, "limitations")?.push(serde_json::json!({
+                "limitation_id": format!("limitation:{kind}"),
+                "kind": kind,
+                "message": "producer limitation",
+                "evidence_refs": []
+            }));
+            Ok(())
+        })?;
+        let expected_class = if kind == "dynamic_dispatch" {
+            ExposureClass::StaticUnknown
+        } else {
+            ExposureClass::WeaklyExposed
+        };
+        assert_eq!(
+            first_finding_misses(&packet)?,
+            (expected_class, vec![None]),
+            "limitation {kind}"
+        );
+    }
+    for (_, kind) in blocking_boundary_kind_cases() {
+        let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+            packet_array(packet, "dynamic_boundaries")?.push(serde_json::json!({
+                "boundary_id": format!("limit:lib/My/App.pm:{kind}:15"),
+                "kind": kind,
+                "file_id": "file:lib/My/App.pm",
+                "owner_id": "perl:lib/My/App.pm::My::App::discount",
+                "range": {"start_line": 15, "start_column": 10, "end_line": 15, "end_column": 18},
+                "confidence": "high",
+                "provenance_refs": ["prov:diff:1"]
+            }));
+            Ok(())
+        })?;
+        // A missing runner blocks repair output but not the class (#3583).
+        let expected_class = if kind == "missing_test_runner" {
+            ExposureClass::WeaklyExposed
+        } else {
+            ExposureClass::StaticUnknown
+        };
+        assert_eq!(
+            first_finding_misses(&packet)?,
+            (expected_class, vec![None]),
+            "boundary {kind}"
+        );
+    }
+    let packet = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "relations",
+            "reachability_hint",
+            "static_unknown".into(),
+        )
+    })?;
+    assert_eq!(
+        first_finding_misses(&packet)?,
+        (ExposureClass::StaticUnknown, vec![None])
+    );
+    Ok(())
+}
+
+/// Cases 13 and 18: with two direct rows, the reason stays on the row whose
+/// own relation, test and oracle earned it, whatever order the packet lists
+/// relations, tests and oracles in. A row linking another test's strong
+/// oracle borrows nothing.
+#[test]
+fn perl_unconfirmed_miss_follows_row_identity_not_position() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let expected = vec![
+        (
+            THRESHOLD_TEST.to_string(),
+            Some(RelatedTestMiss::ObservationUnconfirmed),
+        ),
+        (SECOND_TEST.to_string(), None),
+    ];
+    let borrowed = with_second_row(
+        EXACT_RETURN_PACKET,
+        "direct_owner_call",
+        None,
+        Some("oracle:t/app.t:8:is"),
+    )?;
+    for base in [two_direct_packet()?, borrowed] {
+        for keys in [
+            &[][..],
+            &["relations"][..],
+            &["tests", "oracles"][..],
+            &all_fact_arrays()[..],
+        ] {
+            let finding = only_finding(&reversed_arrays(&base, keys)?)?;
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{keys:?}");
+            assert_eq!(rows_by_name(&finding), expected, "{keys:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Cases 16 and 17: shuffled fact arrays with stable IDs and edited metadata
+/// outside the packet identity keep the same fingerprint, finding identity,
+/// rows, tokens and the inputs the shared sentence is rendered from. Rows are compared by test name: row order, and
+/// the suggested test and verify command read from the first row, follow the
+/// packet's relation order (RIPR-SPEC-0064 asks producers to sort arrays by
+/// ID; the consumer does not re-sort), so they are not asserted under
+/// reordering.
+#[test]
+fn perl_packet_array_order_and_metadata_do_not_move_reasons() -> Result<(), String> {
+    fn projection(
+        text: &str,
+    ) -> Result<(String, impl PartialEq + std::fmt::Debug + use<>), String> {
+        let blessed = bless_fingerprint(text);
+        let packet = consume(&blessed)?;
+        let fingerprint = packet.recompute_packet_fingerprint();
+        let finding = only_finding(text)?;
+        let mut rows = finding
+            .related_tests
+            .iter()
+            .map(|test| {
+                (
+                    test.name.clone(),
+                    test.file.clone(),
+                    test.line,
+                    test.miss,
+                    test.oracle.clone(),
+                    test.relation_reason,
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        let identity = (
+            finding.id.clone(),
+            finding.canonical_gap.clone(),
+            finding.class.clone(),
+            finding.related_tests_total(),
+            // With the row fields above, the inputs of the shared sentence.
+            finding.activation.missing_discriminators.clone(),
+            rows,
+        );
+        Ok((fingerprint, identity))
+    }
+    for base in [
+        direct_and_advisory_packet()?,
+        two_direct_packet()?,
+        with_concrete_discriminator(direct_and_advisory_packet()?),
+    ] {
+        let (fingerprint, identity) = projection(&base)?;
+        let shuffled = reversed_arrays(&base, &all_fact_arrays())?;
+        assert_ne!(shuffled, base);
+        let (shuffled_fingerprint, shuffled_identity) = projection(&shuffled)?;
+        assert_eq!(shuffled_fingerprint, fingerprint);
+        assert_eq!(shuffled_identity, identity);
+
+        // Metadata outside the packet identity: producer version and a
+        // provenance range. The finding is unchanged field for field.
+        let edited = edited_packet(&base, |packet| {
+            packet["producer"]["version"] = "9.9.9-other".into();
+            let provenance = packet_array(packet, "provenance")?;
+            let relation = provenance
+                .iter_mut()
+                .find(|fact| fact["provenance_id"] == "prov:relation:1")
+                .ok_or("missing relation provenance")?;
+            relation["range"]["end_column"] = 99.into();
+            Ok(())
+        })?;
+        assert_ne!(edited, base);
+        assert_eq!(projection(&edited)?.0, fingerprint);
+        assert_eq!(only_finding(&edited)?, only_finding(&base)?);
+    }
+    Ok(())
+}
+
+/// The matrix findings the output-side invariance test projects: exact
+/// return with and without a concrete discriminator, the direct and
+/// advisory pair with and without one, two direct rows, and an aligned
+/// (exposed) control.
+fn miss_matrix_packets() -> Result<Vec<String>, String> {
+    Ok(vec![
+        EXACT_RETURN_PACKET.to_string(),
+        with_concrete_discriminator(EXACT_RETURN_PACKET.to_string()),
+        direct_and_advisory_packet()?,
+        with_concrete_discriminator(direct_and_advisory_packet()?),
+        two_direct_packet()?,
+        with_sinks("$amount / 2", Some("$amount / 2")),
+    ])
+}
+
+/// The packet-backed matrix findings for the output-side invariance test.
+pub(crate) fn perl_miss_matrix_findings() -> Result<Vec<crate::domain::Finding>, String> {
+    miss_matrix_packets()?
+        .iter()
+        .map(|packet| only_finding(packet))
+        .collect()
+}
+
+/// Verdict invariance, producer side. The same packet marked `partial`
+/// closes the miss admission gate, so it stands in for the result without
+/// the #5498 rule. With every miss cleared, each matrix finding equals that
+/// counterfactual field for field: class, stages, confidence, stop reasons,
+/// static limit, finding identity, finding-wide discriminators, evidence
+/// (suggested test, verify command), and related-test selection, order and
+/// totals. `partial` also withholds the strict canonical gap identity, so
+/// that one field is taken from the complete packet. If `partial` gains
+/// another effect on findings this fails loudly rather than passing
+/// vacuously. The consumer side (no projection reads `miss`) is
+/// `output::related_test_miss::tests::perl_packet_backed_miss_changes_no_projected_decision`.
+#[test]
+fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), String> {
+    let mut explained_rows = 0;
+    for packet in miss_matrix_packets()? {
+        let finding = only_finding(&packet)?;
+        let mut cleared = finding.clone();
+        for row in &mut cleared.related_tests {
+            explained_rows += usize::from(row.miss.is_some());
+            row.miss = None;
+        }
+        let partial = packet.replace(
+            "\"packet_status\": \"complete\"",
+            "\"packet_status\": \"partial\"",
+        );
+        assert_ne!(partial, packet);
+        let mut counterfactual = only_finding(&partial)?;
+        // Strict gap identity needs a complete packet, so `partial` also
+        // withholds it; that one field comes from the complete packet.
+        counterfactual.canonical_gap = cleared.canonical_gap.clone();
+        assert_eq!(cleared, counterfactual);
+    }
+    // Not vacuous: five of the six findings carry one explained row.
+    assert_eq!(explained_rows, 5);
+    Ok(())
+}

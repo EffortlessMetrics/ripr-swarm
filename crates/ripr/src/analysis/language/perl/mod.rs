@@ -3440,3 +3440,7 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests;
+/// Packet-backed findings the output, LSP and MCP projection tests share
+/// (#5510).
+#[cfg(test)]
+pub(crate) use tests::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
