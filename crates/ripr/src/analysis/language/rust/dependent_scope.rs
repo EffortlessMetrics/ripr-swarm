@@ -67,8 +67,8 @@ const ADMISSION_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 /// Env override for the dependent scope. `auto` (also empty or unset)
 /// admits by name only when the whole reverse closure would exceed the
-/// narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`); `named` always admits by name; `full` never does (the
-/// pre-#5320 selection). Anything else fails. `full` and `named` are the
+/// narrowing threshold (`RIPR_DIFF_NARROW_INDEX_FILES`); `named` always
+/// admits by name; `full` never does (the pre-#5320 selection). Anything else fails. `full` and `named` are the
 /// operator escape hatches and the parity-check switches.
 pub(crate) const DEPENDENT_SCOPE_ENV: &str = "RIPR_DIFF_DEPENDENT_SCOPE";
 
@@ -92,8 +92,8 @@ pub(crate) enum DependentScopeMode {
 }
 
 impl DependentScopeMode {
-    /// Whether a run whose full selection holds `selected` files, against
-    /// against a narrowing threshold of `limit`, narrows.
+    /// Whether a run whose full selection holds `selected` files, against a
+    /// narrowing threshold of `limit`, narrows.
     pub(crate) fn narrows(self, selected: usize, limit: usize) -> bool {
         match self {
             Self::Auto => selected > limit,
