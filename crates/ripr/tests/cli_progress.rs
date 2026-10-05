@@ -1,5 +1,6 @@
 //! Built-binary stdout/stderr discriminator for CLI analysis progress (#4810).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -29,6 +30,13 @@ impl DiffFixture {
             SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         let fixture = Self(repo_fixture_root(&tag)?);
+        // Cargo can place temporary files inside the checkout. Stop workspace
+        // and configuration ancestor lookup at this fixture's own manifest.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(fixture.0.join("Cargo.toml"))
+            .and_then(|mut manifest| manifest.write_all(b"\n[workspace]\n"))
+            .map_err(|error| format!("bound diff fixture workspace: {error}"))?;
         std::fs::create_dir_all(fixture.0.join("tests"))
             .map_err(|error| format!("create diff fixture tests: {error}"))?;
         std::fs::write(
