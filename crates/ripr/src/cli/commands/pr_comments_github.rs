@@ -191,7 +191,11 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(is_request_file);
-            if owned && path.is_file() {
+            // Not followed: a link left under a request file name, dangling
+            // or not, is removed so the write below creates a plain file.
+            let removable =
+                fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.file_type().is_dir());
+            if owned && removable {
                 fs::remove_file(&path).map_err(|err| {
                     format!("{REQUESTS} could not remove {}: {err}", path.display())
                 })?;
@@ -409,6 +413,55 @@ mod tests {
         assert!(err.contains("cannot pass through a link"), "{err}");
         assert_eq!(kept?, "keep\n");
         assert_eq!(entries.map_err(|err| err.to_string())?, 1);
+        Ok(())
+    }
+
+    /// A dangling `requests.tsv` link inside the request directory is
+    /// removed, not written through.
+    #[cfg(unix)]
+    #[test]
+    fn requests_replace_a_linked_manifest_instead_of_writing_through_it() -> Result<(), String> {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!(
+            "ripr-pr-comments-manifest-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside.tsv");
+        let publish = root.join("target/ripr/review/publish");
+        fs::create_dir_all(&publish).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("target/ripr/review/comment-publish-plan.json"),
+            "{}",
+        )
+        .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, publish.join("requests.tsv"))
+            .map_err(|err| err.to_string())?;
+
+        let args: Vec<String> = [
+            "--root",
+            &root.display().to_string(),
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let result = pr_comments_requests(&args);
+        let leaked = outside.exists();
+        let manifest_is_plain = fs::symlink_metadata(publish.join("requests.tsv"))
+            .map(|metadata| metadata.file_type().is_file());
+        let _ = fs::remove_dir_all(&base);
+
+        result?;
+        assert!(!leaked, "the manifest was written through the link");
+        assert!(manifest_is_plain.map_err(|err| err.to_string())?);
         Ok(())
     }
 }
