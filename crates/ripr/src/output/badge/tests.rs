@@ -233,9 +233,11 @@ fn candidate_current_rust_gap_still_counts_beside_preview_findings() {
 /// `include_unknowns` is on. A Rust unknown still would.
 #[test]
 fn preview_unknowns_are_excluded_from_calibrated_unknown_headline() {
-    let mut policy = BadgePolicy::default();
-    policy.include_unknowns = true;
-    policy.fail_on_nonzero = true;
+    let policy = BadgePolicy {
+        include_unknowns: true,
+        fail_on_nonzero: true,
+        ..BadgePolicy::default()
+    };
 
     let preview_only = check_output(vec![preview_finding(
         ExposureClass::InfectionUnknown,
