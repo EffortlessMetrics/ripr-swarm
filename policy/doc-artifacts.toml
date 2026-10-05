@@ -1307,3 +1307,11 @@ path = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records how ripr decides which match arm a test input selects, names the unselected changed arm as a missing discriminator (#5432), and credits a selecting call paired with an exact oracle."
+
+[[artifact]]
+id = "RIPR-SPEC-0234"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0234-canonical-next-action.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #6304 records the canonical next action: each first-hour producer projects exactly one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate."
