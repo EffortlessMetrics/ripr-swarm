@@ -36,7 +36,7 @@
 use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
 use crate::output;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1088,10 +1088,12 @@ mod tests {
         assert_eq!(receipt["raw_inventory"]["raw_seams"], 4);
         assert_eq!(receipt["basis"], "gap_decision_ledger");
         assert_eq!(receipt["top_files"].as_array().map(Vec::len), Some(0));
-        assert!(receipt["source_command"]
-            .as_str()
-            .map(|s| s.contains("--gap-ledger"))
-            .unwrap_or(false));
+        assert!(
+            receipt["source_command"]
+                .as_str()
+                .map(|s| s.contains("--gap-ledger"))
+                .unwrap_or(false)
+        );
         Ok(())
     }
 
@@ -1190,8 +1192,8 @@ mod tests {
     /// A failed run must not cost the last real receipt: it is set aside, and
     /// the canonical path still says the run was indeterminate.
     #[test]
-    fn failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one(
-    ) -> Result<(), String> {
+    fn failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one()
+    -> Result<(), String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("clock failed: {err}"))?
@@ -1597,10 +1599,12 @@ mod tests {
         assert_eq!(receipt["machine_readable_cause"], "evaluation_timeout");
         assert_eq!(receipt["unresolved"], serde_json::Value::Null);
         assert_eq!(receipt["basis"], serde_json::Value::Null);
-        assert!(receipt["warnings"][0]
-            .as_str()
-            .unwrap_or_default()
-            .contains("timed out"));
+        assert!(
+            receipt["warnings"][0]
+                .as_str()
+                .unwrap_or_default()
+                .contains("timed out")
+        );
         Ok(())
     }
 
