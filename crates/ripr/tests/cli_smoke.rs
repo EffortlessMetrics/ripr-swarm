@@ -26,6 +26,9 @@ mod implicit_git_root;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_recovery_root.rs"]
+mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 
@@ -11697,11 +11700,11 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
-    assert!(stdout.contains("target/ripr/agent"));
-    assert!(stdout.contains("target/ripr/workflow"));
-    assert!(stdout.contains("target/ripr/review"));
+    // #5409: one upload path covers every RIPR report directory.
+    assert!(stdout.contains("            target/ripr\n            target/ci\n"));
+    assert!(stdout.contains("target/ripr/review/publish/requests.tsv"));
     assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/existing-comments.json"));
+    assert!(stdout.contains("ripr pr-comments existing --root . --raw -"));
     // #4696: the analysis steps run inside one packet command.
     assert!(stdout.contains("run: ripr reports ci-packet --root ."));
     // #3906: CI writes only the before side of the repair loop.
@@ -12508,7 +12511,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     init_producer_fixture_repo(&root)?;
     let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
     lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
 
@@ -12551,6 +12554,39 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert!(
         before.get("artifact").is_none(),
         "a budget-truncated pilot snapshot must not carry the comparable identity"
+    );
+    // #6602: the summary says the budget cut the ranked population, out of
+    // every seam the inventory found.
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    let full_total = count(&full);
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
+    );
+    // When the inventory limit also cuts, the disclosed total is still the
+    // inventory's, not the already-capped list the budget saw.
+    assert!(
+        full_total > 2,
+        "fixture must exceed the inventory limit: {full}"
+    );
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&pilot);
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -13755,12 +13791,14 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
 /// A Python preview gap reaches `agent packet` through a check-output gap
 /// ledger. That packet stays blocked (check output carries no snapshot
-/// identity), and its `refresh_commands` are the only next step it names.
-/// They used to rewrite `check.json` with the Rust-only repo-exposure route
-/// and rebuild the ledger from it, which dropped every Python record, so the
-/// same packet command then failed with "gap_id ... was not found". Pasting
-/// the printed refresh from another directory must keep the check-output
-/// route, the recorded base and the Python gap.
+/// identity), and it used to print a runnable refresh route that could not
+/// reproduce the recorded run (#5985): check output does not record whether
+/// its scope came from `--diff`, so a rerun rebuilt the ledger at a
+/// different scope, and the emitted redirect truncated the recorded check
+/// output whenever the first command failed. The packet now types the route
+/// as not replayable (`refresh_replayable: false`, empty
+/// `refresh_commands`) and names the manual rerun-with-same-`--diff` route,
+/// leaving the recorded check output and the ledger untouched.
 #[cfg(all(unix, feature = "lang-python"))]
 #[test]
 fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), String> {
@@ -13866,6 +13904,15 @@ fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), Stri
             && !reason.contains("repo-exposure"),
         "the blocked reason must name the usable route and the unreplayable --diff scope, not the Rust-only route: {reason}"
     );
+    assert!(
+        reason.contains("ripr reports gap-ledger --check-output"),
+        "the blocked reason must carry the manual ledger route: {reason}"
+    );
+    assert_eq!(
+        currentness["refresh_replayable"],
+        serde_json::Value::Bool(false),
+        "a check-output route must type itself as not replayable: {currentness}"
+    );
     let refresh: Vec<String> = currentness["refresh_commands"]
         .as_array()
         .map(|commands| {
@@ -13875,47 +13922,34 @@ fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), Stri
                 .collect()
         })
         .unwrap_or_default();
-    assert_eq!(refresh.len(), 2, "{refresh:?}");
     assert!(
-        refresh[0].contains("--base origin/main")
-            && refresh[0].contains("--json >")
-            && refresh[1].contains("gap-ledger --check-output"),
-        "refresh must replay the check-output route with its recorded base: {refresh:?}"
+        refresh.is_empty(),
+        "a not-replayable route must not offer runnable commands: {refresh:?}"
     );
-    assert!(
-        refresh
-            .iter()
-            .all(|command| !command.contains("repo-exposure")),
-        "refresh must not route a check-output ledger through repo-exposure: {refresh:?}"
+    assert_eq!(
+        packet["blocked_candidate"]["refresh_commands"],
+        serde_json::Value::Array(Vec::new()),
+        "the blocked packet projection must not carry a runnable refresh either: {packet}"
     );
 
-    // Paste the printed refresh from an unrelated directory, `ripr` resolving
-    // to the binary under test.
-    let elsewhere = unique_temp_workspace("python-packet-refresh-elsewhere");
-    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create elsewhere: {err}"))?;
-    for command in &refresh {
-        let script = format!("ripr() {{ \"$0\" \"$@\"; }}; {command}");
-        let run = run_command(
-            "bash",
-            Some(&elsewhere),
-            &["-c", &script, env!("CARGO_BIN_EXE_ripr")],
-        )
-        .map_err(|err| format!("run refresh `{command}`: {err}"))?;
-        assert_success(&run);
-    }
+    // The blocked report is advisory: reading it ran no refresh, so the
+    // recorded check output and the ledger it derived must be untouched.
+    let recorded = std::fs::read_to_string(&check_path)
+        .map_err(|err| format!("the recorded check output must survive: {err}"))?;
+    serde_json::from_str::<serde_json::Value>(&recorded)
+        .map_err(|err| format!("the recorded check output must stay valid JSON: {err}"))?;
     assert_eq!(
         python_gap_ids(&ledger_path)?,
         before_ids,
-        "the refreshed ledger must keep the Python records"
+        "the ledger must keep the Python records while the route is blocked"
     );
-    let refreshed = packet_for(&gap_id)?;
+    let re_read = packet_for(&gap_id)?;
     assert_eq!(
-        refreshed["source_currentness"]["source_kind"], "check_output",
-        "{refreshed}"
+        re_read["source_currentness"]["source_kind"], "check_output",
+        "{re_read}"
     );
 
     ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&elsewhere);
     Ok(())
 }
 
@@ -21119,6 +21153,17 @@ fn plus_help_exits_cleanly() {
         stdout.contains("--gap-ledger"),
         "help must mention --gap-ledger:\n{stdout}"
     );
+    for kept in [
+        "ripr-plus.last-good.json",
+        "ripr-plus.last-good.md",
+        "may be stale",
+        "keeps no last-good copy",
+    ] {
+        assert!(
+            stdout.contains(kept),
+            "help must name the kept last-good receipt and its staleness ({kept}):\n{stdout}"
+        );
+    }
 }
 
 /// An exposure-only counter is not a complete, current RIPR+ quality result.
