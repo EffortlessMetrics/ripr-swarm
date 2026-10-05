@@ -230,7 +230,8 @@ fn candidate_current_rust_gap_still_counts_beside_preview_findings() {
 }
 
 /// #6761: preview unknowns must not inflate the headline when
-/// `include_unknowns` is on. A Rust unknown still would.
+/// `include_unknowns` is on. Native `counts.unknowns` still discloses them.
+/// A Rust unknown still counts toward both the audit field and the headline.
 #[test]
 fn preview_unknowns_are_excluded_from_calibrated_unknown_headline() {
     let policy = BadgePolicy {
@@ -244,16 +245,50 @@ fn preview_unknowns_are_excluded_from_calibrated_unknown_headline() {
         LanguageId::Python,
     )]);
     let preview_summary = ripr_badge_summary(&preview_only, policy.clone());
-    assert_eq!(preview_summary.counts.unknowns, 0);
+    assert_eq!(preview_summary.counts.unknowns, 1);
     assert_eq!(preview_summary.counts.unsuppressed_exposure_gaps, 0);
     assert_eq!(preview_summary.message, "0");
     assert_eq!(preview_summary.status, BadgeStatus::Pass);
 
     let rust_unknown = check_output(vec![finding(ExposureClass::InfectionUnknown, vec![])]);
-    let rust_summary = ripr_badge_summary(&rust_unknown, policy);
+    let rust_summary = ripr_badge_summary(&rust_unknown, policy.clone());
     assert_eq!(rust_summary.counts.unknowns, 1);
     assert_eq!(rust_summary.message, "1");
     assert_eq!(rust_summary.status, BadgeStatus::Fail);
+
+    let mixed = check_output(vec![
+        preview_finding(ExposureClass::StaticUnknown, LanguageId::TypeScript),
+        finding(ExposureClass::PropagationUnknown, vec![]),
+    ]);
+    let mixed_summary = ripr_badge_summary(&mixed, policy);
+    assert_eq!(mixed_summary.counts.unknowns, 2);
+    assert_eq!(mixed_summary.message, "1");
+    assert_eq!(mixed_summary.status, BadgeStatus::Fail);
+}
+
+/// #6761: native badge JSON must still show a preview unknown Finding while
+/// the calibrated RIPR 0 headline stays zero.
+#[test]
+fn preview_unknown_remains_visible_in_native_badge_json_with_zero_headline() {
+    let policy = BadgePolicy {
+        include_unknowns: true,
+        fail_on_nonzero: true,
+        ..BadgePolicy::default()
+    };
+    let summary = ripr_badge_summary(
+        &check_output(vec![preview_finding(
+            ExposureClass::InfectionUnknown,
+            LanguageId::Perl,
+        )]),
+        policy,
+    );
+    let json = render_native_json(&summary);
+
+    assert!(json.contains("\"message\": \"0\""), "{json}");
+    assert!(json.contains("\"unknowns\": 1"), "{json}");
+    assert!(json.contains("\"unsuppressed_exposure_gaps\": 0"), "{json}");
+    assert!(json.contains("\"analyzed_findings\": 1"), "{json}");
+    assert!(json.contains("\"status\": \"pass\""), "{json}");
 }
 
 /// Language name without `language_status = preview` is not the badge
@@ -1015,6 +1050,30 @@ fn ripr_plus_include_unknowns_policy_adds_both_unknown_axes_to_headline() {
 
     // 1 + 2 + 1 + 3 = 7
     assert_eq!(summary.message, "7");
+}
+
+/// Preview unknowns stay in `counts.unknowns` for ripr+ too, but
+/// `include_unknowns` still must not promote them into the RIPR 0 headline.
+#[test]
+fn ripr_plus_preview_unknowns_do_not_inflate_include_unknowns_headline() {
+    let policy = BadgePolicy {
+        include_unknowns: true,
+        fail_on_nonzero: true,
+        ..BadgePolicy::default()
+    };
+    let summary = ripr_plus_badge_summary(
+        &check_output(vec![preview_finding(
+            ExposureClass::InfectionUnknown,
+            LanguageId::Python,
+        )]),
+        TestEfficiencyBadgeSummary::default(),
+        policy,
+    );
+
+    assert_eq!(summary.counts.unknowns, 1);
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(summary.message, "0");
+    assert_eq!(summary.status, BadgeStatus::Pass);
 }
 
 // -------- suppressions wiring --------

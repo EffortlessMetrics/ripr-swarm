@@ -395,9 +395,11 @@ be interpreted as evidence that the change is safe.
 
 Enabled preview-language findings (`language_status = "preview"`) stay visible
 in check JSON and human output. They do not increment the diff badge's
-calibrated exposure-gap count (`unsuppressed_exposure_gaps`), the unknowns
-headline contribution, or the RIPR 0 message. The badge authority is that
-status field, not a language-name table in the renderer. A candidate-current
+calibrated exposure-gap count (`unsuppressed_exposure_gaps`) or the RIPR 0
+message. Native `counts.unknowns` still counts candidate-actionable static
+unknown Finding classes, including enabled preview evidence; only the unknowns
+headline contribution (`include_unknowns`) omits them. The badge authority is
+that status field, not a language-name table in the renderer. A candidate-current
 Rust gap still counts.
 
 ## Colors and status

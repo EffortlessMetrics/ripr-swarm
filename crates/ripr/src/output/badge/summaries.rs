@@ -92,6 +92,40 @@ fn is_preview_evidence(finding: &Finding) -> bool {
     finding.language_status == Some(LanguageStatus::Preview)
 }
 
+/// Candidate-actionable unknown Finding classes that may count against
+/// calibrated RIPR 0. Preview evidence is counted in `BadgeCounts.unknowns`
+/// (native audit) and omitted here (headline).
+pub(crate) fn calibrated_unknown_count<'a>(
+    findings: impl IntoIterator<Item = &'a Finding>,
+) -> usize {
+    findings
+        .into_iter()
+        .filter(|finding| {
+            finding.is_candidate_actionable()
+                && !is_preview_evidence(finding)
+                && matches!(
+                    calibrated_ripr_zero_bucket(&finding.class),
+                    CalibratedRiprZeroBucket::Unknown
+                )
+        })
+        .count()
+}
+
+/// RIPR 0 / ripr+ unknown headline contribution. `calibrated_unknowns` must
+/// already exclude preview evidence; `unknowns_test_efficiency` is the
+/// seam-native opaque axis and is independent of Finding language status.
+pub(crate) fn unknown_headline_contribution(
+    calibrated_unknowns: usize,
+    unknowns_test_efficiency: usize,
+    include_unknowns: bool,
+) -> usize {
+    if include_unknowns {
+        calibrated_unknowns.saturating_add(unknowns_test_efficiency)
+    } else {
+        0
+    }
+}
+
 /// Headline bucket for one calibrated finding. Exhaustive over
 /// `ExposureClass` so a new variant cannot silently skip both gap and
 /// unknown accounting.
@@ -160,9 +194,10 @@ pub fn ripr_badge_summary_with_suppressions(
                 }
             }
             CalibratedRiprZeroBucket::Unknown => {
-                if !is_preview_evidence(finding) {
-                    unknowns += 1;
-                }
+                // Native `counts.unknowns` is the schema audit of static
+                // unknown Finding classes, including preview. Only the
+                // calibrated headline omits preview (#6761 / RIPR-SPEC-0030).
+                unknowns += 1;
             }
             CalibratedRiprZeroBucket::NotHeadline => {}
         }
@@ -180,6 +215,7 @@ pub fn ripr_badge_summary_with_suppressions(
         .filter(|id| calibrated_ids.contains(id.as_str()))
         .count();
     let unsuppressed_exposure_gaps = calibrated_gap_findings.len().saturating_sub(suppressed);
+    let calibrated_unknowns = calibrated_unknown_count(&output.findings);
 
     let counts = BadgeCounts {
         unsuppressed_exposure_gaps,
@@ -201,11 +237,7 @@ pub fn ripr_badge_summary_with_suppressions(
     }
 
     let headline = counts.unsuppressed_exposure_gaps
-        + if policy.include_unknowns {
-            counts.unknowns
-        } else {
-            0
-        };
+        + unknown_headline_contribution(calibrated_unknowns, 0, policy.include_unknowns);
     let (status, color) = badge_status_color(headline, policy.fail_on_nonzero);
 
     // Check for preview-language files that were detected but NOT analyzed
@@ -321,11 +353,7 @@ pub(crate) fn ripr_seam_badge_summary_from_counts(
     }
 
     let headline = counts.unsuppressed_exposure_gaps
-        + if policy.include_unknowns {
-            counts.unknowns
-        } else {
-            0
-        };
+        + unknown_headline_contribution(counts.unknowns, 0, policy.include_unknowns);
     let (status, color) = badge_status_color(headline, policy.fail_on_nonzero);
 
     BadgeSummary {
@@ -398,11 +426,7 @@ pub(crate) fn ripr_canonical_actionable_gap_badge_summary(
     }
 
     let headline = counts.unsuppressed_exposure_gaps
-        + if policy.include_unknowns {
-            counts.unknowns
-        } else {
-            0
-        };
+        + unknown_headline_contribution(counts.unknowns, 0, policy.include_unknowns);
     let (status, color) = badge_status_color(headline, policy.fail_on_nonzero);
 
     BadgeSummary {

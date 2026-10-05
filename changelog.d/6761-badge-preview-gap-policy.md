@@ -1,5 +1,6 @@
 <!-- section: Fixed -->
 - Diff badges no longer count candidate-current preview-language findings
   (`language_status = "preview"`) toward the calibrated RIPR 0 gap headline.
-  Those findings stay in the analyzed denominator and in check JSON; a
+  Preview unknowns remain visible in native `counts.unknowns` and in the
+  analyzed denominator; they do not move the RIPR 0 message. A
   candidate-current Rust gap still counts (#6761).
