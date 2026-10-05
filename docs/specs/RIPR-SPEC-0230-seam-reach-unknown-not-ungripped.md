@@ -49,9 +49,12 @@ unresolved candidate path, in this order:
    name within `MAX_TRANSITIVE_DEPTH` hops.
 2. A macro-reach witness (the existing `no_static_path` macro check).
 3. Trait dispatch. The owner is a trait-impl method (`impl Trait for T`),
-   and a test body, or production code a test may run, names `T`.
+   a test body, or production code a test may run, names `T`, and the trait
+   passes its gate (below).
 4. Trait dispatch, one level down. The owner is called, within the bounded
-   walk, by a trait-impl method whose self type test-reached code names.
+   walk, by a trait-impl method that meets rule 3. A callee that is itself a
+   gated trait's method must pass that trait's gate too, so `Display::fmt`
+   calling `.fmt(f)` does not reach an unused `Debug::fmt`.
    This includes a trait method whose own type nothing names but which a
    named type's trait method delegates to (`self.inner.fmt(f)`).
    Each such method's callees join the test-reached set, so a type they
@@ -59,8 +62,45 @@ unresolved candidate path, in this order:
 
 "Production code a test may run" is the forward closure, by name over
 non-macro call facts, of every test's callees within `MAX_TRANSITIVE_DEPTH`
-hops. A mention is a capitalized identifier outside comments and string
-literals.
+hops. A mention is a capitalized identifier, or a primitive type name
+(`u32`, `str`, `bool`), outside comments and string literals. A function's
+own `fn name(` signature is not a call to `name` (#5577).
+
+The trait gate (#5577). These std traits run only from syntax ripr can see,
+and a test that only builds a value does not run them:
+
+| Trait | Syntax that runs it |
+| --- | --- |
+| `Display` | `to_string`, a `{}` / `{name}` / `{:>8}` placeholder, insta `assert_snapshot!` / `assert_display_snapshot!` |
+| `Debug` | `dbg!`, a `{:?}` / `{x:#?}` placeholder, `assert_debug_snapshot!`, expect_test `assert_debug_eq` |
+| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key` |
+| `PartialOrd`, `Ord` | ` < `, ` > `, `<=`, `>=`, `cmp`, `partial_cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, `clamp`, `sort`, `sort_unstable`, `sort_by_key`, `sort_unstable_by_key`, `max_by_key`, `min_by_key`, `binary_search`, `select_nth_unstable`, `is_sorted`, `BTreeMap`, `BTreeSet`, `BinaryHeap` |
+| `Hash` | `hash`, `hash_one`, `Hasher`, `BuildHasher`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
+| `Clone` | `clone`, `cloned`, `clone_from`, `to_owned`, `to_vec`, `resize`, `extend_from_slice`, `vec![` |
+| `Default` | `default`, `Default`, `unwrap_or_default`, `or_default`, `take` |
+| `FromStr` | `parse`, `from_str`, `FromStr` |
+| `Serialize`, `Deserialize`, serde `Visitor<'de>` | `serde`, the format crates `serde_json`, `serde_yaml`, `toml`, `bincode`, `postcard`, `ron`, `rmp_serde`, `ciborium`, `Serializer`, `Deserializer`, serde_test (`serde_test`, `assert_tokens`, `assert_ser_tokens`, `assert_de_tokens`), insta `assert_json_snapshot!`, `assert_yaml_snapshot!`, `assert_ron_snapshot!`, `assert_toml_snapshot!`, `assert_csv_snapshot!`, `assert_compact_json_snapshot!` |
+| `Arbitrary` | `arbitrary`, `Unstructured`, `fuzz_target`, `proptest`, `prop_compose`, `arbitrary_with`, `quickcheck` |
+
+A gated impl passes when a test, a helper in a test file, a test file's
+`use` items (`use serde_json::to_string;`), or a generic test-reached
+function (`fn render<T: Display>`, an `impl Trait` or `dyn` argument) uses
+the syntax, or when other test-reached production code uses it in a body
+that also names `T`. A method body that uses `self` or `Self` also counts for
+its impl's self type and the types that type's fields or variants name, a few
+levels deep (`self.to_string()`, `format!("{:?}", self.inner)`). A
+`Display` impl that writes a `char` field with `{:?}` runs `char`'s `Debug`,
+not every type's. Delegation within one trait passes the delegating impl's
+gate: an `Outer` `Display` that calls `self.0.fmt(f)` reaches `Inner`'s
+`Display`. A placeholder inside an `assert!`, `assert_eq!`,
+`panic!`, `expect` or similar failure message does not count: it formats only
+when the test fails. `assert_eq!` does not run `Debug` for the same reason.
+
+Every other trait (`Drop`, `From`, `Iterator`, operator traits, a crate's own
+traits) runs from syntax too common or implicit to gate, so the self-type
+mention is enough. A trait impl for a primitive self type also needs the
+trait's name in test-reached code (a `T: Encode` bound or `Encode::encode`),
+since primitive names appear almost everywhere.
 
 When any of these fires, reach is `opaque` (confidence low) and its summary
 names the limit and the witness, for example:
@@ -82,17 +122,31 @@ record carries the reach summary as an `opaque_static_evidence` limitation.
 
 When none fires, reach stays `no` and the seam stays `ungripped`.
 
-Known limits, both in the fail-closed direction (the seam stays
-`ungripped`, or reads `opaque` where it might not need to):
+Known limits. Those that widen dispatch make a seam read `opaque` where it
+might not need to. Those that narrow it leave a seam `ungripped` that a test
+may run, so each is named here:
 
-- Only capitalized identifiers count as type mentions, so a trait impl for a
-  primitive or lowercase self type (`impl Encode for u32`) never meets rule 3.
+- A lowercase self type that is not a primitive never counts as mentioned.
+- The gate is per trait and name-wide within its scope: one test that uses
+  `{:?}` lets every `Debug` impl of a test-used type dispatch.
+- Narrows: the syntax table is a closed approximation. Syntax it does not
+  list (a custom assertion macro that formats, a method of a generic
+  `impl<T>` block that names no type parameter in its own signature) does
+  not pass the gate, and the impl reads `ungripped`.
+- Narrows: production code that uses the syntax on a value whose type its
+  body never names, outside `self` and its fields (a local bound from a
+  call's return value in a free function), does not count for that type.
+- Narrows: a gated callee still waiting for its trait's syntax when the
+  rounds reach `MAX_TRANSITIVE_DEPTH` is not reached.
+- Widens: a test file's unused `use` item counts as syntax.
+- Widens: the failure-message check looks back at most 4096 bytes for the
+  enclosing call; a placeholder past that counts as a use.
 - Comments and strings are stripped line by line, so a type named only inside
   a block comment or multi-line string still counts as a mention.
 - Matching is by name, as in RIPR-SPEC-0114. A test that calls a common name
   such as `new` or `parse` pulls in every same-named function, so rule 3
-  covers most trait impls of types a crate's tests use, including `Debug`,
-  `Hash` or `Drop` impls the tests never exercise. Those seams read unknown,
+  covers most ungated trait impls of types a crate's tests use, such as
+  `Drop` impls the tests never observe. Those seams read unknown,
   not gripped.
 
 The witness is a candidate path. It never becomes a related test and adds
@@ -117,6 +171,14 @@ Seams with related tests are unchanged.
   `ungripped`.
 - A helper run only from a trait-impl method of a test-used type is
   `opaque` and names the dispatch root.
+- A gated trait's impl (`Debug`) of a test-used type stays `ungripped` when
+  no test uses the trait's syntax, and when the only use is an assertion
+  message; it reads `opaque` and names the syntax when a test uses it.
+- A trait method reached by delegation (`.fmt(f)`) does not reach an unused
+  gated impl of the same method name.
+- A trait impl for a primitive reads `opaque` only when test-reached code
+  names the trait.
+- A test whose name matches a helper does not "call" that helper.
 - Runtime-control integration tests (`cargo test -p ripr --test '*'`) pass
   unchanged.
 
@@ -170,3 +232,20 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
 - `ungripped` seams whose reach rests on an unresolved path: 0 by
   construction
 - semver `ungripped`: 505 before, 1 after
+
+### Trait gate (#5577)
+
+Against the same checkouts and cargo-mutants outputs, after #5946:
+
+| Repository | `ungripped` | `opaque` | Moved seams |
+| --- | --- | --- | --- |
+| semver `280ebcb6edac` | 1 → 32 | 504 → 473 | 13 `Debug::fmt` (`Version`, `Error`), 18 serde `Serialize`/`Deserialize`/`Visitor` |
+| bytesize `66a3715e` | 3 → 5 | 2 → 0 | 2 `Arbitrary` |
+| humantime, rust-hex, strsim-rs, atuin `90f590b9` | unchanged | unchanged | none |
+
+cargo-mutants missed every mutant in the functions that own the 33 moved
+seams (16 on semver, 7 on bytesize) and caught none. The 12 spot-check
+false-gap seams stay `opaque`. Of semver's trait-dispatch `opaque` seams,
+those in functions where every mutant was missed drop from 32 to 1
+(`FromIterator`, an ungated trait); those in functions where every mutant was
+caught stay at 128. No other grip class moves.

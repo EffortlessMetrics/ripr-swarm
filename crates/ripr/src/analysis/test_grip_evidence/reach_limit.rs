@@ -8,8 +8,11 @@
 //! - a bounded transitive or macro path from a test toward the owner exists
 //!   but is unresolved (RIPR-SPEC-0114, RIPR-SPEC-0118);
 //! - the owner is a trait-impl method, which operators, formatting macros
-//!   and generic calls run without naming it, and test-reached code names
-//!   the impl's self type.
+//!   and generic calls run without naming it, test-reached code names the
+//!   impl's self type, and, for a std trait with its own call syntax
+//!   (`Display`, `Debug`, `PartialEq`, `PartialOrd`/`Ord`, `Hash`, `Clone`,
+//!   `Default`, `FromStr`, serde, `Arbitrary`), test-reached code uses that
+//!   syntax (#5577).
 //!
 //! Either one makes the reach stage `opaque` with the witness named, so the
 //! seam classifies `opaque` (an unknown with a limit) instead of a gap. The
@@ -18,10 +21,10 @@
 
 use super::related_tests::{CompactGripContext, strip_comments_and_strings};
 use crate::analysis::classify::{
-    MAX_TRANSITIVE_DEPTH, MacroReachWitness, TransitiveWitness, impl_self_type_name,
-    is_trait_impl_method, macro_reach_limit_kind, transitive_reach_limit_kind,
+    MAX_TRANSITIVE_DEPTH, MacroReachWitness, TransitiveWitness, calls_after_definition,
+    impl_self_type_name, is_trait_impl_method, macro_reach_limit_kind, transitive_reach_limit_kind,
 };
-use crate::analysis::rust_index::{FunctionSummary, TestSummary};
+use crate::analysis::rust_index::{FunctionSummary, TestSummary, is_test_file};
 use crate::domain::{Confidence, StageEvidence, StageState};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -49,6 +52,7 @@ enum TypeMention {
 /// them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DispatchRoot {
+    id: String,
     method: String,
     self_type: String,
     file: PathBuf,
@@ -66,17 +70,53 @@ pub(in crate::analysis::test_grip_evidence) struct TypeMentionIndex {
     mentions: BTreeMap<String, (TypeMention, u8)>,
     /// Owner id to the trait method it may run from.
     dispatch_reached: BTreeMap<String, DispatchRoot>,
+    /// First use of each gated trait's call syntax. The key's type is
+    /// `None` for a test, a test-file helper or a generic function
+    /// (`fn render<T: Display>`), whose use may run the trait for any type.
+    /// Other test-reached production code counts only for a type the same
+    /// body names: a `Display` impl writing a `char` with `{:?}` runs
+    /// `char`'s `Debug`, not every type's. A gated trait with no matching
+    /// entry never dispatches.
+    trait_uses: BTreeMap<(GatedTrait, Option<String>), TraitUse>,
+    /// Type-shaped identifiers in each struct or enum definition, by type
+    /// name: what `self.field` or a `match self` binding may hold.
+    field_types: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Where test-reached code first uses a gated trait's call syntax.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TraitUse {
+    syntax: &'static str,
+    site: String,
+    file: PathBuf,
+    line: usize,
 }
 
 impl TypeMentionIndex {
     pub(in crate::analysis::test_grip_evidence) fn build(context: &CompactGripContext<'_>) -> Self {
         let mut index = Self::default();
+        for (_, facts) in context.index.files().iter() {
+            for (name, fields) in type_definitions(&facts.data().source) {
+                index.field_types.entry(name).or_default().extend(fields);
+            }
+        }
         let mut tests: Vec<_> = context.tests.iter().map(|indexed| indexed.test).collect();
         tests.sort_by(|a, b| {
             (&a.file, a.start_line, &a.name).cmp(&(&b.file, b.start_line, &b.name))
         });
+        let mut test_files: BTreeSet<&std::path::Path> = BTreeSet::new();
         for test in tests {
             index.add_test_mentions(test);
+            index.add_trait_uses(&test.body, &test.name, &test.file, test.start_line, true);
+            test_files.insert(test.file.as_path());
+        }
+        // A test file's imports (`use serde_json::to_string;`) say what its
+        // bare calls run.
+        for file in test_files {
+            if let Some(facts) = context.index.files().get(file) {
+                let imports = use_items(&facts.data().source);
+                index.add_trait_uses(&imports, "use", file, 1, true);
+            }
         }
         let reach = &context.transitive_reach;
         let mut reached: BTreeSet<&str> = BTreeSet::new();
@@ -85,6 +125,7 @@ impl TypeMentionIndex {
         for function in functions {
             reached.insert(function.id.0.as_str());
             index.add_function_mentions(function, false);
+            index.add_function_trait_uses(function);
         }
 
         // A dispatch root's callees may name further types whose trait
@@ -95,8 +136,19 @@ impl TypeMentionIndex {
             .filter(|function| is_trait_impl_method(function))
             .collect();
         sort_functions(&mut trait_methods);
+        // Gated callees a root reached before their trait's syntax was seen;
+        // retried each round, since later roots may add that syntax.
+        let mut deferred: Vec<(&FunctionSummary, DispatchRoot)> = Vec::new();
         for _ in 0..MAX_TRANSITIVE_DEPTH {
             let mut grew = false;
+            for (callee, root) in std::mem::take(&mut deferred) {
+                if !index.may_dispatch(&callee.id.0) && !same_gated_trait(callee, &root) {
+                    deferred.push((callee, root));
+                } else if reached.insert(callee.id.0.as_str()) {
+                    index.add_dispatch_reached(callee, root);
+                    grew = true;
+                }
+            }
             for &method in &trait_methods {
                 if reached.contains(method.id.0.as_str()) {
                     continue;
@@ -104,10 +156,11 @@ impl TypeMentionIndex {
                 let Some(self_type) = impl_self_type_name(&method.id.0) else {
                     continue;
                 };
-                if !index.mentions.contains_key(&self_type) {
+                if !index.self_type_dispatches(&method.id.0, &self_type) {
                     continue;
                 }
                 let root = DispatchRoot {
+                    id: method.id.0.clone(),
                     method: method.name.clone(),
                     self_type,
                     file: method.file.clone(),
@@ -115,14 +168,27 @@ impl TypeMentionIndex {
                 };
                 reached.insert(method.id.0.as_str());
                 index.add_function_mentions(method, true);
-                let mut callees = reach.functions_reached_from(&method.calls, MAX_TRANSITIVE_DEPTH);
+                index.add_function_trait_uses(method);
+                let calls = calls_after_definition(&method.name, method.start_line, &method.calls);
+                let mut callees = reach.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH);
                 sort_functions(&mut callees);
                 for callee in callees {
+                    // Name matching reaches every same-named method; a gated
+                    // trait's method still needs its syntax (`Display::fmt`
+                    // calling `.fmt(f)` must not reach an unused `Debug::fmt`).
+                    // Delegation within one trait (`Display::fmt` calling
+                    // an inner `Display::fmt`) passes the root's gate.
+                    if is_trait_impl_method(callee)
+                        && !index.may_dispatch(&callee.id.0)
+                        && !same_gated_trait(callee, &root)
+                    {
+                        if !reached.contains(callee.id.0.as_str()) {
+                            deferred.push((callee, root.clone()));
+                        }
+                        continue;
+                    }
                     if reached.insert(callee.id.0.as_str()) {
-                        index
-                            .dispatch_reached
-                            .insert(callee.id.0.clone(), root.clone());
-                        index.add_function_mentions(callee, true);
+                        index.add_dispatch_reached(callee, root.clone());
                     }
                 }
                 grew = true;
@@ -132,6 +198,12 @@ impl TypeMentionIndex {
             }
         }
         index
+    }
+
+    fn add_dispatch_reached(&mut self, callee: &FunctionSummary, root: DispatchRoot) {
+        self.dispatch_reached.insert(callee.id.0.clone(), root);
+        self.add_function_mentions(callee, true);
+        self.add_function_trait_uses(callee);
     }
 
     fn add_function_mentions(&mut self, function: &FunctionSummary, via_dispatch: bool) {
@@ -167,6 +239,130 @@ impl TypeMentionIndex {
         }
     }
 
+    fn add_function_trait_uses(&mut self, function: &FunctionSummary) {
+        let test_code = is_test_file(&function.file) || is_generic_signature(&function.body);
+        self.add_trait_uses(
+            &function.body,
+            &function.name,
+            &function.file,
+            function.start_line,
+            test_code,
+        );
+        if test_code || gated_trait_uses(&function.body).is_empty() {
+            return;
+        }
+        // A method that uses the syntax on `self`, `Self` or a field
+        // (`self.to_string()`, `format!("{:?}", self.inner)`) runs it for
+        // its own type and the types it holds, which its body never names.
+        let words = words(&function.body);
+        if !(words.contains("self") || words.contains("Self")) {
+            return;
+        }
+        let Some(self_type) = impl_self_type_name(&function.id.0) else {
+            return;
+        };
+        let held = self.held_types(&self_type);
+        self.add_trait_uses_for(
+            &function.body,
+            &function.name,
+            &function.file,
+            function.start_line,
+            held.into_iter().map(Some).collect(),
+        );
+    }
+
+    /// `self_type` and the types its fields hold, a few levels deep.
+    fn held_types(&self, self_type: &str) -> BTreeSet<String> {
+        let mut held = BTreeSet::from([self_type.to_string()]);
+        let mut frontier = vec![self_type.to_string()];
+        for _ in 0..HELD_TYPE_DEPTH {
+            let mut next = Vec::new();
+            for name in frontier {
+                for field in self.field_types.get(&name).into_iter().flatten() {
+                    if held.insert(field.clone()) {
+                        next.push(field.clone());
+                    }
+                }
+            }
+            frontier = next;
+        }
+        held
+    }
+
+    fn add_trait_uses(
+        &mut self,
+        body: &str,
+        site: &str,
+        file: &std::path::Path,
+        line: usize,
+        test_code: bool,
+    ) {
+        let types: Vec<Option<String>> = if test_code {
+            vec![None]
+        } else {
+            identifiers(body)
+                .into_iter()
+                .map(|(token, _)| Some(token))
+                .collect()
+        };
+        self.add_trait_uses_for(body, site, file, line, types);
+    }
+
+    fn add_trait_uses_for(
+        &mut self,
+        body: &str,
+        site: &str,
+        file: &std::path::Path,
+        line: usize,
+        types: Vec<Option<String>>,
+    ) {
+        let uses = gated_trait_uses(body);
+        for (gated, syntax) in uses {
+            for type_name in &types {
+                self.trait_uses
+                    .entry((gated, type_name.clone()))
+                    .or_insert_with(|| TraitUse {
+                        syntax,
+                        site: site.to_string(),
+                        file: file.to_path_buf(),
+                        line,
+                    });
+            }
+        }
+    }
+
+    /// Whether trait dispatch may run the trait-impl method `owner_id`: its
+    /// trait is not gated, or test-reached code uses the trait's syntax.
+    fn may_dispatch(&self, owner_id: &str) -> bool {
+        self.trait_use(owner_id).is_ok()
+    }
+
+    /// The gated trait use that lets `owner_id` dispatch (`Ok(None)` for an
+    /// ungated trait), or `Err` when its gated trait is never used.
+    fn trait_use(&self, owner_id: &str) -> Result<Option<(GatedTrait, &TraitUse)>, ()> {
+        let Some(gated) = GatedTrait::of_owner(owner_id) else {
+            return Ok(None);
+        };
+        let self_type = impl_self_type_name(owner_id);
+        self.trait_uses
+            .get(&(gated, None))
+            .or_else(|| self.trait_uses.get(&(gated, self_type)))
+            .map(|found| Some((gated, found)))
+            .ok_or(())
+    }
+
+    /// Whether test-reached code may run the trait-impl method `owner_id`
+    /// of `self_type` through dispatch. A primitive self type such as `u32`
+    /// is named almost everywhere, so its impl also needs the trait itself
+    /// named (a `T: Encode` bound, `Encode::encode`).
+    fn self_type_dispatches(&self, owner_id: &str, self_type: &str) -> bool {
+        if !self.mentions.contains_key(self_type) || !self.may_dispatch(owner_id) {
+            return false;
+        }
+        !is_primitive_type(self_type)
+            || impl_trait_name(owner_id).is_some_and(|name| self.mentions.contains_key(&name))
+    }
+
     fn mention(&self, type_name: &str) -> Option<&TypeMention> {
         self.mentions.get(type_name).map(|(mention, _)| mention)
     }
@@ -181,9 +377,10 @@ fn sort_functions(functions: &mut [&FunctionSummary]) {
         .sort_by(|a, b| (&a.file, a.start_line, &a.id.0).cmp(&(&b.file, b.start_line, &b.id.0)));
 }
 
-/// Type-shaped identifiers (capitalized) outside comments and strings, each
-/// with whether any occurrence builds or calls through it (`T::`, `T(`,
-/// `T {`) rather than only naming it in a type position.
+/// Type-shaped identifiers (capitalized, or a primitive type such as `u32`)
+/// outside comments and strings, each with whether any occurrence builds or
+/// calls through it (`T::`, `T(`, `T {`) rather than only naming it in a type
+/// position.
 fn identifiers(body: &str) -> Vec<(String, bool)> {
     let code = body
         .lines()
@@ -202,7 +399,7 @@ fn identifiers(body: &str) -> Vec<(String, bool)> {
             continue;
         };
         let token = &code[begin..index];
-        if !token.chars().next().is_some_and(char::is_uppercase) {
+        if !token.chars().next().is_some_and(char::is_uppercase) && !is_primitive_type(token) {
             continue;
         }
         let rest = code[index..].trim_start();
@@ -282,15 +479,585 @@ fn trait_dispatch_reach_summary(
     let mentions = context.type_mentions();
     if is_trait_impl_method(owner_fn)
         && let Some(self_type) = impl_self_type_name(&owner_fn.id.0)
+        && mentions.self_type_dispatches(&owner_fn.id.0, &self_type)
         && let Some(mention) = mentions.mention(&self_type)
     {
-        return Some(trait_dispatch_summary(owner_name, &self_type, mention));
+        let trait_use = mentions.trait_use(&owner_fn.id.0).ok().flatten();
+        return Some(trait_dispatch_summary(
+            owner_name, &self_type, mention, trait_use,
+        ));
     }
     // A trait method whose own type nothing names may still run from another
     // trait method that delegates to it (`self.inner.fmt(f)`).
     let root = mentions.dispatch_root(&owner_fn.id.0)?;
     let mention = mentions.mention(&root.self_type)?;
-    Some(dispatch_reached_summary(owner_name, root, mention))
+    let trait_use = mentions.trait_use(&root.id).ok().flatten();
+    Some(dispatch_reached_summary(
+        owner_name, root, mention, trait_use,
+    ))
+}
+
+/// A std trait whose methods run only through call syntax ripr can see
+/// (#5577). A test that only builds a value does not format, compare, hash
+/// or clone it, so an impl of one of these traits dispatches only when a
+/// test uses the trait's syntax, or test-reached code does in a body that
+/// names the type. Other traits (`Drop`, `From`, `Iterator`, operator
+/// traits, a crate's own traits) run from syntax too common or too implicit
+/// to gate, so naming the self type is enough for them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum GatedTrait {
+    Display,
+    Debug,
+    PartialEq,
+    Ord,
+    Hash,
+    Clone,
+    Default,
+    FromStr,
+    Serde,
+    Arbitrary,
+}
+
+impl GatedTrait {
+    const ALL: [Self; 10] = [
+        Self::Display,
+        Self::Debug,
+        Self::PartialEq,
+        Self::Ord,
+        Self::Hash,
+        Self::Clone,
+        Self::Default,
+        Self::FromStr,
+        Self::Serde,
+        Self::Arbitrary,
+    ];
+
+    /// The gated trait an impl owner id implements, if any. serde's
+    /// `Visitor<'de>` counts; another trait named `Visitor` does not.
+    fn of_owner(owner_id: &str) -> Option<Self> {
+        let name = impl_trait_name(owner_id)?;
+        if name == "Visitor" {
+            return owner_id.contains("Visitor<'de>").then_some(Self::Serde);
+        }
+        Self::from_name(&name)
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "Display" => Self::Display,
+            "Debug" => Self::Debug,
+            "PartialEq" => Self::PartialEq,
+            // A `PartialOrd` impl usually delegates to `cmp`, and both run
+            // from the same comparisons.
+            "PartialOrd" | "Ord" => Self::Ord,
+            "Hash" => Self::Hash,
+            "Clone" => Self::Clone,
+            "Default" => Self::Default,
+            "FromStr" => Self::FromStr,
+            "Serialize" | "Deserialize" => Self::Serde,
+            // `arbitrary` and `proptest` generate values only in fuzz and
+            // property harnesses.
+            "Arbitrary" => Self::Arbitrary,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Display => "Display",
+            Self::Debug => "Debug",
+            Self::PartialEq => "PartialEq",
+            Self::Ord => "Ord",
+            Self::Hash => "Hash",
+            Self::Clone => "Clone",
+            Self::Default => "Default",
+            Self::FromStr => "FromStr",
+            Self::Serde => "serde",
+            Self::Arbitrary => "Arbitrary",
+        }
+    }
+
+    /// Identifiers (outside comments and strings) whose use runs the trait.
+    fn identifiers(self) -> &'static [&'static str] {
+        match self {
+            Self::Display => &["to_string", "assert_display_snapshot", "assert_snapshot"],
+            // `assert_eq!` and `unwrap` format `Debug` only when they fail,
+            // so a passing test never runs `Debug::fmt` through them.
+            Self::Debug => &["dbg", "assert_debug_snapshot", "assert_debug_eq"],
+            Self::PartialEq => &[
+                "assert_eq",
+                "assert_ne",
+                "debug_assert_eq",
+                "debug_assert_ne",
+                "eq",
+                "ne",
+                "contains",
+                "dedup",
+                "dedup_by_key",
+            ],
+            Self::Ord => &[
+                "cmp",
+                "partial_cmp",
+                "lt",
+                "le",
+                "gt",
+                "ge",
+                "max",
+                "min",
+                "clamp",
+                "sort",
+                "sort_unstable",
+                "sort_by_key",
+                "sort_unstable_by_key",
+                "max_by_key",
+                "min_by_key",
+                "binary_search",
+                "select_nth_unstable",
+                "is_sorted",
+                "BTreeMap",
+                "BTreeSet",
+                "BinaryHeap",
+            ],
+            Self::Hash => &[
+                "hash",
+                "hash_one",
+                "Hasher",
+                "BuildHasher",
+                "HashMap",
+                "HashSet",
+                "IndexMap",
+                "IndexSet",
+            ],
+            Self::Clone => &[
+                "clone",
+                "cloned",
+                "clone_from",
+                "to_owned",
+                "to_vec",
+                "resize",
+                "extend_from_slice",
+            ],
+            Self::Default => &[
+                "default",
+                "unwrap_or_default",
+                "or_default",
+                "Default",
+                "take",
+            ],
+            Self::FromStr => &["parse", "from_str", "FromStr"],
+            // A format crate or serde itself; a crate whose tests never
+            // serialize (serde behind a feature, say) never runs its impls.
+            Self::Serde => &[
+                "serde",
+                "serde_json",
+                "serde_yaml",
+                "serde_test",
+                "toml",
+                "bincode",
+                "postcard",
+                "ron",
+                "rmp_serde",
+                "ciborium",
+                "Serializer",
+                "Deserializer",
+                "assert_tokens",
+                "assert_ser_tokens",
+                "assert_de_tokens",
+                "assert_json_snapshot",
+                "assert_yaml_snapshot",
+                "assert_ron_snapshot",
+                "assert_toml_snapshot",
+                "assert_csv_snapshot",
+                "assert_compact_json_snapshot",
+            ],
+            Self::Arbitrary => &[
+                "arbitrary",
+                "Unstructured",
+                "fuzz_target",
+                "proptest",
+                "prop_compose",
+                "arbitrary_with",
+                "quickcheck",
+            ],
+        }
+    }
+
+    /// Operators and macro syntax (outside comments and strings) whose use
+    /// runs the trait. `<` and `>` count only with a space on each side, so
+    /// generics and `->` do not. Any `vec![` counts for `Clone`, since
+    /// `vec![x; n]` clones `x`.
+    fn operators(self) -> &'static [&'static str] {
+        match self {
+            Self::PartialEq => &["==", "!="],
+            Self::Ord => &[" < ", " > ", "<=", ">="],
+            Self::Clone => &["vec!["],
+            _ => &[],
+        }
+    }
+}
+
+/// Each gated trait whose call syntax `body` uses, with the first syntax
+/// found. A format string counts only outside a failure message
+/// (`assert!`, `panic!`, `expect`), which formats only when the test fails.
+fn gated_trait_uses(body: &str) -> Vec<(GatedTrait, &'static str)> {
+    let code = body
+        .lines()
+        .map(strip_comments_and_strings)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let words = words(&code);
+    let (display_placeholder, debug_placeholder) = format_placeholders(body);
+    GatedTrait::ALL
+        .into_iter()
+        .filter_map(|gated| {
+            let placeholder = match gated {
+                GatedTrait::Display if display_placeholder => Some("{}"),
+                GatedTrait::Debug if debug_placeholder => Some("{:?}"),
+                _ => None,
+            };
+            let syntax = placeholder
+                .or_else(|| {
+                    gated
+                        .identifiers()
+                        .iter()
+                        .copied()
+                        .find(|ident| words.contains(ident))
+                })
+                .or_else(|| {
+                    gated
+                        .operators()
+                        .iter()
+                        .copied()
+                        .find(|op| code.contains(op))
+                        .map(str::trim)
+                })?;
+            Some((gated, syntax))
+        })
+        .collect()
+}
+
+fn words(code: &str) -> BTreeSet<&str> {
+    code.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Whether `body` has a `Display` placeholder (`{}`, `{name}`, `{:>8}`) and
+/// a `Debug` one (`{:?}`, `{x:#?}`) in a string literal that is not a
+/// failure message.
+fn format_placeholders(body: &str) -> (bool, bool) {
+    let mut display = false;
+    let mut debug = false;
+    let literals = string_literals(body);
+    // The enclosing-call scan reads a copy with literal contents blanked, so
+    // a `(` inside an earlier message cannot shift its depth.
+    let mut masked = body.as_bytes().to_vec();
+    for (_, literal) in &literals {
+        let from = literal.as_ptr() as usize - body.as_ptr() as usize;
+        masked[from..from + literal.len()].fill(b' ');
+    }
+    let masked = String::from_utf8(masked).unwrap_or_else(|_| body.to_string());
+    for (start, literal) in literals {
+        if masked.get(..start).is_some_and(is_failure_message) {
+            continue;
+        }
+        let mut rest = literal;
+        while let Some(open) = rest.find('{') {
+            rest = &rest[open + 1..];
+            if let Some(after) = rest.strip_prefix('{') {
+                rest = after;
+                continue;
+            }
+            let Some(close) = rest.find('}') else {
+                break;
+            };
+            let inner = &rest[..close];
+            rest = &rest[close + 1..];
+            if inner.contains(['{', '"', '\\', ' ']) {
+                continue;
+            }
+            match inner.split_once(':') {
+                Some((_, spec)) if spec.contains('?') => debug = true,
+                _ => display = true,
+            }
+        }
+    }
+    (display, debug)
+}
+
+/// Each `"..."` literal's start offset and contents, skipping `//` and
+/// `/* */` comments and char literals.
+fn string_literals(body: &str) -> Vec<(usize, &str)> {
+    let bytes = body.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    i += 1;
+                }
+                i += 2;
+            }
+            // A char literal such as '"' must not open a string.
+            b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 3,
+            b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => {
+                i += 4;
+            }
+            // A raw string (`r"…"`, `r#"…"#`, `br"…"`) has no escapes and
+            // ends at a quote followed by as many `#` as it opened with.
+            b'r' if raw_string_open(bytes, i).is_some() => {
+                let Some((hashes, quote)) = raw_string_open(bytes, i) else {
+                    i += 1;
+                    continue;
+                };
+                let start = quote;
+                let mut end = quote + 1;
+                while end < bytes.len()
+                    && !(bytes[end] == b'"'
+                        && bytes[end + 1..]
+                            .iter()
+                            .take(hashes)
+                            .filter(|b| **b == b'#')
+                            .count()
+                            == hashes)
+                {
+                    end += 1;
+                }
+                if let Some(literal) = body.get(start + 1..end.min(bytes.len())) {
+                    out.push((start, literal));
+                }
+                i = end + 1 + hashes;
+            }
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                let end = i.min(bytes.len());
+                if let Some(literal) = body.get(start + 1..end) {
+                    out.push((start, literal));
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// The `#` count and opening-quote offset of a raw string starting at the
+/// `r` at `at`, if one does: `r` must not end an identifier (`br` may).
+fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    if at > 0 && is_ident(bytes[at - 1]) {
+        let byte_prefix = bytes[at - 1] == b'b' && (at < 2 || !is_ident(bytes[at - 2]));
+        if !byte_prefix {
+            return None;
+        }
+    }
+    let hashes = bytes[at + 1..].iter().take_while(|b| **b == b'#').count();
+    let quote = at + 1 + hashes;
+    (bytes.get(quote) == Some(&b'"')).then_some((hashes, quote))
+}
+
+/// How far back `is_failure_message` looks for the enclosing call.
+const FAILURE_MESSAGE_SCAN_LIMIT: usize = 4096;
+
+/// Whether the call that encloses the end of `before` formats its message
+/// only on failure.
+fn is_failure_message(before: &str) -> bool {
+    let bytes = before.as_bytes();
+    let mut depth = 0usize;
+    let mut i = bytes.len();
+    // A long table literal would make each lookup quadratic; past the cap the
+    // literal counts as a use, which only widens what may dispatch.
+    let floor = bytes.len().saturating_sub(FAILURE_MESSAGE_SCAN_LIMIT);
+    while i > floor {
+        i -= 1;
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' if depth == 0 => {
+                let name = before[..i].trim_end().trim_end_matches('!');
+                let start = name
+                    .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .map_or(0, |at| at + 1);
+                return matches!(
+                    &name[start..],
+                    "assert"
+                        | "assert_eq"
+                        | "assert_ne"
+                        | "debug_assert"
+                        | "debug_assert_eq"
+                        | "debug_assert_ne"
+                        | "panic"
+                        | "unreachable"
+                        | "todo"
+                        | "unimplemented"
+                        | "expect"
+                        | "expect_err"
+                );
+            }
+            b'(' => depth -= 1,
+            b';' | b'{' | b'}' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// How many levels of fields `held_types` follows from a method's self type.
+const HELD_TYPE_DEPTH: usize = 3;
+
+/// Whether `callee` implements the same gated trait as the root that reached
+/// it, so the root's gate covers it.
+fn same_gated_trait(callee: &FunctionSummary, root: &DispatchRoot) -> bool {
+    GatedTrait::of_owner(&callee.id.0)
+        .is_some_and(|gated| GatedTrait::of_owner(&root.id) == Some(gated))
+}
+
+/// Each `struct` or `enum` definition in `source` with the type-shaped
+/// identifiers its fields or variants name. Enum variant names are kept
+/// too; they only widen what may dispatch.
+fn type_definitions(source: &str) -> Vec<(String, BTreeSet<String>)> {
+    let code = source
+        .lines()
+        .map(strip_comments_and_strings)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = code.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_ident(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_ident(bytes[i]) {
+            i += 1;
+        }
+        if !matches!(&code[start..i], "struct" | "enum") {
+            continue;
+        }
+        let name_start = code[i..]
+            .find(|ch: char| !ch.is_whitespace())
+            .map_or(bytes.len(), |at| i + at);
+        let name_end = code[name_start..]
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(bytes.len(), |at| name_start + at);
+        let name = &code[name_start..name_end];
+        if name.is_empty() {
+            continue;
+        }
+        // The definition runs to the `;` of a unit or tuple struct or the
+        // brace that closes its fields, whichever comes first at depth 0.
+        let mut depth = 0usize;
+        let mut end = name_end;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' | b'{' | b'[' => depth += 1,
+                b')' | b']' => depth = depth.saturating_sub(1),
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                b';' if depth == 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        let fields = identifiers(&code[name_end..end.min(bytes.len())])
+            .into_iter()
+            .map(|(token, _)| token)
+            .filter(|token| token != name)
+            .collect();
+        out.push((name.to_string(), fields));
+        i = name_end;
+    }
+    out
+}
+
+/// The `use` items of a file, one per line.
+fn use_items(source: &str) -> String {
+    source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether a function's signature takes a type parameter or an `impl` /
+/// `dyn` argument, so a trait it uses may run for whatever type a caller
+/// passes. Lifetime-only generics (`fn f<'a>`) do not count.
+fn is_generic_signature(body: &str) -> bool {
+    let signature = body.split('{').next().unwrap_or(body);
+    let Some(after_fn) = signature.split_once("fn ").map(|(_, rest)| rest) else {
+        return false;
+    };
+    let name_end = after_fn
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(after_fn.len());
+    let rest = &after_fn[name_end..];
+    if let Some(params) = rest.strip_prefix('<') {
+        let params = params.split('>').next().unwrap_or(params);
+        if params
+            .split(',')
+            .map(str::trim)
+            .any(|param| !param.is_empty() && !param.starts_with('\''))
+        {
+            return true;
+        }
+    }
+    let arguments = rest.split_once('(').map_or("", |(_, args)| args);
+    let words = words(arguments);
+    words.contains("impl") || words.contains("dyn")
+}
+
+/// The trait of a trait-impl owner id: `Display` from
+/// `src/lib.rs::impl fmt::Display for Version::fmt`.
+fn impl_trait_name(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_path, _) = impl_body.rsplit_once(" for ")?;
+    let trait_path = trait_path.split('<').next()?.trim();
+    let name = trait_path.rsplit("::").next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn is_primitive_type(token: &str) -> bool {
+    matches!(
+        token,
+        "bool"
+            | "char"
+            | "str"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    )
 }
 
 fn location(file: &std::path::Path, line: usize) -> String {
@@ -344,10 +1111,31 @@ fn mention_text(self_type: &str, mention: &TypeMention) -> String {
     }
 }
 
-fn trait_dispatch_summary(owner_name: &str, self_type: &str, mention: &TypeMention) -> String {
+/// `, and `site` (file:line) uses `syntax`, which runs `Trait`` for a gated
+/// trait; nothing for an ungated one.
+fn trait_use_text(trait_use: Option<(GatedTrait, &TraitUse)>) -> String {
+    let Some((gated, found)) = trait_use else {
+        return String::new();
+    };
     format!(
-        "Reach unresolved (trait dispatch): `{owner_name}` is a trait method of `{self_type}`, which operators, formatting and generic calls run without naming it; {}. ripr does not trace trait dispatch, so no gap is reported",
-        mention_text(self_type, mention)
+        ", and `{}` ({}) uses `{}`, which runs `{}`",
+        found.site,
+        location(&found.file, found.line),
+        found.syntax,
+        gated.name(),
+    )
+}
+
+fn trait_dispatch_summary(
+    owner_name: &str,
+    self_type: &str,
+    mention: &TypeMention,
+    trait_use: Option<(GatedTrait, &TraitUse)>,
+) -> String {
+    format!(
+        "Reach unresolved (trait dispatch): `{owner_name}` is a trait method of `{self_type}`, which operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
+        mention_text(self_type, mention),
+        trait_use_text(trait_use),
     )
 }
 
@@ -355,13 +1143,15 @@ fn dispatch_reached_summary(
     owner_name: &str,
     root: &DispatchRoot,
     mention: &TypeMention,
+    trait_use: Option<(GatedTrait, &TraitUse)>,
 ) -> String {
     format!(
-        "Reach unresolved (trait dispatch): `{owner_name}` may run from `{}` ({}), a trait method of `{}` that operators, formatting and generic calls run without naming it; {}. ripr does not trace trait dispatch, so no gap is reported",
+        "Reach unresolved (trait dispatch): `{owner_name}` may run from `{}` ({}), a trait method of `{}` that operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
         root.method,
         location(&root.file, root.line),
         root.self_type,
-        mention_text(&root.self_type, mention)
+        mention_text(&root.self_type, mention),
+        trait_use_text(trait_use),
     )
 }
 
@@ -377,6 +1167,158 @@ mod tests {
         assert_eq!(
             tokens,
             vec![("Op".to_string(), false), ("Version".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn identifiers_keep_primitive_types() {
+        let tokens = identifiers("let n: u32 = width(3usize);");
+        assert_eq!(tokens, vec![("u32".to_string(), false)]);
+    }
+
+    #[test]
+    fn format_strings_count_outside_failure_messages_only() {
+        assert_eq!(
+            format_placeholders("let s = format!(\"{}\", v);"),
+            (true, false)
+        );
+        assert_eq!(format_placeholders("println!(\"{v:#?}\");"), (false, true));
+        assert_eq!(
+            format_placeholders("write!(f, \"{:>8}\", v)"),
+            (true, false)
+        );
+        assert_eq!(
+            format_placeholders("assert!(ok(v), \"bad {:?}\", v); x.expect(\"{}\");"),
+            (false, false)
+        );
+        assert_eq!(
+            format_placeholders("assert_eq!(f(x), 1, \"bad {}\", v);"),
+            (false, false)
+        );
+        // A format string passed to another call inside an assertion runs.
+        assert_eq!(
+            format_placeholders("assert_eq!(format!(\"{:?}\", v), \"V\");"),
+            (false, true)
+        );
+        // Escaped braces and a char literal quote do not open a placeholder.
+        assert_eq!(
+            format_placeholders("let q = '\"'; let s = \"{{x}}\";"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn raw_strings_are_read_whole() {
+        // The inner quote does not end `r#"…"#`, so the later `{:?}` is
+        // still read as its own literal.
+        assert_eq!(
+            format_placeholders("let a = r#\"say \"x\" {}\"#; let b = format!(\"{:?}\", a);"),
+            (true, true)
+        );
+        assert_eq!(
+            format_placeholders("let p = r\"dir\\\"; let s = format!(\"{:?}\", p);"),
+            (false, true)
+        );
+        assert_eq!(format_placeholders("let b = br\"{x}\";"), (true, false));
+    }
+
+    #[test]
+    fn a_paren_in_an_earlier_message_does_not_hide_the_enclosing_call() {
+        // The `assert(` inside the first literal is text, not the call
+        // that encloses the placeholder.
+        assert_eq!(
+            format_placeholders("let s = label(\"assert(\", \"{:?}\");"),
+            (false, true)
+        );
+        assert_eq!(
+            format_placeholders("let s = f(\")\", format!(\"{}\", a));"),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn type_definitions_read_struct_and_enum_fields() {
+        let found = type_definitions(
+            "pub struct Wrapper { inner: Amount, items: Vec<Item> }\n\
+             struct Quoted(char);\n\
+             struct Unit;\n\
+             enum Kind { Plain(Text), Pair { left: Left } }\n\
+             // struct Commented { x: Hidden }\n",
+        );
+        let get = |name: &str| {
+            found
+                .iter()
+                .find(|(found, _)| found == name)
+                .map(|(_, fields)| fields.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        assert_eq!(get("Wrapper"), Some(vec!["Amount", "Item", "Vec"]));
+        assert_eq!(get("Quoted"), Some(vec!["char"]));
+        assert_eq!(get("Unit"), Some(vec![]));
+        assert_eq!(get("Kind"), Some(vec!["Left", "Pair", "Plain", "Text"]));
+        assert_eq!(get("Commented"), None);
+    }
+
+    #[test]
+    fn block_comments_hold_no_format_strings() {
+        assert_eq!(
+            format_placeholders("let a = 1; /* \"{:?}\" */ let b = 2;"),
+            (false, false)
+        );
+        assert_eq!(
+            format_placeholders("/* x */ let s = format!(\"{}\", a);"),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn generic_signatures_take_type_parameters_or_impl_arguments() {
+        assert!(is_generic_signature(
+            "fn render<T: Display>(t: &T) -> String { t.to_string() }"
+        ));
+        assert!(is_generic_signature("pub fn show(t: &impl Debug) { }"));
+        assert!(is_generic_signature("fn show(t: &dyn Debug) { }"));
+        assert!(!is_generic_signature(
+            "fn fmt<'a>(&self, f: &mut Formatter<'a>) -> Result { }"
+        ));
+        assert!(!is_generic_signature(
+            "fn fmt(&self, f: &mut Formatter<'_>) -> Result { }"
+        ));
+    }
+
+    #[test]
+    fn gated_trait_uses_read_operators_and_identifiers() {
+        let uses =
+            gated_trait_uses("if a < b && v == w { list.sort(); }\nlet x: Vec<u8> = Vec::new();");
+        assert_eq!(
+            uses,
+            vec![(GatedTrait::PartialEq, "=="), (GatedTrait::Ord, "sort"),]
+        );
+        // `->` and generics are not comparisons.
+        assert_eq!(
+            gated_trait_uses("fn f() -> Option<Vec<u8>> { None }"),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn impl_trait_name_reads_the_trait_segment() {
+        assert_eq!(
+            impl_trait_name("src/display.rs::impl fmt::Display for Version::fmt").as_deref(),
+            Some("Display")
+        );
+        assert_eq!(
+            impl_trait_name("src/serde.rs::impl Deserialize<'de> for Version::deserialize")
+                .as_deref(),
+            Some("Deserialize")
+        );
+        assert_eq!(impl_trait_name("src/lib.rs::impl Version::parse"), None);
+        assert_eq!(
+            GatedTrait::of_owner("src/serde.rs::impl Visitor<'de> for V::visit_str"),
+            Some(GatedTrait::Serde)
+        );
+        assert_eq!(
+            GatedTrait::of_owner("src/ast.rs::impl Visitor for Walk::visit"),
+            None
         );
     }
 }
