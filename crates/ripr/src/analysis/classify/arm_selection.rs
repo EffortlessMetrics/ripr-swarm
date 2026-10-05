@@ -165,19 +165,9 @@ impl ArmSelector {
                 Some(original) if same_pattern(&original, &pattern_text) => None,
                 // Reordered alternatives (`"CA" | "MX"` to `"MX" | "CA"`)
                 // take exactly the same inputs, so the arm reads as one whose
-                // pattern did not change.
-                Some(original)
-                    if top_level_alternatives(&original).is_some_and(|original| {
-                        let original = original.into_iter().map(pattern_head).collect::<Vec<_>>();
-                        original.len() == alternatives.len()
-                            && original.iter().all(|head| {
-                                *head != PatternHead::Opaque && alternatives.contains(head)
-                            })
-                            && alternatives.iter().all(|head| original.contains(head))
-                    }) =>
-                {
-                    None
-                }
+                // pattern did not change. Alternatives compare as text, not
+                // heads: `Some(1)` and `Some(2)` share a head (#5638 review).
+                Some(original) if same_alternatives(&original, &pattern_text) => None,
                 // The diff pairs an added line with the first adjacent
                 // removed line that shares any token, and a qualified enum
                 // name is shared by every arm in a multi-line hunk. The
@@ -614,6 +604,20 @@ fn judge_alternative(alternative: &PatternHead, input: &PatternHead) -> ArmSelec
 /// Two pattern texts that differ only in whitespace.
 fn same_pattern(left: &str, right: &str) -> bool {
     left.split_whitespace().eq(right.split_whitespace())
+}
+
+/// The same top-level alternatives in any order, each compared ignoring
+/// whitespace.
+fn same_alternatives(left: &str, right: &str) -> bool {
+    let normalized = |pattern: &str| {
+        top_level_alternatives(pattern).map(|alternatives| {
+            alternatives
+                .into_iter()
+                .map(|alternative| alternative.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+    };
+    normalized(left).is_some_and(|left| normalized(right).is_some_and(|right| left == right))
 }
 
 /// The pattern before `=>`, without comments, trimmed, with no guard.
@@ -1912,6 +1916,14 @@ mod tests {
         let selector = ArmSelector::establish(&narrowed, &owner(zones, "shipping_zone"))
             .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
         assert!(!selector.assertion_selects("assert_eq!(shipping_zone(\"CA\"), 2);"));
+        // A payload change is not a reorder, though both payloads share a
+        // variant head.
+        let options = "pub fn f(x: Option<u8>) -> u8 {\n    match x {\n        None | Some(2) => 2,\n        _ => 3,\n    }\n}\n";
+        let mut repayloaded = arm_probe("None | Some(2) => 2,", 4);
+        repayloaded.before = Some("Some(1) | None => 2,".to_string());
+        let selector = ArmSelector::establish(&repayloaded, &owner(options, "f"))
+            .ok_or_else(|| "premise: the repayloaded arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(None), 2);"));
         // A removed-line probe whose arm no longer stands on that line
         // establishes nothing.
         let mut removed = arm_probe("Kind::Delta => 2,", 4);
