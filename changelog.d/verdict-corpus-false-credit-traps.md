@@ -1,6 +1,6 @@
 <!-- section: Added -->
 - Verdict corpus: 23 authored false-credit cases in `authored-trap-kit`
-  (corpus `2026-10-04.6`). Eighteen are traps whose tests cannot notice the
+  (corpus `2026-10-04.8`). Eighteen are traps whose tests cannot notice the
   change: a self-computed expected value via a test helper, `assert_eq!(x, x)`,
   an assert on the input or on a stale clone, a sibling-named or same-named
   function tested instead, an assert after an always-taken return, a bare
