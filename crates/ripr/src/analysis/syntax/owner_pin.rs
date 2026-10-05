@@ -665,7 +665,9 @@ const STD_DERIVES: &[&str] = &[
 
 /// Prelude macro names `attribute_emits_no_items` trusts that an import can
 /// rebind. Built-in attributes (`cfg`, `inline`, ..) cannot be rebound: an
-/// import of one is an ambiguity error.
+/// import of one is an ambiguity error. A `#[macro_use]` extern crate can
+/// also rebind these names with no import; `macro_binding_scan` refuses any
+/// `macro_use` in the scanned files, which this check relies on.
 const PRELUDE_MACROS: &[&str] = &[
     "derive",
     "test",

@@ -656,6 +656,10 @@ fn serial_test_locks_resolve_in_the_tests_own_module() {
     assert!(weight_admitted(shadowed).is_empty(), "{shadowed}");
     let rebound = "use demo::weight;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
     assert!(weight_admitted(rebound).is_empty(), "{rebound}");
+    // `#[macro_use]` can rebind `Debug` with no import; the file-wide
+    // macro-binding scan refuses it.
+    let macro_use = "#[macro_use]\nextern crate my_macros;\nuse demo::weight;\nmod tests {\nuse super::*;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(macro_use).is_empty(), "{macro_use}");
     // The bare lock is bound only through the glob, which proves nothing.
     assert!(weight_admitted(bare).is_empty(), "{bare}");
 }
