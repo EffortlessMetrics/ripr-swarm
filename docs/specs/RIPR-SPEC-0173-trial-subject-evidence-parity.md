@@ -111,8 +111,15 @@ widening directions, each fail-closed:
   groups, literals, identifiers, those keywords, and `.`/`::`
   connectors, and never reaches across a statement boundary.
 
-Macro input is skipped wholesale for method scanning (assertion macros
-still classify themselves), matching what parsed method-call nodes could
+Inline terminal Err guards reuse SPEC0154's bounded assertion-twin grammar
+(#5713), including one-line and multiline negated matchers. Only the
+condition determines kind/strength; the failure-body Err constructor cannot
+turn a scalar value pin into an error-variant pin. Guard spans stay inside
+the claimed Trial, and body/sibling assertions retain their own coordinates.
+This adds no general control-flow or execution promise.
+
+Macro input is skipped wholesale for method and terminal-guard scanning
+(assertion macros still classify themselves), matching what parsed method-call nodes could
 see on the ordinary path: a method token inside `println!(...)` never
 classifies. Qualified assertion invocations slice from the full
 contiguous macro path (`insta::assert_snapshot![...]`, including `crate`,

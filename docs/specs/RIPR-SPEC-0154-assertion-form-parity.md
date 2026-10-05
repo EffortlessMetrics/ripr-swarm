@@ -70,6 +70,11 @@ owner's source role.
   assert twins in kind and strength, including an explicit exact/strong
   constructor-pattern control. Opaque guards contribute zero facts, including
   diagnostic-only assertion/matcher text and unnegated matcher controls.
+- One-line and multiline literal-2 and whole-wildcard twins retain their
+  kind/strength through lexical, parsed, inline Trial and resolved helper
+  routes (#5713). Named subjects and owner calls are required; condition
+  continuation rows belong to the guard, while body and sibling assertions
+  keep their distinct coordinates. Discarded computations stay non-crediting.
 - The repo-mode leak reproduction (cfg(test) helper shapes seeded repo
   probes on main; none after the owner filter) with the production
   shapes still seeding.
@@ -91,7 +96,7 @@ owner's source role.
 
 - Accept: `if actual != expected { return Err(format!(...)) }` credits
   the same oracle as `assert!(actual == expected, ...)`.
-- Accept: `if !matches!(result, Expected::Good(_)) { return Err(...) }`
+- Accept: `if !matches!(value, 2) { return Err(()) }`
   credits `ExactValue`/`Strong`, equal to its assertion twin; the Err-return
   body does not make it an `ExactErrorVariant` oracle.
 - Accept: a cfg(test) helper's `if result != expected { panic!(...) }`
@@ -106,6 +111,10 @@ owner's source role.
 opaque rejection); `analysis/probes/repo.rs` `cfg_test_leak_tests` (repo
 leak + production control); `analysis/syntax/ra.rs`
 `cfg_all_test_tests` (role pin); fixtures `assertion_form_parity_*`.
+
+`analysis/extract/oracles/discarded_matches_tests.rs` pins lexical/parsed
+layout parity and condition ownership; `analysis/facts/harness_registry/tests.rs`
+pins inline/helper twins, discarded/opaque controls and inert macro input.
 
 ## Non-Goals
 

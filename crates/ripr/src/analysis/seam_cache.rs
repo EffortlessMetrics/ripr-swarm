@@ -285,7 +285,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.32`: weak grip requires established activation; a seam whose
 /// activation is unknown classifies `activation_unknown`, not
 /// `weakly_gripped` (#5946). Old entries would keep the weak-grip class.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
+/// `1.33`: lexical multiline and inline Trial terminal guards regain their
+/// consumed assertion twins (#5713); prior classified evidence must miss.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.33";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -354,7 +356,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.39`: same terminal-guard evidence transition as full `1.33` (#5713).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -425,7 +428,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.39`: same terminal-guard evidence transition as full `1.33` (#5713).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -558,7 +562,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// concurrent assertion-admission candidate #5359 uses generation `1.19`.
 /// `1.21`: discarded matcher computations are not assertion facts (#5713).
 /// Favorable parser/lexical facts from `1.20` must not replay.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.21";
+/// `1.22`: lexical multiline terminal guards retain assertion twins and
+/// condition continuation ownership (#5713); guard-blind facts must miss.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.22";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3650,7 +3656,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.21");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.22");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3699,7 +3705,8 @@ mod tests {
         // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
         // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
         // 1.31 -> 1.32: weak grip requires established activation (#5946).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.32");
+        // 1.32 -> 1.33: consumed terminal guard facts (#5713).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.33");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3725,8 +3732,9 @@ mod tests {
         // 0.35 -> 0.36: same related-test table body as the outer cache.
         // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
         // 0.37 -> 0.38: same weak-grip activation transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
+        // 0.38 -> 0.39: same terminal guard transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
     }
 
     #[test]
@@ -3881,115 +3889,126 @@ mod tests {
 
     #[test]
     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
-        for compact in [false, true] {
-            for sharded in [false, true] {
-                let scratch = integrity_scratch("property-classified-generation")?;
-                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
-                let mut current_key = empty_state().cache_key();
-                if compact {
-                    current_key.schema_version =
-                        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
-                }
-                let previous_key = RepoSeamCacheKey {
-                    schema_version: if compact { "0.33" } else { "1.27" }.to_string(),
-                    ..current_key.clone()
-                };
-                // Representative synthesized favorable classification, not
-                // a claimed capture from the old whole-analyzer execution.
-                let favorable = synthesized_discarded_oracle_classified();
-                let count = if sharded { 2 } else { 1 };
-                let store_limit = if sharded { 1 } else { 10 };
-                let favorable = vec![favorable; count];
-                cache.store_classified_seams_with_limit(
-                    &previous_key,
-                    &favorable,
-                    None,
-                    store_limit,
-                )?;
-                assert_classified_cache_values(&cache, &previous_key, &favorable)?;
-                assert!(matches!(
-                    cache.load_classified_seams_with_fallback(&current_key),
-                    CacheLoad::Miss
-                ));
-                if sharded {
-                    assert!(cache.sharded_manifest_path(&previous_key).exists());
-                    assert!(!cache.entry_path(&previous_key).exists());
-                } else {
-                    let stale = std::fs::read(cache.entry_path(&previous_key))
-                        .map_err(|error| error.to_string())?;
-                    std::fs::write(cache.entry_path(&current_key), stale)
-                        .map_err(|error| error.to_string())?;
+        for (previous_full, previous_compact) in [("1.27", "0.33"), ("1.32", "0.38")] {
+            for compact in [false, true] {
+                for sharded in [false, true] {
+                    let scratch = integrity_scratch("property-classified-generation")?;
+                    let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                    let mut current_key = empty_state().cache_key();
+                    if compact {
+                        current_key.schema_version =
+                            COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                    }
+                    let previous_key = RepoSeamCacheKey {
+                        schema_version: if compact {
+                            previous_compact
+                        } else {
+                            previous_full
+                        }
+                        .to_string(),
+                        ..current_key.clone()
+                    };
+                    // Representative synthesized favorable classification, not
+                    // a claimed capture from the old whole-analyzer execution.
+                    let favorable = synthesized_discarded_oracle_classified();
+                    let count = if sharded { 2 } else { 1 };
+                    let store_limit = if sharded { 1 } else { 10 };
+                    let favorable = vec![favorable; count];
+                    cache.store_classified_seams_with_limit(
+                        &previous_key,
+                        &favorable,
+                        None,
+                        store_limit,
+                    )?;
+                    assert_classified_cache_values(&cache, &previous_key, &favorable)?;
                     assert!(matches!(
                         cache.load_classified_seams_with_fallback(&current_key),
                         CacheLoad::Miss
                     ));
+                    if sharded {
+                        assert!(cache.sharded_manifest_path(&previous_key).exists());
+                        assert!(!cache.entry_path(&previous_key).exists());
+                    } else {
+                        let stale = std::fs::read(cache.entry_path(&previous_key))
+                            .map_err(|error| error.to_string())?;
+                        std::fs::write(cache.entry_path(&current_key), stale)
+                            .map_err(|error| error.to_string())?;
+                        assert!(matches!(
+                            cache.load_classified_seams_with_fallback(&current_key),
+                            CacheLoad::Miss
+                        ));
+                    }
+                    let mut corrected = sample_classified();
+                    corrected.class = SeamGripClass::ReachableUnrevealed;
+                    corrected.evidence.observe.state = StageState::No;
+                    corrected.evidence.discriminate.state = StageState::No;
+                    let corrected = vec![corrected; count];
+                    cache.store_classified_seams_with_limit(
+                        &current_key,
+                        &corrected,
+                        None,
+                        store_limit,
+                    )?;
+                    assert_classified_cache_values(&cache, &current_key, &corrected)?;
                 }
-                let mut corrected = sample_classified();
-                corrected.class = SeamGripClass::ReachableUnrevealed;
-                corrected.evidence.observe.state = StageState::No;
-                corrected.evidence.discriminate.state = StageState::No;
-                let corrected = vec![corrected; count];
-                cache.store_classified_seams_with_limit(
-                    &current_key,
-                    &corrected,
-                    None,
-                    store_limit,
-                )?;
-                assert_classified_cache_values(&cache, &current_key, &corrected)?;
             }
         }
         Ok(())
     }
 
     #[test]
-    fn favorable_033_shard_generation_is_refused_with_current_outer_key() -> Result<(), String> {
-        for compact in [false, true] {
-            let scratch = integrity_scratch("property-shard-generation")?;
-            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
-            let mut key = empty_state().cache_key();
-            if compact {
-                key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
-            }
-            let favorable = synthesized_discarded_oracle_classified();
-            let favorable = vec![favorable; 2];
-            cache.store_classified_seams_with_limit(&key, &favorable, None, 1)?;
-            assert_classified_cache_values(&cache, &key, &favorable)?;
-            // Hold outer identity fixed to challenge the independent shard
-            // generation, rather than only missing a differently keyed path.
-            let path = cache.sharded_manifest_path(&key);
-            let mut manifest = codec::decode_sharded_manifest(
-                &std::fs::read(&path).map_err(|error| error.to_string())?,
-            )?;
-            manifest.sharded_cache_schema_version = "0.33".to_string();
-            for shard in &manifest.shards {
-                let path = cache.sharded_entry_dir(&key).join(&shard.file);
-                let mut envelope =
-                    codec::decode_shard(&std::fs::read(&path).map_err(|error| error.to_string())?)?;
-                assert_eq!(envelope.classified_seams.len(), 1);
-                assert_eq!(
-                    envelope.classified_seams[0].class,
-                    SeamGripClass::StronglyGripped
-                );
-                envelope.sharded_cache_schema_version = "0.33".to_string();
-                std::fs::write(&path, codec::encode_shard(&envelope)?)
+    fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+        for previous in ["0.33", "0.38"] {
+            for compact in [false, true] {
+                let scratch = integrity_scratch("property-shard-generation")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                }
+                let favorable = synthesized_discarded_oracle_classified();
+                let favorable = vec![favorable; 2];
+                cache.store_classified_seams_with_limit(&key, &favorable, None, 1)?;
+                assert_classified_cache_values(&cache, &key, &favorable)?;
+                // Hold outer identity fixed to challenge the independent shard
+                // generation, rather than only missing a differently keyed path.
+                let path = cache.sharded_manifest_path(&key);
+                let mut manifest = codec::decode_sharded_manifest(
+                    &std::fs::read(&path).map_err(|error| error.to_string())?,
+                )?;
+                manifest.sharded_cache_schema_version = previous.to_string();
+                for shard in &manifest.shards {
+                    let path = cache.sharded_entry_dir(&key).join(&shard.file);
+                    let mut envelope = codec::decode_shard(
+                        &std::fs::read(&path).map_err(|error| error.to_string())?,
+                    )?;
+                    assert_eq!(envelope.classified_seams.len(), 1);
+                    assert_eq!(
+                        envelope.classified_seams[0].class,
+                        SeamGripClass::StronglyGripped
+                    );
+                    envelope.sharded_cache_schema_version = previous.to_string();
+                    std::fs::write(&path, codec::encode_shard(&envelope)?)
+                        .map_err(|error| error.to_string())?;
+                    let seeded = codec::decode_shard(
+                        &std::fs::read(path).map_err(|error| error.to_string())?,
+                    )?;
+                    seeded.validate_integrity()?;
+                }
+                std::fs::write(&path, codec::encode_sharded_manifest(&manifest)?)
                     .map_err(|error| error.to_string())?;
-                let seeded =
-                    codec::decode_shard(&std::fs::read(path).map_err(|error| error.to_string())?)?;
+                let seeded = codec::decode_sharded_manifest(
+                    &std::fs::read(path).map_err(|error| error.to_string())?,
+                )?;
                 seeded.validate_integrity()?;
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&key),
+                    CacheLoad::Miss
+                ));
+                let corrected = vec![sample_classified(); 2];
+                cache.store_classified_seams_with_limit(&key, &corrected, None, 1)?;
+                assert_classified_cache_values(&cache, &key, &corrected)?;
             }
-            std::fs::write(&path, codec::encode_sharded_manifest(&manifest)?)
-                .map_err(|error| error.to_string())?;
-            let seeded = codec::decode_sharded_manifest(
-                &std::fs::read(path).map_err(|error| error.to_string())?,
-            )?;
-            seeded.validate_integrity()?;
-            assert!(matches!(
-                cache.load_classified_seams_with_fallback(&key),
-                CacheLoad::Miss
-            ));
-            let corrected = vec![sample_classified(); 2];
-            cache.store_classified_seams_with_limit(&key, &corrected, None, 1)?;
-            assert_classified_cache_values(&cache, &key, &corrected)?;
         }
         Ok(())
     }
@@ -7668,7 +7687,7 @@ mod generation_transition_tests {
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
         let previous_key = RepoFileFactCacheKey {
-            schema_version: "1.20".to_string(),
+            schema_version: "1.21".to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file.to_path_buf(),
             content_hash: content_hash_for(&content),

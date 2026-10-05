@@ -80,6 +80,7 @@ use super::test_styles::normalized_test_attribute_path as normalized_attribute_p
 use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
+use crate::analysis::extract::terminal_err_return_guard_oracle;
 use crate::analysis::rust_index::{
     OracleFact, classify_assertion, extract_assertions, extract_call_facts,
     extract_identifier_tokens, extract_literal_facts,
@@ -425,8 +426,13 @@ fn apply_libtest_mimic_target(
         let masked_body = mask_dormant_template_spans(&body, &template_spans);
         let mut calls = extract_call_facts(&masked_body, start_line);
         let mut literals = extract_literal_facts(&masked_body, start_line);
-        let mut assertions =
-            parser_oracles_for_node_tokens(source, &tokens, matched.name_token_index, &line_index);
+        let mut assertions = parser_oracles_for_node_tokens(
+            source,
+            &tokens,
+            matched.name_token_index,
+            close_index,
+            &line_index,
+        );
         // #3603: a bare-identifier callback (`Trial::test("name",
         // helper_fn)`) resolves to exactly one top-level function in this
         // file, and that function's body is what the trial exercises —
@@ -878,6 +884,7 @@ fn parser_oracles_for_node_tokens(
     source: &str,
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
+    trial_close_index: usize,
     line_index: &LineIndex,
 ) -> Vec<OracleFact> {
     let mut assertions = Vec::new();
@@ -888,6 +895,25 @@ fn parser_oracles_for_node_tokens(
         match token.kind() {
             ra_ap_syntax::SyntaxKind::L_PAREN => depth += 1,
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
+            ra_ap_syntax::SyntaxKind::IF_KW if !inside_macro_rules(token.parent_ancestors()) => {
+                // This hook only sees tokens the existing traversal admits.
+                // Nonassertion macro input and dormant templates are skipped
+                // before it can see their guards. Keep traversing the body so
+                // separate assertion facts retain their own coordinates.
+                if let Some(end) = inline_terminal_guard_end(tokens, index, trial_close_index) {
+                    let text = slice_text(
+                        source,
+                        token.text_range().start(),
+                        tokens[end].text_range().end(),
+                    );
+                    if let Some(oracle) = terminal_err_return_guard_oracle(
+                        &text,
+                        line_index.line(token.text_range().start()),
+                    ) {
+                        assertions.push(oracle);
+                    }
+                }
+            }
             // A `macro_rules!` definition inside the claimed span is a
             // dormant token tree: its template never executes, so no token
             // inside it — assertion macro, method call, or otherwise —
@@ -1117,6 +1143,36 @@ fn parser_oracles_for_node_tokens(
     }
     assertions.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     assertions
+}
+
+/// The balanced body of an inline if guard, bounded by this Trial's close.
+/// Parenthesized/bracketed condition operands are skipped as whole groups;
+/// unsupported shapes fail closed at an enclosing close or statement boundary.
+fn inline_terminal_guard_end(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    if_index: usize,
+    trial_close_index: usize,
+) -> Option<usize> {
+    let mut index = next_significant(tokens, if_index + 1)?;
+    while index < trial_close_index {
+        match tokens[index].kind() {
+            ra_ap_syntax::SyntaxKind::L_CURLY => {
+                return matching_group_close(tokens, index)
+                    .filter(|close| *close < trial_close_index);
+            }
+            ra_ap_syntax::SyntaxKind::L_PAREN | ra_ap_syntax::SyntaxKind::L_BRACK => {
+                let close = matching_group_close(tokens, index)
+                    .filter(|close| *close < trial_close_index)?;
+                index = next_significant(tokens, close + 1)?;
+            }
+            ra_ap_syntax::SyntaxKind::R_PAREN
+            | ra_ap_syntax::SyntaxKind::R_BRACK
+            | ra_ap_syntax::SyntaxKind::R_CURLY
+            | ra_ap_syntax::SyntaxKind::SEMICOLON => return None,
+            _ => index = next_significant(tokens, index + 1)?,
+        }
+    }
+    None
 }
 
 /// Index of the previous non-trivia token before `from`.

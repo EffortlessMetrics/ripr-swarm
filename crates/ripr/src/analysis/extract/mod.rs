@@ -17,7 +17,8 @@ pub(crate) use oracles::{
     OracleTextShape, assertion_oracle_text, classify_assertion, equality_assertion_arguments,
     err_return_guard_oracles, extract_assertions, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_unwrap_err_bound_error_assertion, terminal_err_return_guard_oracle,
+    unwrap_err_bound_variables,
 };
 pub(crate) use probe_shapes::{
     PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,

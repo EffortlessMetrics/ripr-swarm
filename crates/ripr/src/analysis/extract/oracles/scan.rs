@@ -25,7 +25,11 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
     let guarded = guarded_result_match_scan(body, start_line);
     let mut out = Vec::new();
     let mut lines = body.lines().enumerate().peekable();
+    let mut guard_condition_end_line = None;
     while let Some((offset, line)) = lines.next() {
+        if guard_condition_end_line.is_some_and(|end| start_line + offset <= end) {
+            continue;
+        }
         let mut trimmed = line.trim().to_string();
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
@@ -35,10 +39,11 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         // #3284: peek without consuming the block, preserving assertions
         // inside it; only its condition and first body statement participate.
         if (trimmed.starts_with("if ") || trimmed.starts_with("if("))
-            && let Some(oracle) =
-                peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
+            && let Some((oracle, condition_end_line)) =
+                peeked_err_return_guard_oracle(&trimmed, lines.clone(), start_line + offset)
         {
             out.push(oracle);
+            guard_condition_end_line = Some(condition_end_line);
             continue;
         }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
@@ -1764,17 +1769,33 @@ fn truncate_chars(text: &str, max: usize) -> String {
     format!("{}...", &text[..cut])
 }
 
-/// The lexical-path guard oracle: recognize from the condition line plus
-/// a single peeked body line, consuming nothing, so assertions inside the
-/// guard body stay visible to the outer loop (review finding: the first
-/// draft joined the whole block and swallowed them).
-fn peeked_err_return_guard_oracle(
+/// Join a guard through cloned lookahead. Only condition continuation rows
+/// belong to this oracle; the real iterator retains body and sibling rows.
+fn peeked_err_return_guard_oracle<'a, I>(
     line: &str,
-    next: Option<&(usize, &str)>,
+    mut lines: std::iter::Peekable<I>,
+    line_number: usize,
+) -> Option<(OracleFact, usize)>
+where
+    I: Iterator<Item = (usize, &'a str)>,
+{
+    let mut statement = line.to_string();
+    collect_multiline_assertion(&mut statement, &mut lines);
+    let oracle = terminal_err_return_guard_oracle(&statement, line_number)?;
+    let brace = statement.find('{')?;
+    let condition_end_line = line_number + statement[..brace].matches('\n').count();
+    Some((oracle, condition_end_line))
+}
+
+/// Shared by lexical guards and traversed inline-trial guard spans. The
+/// actual first body statement must return Err; only the assertion twin's
+/// condition determines kind, strength and observed tokens.
+pub(crate) fn terminal_err_return_guard_oracle(
+    statement: &str,
     line_number: usize,
 ) -> Option<OracleFact> {
-    let brace = line.find('{')?;
-    let head = line[..brace].trim();
+    let brace = statement.find('{')?;
+    let head = statement[..brace].trim();
     let condition = head.strip_prefix("if")?.trim();
     if condition.is_empty() {
         return None;
@@ -1782,12 +1803,11 @@ fn peeked_err_return_guard_oracle(
     // Same fail-closed gate as the parser path: the Err return must be
     // the body's first statement, so a commented-out or string-embedded
     // `return Err(` never credits.
-    let returns_on_line = line[brace..].replace(' ', "").starts_with("{returnErr(");
-    let returns_on_next = next.is_some_and(|(_, next)| {
-        let compact = next.replace(' ', "");
-        compact.starts_with("returnErr(")
-    });
-    if !returns_on_line && !returns_on_next {
+    let body: String = statement[brace..]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if !body.starts_with("{returnErr(") {
         return None;
     }
     let twin = err_return_guard_assertion(&format!("if {condition} {{ return Err(()) }}"))?;

@@ -58,7 +58,10 @@ are scoped or reviewed.
 - Discarded Rust `matches!` computations no longer count as assertion oracles
   in parser, lexical or registered-harness facts. Actual asserting wrappers
   retain pattern credit, including the weak whole-wildcard boundary from
-  #5410. File-fact generation 1.21 invalidates favorable predecessor facts
+  #5410. Consumed multiline lexical and inline Trial Err guards retain their
+  assertion twins, with condition ownership and sibling coordinates preserved.
+  File-fact generation 1.22 and classified generations 1.33/0.39 invalidate
+  favorable or guard-blind predecessor facts
   (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
   existing honesty corpus, preserving absent, weak and strong observer
   boundaries. Shared-validator negative controls reject strong and weak
