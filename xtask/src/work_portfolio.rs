@@ -1688,9 +1688,7 @@ pub(crate) fn compile_work_portfolio(
                                 .map(|slice| slice.delta_id.clone())
                                 .collect::<BTreeSet<_>>()
                         })
-                        .reduce(|left, right| {
-                            left.intersection(&right).cloned().collect()
-                        })
+                        .reduce(|left, right| left.intersection(&right).cloned().collect())
                         .unwrap_or_default();
                     if common.is_empty() {
                         boundaries.insert(format!(
