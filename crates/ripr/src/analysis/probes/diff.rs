@@ -78,7 +78,7 @@ pub(crate) fn probes_for_file_with_relations(
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
             continue;
         }
-        let removed_counterpart = nearby_removed_line(added.new_side_line, text, changed);
+        let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
         let parser_shapes = parser_probe_shapes_for_changed_line_against(
             index,
             &changed.path,
@@ -788,6 +788,37 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// The removed line this added line replaced, paired by position inside one
+/// replacement block. The diff parser gives every removed line of a block
+/// the new-side coordinate where the block's added run starts, so the k-th
+/// added line pairs with the k-th removed line when both runs have the same
+/// length. Unequal runs pair nothing: shape selection treats a removed line
+/// as proof that a field was left unchanged, and a guessed pairing (such as
+/// the first removed line sharing a type name with every added line) would
+/// turn that proof against the edited field.
+fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) -> Option<String> {
+    let run_start = added_run_start(added_new_side_line, changed);
+    let mut run_len = 0usize;
+    while changed
+        .added_lines
+        .iter()
+        .any(|line| line.new_side_line == run_start + run_len)
+    {
+        run_len += 1;
+    }
+    let removed = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if removed.len() != run_len {
+        return None;
+    }
+    removed
+        .get(added_new_side_line.checked_sub(run_start)?)
+        .map(|line| line.text.trim().to_string())
 }
 
 fn nearby_removed_line(

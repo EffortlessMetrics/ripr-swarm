@@ -1,5 +1,6 @@
 use super::super::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex};
 use super::family::family_for_probe_shape;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FileData;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::ProbeFamily;
@@ -257,14 +258,26 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
         .map(|facts| facts.data())
 }
 
-/// True when `needle` occurs in `haystack` without an identifier or digit
-/// character on either side, so `b: 2` is not found inside `b: 20`.
+/// True when `needle` occurs in `haystack` as code, without an identifier
+/// or digit character on either side, so `b: 2` is not found inside `b: 20`
+/// and a removed line's trailing `// version: 0x2` comment does not make the
+/// edited `version: 0x2` field read as unchanged.
 fn contains_as_token_run(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
+    // The mask keeps byte length, so a match position indexes both strings;
+    // an occurrence counts only when it starts on an unmasked code byte.
+    let masked = mask_comments_and_strings(haystack);
+    let masked = masked.as_bytes();
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     haystack.match_indices(needle).any(|(start, _)| {
+        let starts_in_code = masked
+            .get(start)
+            .is_some_and(|byte| !byte.is_ascii_whitespace());
+        if !starts_in_code {
+            return false;
+        }
         let before = haystack[..start].chars().next_back();
         let after = haystack[start + needle.len()..].chars().next();
         let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))

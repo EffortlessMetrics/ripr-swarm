@@ -152,12 +152,31 @@ fn probes_for_replaced_line(
     line: usize,
     removed: &str,
 ) -> Result<Vec<Probe>, String> {
+    probes_for_replaced_block(source, line, &[removed])
+}
+
+/// Real RA summary and diff probes for a block replacing `removed.len()`
+/// lines starting at `first_line`. Like the diff parser, every removed line
+/// carries the new-side coordinate where the added run starts.
+fn probes_for_replaced_block(
+    source: &str,
+    first_line: usize,
+    removed: &[&str],
+) -> Result<Vec<Probe>, String> {
     let path = PathBuf::from("src/lib.rs");
-    let text = source
-        .lines()
-        .nth(line.saturating_sub(1))
-        .ok_or_else(|| format!("fixture has no line {line}"))?
-        .to_string();
+    let added_lines = (first_line..first_line + removed.len())
+        .map(|line| {
+            source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|text| ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text: text.to_string(),
+                })
+                .ok_or_else(|| format!("fixture has no line {line}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
     let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
         files: BTreeMap::from([(path.clone(), facts)]),
@@ -165,16 +184,16 @@ fn probes_for_replaced_line(
     });
     let changed = ChangedFile {
         path,
-        added_lines: vec![ChangedLine {
-            line,
-            new_side_line: line,
-            text,
-        }],
-        removed_lines: vec![ChangedLine {
-            line,
-            new_side_line: line,
-            text: removed.to_string(),
-        }],
+        added_lines,
+        removed_lines: removed
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: first_line + offset,
+                new_side_line: first_line,
+                text: (*text).to_string(),
+            })
+            .collect(),
     };
     Ok(probes_for_file(Path::new("."), &changed, &index))
 }
@@ -217,6 +236,49 @@ fn a_field_text_inside_a_longer_removed_value_is_not_unchanged() -> Result<(), S
     assert_eq!(
         field_construction_expressions(&probes),
         vec!["version: 0x1"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_removed_comment_repeating_the_new_field_does_not_mark_it_unchanged() -> Result<(), String> {
+    // The old line's comment already reads `version: 0x2`; only code counts
+    // as the unchanged field, so the edited `version` stays the subject.
+    let source = "pub struct Id {\n    counter: u32,\n    version: u8,\n}\npub fn new_v2() -> Id {\n    Id { counter: 0x00ab_cdef, version: 0x2 } // version: 0x2\n}\n";
+    let probes = probes_for_replaced_line(
+        source,
+        6,
+        "    Id { counter: 0x00ab_cdef, version: 0x1 } // version: 0x2",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 0x2"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), String> {
+    // Both removed lines share the `Id` token with both added lines. The
+    // second added line must compare against the second removed line, where
+    // `b: 2` is new, not the first, where `b: 2` already appeared.
+    let source = "pub struct Id {\n    a: u8,\n    b: u8,\n}\npub fn pair() -> (Id, Id) {\n    (\n        Id { a: 0, b: 4 },\n        Id { a: 1, b: 2 },\n    )\n}\n";
+    let probes = probes_for_replaced_block(
+        source,
+        7,
+        &["        Id { a: 0, b: 2 },", "        Id { a: 1, b: 3 },"],
+    )?;
+    // Removed-side probes (no `after`) are out of scope here.
+    let added_side = probes
+        .iter()
+        .filter(|probe| probe.after.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        field_construction_expressions(&added_side),
+        vec!["b: 4", "b: 2"],
         "{probes:?}"
     );
     Ok(())
