@@ -1011,9 +1011,7 @@ fn parse_rfc3339_utc(text: &str) -> Option<i64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    if bytes.get(10) != Some(&b'T')
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
+    if bytes.get(10) != Some(&b'T') || bytes.get(13) != Some(&b':') || bytes.get(16) != Some(&b':')
     {
         return None;
     }
@@ -1055,11 +1053,7 @@ fn parse_rfc3339_utc(text: &str) -> Option<i64> {
                 return None;
             }
             let magnitude = offset_hour * 3600 + offset_minute * 60;
-            if *sign == b'-' {
-                -magnitude
-            } else {
-                magnitude
-            }
+            if *sign == b'-' { -magnitude } else { magnitude }
         }
         _ => return None,
     };
@@ -1621,7 +1615,9 @@ fn same_issue_branch_claim_exists(
     claims.iter().any(|claim| {
         claim.branch == pr.head_branch
             && claim.state == "active"
-            && claim.issue.is_some_and(|issue| pr.linked_issues.contains(&issue))
+            && claim
+                .issue
+                .is_some_and(|issue| pr.linked_issues.contains(&issue))
     })
 }
 
@@ -1653,8 +1649,11 @@ fn canonical_strings(values: &[String]) -> Vec<String> {
 fn canonical_blockers(values: &[WorkCapturedBlockerV1]) -> Vec<WorkCapturedBlockerV1> {
     let mut canonical = values.to_vec();
     canonical.sort_by(|left, right| {
-        (&left.kind, &left.reference, &left.description)
-            .cmp(&(&right.kind, &right.reference, &right.description))
+        (&left.kind, &left.reference, &left.description).cmp(&(
+            &right.kind,
+            &right.reference,
+            &right.description,
+        ))
     });
     canonical.dedup_by(|left, right| {
         left.kind == right.kind
@@ -2376,7 +2375,13 @@ pub(crate) fn compile_work_portfolio(
             confidence,
             confidence_reasons: confidence_reasons
                 .iter()
-                .map(|reason| reason.trim_start_matches("partial:").trim_start_matches("not_proven:").trim().to_string())
+                .map(|reason| {
+                    reason
+                        .trim_start_matches("partial:")
+                        .trim_start_matches("not_proven:")
+                        .trim()
+                        .to_string()
+                })
                 .collect(),
             single_agent_preferred: issue.single_agent_preferred,
             duplicate_family: duplicate_family_by_issue.get(&issue.number).cloned(),
@@ -4657,7 +4662,10 @@ mod tests {
         };
         let graph = WorkCapturedCargoAllowV1 {
             schema_version: "work_cargo_allow.v1".to_string(),
-            requirements: vec![requirement("REQ-owned", 7004), requirement("REQ-other", 7004)],
+            requirements: vec![
+                requirement("REQ-owned", 7004),
+                requirement("REQ-other", 7004),
+            ],
         };
         let mut issue = WorkCapturedIssueV1 {
             number: 7004,
@@ -4913,7 +4921,10 @@ mod tests {
         for kind in WorkCapturedSourceKindV1::all() {
             freshness.insert(kind, WorkSourceFreshnessV1::Current);
         }
-        freshness.insert(WorkCapturedSourceKindV1::Campaigns, WorkSourceFreshnessV1::Stale);
+        freshness.insert(
+            WorkCapturedSourceKindV1::Campaigns,
+            WorkSourceFreshnessV1::Stale,
+        );
         let context = WorkCompileContext { freshness };
         let issue = WorkCapturedIssueV1 {
             number: 7010,
@@ -5029,7 +5040,9 @@ mod tests {
             ));
         }
         if default_snapshot.portable_identity != explicit_snapshot.portable_identity {
-            return Err("the volatile captured path must stay out of portable identity".to_string());
+            return Err(
+                "the volatile captured path must stay out of portable identity".to_string(),
+            );
         }
         Ok(())
     }
