@@ -471,9 +471,10 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
 /// enclosing repository, and the pin checkout below would then detach the
 /// caller's own working tree.
 pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
-    let toplevel = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
-    let toplevel =
-        fs::canonicalize(toplevel.trim()).map_err(|err| format!("{}: {err}", toplevel.trim()))?;
+    let output = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
+    // Strip only git's line ending; a directory name may end in spaces.
+    let printed = output.trim_end_matches(['\n', '\r']);
+    let toplevel = fs::canonicalize(printed).map_err(|err| format!("{printed}: {err}"))?;
     if toplevel == dir {
         Ok(())
     } else {

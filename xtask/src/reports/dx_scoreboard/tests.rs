@@ -2086,3 +2086,16 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
     );
     accepted
 }
+
+#[test]
+fn a_checkout_whose_directory_name_ends_in_a_space_is_its_own_checkout() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!("ripr-dx-spaced-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let dir = root.join("demo ");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    super::measure::git(Some(&dir), &["init", "--quiet"])?;
+    let dir = fs::canonicalize(&dir).map_err(|err| err.to_string())?;
+    let verdict = super::measure::verify_own_checkout(&dir);
+    let _ = fs::remove_dir_all(&root);
+    verdict
+}
