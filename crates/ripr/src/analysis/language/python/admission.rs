@@ -26,7 +26,9 @@
 //! can still fail a `NoAssertionLike` test (#6657). A module imported from
 //! the test file's own directory or below is treated as test support; a
 //! test file at the repository root has no such directory, so its relative
-//! imports (`from . import checks`) are not caught (#6657). A
+//! imports (`from . import checks`) are not caught (#6657). A global filled
+//! through a plain-name registering decorator (`@register` whose body
+//! appends to `HANDLERS`) is not tainted either (#6657). A
 //! `no_assertion` miss must account for the rest before it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
@@ -469,6 +471,14 @@ fn module_bindings<'s>(
                 module_bindings(&try_stmt.finalbody, out, registries);
             }
             Stmt::With(with_stmt) => module_bindings(&with_stmt.body, out, registries),
+            // `for f in (verify_a, verify_b): HANDLERS.append(f)`.
+            Stmt::For(for_stmt) => {
+                let mut names = Vec::new();
+                binding_roots(&for_stmt.target, &mut names);
+                out.push((names, for_stmt.iter.as_ref()));
+                module_bindings(&for_stmt.body, out, registries);
+                module_bindings(&for_stmt.orelse, out, registries);
+            }
             _ => {}
         }
     }
@@ -1136,13 +1146,16 @@ impl BodyScan<'_> {
         }
         if matches!(root, "self" | "cls") {
             // The bare instance or class as a value (`t = self`,
-            // `type(self)`) lets a local reach every method on it.
-            return segments.len() == 1;
+            // `type(self)`) lets a local reach every method on it; an
+            // inherited assertion method passed as a callback
+            // (`d.addCallback(self.assertEqual, 5)`) is one by name.
+            return segments.len() == 1 || has_assertion_like_prefix(last);
         }
-        // A local holding a forbidden value is caught where it is bound, so
-        // its own name (`expected = 10`) is not suspect.
+        // A bare local holding a forbidden value is caught where it is
+        // bound, so its own name (`expected = 10`) is not suspect. A member
+        // of a local (`m.assert_called_once_with`, `v.validate`) still is.
         if self.scope.argnames.contains(root) || self.scope.locals.contains(root) {
-            return false;
+            return segments.len() > 1 && has_assertion_like_prefix(last);
         }
         if has_assertion_like_prefix(last) {
             return true;

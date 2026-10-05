@@ -3031,6 +3031,31 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             none,
         ),
         (
+            "mock assertion method stored in a local",
+            "from unittest.mock import Mock\ndef test_x():\n    m = Mock()\n    apply_discount(20, m)\n    f = m.assert_called_once_with\n    f(20)\n",
+            unresolved,
+        ),
+        (
+            "validator method passed as a value",
+            "from src.schema import Validator\ndef test_x():\n    v = Validator()\n    list(map(v.validate, [apply_discount(20)]))\n",
+            unresolved,
+        ),
+        (
+            "inherited assertion method passed as a callback",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        d = apply_discount(20)\n        d.addCallback(self.assertEqual, 5)\n        return d\n",
+            unresolved,
+        ),
+        (
+            "inherited fail passed as an errback",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        d = apply_discount(20)\n        d.addErrback(self.fail)\n",
+            unresolved,
+        ),
+        (
+            "registry filled by a module-level loop",
+            "def _verify_one(value):\n    assert value\nHANDLERS = []\nfor f in (_verify_one,):\n    HANDLERS.append(f)\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
             "class attribute that is a plain constant",
             "class TestX:\n    rate = 20\n    def test_x(self):\n        apply_discount(self.rate)\n",
             none,
