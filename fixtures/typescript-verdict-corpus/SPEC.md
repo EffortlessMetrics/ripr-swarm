@@ -65,8 +65,8 @@ false silent, and the report must equal `expected/report.json` and
 
 ## Known labeling caveat
 
-StrykerJS's vitest runner, with vitest 5, reported mutants killed only inside
-a `describe()` block as survived. `authored-ts-vitest-orders` therefore keeps
+StrykerJS's vitest runner, with vitest 5, reported mutants that only a test
+inside a `describe()` block detects as not detected. `authored-ts-vitest-orders` therefore keeps
 its tests at the top level; the replay confirmed every label.
 
 ## Refreshing

@@ -269,7 +269,7 @@
       "contradictions": []
     },
     {
-      "case_id": "ts-nodetest-footer-untested",
+      "case_id": "ts-nodetest-footer-unasserted",
       "subject_id": "authored-ts-nodetest-pricing",
       "origin": "authored",
       "anchor": "src/pricing.ts:64",

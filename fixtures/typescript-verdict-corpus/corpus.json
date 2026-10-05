@@ -1406,9 +1406,9 @@
       }
     },
     {
-      "case_id": "ts-nodetest-footer-untested",
+      "case_id": "ts-nodetest-footer-unasserted",
       "subject_id": "authored-ts-nodetest-pricing",
-      "diff": "cases/ts-nodetest-footer-untested.diff",
+      "diff": "cases/ts-nodetest-footer-unasserted.diff",
       "anchor": {
         "file": "src/pricing.ts",
         "line": 64
@@ -5053,7 +5053,7 @@
           "limited"
         ]
       },
-      "reasoning": "The throw-message line is rewritten to concatenate the same message. `assert.throws(() => refundAmount(-3))` with no matcher accepts any thrown error, so both message mutants survived. ripr reports `weakly_exposed` with broad_error/weak, a correct gap for the not_discriminated truth.",
+      "reasoning": "The throw-message line is rewritten to concatenate the same message. `assert.throws(() => refundAmount(-3))` with no matcher accepts any thrown error, so both message mutants left the tests green. ripr reports `weakly_exposed` with broad_error/weak, a correct gap for the not_discriminated truth.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -5390,7 +5390,7 @@
           "silent"
         ]
       },
-      "reasoning": "The rewrite swaps the factors of the total field; the test pins the whole returned object with toStrictEqual({ sku, qty: 3, total: 12 }), so the only Stryker mutant (unitPrice / qty = 1.33) fails it. ripr reports exposed with an exact_value/strong oracle on the anchor. Note: the test was first written inside describe(); Stryker 10's vitest runner then reported this mutant Survived although a manual vitest run fails it, so the test is kept at top level.",
+      "reasoning": "The rewrite swaps the factors of the total field; the test pins the whole returned object with toStrictEqual({ sku, qty: 3, total: 12 }), so the only Stryker mutant (unitPrice / qty = 1.33) fails it. ripr reports exposed with an exact_value/strong oracle on the anchor. Note: the test was first written inside describe(); Stryker 10's vitest runner then reported this mutant as not detected although a manual vitest run fails it, so the test is kept at top level.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",
@@ -5601,7 +5601,7 @@
           "silent"
         ]
       },
-      "reasoning": "`spend >= 500` is rewritten to the exactly equivalent `!(spend < 500)`; the it.each table pins 499 -> false and 500 -> true, so all seven Stryker mutants fail a row. ripr reports weakly_exposed with typescript_table_case_unresolved and typescript_dynamic_assertion_unresolved because toBe(expected) reads a row value, an under-credit. As with the order case, a describe() wrapper made Stryker's vitest runner report every mutant Survived, so the table is at top level.",
+      "reasoning": "`spend >= 500` is rewritten to the exactly equivalent `!(spend < 500)`; the it.each table pins 499 -> false and 500 -> true, so all seven Stryker mutants fail a row. ripr reports weakly_exposed with typescript_table_case_unresolved and typescript_dynamic_assertion_unresolved because toBe(expected) reads a row value, an under-credit. As with the order case, a describe() wrapper made Stryker's vitest runner report every mutant as not detected, so the table is at top level.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",

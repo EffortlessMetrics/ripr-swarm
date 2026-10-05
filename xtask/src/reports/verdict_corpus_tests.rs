@@ -932,7 +932,8 @@ fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
 }
 
 #[test]
-fn committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels() -> Result<(), String> {
+fn committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels() -> Result<(), String>
+{
     let dir = crate::dogfood::repo_rooted_fixture_path("fixtures/typescript-verdict-corpus");
     let corpus = corpus_for_language(&dir, "typescript")?;
     assert!(

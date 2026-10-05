@@ -23,7 +23,7 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 101.
 | `ts-nodetest-audit-log` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `ts-nodetest-charge-rate` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `ts-nodetest-quote-shipping-term` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
-| `ts-nodetest-footer-untested` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `ts-nodetest-footer-unasserted` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `ts-vitest-line-total-reexport` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `ts-vitest-bulk-threshold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `ts-vitest-add-line-message` | authored | discriminated | credited | credited | exposed | ideal | no | none |
