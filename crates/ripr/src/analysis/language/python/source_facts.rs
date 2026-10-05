@@ -1,7 +1,7 @@
 use super::admission::PythonAdmissionContext;
 use super::module_constants::{module_literal_constants, with_module_rebinding};
 use super::owners_tests::{
-    PythonTestModule, collect_imports_from_statements, collect_owners_from_statements,
+    TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
     collect_tests_from_statements, module_owner,
 };
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
@@ -283,8 +283,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module.body,
         None,
         false,
-        &PythonTestModule {
-            imports: &imports,
+        TestImportContext {
+            body: &imports,
+            definition: &[],
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,

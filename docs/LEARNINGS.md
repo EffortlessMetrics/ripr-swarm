@@ -3,6 +3,22 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
+
+`assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
+and a test-local zero, not an error path. `assertion_observes_error` must not
+treat a leading, middle, or undelimited `error`/`err` segment in a compound
+identifier as an error observer (`error_count`, `nonerror`). Trailing tokens
+still count (`Err`, `unwrap_err`, `last_error`, `ParseError`). Diagnostic
+stripping from #4748 is unchanged.
+
+Pin the operand twin beside the message twin: `error_path_operand_error_lexeme`
+must stay `weakly_exposed`, matching `error_path_diagnostic_error`. Existing
+`error_path_diagnostic_*` goldens stay green. Sibling ErrorPath confirmation
+sites (diagnostic operand stripping, guarded owner-result matches, exact-variant
+pins, Python's typed-oracle gate) do not scan identifier lexemes. Do not reopen
+#4748.
+
 ## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
 
 Pinned `rmcp` 3.5.0 answers pre-init `ping` in the handshake loop (any
@@ -201,6 +217,8 @@ original oracle text for rendering. The `error_path_diagnostic_*` fixtures pin
 absent, neutral, raw, escaped, formatted and typed-diagnostic controls in the
 RIPR-SPEC-0108 honesty corpus. Genuine typed and guarded Result oracles retain
 their producer-owned evidence; this is not general Rust name/dataflow resolution.
+Operand-position identifier residual (`error_count`) is #5255; do not reopen
+this diagnostic-operand claim for that mechanism.
 
 ## 2026-09-29: Absent worktree files are not `no_static_path` (#4586)
 
@@ -289,6 +307,26 @@ Do not absorb helper credit (#4574), proximity-only oracles (#4486), or
 bare-name method relation (#4760) into this pairing gate. Pairing reuses
 activation's `==` facts so a same-test oracle that already infected through
 a named constant or helper hop stays `exposed`.
+
+## 2026-10-05: A boundary literal buried in an argument expression is a false `exposed` (#6668)
+
+Same-test pairing reused `owner_argument_values`, which collects every scalar
+token inside the argument text. `assert_eq!(gate(if false { 10 } else { 50 }),
+true)` and `assert_eq!(gate(std::cmp::max(10, 50)), true)` therefore paired as
+boundary inputs even though both calls evaluate to 50; the `10 <= value` →
+`10 < value` mutant still passes. Bool-owner `assert!(gate(..))` pins inherit
+the same matcher. Pairing now admits an argument only when it is the literal
+itself, a named local bound to that literal, or a call infection already
+recorded as `==` the boundary. Do not "fix" this by changing
+`owner_argument_values` / `scalar_values` (those remain the activation
+authority; #5638 / #5359). Activation `==` fallback is refused when the
+compared argument is compound, not when an unrelated extra argument is
+(`gate(LIMIT, make_context())` still pairs) or when the compared argument
+is a path-qualified constant (`bulk_rate(parcels::BULK_ITEMS)`). When a
+compared operand is a local alias rather than a parameter name, activation
+fallback fail-closes to the whole argument list so a buried literal in the
+aliased slot cannot restore pairing. The reverse direction, helper-built
+inputs that read as gaps, is #6615.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
