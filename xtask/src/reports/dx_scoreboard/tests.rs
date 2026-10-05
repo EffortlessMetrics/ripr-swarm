@@ -1980,3 +1980,16 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
     assert_eq!(uncompared.len(), 9, "{}", crossed["gate"]);
     Ok(())
 }
+
+#[test]
+fn the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!("dx-step-summary-{}", std::process::id()));
+    fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let summary = root.join("summary.md");
+    fs::write(&summary, "earlier step\n").map_err(|err| err.to_string())?;
+    append_step_summary(&summary, "# DX scoreboard\n")?;
+    let text = fs::read_to_string(&summary).map_err(|err| err.to_string())?;
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(text, "earlier step\n# DX scoreboard\n");
+    Ok(())
+}
