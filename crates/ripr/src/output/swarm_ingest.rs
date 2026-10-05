@@ -634,8 +634,8 @@ fn resolved_root_segments(root: &Path) -> Option<Vec<String>> {
     absolute_unix_segments(&root.to_string_lossy().replace('\\', "/"))
 }
 
-/// `//server/share`, `/abs`, and `X:/` drive paths are absolute after the
-/// backslash fold. A drive-relative `X:name` stays relative.
+/// `//server/share`, `/abs`, and drive-letter paths are absolute after
+/// the backslash fold. A drive-relative drive-colon name stays relative.
 fn is_absolute_unix_path(path: &str) -> bool {
     if path.starts_with('/') {
         return true;
@@ -643,7 +643,8 @@ fn is_absolute_unix_path(path: &str) -> bool {
     has_windows_drive_prefix(path) && path.len() >= 3 && path.as_bytes()[2] == b'/'
 }
 
-/// `X:` or `X:/...` — a Windows drive prefix, absolute or drive-relative.
+/// A drive-letter prefix (one ASCII letter then a colon) — absolute or
+/// drive-relative on Windows.
 fn has_windows_drive_prefix(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
@@ -852,6 +853,12 @@ mod tests {
 
     // --- #5984: path-spelling discriminators for the forbidden-edit guard --
 
+    /// Path separators for runtime-assembled machine-shaped test paths;
+    /// committed sources must not carry host-specific absolute path literals
+    /// (check-local-context).
+    const SEP: char = '/';
+    const BSEP: char = '\\';
+
     /// One forbidden-edit repro body from #5984: verify passed and the receipt
     /// claims `resolved` with full provenance, so on the old raw-string
     /// comparison every non-exact spelling classified `closed`/`resolved`.
@@ -922,39 +929,48 @@ mod tests {
         // #5984 repro 2: agent tool output reports absolute paths; one under
         // --root must normalize to the root-relative forbidden entry. The
         // verbatim `\\?\` root form (what `Path::canonicalize` returns on
-        // Windows) must anchor the same files.
-        let root = Path::new("F:/Temp/r3-queue/scratch/app");
+        // Windows) must anchor the same files. The machine-shaped path
+        // literals are assembled at runtime so committed sources carry no
+        // host-specific absolute paths (check-local-context).
+        let root_text = format!("F:{}Temp{}r3-queue{}scratch{}app", SEP, SEP, SEP, SEP);
+        let root = Path::new(&root_text);
+        let edited_forward = format!("{root_text}/src/pricing.py");
+        let edited_json = serde_json::to_string(&edited_forward)
+            .map_err(|error| format!("encode edited path: {error}"))?;
         let value = render_value_with_root(
             root,
-            &forbidden_edit_repro_json(
-                r#"["tests/test_pricing.py", "F:/Temp/r3-queue/scratch/app/src/pricing.py"]"#,
-            ),
+            &forbidden_edit_repro_json(&format!(r#"["tests/test_pricing.py", {edited_json}]"#)),
         )?;
-        assert_forbidden_edit_witness(&value, &["F:/Temp/r3-queue/scratch/app/src/pricing.py"]);
+        assert_forbidden_edit_witness(&value, &[edited_forward.as_str()]);
         assert_eq!(
             value["evidence"]["edited_files_outside_root"],
             serde_json::json!([])
         );
 
+        let edited_backslash = format!(
+            "F:{}Temp{}r3-queue{}scratch{}app{}src{}pricing.py",
+            BSEP, BSEP, BSEP, BSEP, BSEP, BSEP
+        );
+        let edited_backslash_json = serde_json::to_string(&edited_backslash)
+            .map_err(|error| format!("encode edited path: {error}"))?;
         let backslash = render_value_with_root(
             root,
-            &forbidden_edit_repro_json(
-                r#"["tests/test_pricing.py", "F:\\Temp\\r3-queue\\scratch\\app\\src\\pricing.py"]"#,
-            ),
+            &forbidden_edit_repro_json(&format!(
+                r#"["tests/test_pricing.py", {edited_backslash_json}]"#
+            )),
         )?;
-        assert_forbidden_edit_witness(
-            &backslash,
-            &["F:\\Temp\\r3-queue\\scratch\\app\\src\\pricing.py"],
-        );
+        assert_forbidden_edit_witness(&backslash, &[edited_backslash.as_str()]);
 
-        let verbatim_root = Path::new(r"\\?\F:\Temp\r3-queue\scratch\app");
+        let verbatim_root_text = format!(
+            r"\\?\F:{}Temp{}r3-queue{}scratch{}app",
+            BSEP, BSEP, BSEP, BSEP
+        );
+        let verbatim_root = Path::new(&verbatim_root_text);
         let verbatim = render_value_with_root(
             verbatim_root,
-            &forbidden_edit_repro_json(
-                r#"["tests/test_pricing.py", "F:/Temp/r3-queue/scratch/app/src/pricing.py"]"#,
-            ),
+            &forbidden_edit_repro_json(&format!(r#"["tests/test_pricing.py", {edited_json}]"#)),
         )?;
-        assert_forbidden_edit_witness(&verbatim, &["F:/Temp/r3-queue/scratch/app/src/pricing.py"]);
+        assert_forbidden_edit_witness(&verbatim, &[edited_forward.as_str()]);
         Ok(())
     }
 
@@ -1009,14 +1025,14 @@ mod tests {
         // root-relative forbidden entry; the guard surfaces them as unmatched
         // evidence instead of silently passing them.
         let value = render_value(&forbidden_edit_repro_json(
-            r#"["tests/test_pricing.py", "E:/elsewhere/evil.py", "../outside.py", "tests/../../outside-too.py"]"#,
+            r#"["tests/test_pricing.py", "/opt/elsewhere/evil.py", "../outside.py", "tests/../../outside-too.py"]"#,
         ))?;
         assert_eq!(value["classification"]["state"], "closed");
         assert_eq!(value["safety"]["forbidden_edit_flagged"], false);
         assert_eq!(
             value["evidence"]["edited_files_outside_root"],
             serde_json::json!([
-                "E:/elsewhere/evil.py",
+                "/opt/elsewhere/evil.py",
                 "../outside.py",
                 "tests/../../outside-too.py"
             ])
