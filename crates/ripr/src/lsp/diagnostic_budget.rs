@@ -608,12 +608,22 @@ pub(crate) fn diagnostic_canonical_id(
     if let Some(data) = &diagnostic.data
         && let Some(obj) = data.as_object()
     {
+        // The listed id must resolve through the continuation routes
+        // (#6848): `ripr.collectContext` matches `finding_id` against the
+        // snapshot's producer finding ids and `seam_id` against classified
+        // seams, so those producer identities lead and one finding carries
+        // one id across check/explain/LSP (#5996). The projection-local
+        // `diagnostic_id` (`finding:<hash>` for findings without a canonical
+        // gap) is not a collectContext namespace and stays a legacy fallback
+        // only. Gap-ledger diagnostics keep their ledger-canonical identity
+        // via `diagnostic_id`; the ledger route matches both gap and
+        // canonical gap ids.
         for key in [
+            "finding_id",
+            "seam_id",
             "diagnostic_id",
             "canonical_gap_id",
-            "finding_id",
             "gap_id",
-            "seam_id",
         ] {
             if let Some(id) = obj
                 .get(key)
@@ -643,20 +653,29 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
             && data.get("repairability").and_then(|value| value.as_str()) == Some("repairable");
     }
 
-    // Classified seams publish their producer-owned headline decision. Preview
-    // findings publish the shared validator's packet decision. These signals
-    // are already settled before this delivery projection runs.
+    // Classified seams publish their producer-owned headline decision. These
+    // signals are already settled before this delivery projection runs.
     if let Some(eligible) = data
         .get("headline_eligible")
         .and_then(|value| value.as_bool())
     {
         return eligible;
     }
-    data.get("preview_actionability")
-        .and_then(|value| value.get("repair_packet_ready"))
+    // Producer authority for ordinary findings (#6847): `delivery_eligible`
+    // is stamped after profile admission and is the delivery decision. A
+    // preview finding's `preview_actionability.repair_packet_ready` is the
+    // shared packet validator's verdict on the repair-packet surface (code
+    // actions), not a delivery authority — consulting it first let an
+    // incomplete packet shadow the stamp and withhold every
+    // TypeScript/JavaScript/Perl preview diagnostic in both profiles while
+    // the producer had already admitted them. It remains only as the
+    // fail-closed fallback for preview-family payloads that reach this
+    // projection without the producer stamp.
+    data.get("delivery_eligible")
         .and_then(|value| value.as_bool())
         .or_else(|| {
-            data.get("delivery_eligible")
+            data.get("preview_actionability")
+                .and_then(|value| value.get("repair_packet_ready"))
                 .and_then(|value| value.as_bool())
         })
         .unwrap_or(false)
@@ -882,6 +901,91 @@ mod tests {
         {
             return Err(format!(
                 "ordinary eligibility or family precedence regressed: {items:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #6847 discriminating test (red before the fix): a production preview
+    /// diagnostic carries the shared validator's fail-closed packet verdict
+    /// (`repair_packet_ready: false`) next to the producer's unconditional
+    /// `delivery_eligible: true` stamp (applied after profile admission).
+    /// The packet verdict gates the repair-packet surface, not delivery, so
+    /// the item must be selected — never omitted as `profile_filtered` — and
+    /// its listed id must be the producer probe id that
+    /// `ripr.collectContext` resolves (#6848), not the projection-local
+    /// `finding:<hash>`. The unstamped control stays fail-closed: a
+    /// withheld item is exactly one the producer did not admit.
+    #[test]
+    fn producer_stamp_delivers_packet_not_ready_preview_finding() -> Result<(), String> {
+        let uri = "file:///workspace/src/pricing.ts"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let preview = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "schema_version": "0.1",
+                "diagnostic_id": "finding:7a904c15d4d16974",
+                "finding_id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
+                "delivery_eligible": true,
+                "preview_actionability": {"repair_packet_ready": false},
+            })),
+            ..Default::default()
+        };
+        let unstamped_control = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "finding:7a904c15d4d16974",
+                "finding_id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
+                "preview_actionability": {"repair_packet_ready": false},
+            })),
+            ..Default::default()
+        };
+
+        let stamped = std::collections::BTreeMap::from([(uri.clone(), vec![preview.clone()])]);
+        let items = build_budget_items_from_diagnostics(&stamped)
+            .map_err(|err| format!("build budget items: {err}"))?;
+        if items.len() != 1 || items[0].eligibility != DiagnosticBudgetEligibility::Actionable {
+            return Err(format!(
+                "a producer-stamped preview finding must stay deliverable regardless of \
+                 packet readiness, got {items:?}"
+            ));
+        }
+        if items[0].canonical_id != "probe:src_pricing.ts:typescript_preview:bd772dc8" {
+            return Err(format!(
+                "the listed id must be the producer probe id collectContext resolves, got {}",
+                items[0].canonical_id
+            ));
+        }
+        let selection = DiagnosticDeliverySelection::evaluate(
+            &stamped,
+            &DiagnosticBudget::default(),
+            "snapshot:s1:profile:full",
+            "evidence:e1",
+        );
+        let DiagnosticDeliveryOutcome::Applied { result, .. } = &selection.outcome else {
+            return Err("expected an applied delivery selection".to_string());
+        };
+        if result.selected.len() != 1 || !result.omitted.is_empty() {
+            return Err(format!(
+                "the stamped preview finding must be selected with nothing omitted: \
+                 selected={:?}, omitted={:?}",
+                result.selected, result.omitted
+            ));
+        }
+        if selection
+            .diagnostics_for_document(uri.as_str(), &stamped[&uri])
+            .len()
+            != 1
+        {
+            return Err("the selection must deliver the stamped preview finding".to_string());
+        }
+
+        let control = std::collections::BTreeMap::from([(uri, vec![unstamped_control])]);
+        let control_items = build_budget_items_from_diagnostics(&control)
+            .map_err(|err| format!("build control budget items: {err}"))?;
+        if control_items[0].eligibility != DiagnosticBudgetEligibility::ProfileFiltered {
+            return Err(format!(
+                "the same payload without the producer stamp must stay fail-closed: {:?}",
+                control_items
             ));
         }
         Ok(())

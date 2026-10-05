@@ -13765,6 +13765,372 @@ fn typescript_preview_finding_diagnostic_carries_actionability_context() -> Resu
     Ok(())
 }
 
+/// A TypeScript preview finding shaped like the production corpus finding:
+/// packet-not-ready (`repair_packet_ready: false`) yet candidate-actionable
+/// (witness with missing discriminators and a fix site), so it passes
+/// `finding_is_visible_in_profile` under BOTH diagnostic profiles — the
+/// exact shape #6847 was filed against.
+fn packet_not_ready_preview_finding_for_profile() -> Finding {
+    let mut finding = sample_typescript_preview_actionability_finding();
+    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+        value: "amount == threshold".to_string(),
+        reason: "changed TypeScript equality-boundary lacks a concrete discriminator".to_string(),
+        flow_sink: None,
+    }];
+    finding.related_tests.push(RelatedTest {
+        name: "discount_at_threshold".to_string(),
+        file: PathBuf::from("tests/pricing.test.ts"),
+        line: 5,
+        oracle: Some("expect(result).toBe(50)".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Weak,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+    });
+    finding
+}
+
+/// #6847 discriminating test (red before the fix: the publish batch was
+/// empty and the delivery budget selected zero of one in BOTH profiles while
+/// workspace status claimed one actionable diagnostic). The producer stamps
+/// `delivery_eligible: true` after profile admission; the shared validator's
+/// packet verdict gates the repair-packet surface, not delivery. The finding
+/// must publish at advisory severity under both profiles, be the one
+/// selected delivered item, and never appear in the omitted list.
+#[test]
+fn typescript_preview_finding_publishes_in_both_profiles_despite_incomplete_packet()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        for profile in [
+            crate::config::LspDiagnosticProfile::Actionable,
+            crate::config::LspDiagnosticProfile::Full,
+        ] {
+            // A fresh backend per profile: both profiles deliver identical
+            // payloads, and a shared backend would correctly plan the second
+            // round as unchanged rather than republishing.
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let finding = packet_not_ready_preview_finding_for_profile();
+            let grouped = finding_diagnostics_by_uri_with_profile(
+                Path::new("/workspace"),
+                std::slice::from_ref(&finding),
+                &crate::config::SeverityConfig::default(),
+                true,
+                FindingDiagnosticProjection::new(
+                    profile,
+                    &PositionEncodingKind::UTF16,
+                    &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+                ),
+            )?;
+            if grouped.len() != 1 {
+                return Err(format!(
+                    "expected the preview finding to project under {profile:?}, got {grouped:?}"
+                ));
+            }
+            let (uri, diagnostics) = grouped
+                .into_iter()
+                .next()
+                .ok_or_else(|| "expected the preview finding diagnostic group".to_string())?;
+            if diagnostics.len() != 1 {
+                return Err(format!(
+                    "expected one preview diagnostic, got {}",
+                    diagnostics.len()
+                ));
+            }
+            let data = diagnostics[0]
+                .data
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .ok_or_else(|| "expected preview diagnostic data".to_string())?;
+            if data.get("delivery_eligible") != Some(&serde_json::Value::Bool(true)) {
+                return Err("the producer must stamp delivery eligibility".to_string());
+            }
+            if data
+                .get("preview_actionability")
+                .and_then(|value| value.get("repair_packet_ready"))
+                .and_then(|value| value.as_bool())
+                != Some(false)
+            {
+                return Err("the fixture must stay packet-not-ready".to_string());
+            }
+            if diagnostics[0].severity != Some(DiagnosticSeverity::INFORMATION) {
+                return Err("preview findings publish at advisory severity".to_string());
+            }
+
+            let workspace = sample_workspace_diagnostics(
+                PathBuf::from("/workspace"),
+                uri.clone(),
+                diagnostics.clone(),
+                vec![finding],
+            );
+            let transaction = backend
+                .prepare_refresh_transaction(workspace)
+                .ok_or_else(|| "expected the preview snapshot to prepare".to_string())?;
+            let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
+            let batch = plan
+                .publish_batches
+                .iter()
+                .find(|batch| batch.uri == uri)
+                .ok_or_else(|| "expected a publish batch for the preview document".to_string())?;
+            if batch.diagnostics.len() != 1 {
+                return Err(format!(
+                    "the preview finding must reach the publish batch, got {}",
+                    batch.diagnostics.len()
+                ));
+            }
+            let selection = snapshot
+                .delivery_selection
+                .clone()
+                .ok_or_else(|| "expected the prepared delivery selection".to_string())?;
+            let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied {
+                result, ..
+            } = &selection.outcome
+            else {
+                return Err("expected an applied delivery selection".to_string());
+            };
+            if result.selected.len() != 1 || !result.omitted.is_empty() {
+                return Err(format!(
+                    "the packet-not-ready preview finding must be the one selected item with \
+                     nothing omitted (profile {profile:?}): selected={:?}, omitted={:?}",
+                    result.selected, result.omitted
+                ));
+            }
+            // Status agreement (#6847): the actionable projection and the
+            // delivered selection must agree in the same payload.
+            if snapshot.actionable_diagnostic_count() != result.selected.len() {
+                return Err(format!(
+                    "workspace status claims {} actionable diagnostics but the budget \
+                     delivered {}: the contradiction #6847 filed is back",
+                    snapshot.actionable_diagnostic_count(),
+                    result.selected.len()
+                ));
+            }
+            let pending_analyzed = BTreeMap::new();
+            let pending_entered = Vec::new();
+            if backend
+                .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+                .is_none()
+            {
+                return Err("expected the preview snapshot to commit".to_string());
+            }
+            let committed = backend
+                .latest_analysis_snapshot()
+                .ok_or_else(|| "expected the committed snapshot".to_string())?;
+            let served = committed.served_diagnostics_for_uri(&uri);
+            if served.len() != 1 {
+                return Err(format!(
+                    "the delivered surface must serve the preview finding, got {}",
+                    served.len()
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// #6847 control: Python preview delivery is byte-stable. Python published
+/// before the fix and must publish identically after it — same payload bytes
+/// in both profiles, and the delivery selection still selects the one item.
+#[test]
+fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<(), String> {
+    let project = |profile| {
+        let mut finding = sample_finding();
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= threshold".to_string(),
+            reason: "changed Python boundary lacks a concrete discriminator".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests.push(RelatedTest {
+            name: "discount_at_threshold".to_string(),
+            file: PathBuf::from("tests/pricing.py"),
+            line: 5,
+            oracle: Some("assert total == 50".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        });
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            Path::new("/workspace"),
+            &[finding],
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                profile,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
+        )?;
+        grouped
+            .into_iter()
+            .next()
+            .map(|(_, diagnostics)| diagnostics)
+            .ok_or_else(|| "expected the python finding to project".to_string())
+    };
+    let actionable = project(crate::config::LspDiagnosticProfile::Actionable)?;
+    let full = project(crate::config::LspDiagnosticProfile::Full)?;
+    let bytes_for = |diagnostics: &[Diagnostic]| {
+        serde_json::to_vec(diagnostics).map_err(|err| format!("serialize payload: {err}"))
+    };
+    if bytes_for(&actionable)? != bytes_for(&full)? {
+        return Err("python preview payload must be byte-identical across profiles".to_string());
+    }
+    for diagnostics in [&actionable, &full] {
+        let uri = file_uri_for_path(Path::new("/workspace/src/pricing.rs"))
+            .map_err(|err| format!("root URI construction failed: {err}"))?;
+        let by_uri = BTreeMap::from([(uri, diagnostics.clone())]);
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &by_uri,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+            "snapshot:s1:profile:python",
+            "evidence:e1",
+        );
+        let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied { result, .. } =
+            &selection.outcome
+        else {
+            return Err("expected an applied delivery selection".to_string());
+        };
+        if result.selected.len() != 1 || !result.omitted.is_empty() {
+            return Err(format!(
+                "python preview delivery must stay 1/1: selected={:?}, omitted={:?}",
+                result.selected, result.omitted
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #6848 discriminating test (red before the fix: the listing exposed the
+/// projection-local `finding:<hash>` / canonical gap ids, which
+/// `ripr.collectContext` rejects with -32602 while its recovery advice
+/// loops). The #5996-style cross-surface identity promise: every canonical
+/// id `ripr/listActionableItems` lists is the producer id the continuation
+/// route resolves — for ALL language classes, plus the seam surface.
+#[test]
+fn list_actionable_item_ids_resolve_through_collect_context_for_all_language_classes()
+-> Result<(), String> {
+    let mut rust_finding = sample_finding();
+    rust_finding.probe.location.file = PathBuf::from("src/pricing.rs");
+
+    let mut python_finding = sample_finding();
+    python_finding.id = "probe:src_pricing.py:88:predicate".to_string();
+    python_finding.probe.id = ProbeId(python_finding.id.clone());
+    python_finding.probe.location.file = PathBuf::from("src/pricing.py");
+    python_finding.language = Some(LanguageId::Python);
+    python_finding.language_status = Some(LanguageStatus::Preview);
+    python_finding.canonical_gap = Some(sample_canonical_gap());
+
+    let mut typescript_finding = sample_typescript_preview_actionability_finding();
+    typescript_finding.id = "probe:src_pricing.ts:typescript_preview:bd772dc8".to_string();
+    typescript_finding.probe.id = ProbeId(typescript_finding.id.clone());
+    typescript_finding.probe.location.file = PathBuf::from("src/pricing.ts");
+
+    let mut javascript_finding = sample_typescript_preview_actionability_finding();
+    javascript_finding.id = "probe:src_pricing.js:javascript_preview:bd772dc8".to_string();
+    javascript_finding.probe.id = ProbeId(javascript_finding.id.clone());
+    javascript_finding.probe.location.file = PathBuf::from("src/pricing.js");
+    javascript_finding.language = Some(LanguageId::JavaScript);
+
+    let mut perl_finding = sample_typescript_preview_actionability_finding();
+    perl_finding.id = "probe:src_pricing.pl:perl_preview:1a2b3c4d".to_string();
+    perl_finding.probe.id = ProbeId(perl_finding.id.clone());
+    perl_finding.probe.location.file = PathBuf::from("src/pricing.pl");
+    perl_finding.language = Some(LanguageId::Perl);
+
+    let findings = vec![
+        rust_finding,
+        python_finding,
+        typescript_finding,
+        javascript_finding,
+        perl_finding,
+    ];
+    // The full profile publishes every canonical finding, so the budget
+    // lists exactly one item per language class.
+    let grouped = finding_diagnostics_by_uri_with_profile(
+        Path::new("/workspace"),
+        &findings,
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(
+            crate::config::LspDiagnosticProfile::Full,
+            &PositionEncodingKind::UTF16,
+            &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+        ),
+    )?;
+    let items = crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(&grouped)
+        .map_err(|err| format!("build budget items: {err}"))?;
+    if items.len() != findings.len() {
+        return Err(format!(
+            "expected one budget item per finding, got {} items for {} findings",
+            items.len(),
+            findings.len()
+        ));
+    }
+    let snapshot_uri = file_uri_for_path(Path::new("/workspace/src/pricing.rs"))
+        .map_err(|err| format!("root URI construction failed: {err}"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        snapshot_uri.clone(),
+        Vec::new(),
+        findings.clone(),
+    );
+    snapshot.classified_seams = vec![sample_classified_seam()];
+    for item in &items {
+        let resolved = snapshot.finding_by_id(&item.canonical_id).ok_or_else(|| {
+            format!(
+                "listed canonical id {:?} does not resolve through the \
+                 ripr.collectContext finding_id route",
+                item.canonical_id
+            )
+        })?;
+        if resolved.id != item.canonical_id {
+            return Err(format!(
+                "the listed id must be the producer finding id, got {item:?}"
+            ));
+        }
+    }
+
+    // The seam surface: the seam diagnostic's listed id is the producer seam
+    // id the seam continuation route resolves.
+    let seam = sample_classified_seam();
+    let seam_diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected a seam diagnostic".to_string())?;
+    let seam_items = crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(
+        &BTreeMap::from([(snapshot_uri, vec![seam_diagnostic])]),
+    )
+    .map_err(|err| format!("build seam budget items: {err}"))?;
+    if seam_items.len() != 1 {
+        return Err(format!("expected one seam budget item, got {seam_items:?}"));
+    }
+    let seam_id = seam.seam.id().as_str().to_string();
+    if seam_items[0].canonical_id != seam_id {
+        return Err(format!(
+            "the listed seam id must be the producer seam id {seam_id:?}, got {:?}",
+            seam_items[0].canonical_id
+        ));
+    }
+    if snapshot
+        .classified_seam_by_id(&seam_items[0].canonical_id)
+        .is_none()
+    {
+        return Err(format!(
+            "listed seam id {:?} does not resolve through the seam continuation route",
+            seam_items[0].canonical_id
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn preview_finding_hover_shows_boundary_before_evidence() -> Result<(), String> {
     use super::hover::finding_hover_response;

@@ -7908,8 +7908,12 @@ Success payload (200-level result object, no `protocol_version`,
   counts from the committed delivery selection.
 - `selected` — `[{canonical_id, document}]` for every delivered diagnostic
   (already bounded by the workspace item budget). `canonical_id` is the
-  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
-  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+  producer identity the continuation route resolves: the finding's probe id
+  (`data.finding_id`) for finding diagnostics, the seam id for seam
+  diagnostics, and the ledger-canonical gap id for gap-ledger diagnostics.
+  Every listed canonical id is accepted by `ripr.collectContext` (#6848);
+  legacy payloads without producer ids fall back to the projection-local
+  `diagnostic_id`.
 - `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
   200 entries. `reason` is `profile_filtered`, `document_item_limit`,
   `workspace_item_limit`, or `serialized_byte_limit`.
