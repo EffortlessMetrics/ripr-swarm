@@ -76,13 +76,6 @@ are scoped or reviewed.
   OS lock with base revalidation, so exactly one after phase commits and
   the loser gets a typed retry refusal instead of a silent overwrite
   (#5287).
-- `ripr check --format human-full` and `ripr explain`: a changed predicate,
-  return or error expression now shows the same span on both sides, so
-  `before: bytes < unit` sits against `after:  bytes <= unit`. Before,
-  `before:` kept the whole line (`if ... {`, or a trailing `;`) while `after:`
-  showed the bare expression, which read as a structural edit.
-  The removed line is cut to the added line's span only when both lines share
-  the same framing; otherwise it stays whole (#5312).
 - `ripr pilot`, repo exposure and the editor no longer report a seam as
   `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
   failed to trace the path to it. A seam with no related test now reads
