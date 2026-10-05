@@ -2727,6 +2727,7 @@ fn find_related_tests_never_projects_parametrize_as_an_oracle() -> Result<(), St
         Path::new("tests/test_pricing.py"),
         r#"
 import pytest
+from src.pricing import apply_discount
 
 @pytest.mark.parametrize("amount", [1, 2])
 def test_apply_discount(amount):
@@ -2781,26 +2782,53 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
     let recognized = A::Recognized.as_str();
     let none = A::NoAssertionLike.as_str();
     let unresolved = A::Unresolved.as_str();
+    let import = "from src.pricing import apply_discount\n";
     let cases: &[(&str, &str, &str)] = &[
-        // 1. a literal assert is a recognized assertion.
         (
             "literal assert",
             "def test_x():\n    assert apply_discount(20) == 10\n",
             recognized,
         ),
-        // 2. a call and an assignment, nothing else: established no assertion.
         (
-            "call only",
+            "call and assignment only",
             "def test_x():\n    result = apply_discount(20)\n    apply_discount(result)\n",
             none,
         ),
-        // 3. parameterization adds inputs, not an assertion.
         (
             "parametrized call only",
             "import pytest\n@pytest.mark.parametrize('amount', [1, 2])\ndef test_x(amount):\n    apply_discount(amount)\n",
             none,
         ),
-        // 4. supported pytest and unittest forms stay recognized.
+        (
+            "builtins, locals and builtin fixtures",
+            "def test_x(tmp_path, monkeypatch):\n    monkeypatch.setenv('A', '1')\n    values = sorted([apply_discount(v) for v in range(3)])\n    path = tmp_path / 'out'\n    path.write_text(str(len(values)))\n",
+            none,
+        ),
+        (
+            "production module import",
+            "import src.pricing as pricing\ndef test_x():\n    pricing.apply_discount(20)\n",
+            none,
+        ),
+        (
+            "plain setup_method",
+            "class TestX:\n    def setup_method(self):\n        self.value = apply_discount(20)\n    def test_x(self):\n        apply_discount(self.value)\n",
+            none,
+        ),
+        (
+            "autouse=False fixture does not run around tests",
+            "import pytest\n@pytest.fixture(autouse=False)\ndef other():\n    return 1\n\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest subTest",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        for v in (1, 2):\n            with self.subTest(v=v):\n                apply_discount(v)\n",
+            none,
+        ),
+        (
+            "skip mark stays an activation fact, not admission",
+            "import pytest\n@pytest.mark.skip(reason='later')\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
         (
             "pytest.raises",
             "import pytest\ndef test_x():\n    with pytest.raises(ValueError):\n        apply_discount(-1)\n",
@@ -2811,15 +2839,9 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(apply_discount(20), 10)\n",
             recognized,
         ),
-        // 5. custom, unknown or wrapped helpers are unresolved, never none.
         (
             "assert_* custom helper",
             "def test_x():\n    assert_payload(apply_discount(20))\n",
-            unresolved,
-        ),
-        (
-            "check helper",
-            "def test_x():\n    check_result(apply_discount(20))\n",
             unresolved,
         ),
         (
@@ -2833,8 +2855,38 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "same-module helper passed as a value",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run = run_case\n    run(20)\n",
+            unresolved,
+        ),
+        (
+            "calling another test",
+            "def test_y():\n    assert apply_discount(20) == 10\n\ndef test_x():\n    test_y()\n",
+            unresolved,
+        ),
+        (
+            "same-module class constructor",
+            "class Harness:\n    def __init__(self, value):\n        assert apply_discount(value) == 10\n\ndef test_x():\n    Harness(20)\n",
+            unresolved,
+        ),
+        (
+            "helper under a module-level if",
+            "import sys\nif sys.version_info > (3,):\n    def run_case(value):\n        assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
             "self helper method",
             "class TestX:\n    def _run(self, value):\n        assert apply_discount(value) == 10\n    def test_x(self):\n        self._run(20)\n",
+            unresolved,
+        ),
+        (
+            "self helper registered as cleanup",
+            "import unittest\nclass T(unittest.TestCase):\n    def _verify(self):\n        pass\n    def test_x(self):\n        apply_discount(20)\n        self.addCleanup(self._verify)\n",
+            unresolved,
+        ),
+        (
+            "inherited helper from an imported base",
+            "from tests.base import Base\nclass TestX(Base):\n    def test_x(self):\n        apply_discount(20)\n",
             unresolved,
         ),
         (
@@ -2843,8 +2895,23 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "calling a call result",
+            "from src.factory import make_checker\ndef test_x():\n    make_checker()(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "unknown global",
+            "def test_x():\n    roundtrip(apply_discount)\n",
+            unresolved,
+        ),
+        (
             "assert inside a nested function",
             "def test_x():\n    def inner():\n        assert apply_discount(20) == 10\n    inner()\n",
+            unresolved,
+        ),
+        (
+            "assertion-like lambda default",
+            "def test_x():\n    g = lambda x=verify(apply_discount(1)): x\n",
             unresolved,
         ),
         (
@@ -2857,20 +2924,19 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "def test_x():\n    results = [verify(apply_discount(v)) for v in (1, 2)]\n",
             unresolved,
         ),
-        // Fixtures RIPR cannot see into may assert.
         (
-            "opaque fixture",
-            "def test_x(checked_client):\n    apply_discount(20)\n",
+            "process exit",
+            "import sys\ndef test_x():\n    if apply_discount(20) != 10:\n        sys.exit(1)\n",
             unresolved,
         ),
         (
-            "builtin fixture",
-            "def test_x(tmp_path, monkeypatch):\n    apply_discount(20)\n",
-            none,
+            "pytest.warns",
+            "import pytest\ndef test_x():\n    with pytest.warns(UserWarning):\n        apply_discount(20)\n",
+            unresolved,
         ),
         (
-            "uncertain parametrize leaves its argnames opaque",
-            "import pytest\nVALUES = [1]\n@pytest.mark.parametrize('amount', VALUES, indirect=True)\ndef test_x(amount):\n    apply_discount(amount)\n",
+            "warns imported from pytest",
+            "from pytest import deprecated_call\ndef test_x():\n    with deprecated_call():\n        apply_discount(20)\n",
             unresolved,
         ),
         (
@@ -2879,14 +2945,34 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "aliased helper from a test-support module",
+            "from testutil import roundtrip as rt\ndef test_x():\n    rt(apply_discount)\n",
+            unresolved,
+        ),
+        (
             "helper module imported whole",
             "import tests.support as support\ndef test_x():\n    support.run_case(20)\n",
             unresolved,
         ),
         (
-            "production import is not a helper",
-            "from src.pricing import apply_discount\ndef test_x():\n    apply_discount(20)\n",
-            none,
+            "same-module decorator",
+            "def returns_ok(fn):\n    return fn\n\n@returns_ok\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "opaque fixture",
+            "def test_x(checked_client):\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.getfixturevalue",
+            "def test_x(request):\n    request.getfixturevalue('db')\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "uncertain parametrize leaves its argnames opaque",
+            "import pytest\nVALUES = [1]\n@pytest.mark.parametrize('amount', VALUES, indirect=True)\ndef test_x(amount):\n    apply_discount(amount)\n",
+            unresolved,
         ),
         (
             "usefixtures mark",
@@ -2894,29 +2980,39 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "assertion-like setUp",
-            "import unittest\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(READY)\n    def test_x(self):\n        apply_discount(20)\n",
+            "module pytestmark usefixtures",
+            "import pytest\npytestmark = pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
             unresolved,
-        ),
-        (
-            "plain setup_method",
-            "class TestX:\n    def setup_method(self):\n        self.value = 20\n    def test_x(self):\n        apply_discount(self.value)\n",
-            none,
         ),
         (
             "autouse fixture in the module",
-            "import pytest\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert True\n\ndef test_x():\n    apply_discount(20)\n",
+            "import pytest\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n\ndef test_x():\n    apply_discount(20)\n",
             unresolved,
         ),
         (
-            "autouse=False fixture does not run around tests",
-            "import pytest\n@pytest.fixture(autouse=False)\ndef other():\n    return 1\n\ndef test_x():\n    apply_discount(20)\n",
-            none,
+            "assertion-like setUp",
+            "import unittest\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(apply_discount(20))\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "assert in a try body",
+            "def test_x():\n    try:\n        verify(apply_discount(20))\n    except ValueError:\n        pass\n",
+            unresolved,
+        ),
+        (
+            "assertion-like while test",
+            "def test_x():\n    while check(apply_discount(20)):\n        break\n",
+            unresolved,
+        ),
+        (
+            "assertion-like match guard",
+            "def test_x():\n    match apply_discount(20):\n        case 10 if verify(10):\n            pass\n",
+            unresolved,
         ),
     ];
     let mut failures = Vec::new();
     for (label, source, expected) in cases {
-        let actual = admission_of(source, "test_x")?;
+        let actual = admission_of(&format!("{import}{source}"), "test_x")?;
         if actual != *expected {
             failures.push(format!("{label}: expected {expected}, got {actual}"));
         }

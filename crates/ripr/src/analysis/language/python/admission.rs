@@ -2,17 +2,27 @@
 //!
 //! An empty `PythonTest::assertions` vector only means the oracle extractor
 //! recognized nothing. That is a weaker fact than "this test asserts nothing":
-//! a custom helper, a same-module wrapper, a fixture, an `assert` inside a
-//! nested function, or a dynamic call can all check behavior the extractor
-//! does not model. A later related-test miss (`no_assertion`, #5491) may only
-//! be claimed from [`PythonAssertionAdmission::NoAssertionLike`], so this scan
-//! is fail-closed: anything that could be an assertion it does not recognize
-//! makes the state [`PythonAssertionAdmission::Unresolved`].
+//! a custom or imported helper, a same-module wrapper, a fixture, a setup
+//! hook, an `assert` inside a nested function, or a dynamic call can all
+//! check behavior the extractor does not model. A later related-test miss
+//! (`no_assertion`, #5491) may only be claimed from
+//! [`PythonAssertionAdmission::NoAssertionLike`], so this scan is
+//! fail-closed. Every callee must resolve to something known not to assert:
+//! a built-in, a name imported from a non-test module, a method on a value
+//! the test itself bound, or a pytest built-in fixture. Anything else (an
+//! unknown global, a same-module function or class, a `self.` method, a
+//! test-support import, a dynamic callee) makes the state
+//! [`PythonAssertionAdmission::Unresolved`].
 //!
 //! A file the parser refuses yields no `PythonTest` at all, so an extracted
 //! test is never "partially extracted": the parse-limited state is carried by
 //! the absence of the row and the file's `unsupported_syntax` limitation, not
 //! by a value here.
+//!
+//! Known blind spot: the scan sees one file. An autouse fixture in a
+//! `conftest.py` or an assertion installed by a pytest plugin can still fail
+//! a `NoAssertionLike` test (#6657). A `no_assertion` miss must account for
+//! that before it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
 //! fact and is not folded into this state.
@@ -28,9 +38,9 @@ pub(super) enum PythonAssertionAdmission {
     /// The extractor recognized at least one assertion or observer it can
     /// grade (anything other than an unknown custom helper).
     Recognized,
-    /// The whole body was walked and nothing assertion-like exists: no
-    /// `assert`, no `raise`, no assertion-named or dynamic call, no call to a
-    /// helper defined in the same module, and no fixture that could assert.
+    /// The whole test was walked and nothing assertion-like exists: every
+    /// callee resolves to something known not to assert, and no fixture,
+    /// decorator, base class or setup hook could assert around it.
     NoAssertionLike,
     /// Something assertion-like is present that RIPR cannot admit or resolve.
     Unresolved,
@@ -46,14 +56,17 @@ impl PythonAssertionAdmission {
     }
 }
 
-/// Module-wide facts the per-test scan needs: the names of functions defined
-/// in the same file that are not themselves tests (a test calling one may be
-/// asserting through it), and whether the module declares an autouse fixture
-/// (which can assert around every test without being named).
+/// Module-wide facts the per-test scan needs.
 #[derive(Clone, Debug, Default)]
 pub(super) struct PythonAdmissionContext {
-    helper_names: BTreeSet<String>,
-    has_autouse_fixture: bool,
+    /// Every function, method and class name defined in the file, tests
+    /// included. A test that calls or references one may assert through it.
+    defined_names: BTreeSet<String>,
+    /// Classes whose bases or keywords RIPR cannot see into (an imported
+    /// base, a metaclass): inherited setup hooks may assert.
+    opaque_classes: BTreeSet<String>,
+    /// An autouse fixture, or a `pytestmark` that applies `usefixtures`.
+    has_implicit_fixture: bool,
     /// A setup or teardown hook (`setUp`, `teardown_method`, `setup_module`,
     /// ...) in this file whose body is assertion-like. The runner calls it
     /// around tests without the test naming it.
@@ -61,15 +74,17 @@ pub(super) struct PythonAdmissionContext {
 }
 
 impl PythonAdmissionContext {
-    pub(super) fn of_module(statements: &[Stmt]) -> Self {
+    pub(super) fn of_module(statements: &[Stmt], imports: &[PythonImport]) -> Self {
         let mut context = Self::default();
         let mut lifecycle_bodies = Vec::new();
         context.collect(statements, &mut lifecycle_bodies);
-        // Helper names are complete only after the whole module is seen.
+        // Defined names are complete only after the whole module is seen.
         context.has_assertion_like_lifecycle = lifecycle_bodies.iter().any(|body| {
+            let scope = TestScope::of_body(&[], body, None);
             let mut scan = BodyScan {
                 context: &context,
-                imports: &[],
+                imports,
+                scope: &scope,
                 assertion_like: false,
             };
             scan.statements(body);
@@ -93,21 +108,81 @@ impl PythonAdmissionContext {
                         lifecycle.push(&function.body);
                     }
                 }
-                Stmt::ClassDef(class) => self.collect(&class.body, lifecycle),
+                Stmt::ClassDef(class) => {
+                    self.defined_names.insert(class.name.to_string());
+                    let opaque_base = class.bases.iter().any(|base| {
+                        !expr_full_name(base).is_some_and(|name| SAFE_TEST_BASES.contains(&name.as_str()))
+                    });
+                    if opaque_base || !class.keywords.is_empty() {
+                        self.opaque_classes.insert(class.name.to_string());
+                    }
+                    self.collect(&class.body, lifecycle);
+                }
+                Stmt::Assign(assign)
+                    if assign.targets.iter().any(|target| {
+                        matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark")
+                    }) && mentions_usefixtures(&assign.value) =>
+                {
+                    self.has_implicit_fixture = true;
+                }
+                // Definitions under a module-level `if`, `try` or `with`.
+                Stmt::If(if_stmt) => {
+                    self.collect(&if_stmt.body, lifecycle);
+                    self.collect(&if_stmt.orelse, lifecycle);
+                }
+                Stmt::Try(try_stmt) => self.collect_try(
+                    &try_stmt.body,
+                    &try_stmt.handlers,
+                    &try_stmt.orelse,
+                    &try_stmt.finalbody,
+                    lifecycle,
+                ),
+                Stmt::TryStar(try_stmt) => self.collect_try(
+                    &try_stmt.body,
+                    &try_stmt.handlers,
+                    &try_stmt.orelse,
+                    &try_stmt.finalbody,
+                    lifecycle,
+                ),
+                Stmt::With(with_stmt) => self.collect(&with_stmt.body, lifecycle),
                 _ => {}
             }
         }
     }
 
+    fn collect_try<'s>(
+        &mut self,
+        body: &'s [Stmt],
+        handlers: &'s [ast::ExceptHandler],
+        orelse: &'s [Stmt],
+        finalbody: &'s [Stmt],
+        lifecycle: &mut Vec<&'s [Stmt]>,
+    ) {
+        self.collect(body, lifecycle);
+        for handler in handlers {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            self.collect(&handler.body, lifecycle);
+        }
+        self.collect(orelse, lifecycle);
+        self.collect(finalbody, lifecycle);
+    }
+
     fn note_function(&mut self, name: &str, decorators: &[Expr]) {
         if decorators.iter().any(is_autouse_fixture) {
-            self.has_autouse_fixture = true;
+            self.has_implicit_fixture = true;
         }
-        if !name.starts_with("test") {
-            self.helper_names.insert(name.to_string());
-        }
+        self.defined_names.insert(name.to_string());
     }
 }
+
+/// Bases a test class may have without inheriting hooks RIPR cannot see.
+const SAFE_TEST_BASES: &[&str] = &[
+    "object",
+    "TestCase",
+    "unittest.TestCase",
+    "IsolatedAsyncioTestCase",
+    "unittest.IsolatedAsyncioTestCase",
+];
 
 /// unittest, pytest xunit-style and nose setup/teardown hooks the runner
 /// calls around a test without the test naming them.
@@ -132,10 +207,10 @@ const LIFECYCLE_HOOKS: &[&str] = &[
     "teardown_module",
 ];
 
-/// Module path segments that mark test-support code. A call to a name
-/// imported from such a module may be an assertion helper with any name.
-fn is_test_support_module(module: &str) -> bool {
-    module.split('.').any(|segment| {
+/// Module path segments that mark test-support code. A name imported from
+/// such a module may be an assertion helper with any name.
+fn is_test_support_path(path: &str) -> bool {
+    path.split('.').any(|segment| {
         segment.starts_with("test")
             || segment.ends_with("_test")
             || segment.ends_with("_tests")
@@ -145,6 +220,89 @@ fn is_test_support_module(module: &str) -> bool {
             )
     })
 }
+
+/// Qualified callees that end or fail a test without an `assert`.
+const FAILING_CALLEES: &[&str] = &[
+    "os._exit",
+    "os.abort",
+    "os.kill",
+    "sys.exit",
+    "_thread.interrupt_main",
+];
+
+/// The `pytest.` members that only build values or marks. Every other
+/// `pytest.` call (`warns`, `deprecated_call`, `fail`, `exit`, ...) can fail
+/// the test.
+fn is_inert_pytest_member(qualified: &str) -> bool {
+    matches!(qualified, "pytest.approx" | "pytest.param")
+        || (qualified.starts_with("pytest.mark.") && !qualified.contains("usefixtures"))
+}
+
+/// Built-ins that compute values and cannot fail a test by themselves.
+/// `exit`, `quit`, `eval`, `exec`, `compile`, `breakpoint` and `__import__`
+/// are deliberately absent.
+const INERT_BUILTINS: &[&str] = &[
+    "abs",
+    "all",
+    "any",
+    "ascii",
+    "bin",
+    "bool",
+    "bytearray",
+    "bytes",
+    "callable",
+    "chr",
+    "classmethod",
+    "complex",
+    "delattr",
+    "dict",
+    "dir",
+    "divmod",
+    "enumerate",
+    "filter",
+    "float",
+    "format",
+    "frozenset",
+    "getattr",
+    "hasattr",
+    "hash",
+    "hex",
+    "id",
+    "int",
+    "isinstance",
+    "issubclass",
+    "iter",
+    "len",
+    "list",
+    "map",
+    "max",
+    "memoryview",
+    "min",
+    "next",
+    "object",
+    "oct",
+    "open",
+    "ord",
+    "pow",
+    "print",
+    "property",
+    "range",
+    "repr",
+    "reversed",
+    "round",
+    "set",
+    "setattr",
+    "slice",
+    "sorted",
+    "staticmethod",
+    "str",
+    "sum",
+    "super",
+    "tuple",
+    "type",
+    "vars",
+    "zip",
+];
 
 /// pytest's built-in fixtures. They supply inputs and capture state; they do
 /// not assert on their own, so requesting one does not make admission
@@ -172,9 +330,9 @@ const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "tmpdir_factory",
 ];
 
-/// Callee name prefixes that read as an assertion or a failure. A call whose
-/// last segment starts with one of these and that the oracle extractor did
-/// not grade is assertion-like but unresolved.
+/// Callee name prefixes that read as an assertion or a failure. They only
+/// ever withhold `NoAssertionLike` (a method on a test-bound value such as
+/// `result.verify()`), never grant it.
 const ASSERTION_LIKE_PREFIXES: &[&str] = &[
     "assert", "check", "compare", "ensure", "expect", "fail", "must", "require", "should",
     "validate", "verify",
@@ -188,11 +346,13 @@ pub(super) struct PythonTestFunction<'a> {
     pub(super) parameters: &'a [String],
     /// Module imports plus the test body's own imports.
     pub(super) imports: &'a [PythonImport],
+    /// The enclosing test class path (`TestOuter.TestInner`), if any.
+    pub(super) class_path: Option<&'a str>,
 }
 
-/// The admission state of one test body.
+/// The admission state of one test.
 ///
-/// `parametrize_argnames` the names a statically certain
+/// `parametrize_argnames` are the names a statically certain
 /// `@pytest.mark.parametrize` binds (`None` when the decorators cannot be
 /// enumerated). A parameter that is neither a built-in fixture nor a known
 /// parametrize argname is a fixture RIPR cannot see into.
@@ -208,15 +368,14 @@ pub(super) fn assertion_admission(
     {
         return PythonAssertionAdmission::Recognized;
     }
-    // `@pytest.mark.usefixtures(...)` requests fixtures without naming them
-    // as parameters.
-    let uses_fixtures = test.decorators.iter().any(|decorator| {
-        expr_full_name(decorator).is_some_and(|name| name.ends_with("usefixtures"))
+    let opaque_class = test.class_path.is_some_and(|path| {
+        path.split('.')
+            .any(|class| context.opaque_classes.contains(class))
     });
     if !assertions.is_empty()
-        || context.has_autouse_fixture
+        || context.has_implicit_fixture
         || context.has_assertion_like_lifecycle
-        || uses_fixtures
+        || opaque_class
     {
         return PythonAssertionAdmission::Unresolved;
     }
@@ -227,11 +386,18 @@ pub(super) fn assertion_admission(
     if opaque_fixture {
         return PythonAssertionAdmission::Unresolved;
     }
+    let scope = TestScope::of_body(test.parameters, test.body, parametrize_argnames);
     let mut scan = BodyScan {
         context,
         imports: test.imports,
+        scope: &scope,
         assertion_like: false,
     };
+    // A decorator wraps the test: a same-module or unknown decorator may
+    // assert around it, and `usefixtures` requests fixtures by name.
+    for decorator in test.decorators {
+        scan.decorator(decorator);
+    }
     scan.statements(test.body);
     if scan.assertion_like {
         PythonAssertionAdmission::Unresolved
@@ -244,8 +410,9 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
     let Expr::Call(call) = decorator else {
         return false;
     };
-    let is_fixture = expr_full_name(call.func.as_ref())
-        .is_some_and(|name| name == "fixture" || name.ends_with(".fixture"));
+    // `fixture`, `pytest.fixture` and the old `pytest.yield_fixture`.
+    let is_fixture =
+        expr_full_name(call.func.as_ref()).is_some_and(|name| name.ends_with("fixture"));
     // A non-literal `autouse=` value cannot be ruled out, so it counts.
     is_fixture
         && call.keywords.iter().any(|keyword| {
@@ -258,11 +425,154 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
         })
 }
 
+fn mentions_usefixtures(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(call) => mentions_usefixtures(&call.func),
+        Expr::Attribute(attribute) => {
+            attribute.attr.as_str() == "usefixtures" || mentions_usefixtures(&attribute.value)
+        }
+        Expr::Name(name) => name.id.as_str() == "usefixtures",
+        Expr::List(list) => list.elts.iter().any(mentions_usefixtures),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(mentions_usefixtures),
+        // Anything else may compute marks RIPR cannot read.
+        _ => true,
+    }
+}
+
+/// Names a test binds: its parameters, and every name its body assigns,
+/// loops over, imports, catches or defines. A method on one of these values
+/// is the test's own computation, not a hidden helper.
+struct TestScope {
+    builtin_fixtures: BTreeSet<String>,
+    argnames: BTreeSet<String>,
+    locals: BTreeSet<String>,
+}
+
+impl TestScope {
+    fn of_body(
+        parameters: &[String],
+        body: &[Stmt],
+        parametrize_argnames: Option<&BTreeSet<String>>,
+    ) -> Self {
+        let mut locals = BTreeSet::new();
+        bound_names(body, &mut locals);
+        Self {
+            builtin_fixtures: parameters
+                .iter()
+                .filter(|name| PYTEST_BUILTIN_FIXTURES.contains(&name.as_str()))
+                .cloned()
+                .collect(),
+            argnames: parametrize_argnames.cloned().unwrap_or_default(),
+            locals,
+        }
+    }
+}
+
+fn bound_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
+    for stmt in statements {
+        match stmt {
+            Stmt::Assign(assign) => {
+                for target in &assign.targets {
+                    target_names(target, out);
+                }
+            }
+            Stmt::AnnAssign(assign) => target_names(&assign.target, out),
+            Stmt::AugAssign(assign) => target_names(&assign.target, out),
+            Stmt::For(for_stmt) => {
+                target_names(&for_stmt.target, out);
+                bound_names(&for_stmt.body, out);
+                bound_names(&for_stmt.orelse, out);
+            }
+            Stmt::AsyncFor(for_stmt) => {
+                target_names(&for_stmt.target, out);
+                bound_names(&for_stmt.body, out);
+                bound_names(&for_stmt.orelse, out);
+            }
+            Stmt::While(while_stmt) => {
+                bound_names(&while_stmt.body, out);
+                bound_names(&while_stmt.orelse, out);
+            }
+            Stmt::If(if_stmt) => {
+                bound_names(&if_stmt.body, out);
+                bound_names(&if_stmt.orelse, out);
+            }
+            Stmt::With(with_stmt) => {
+                for item in &with_stmt.items {
+                    if let Some(vars) = &item.optional_vars {
+                        target_names(vars, out);
+                    }
+                }
+                bound_names(&with_stmt.body, out);
+            }
+            Stmt::AsyncWith(with_stmt) => {
+                for item in &with_stmt.items {
+                    if let Some(vars) = &item.optional_vars {
+                        target_names(vars, out);
+                    }
+                }
+                bound_names(&with_stmt.body, out);
+            }
+            Stmt::Try(try_stmt) => {
+                bound_names(&try_stmt.body, out);
+                handler_names(&try_stmt.handlers, out);
+                bound_names(&try_stmt.orelse, out);
+                bound_names(&try_stmt.finalbody, out);
+            }
+            Stmt::TryStar(try_stmt) => {
+                bound_names(&try_stmt.body, out);
+                handler_names(&try_stmt.handlers, out);
+                bound_names(&try_stmt.orelse, out);
+                bound_names(&try_stmt.finalbody, out);
+            }
+            Stmt::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    bound_names(&case.body, out);
+                }
+            }
+            // A nested def or class is walked by the scan itself.
+            Stmt::FunctionDef(function) => {
+                out.insert(function.name.to_string());
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                out.insert(function.name.to_string());
+            }
+            Stmt::ClassDef(class) => {
+                out.insert(class.name.to_string());
+            }
+            _ => {}
+        }
+    }
+}
+
+fn handler_names(handlers: &[ast::ExceptHandler], out: &mut BTreeSet<String>) {
+    for handler in handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        if let Some(name) = &handler.name {
+            out.insert(name.to_string());
+        }
+        bound_names(&handler.body, out);
+    }
+}
+
+fn target_names(target: &Expr, out: &mut BTreeSet<String>) {
+    match target {
+        Expr::Name(name) => {
+            out.insert(name.id.to_string());
+        }
+        Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::List(list) => list.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::Starred(starred) => target_names(&starred.value, out),
+        _ => {}
+    }
+}
+
 /// Walks every statement and expression of a test body, including nested
-/// functions, lambdas and classes, looking for anything assertion-like.
+/// functions, lambdas, defaults and classes, looking for anything
+/// assertion-like.
 struct BodyScan<'a> {
     context: &'a PythonAdmissionContext,
     imports: &'a [PythonImport],
+    scope: &'a TestScope,
     assertion_like: bool,
 }
 
@@ -283,14 +593,19 @@ impl BodyScan<'_> {
             Stmt::Assert(_) | Stmt::Raise(_) => self.assertion_like = true,
             Stmt::FunctionDef(function) => {
                 self.exprs(&function.decorator_list);
+                self.arguments(&function.args);
                 self.statements(&function.body);
             }
             Stmt::AsyncFunctionDef(function) => {
                 self.exprs(&function.decorator_list);
+                self.arguments(&function.args);
                 self.statements(&function.body);
             }
             Stmt::ClassDef(class) => {
                 self.exprs(&class.bases);
+                for keyword in &class.keywords {
+                    self.expr(&keyword.value);
+                }
                 self.exprs(&class.decorator_list);
                 self.statements(&class.body);
             }
@@ -369,6 +684,30 @@ impl BodyScan<'_> {
         }
     }
 
+    /// Default values run when a nested function or lambda is defined.
+    fn arguments(&mut self, args: &ast::Arguments) {
+        for arg in args
+            .posonlyargs
+            .iter()
+            .chain(args.args.iter())
+            .chain(args.kwonlyargs.iter())
+        {
+            self.opt_expr(arg.default.as_deref());
+        }
+    }
+
+    fn decorator(&mut self, decorator: &Expr) {
+        if let Expr::Call(_) = decorator {
+            self.expr(decorator);
+        } else if let Some(name) = expr_full_name(decorator) {
+            if self.name_is_assertion_like(&name) {
+                self.assertion_like = true;
+            }
+        } else {
+            self.assertion_like = true;
+        }
+    }
+
     fn with_items(&mut self, items: &[ast::WithItem]) {
         for item in items {
             self.expr(&item.context_expr);
@@ -430,7 +769,10 @@ impl BodyScan<'_> {
                 self.expr(&op.right);
             }
             Expr::UnaryOp(op) => self.expr(&op.operand),
-            Expr::Lambda(lambda) => self.expr(&lambda.body),
+            Expr::Lambda(lambda) => {
+                self.arguments(&lambda.args);
+                self.expr(&lambda.body);
+            }
             Expr::IfExp(if_exp) => {
                 self.expr(&if_exp.test);
                 self.expr(&if_exp.body);
@@ -472,7 +814,16 @@ impl BodyScan<'_> {
                 self.opt_expr(value.format_spec.as_deref());
             }
             Expr::JoinedStr(joined) => self.exprs(&joined.values),
-            Expr::Attribute(attribute) => self.expr(&attribute.value),
+            // `self._verify` passed as a callback (`self.addCleanup(...)`).
+            Expr::Attribute(attribute) => {
+                if matches!(attribute.value.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "self" | "cls"))
+                    && self.context.defined_names.contains(attribute.attr.as_str())
+                {
+                    self.assertion_like = true;
+                    return;
+                }
+                self.expr(&attribute.value);
+            }
             Expr::Subscript(subscript) => {
                 self.expr(&subscript.value);
                 self.expr(&subscript.slice);
@@ -485,31 +836,98 @@ impl BodyScan<'_> {
                 self.opt_expr(slice.upper.as_deref());
                 self.opt_expr(slice.step.as_deref());
             }
-            Expr::Constant(_) | Expr::Name(_) => {}
+            // A same-module function or class passed or stored as a value
+            // (`run = run_case`) may be called later.
+            Expr::Name(name) => {
+                if self.context.defined_names.contains(name.id.as_str())
+                    && !self.scope.locals.contains(name.id.as_str())
+                {
+                    self.assertion_like = true;
+                }
+            }
+            Expr::Constant(_) => {}
         }
     }
 
-    /// A call is assertion-like when its callee cannot be named statically
-    /// (`checks[kind](value)`), when its last segment reads as an assertion
-    /// or a failure, when it names a function defined in the same module
-    /// that is not itself a test, or when its root name is imported from a
-    /// test-support module (`from tests.helpers import run_case`): either
-    /// may be a helper that asserts.
+    /// A call is assertion-like unless its callee resolves to something known
+    /// not to assert. Calling the result of a call (`make_checker()(x)`) or a
+    /// subscript (`checks[kind](x)`) is dynamic and so assertion-like.
     fn call_is_assertion_like(&self, call: &ast::ExprCall) -> bool {
-        let Some(name) = expr_full_name(call.func.as_ref()) else {
+        if matches!(call.func.as_ref(), Expr::Call(_)) {
             return true;
-        };
-        let last = name.rsplit('.').next().unwrap_or(name.as_str());
-        let root = name.split('.').next().unwrap_or(name.as_str());
+        }
+        match expr_full_name(call.func.as_ref()) {
+            Some(name) => self.name_is_assertion_like(&name),
+            None => true,
+        }
+    }
+
+    fn name_is_assertion_like(&self, name: &str) -> bool {
+        let segments: Vec<&str> = name.split('.').collect();
+        let root = segments.first().copied().unwrap_or(name);
+        let last = segments.last().copied().unwrap_or(name);
         let lowered = last.to_ascii_lowercase();
-        ASSERTION_LIKE_PREFIXES
+        if ASSERTION_LIKE_PREFIXES
             .iter()
             .any(|prefix| lowered.starts_with(prefix))
-            || self.context.helper_names.contains(last)
-            || self.imports.iter().any(|import| {
-                import.alias == root
-                    && (is_test_support_module(&import.source_module)
-                        || is_test_support_module(&import.imported))
+        {
+            return true;
+        }
+        if matches!(root, "self" | "cls") {
+            // `self.helper()` may be defined here or inherited; only
+            // unittest's `subTest` is known not to assert. A method on an
+            // attribute (`self.client.get()`) acts on a value the test or its
+            // setup built, and setup hooks are scanned separately.
+            return segments.len() == 2 && last != "subTest";
+        }
+        if self.scope.locals.contains(root) {
+            return false;
+        }
+        if self.scope.builtin_fixtures.contains(root) {
+            // `request.getfixturevalue("name")` pulls in any fixture.
+            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+        }
+        if self.scope.argnames.contains(root) {
+            // Calling a parameter runs whatever the case supplies.
+            return segments.len() == 1;
+        }
+        if let Some(qualified) = self.imported_name(name) {
+            return is_test_support_path(&qualified)
+                || FAILING_CALLEES.contains(&qualified.as_str())
+                || (qualified.starts_with("pytest.") && !is_inert_pytest_member(&qualified));
+        }
+        if self.context.defined_names.contains(root) {
+            return true;
+        }
+        if INERT_BUILTINS.contains(&root)
+            || root.ends_with("Error")
+            || root.ends_with("Exception")
+            || root.ends_with("Warning")
+        {
+            return false;
+        }
+        // An unknown global: a module variable, a star import, `exit`,
+        // `eval`, or a name bound somewhere RIPR does not track.
+        true
+    }
+
+    /// The fully qualified spelling of a name whose root is imported:
+    /// `from pytest import warns` makes `warns` read `pytest.warns`, and
+    /// `import tests.helpers as h` makes `h.run` read `tests.helpers.run`.
+    fn imported_name(&self, name: &str) -> Option<String> {
+        self.imports
+            .iter()
+            .filter(|import| {
+                name == import.alias || name.starts_with(&format!("{}.", import.alias))
+            })
+            .max_by_key(|import| import.alias.len())
+            .map(|import| {
+                let rest = &name[import.alias.len()..];
+                if import.source_module.is_empty() {
+                    format!("{}{rest}", import.imported)
+                } else {
+                    format!("{}.{}{rest}", import.source_module, import.imported)
+                }
             })
     }
 }

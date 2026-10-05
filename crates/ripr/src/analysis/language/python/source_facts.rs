@@ -285,7 +285,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         false,
         &PythonTestModule {
             imports: &imports,
-            admission: &PythonAdmissionContext::of_module(&module.body),
+            admission: &PythonAdmissionContext::of_module(&module.body, &imports),
         },
         &mut snapshot.tests,
     );
