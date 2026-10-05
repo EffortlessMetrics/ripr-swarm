@@ -3861,18 +3861,18 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
         "zq_quote_target_token"
     ));
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
                         }\n\
                         fn zq_quote_target_token(input: &str) -> String { input.to_string() }\n\
                         pub fn zq_description_owner(description: &str) -> bool { \
-                            description.is_empty() \
+                            description.is_empty(); false \
                         }\n\
                         pub fn zq_variant_owner(variant: &str, arm: &str) -> String { \
                             let _arm = arm.clone(); \
-                            variant.to_string() \
+                            variant.to_string(); String::new() \
                         }\n\
                         pub fn zq_collect_source_owner(file: &str, source: &str, current_owner: &str, out: &mut Vec<String>) { \
                             collect_source_facts_from_expr(file, source, current_owner, out); \
@@ -3888,7 +3888,7 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
                             pub evidence: String, \
                         }\n\
                         pub fn zq_probe_owner(context: &ZqContext) -> String { \
-                            zq_missing_evidence(&context.probe, &context.class, &context.evidence) \
+                            zq_missing_evidence(&context.probe, &context.class, &context.evidence); String::new() \
                         }\n\
                         fn zq_missing_evidence(probe: &str, class: &str, evidence: &str) -> String { \
                             format!(\"{probe}:{class}:{evidence}\") \
@@ -4107,7 +4107,8 @@ fn given_call_presence_when_direct_owner_call_uses_turbofish_then_activation_is_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline<T: ToString>(input: T) -> String {
-    format_output(input.to_string())
+    format_output(input.to_string());
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4173,7 +4174,8 @@ fn given_call_presence_when_direct_owner_call_has_space_before_paren_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: String) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4238,7 +4240,7 @@ fn given_call_presence_when_assertion_mentions_short_specific_call_target_then_a
 -> Result<(), String> {
     let prod = PathBuf::from("src/agent_paths.rs");
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
@@ -4300,7 +4302,8 @@ fn given_call_presence_when_same_file_wrapper_directly_calls_owner_then_activati
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -4370,7 +4373,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4438,7 +4442,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4506,7 +4511,8 @@ fn given_call_presence_when_test_local_helper_directly_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -4572,7 +4578,8 @@ fn given_call_presence_when_helper_calls_owner_then_logs_then_activation_is_yes(
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -4634,7 +4641,8 @@ fn given_call_presence_when_integration_test_calls_production_wrapper_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -4692,7 +4700,8 @@ fn given_call_presence_when_integration_test_calls_two_hop_production_wrapper_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn build_pipeline(input: &str) -> String {
@@ -4762,7 +4771,8 @@ fn given_call_presence_when_two_hop_production_wrapper_reaches_multiple_owners_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -4829,7 +4839,8 @@ fn given_call_presence_when_production_wrapper_calls_same_owner_multiple_times_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn shell_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn agent_start_command(root: &str, packet: &str) -> String {
@@ -4888,7 +4899,8 @@ fn given_call_presence_when_production_wrapper_calls_multiple_owners_then_activa
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -4951,7 +4963,8 @@ fn given_call_presence_when_multi_owner_production_wrapper_has_target_affinity_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5019,7 +5032,8 @@ fn given_call_presence_when_unit_test_calls_same_file_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5088,7 +5102,8 @@ fn given_call_presence_when_multi_owner_wrapper_asserts_other_target_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5155,7 +5170,8 @@ fn given_call_presence_when_test_local_fanout_helper_asserts_other_target_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5222,7 +5238,8 @@ fn given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5293,7 +5310,8 @@ fn given_call_presence_when_module_qualified_ambiguous_production_wrapper_has_ta
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5367,7 +5385,8 @@ fn given_call_presence_when_aliased_module_wrapper_has_target_affinity_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5443,7 +5462,8 @@ fn given_call_presence_when_a_module_alias_is_ambiguous_then_no_relation_is_cred
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5535,7 +5555,8 @@ fn given_call_presence_when_nested_test_module_rebinds_a_module_alias_then_each_
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5549,7 +5570,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn render_report(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5673,7 +5695,8 @@ fn given_call_presence_when_bare_aliased_module_wrapper_has_target_affinity_then
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5754,7 +5777,8 @@ pub fn display_path(path: &Path) -> String {
 }
 
 pub fn shell_path(path: &Path) -> String {
-    shell_arg(&display_path(path))
+    shell_arg(&display_path(path));
+    Default::default()
 }
 
 pub fn shell_arg(value: &str) -> String {
@@ -5824,7 +5848,8 @@ fn given_call_presence_when_direct_imported_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -5900,7 +5925,8 @@ fn given_call_presence_when_crate_qualified_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -5974,7 +6000,8 @@ fn given_call_presence_when_crate_qualified_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6047,7 +6074,8 @@ fn given_call_presence_when_bare_qualified_wrapper_has_target_affinity_then_acti
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6111,7 +6139,8 @@ fn given_call_presence_when_crate_qualified_owner_exists_only_in_other_package_t
     let alpha_owner = PathBuf::from("crates/alpha/src/analysis/other.rs");
     let alpha_owner_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6189,7 +6218,8 @@ fn given_call_presence_when_external_direct_import_matches_local_owner_name_then
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6255,7 +6285,8 @@ fn given_call_presence_when_ambiguous_direct_import_owner_name_then_activation_s
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6332,7 +6363,8 @@ fn given_call_presence_when_module_qualified_wrapper_asserts_other_target_then_a
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6405,7 +6437,8 @@ fn given_call_presence_when_aliased_module_wrapper_asserts_other_target_then_act
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6480,7 +6513,8 @@ fn given_call_presence_when_direct_imported_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6555,7 +6589,8 @@ fn given_call_presence_when_test_local_helper_shadows_production_wrapper_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6610,7 +6645,8 @@ fn given_call_presence_when_test_local_helper_shadows_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -6681,7 +6717,8 @@ fn given_call_presence_when_unique_test_support_helper_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6751,7 +6788,8 @@ fn given_call_presence_when_duplicate_test_support_helpers_share_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6825,7 +6863,8 @@ fn given_call_presence_when_test_support_helper_name_is_ambiguous_then_activatio
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6904,7 +6943,8 @@ fn given_call_presence_when_direct_imported_ambiguous_support_helper_calls_owner
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6990,7 +7030,8 @@ fn given_call_presence_when_aliased_direct_imported_support_helper_calls_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn calculate(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7000,7 +7041,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn summarize(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 fn format_report(input: &str) -> String {
@@ -7293,7 +7335,7 @@ fn wrong_binding_mutation_is_exposed_by_full_production_evidence_path() -> Resul
     let index = index_from_files(&[
         (
             PathBuf::from("src/pipeline.rs"),
-            "pub fn calculate(input: &str) -> String { input.to_string() }",
+            "pub fn calculate(input: &str) -> String { input.to_string(); Default::default() }",
         ),
         (
             PathBuf::from("src/report.rs"),
@@ -7330,7 +7372,8 @@ fn given_call_presence_when_direct_imported_support_helper_targets_other_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7407,7 +7450,8 @@ fn given_call_presence_when_direct_imported_external_helper_then_activation_stay
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7461,7 +7505,8 @@ fn given_call_presence_when_block_local_direct_imported_helper_is_not_file_scope
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7551,7 +7596,8 @@ fn given_call_presence_when_ambiguous_support_helper_is_module_qualified_then_ac
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7635,7 +7681,8 @@ fn given_call_presence_when_qualified_support_helper_targets_other_owner_then_no
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7717,7 +7764,8 @@ fn given_call_presence_when_crate_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7801,7 +7849,8 @@ fn given_call_presence_when_super_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7975,7 +8024,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_option_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8037,7 +8087,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8099,7 +8150,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_turbofi
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8161,7 +8213,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_err_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8223,7 +8276,8 @@ fn given_call_presence_when_test_local_helper_unwraps_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8285,7 +8339,8 @@ fn given_call_presence_when_test_local_helper_expects_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8347,7 +8402,8 @@ fn given_call_presence_when_test_local_helper_borrows_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8409,7 +8465,8 @@ fn given_call_presence_when_test_local_helper_trims_owner_call_result_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8467,7 +8524,8 @@ fn given_call_presence_when_test_local_helper_uses_unknown_owner_call_chain_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8525,7 +8583,8 @@ fn given_call_presence_when_test_local_assertion_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8586,7 +8645,8 @@ fn given_call_presence_when_test_local_equality_helper_calls_owner_as_later_arg_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8647,7 +8707,8 @@ fn given_call_presence_when_assert_message_arg_calls_owner_then_activation_stays
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8704,7 +8765,8 @@ fn given_call_presence_when_test_local_assert_macro_helper_calls_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8765,7 +8827,8 @@ fn given_call_presence_when_test_local_assert_macro_short_circuits_owner_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8822,7 +8885,8 @@ fn given_call_presence_when_test_local_matches_macro_helper_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -8879,7 +8943,8 @@ fn given_call_presence_when_test_local_matches_macro_short_circuits_owner_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -8936,7 +9001,8 @@ fn given_call_presence_when_test_local_dbg_macro_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8994,7 +9060,8 @@ fn given_call_presence_when_test_local_dbg_macro_short_circuits_owner_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9051,7 +9118,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_macro_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9109,7 +9177,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_args_ma
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9167,7 +9236,8 @@ fn given_call_presence_when_test_local_format_args_macro_short_circuits_owner_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9225,7 +9295,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_block_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9283,7 +9354,8 @@ fn given_call_presence_when_test_local_helper_conditionally_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9341,7 +9413,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_vec_macro_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9399,7 +9472,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_array_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9457,7 +9531,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_tuple_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9515,7 +9590,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_unknown_macro_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9579,7 +9655,8 @@ fn given_call_presence_when_helper_wraps_owner_call_with_non_container_call_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9647,7 +9724,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_std_identity_t
         let prod = PathBuf::from("src/pipeline.rs");
         let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9709,7 +9787,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_local_identity
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9771,7 +9850,8 @@ fn given_call_presence_when_test_local_two_hop_helper_calls_owner_then_activatio
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9853,7 +9933,8 @@ fn missing_boundary_discriminator(rows: &[Vec<String>], parameter: &str) -> Opti
 }
 
 fn parameter_value_set(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
-    let values = observed_parameter_values(rows, parameter);
+    observed_parameter_values(rows, parameter);
+    let values = rows.concat();
     if values.is_empty() { None } else { Some(values) }
 }
 
@@ -9943,7 +10024,10 @@ fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {
 
 fn required_discriminator_text(discriminator: &RequiredDiscriminator) -> String {
     match discriminator {
-        RequiredDiscriminator::BoundaryValue { description } => description.clone(),
+        RequiredDiscriminator::BoundaryValue { description } => {
+            description.clone();
+            String::new()
+        }
         RequiredDiscriminator::ErrorVariant { variant } => variant.clone(),
     }
 }
@@ -10018,7 +10102,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10076,7 +10161,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -10143,7 +10229,8 @@ fn should_skip_pipeline(input: &str) -> bool {
 }
 
 fn render_pipeline(input: &str) -> bool {
-    format_output(input).is_empty()
+    format_output(input).is_empty();
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10213,7 +10300,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10290,7 +10378,8 @@ fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<Missing
 fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact> {
     flow_sinks
         .iter()
-        .find(|sink| sink.kind != FlowSinkKind::Unknown)
+        .find(|sink| sink.kind != FlowSinkKind::Unknown);
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10343,7 +10432,8 @@ fn given_call_presence_when_same_file_wrapper_skips_owner_then_activation_stays_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn render_pipeline_fixture() -> String {
@@ -10405,7 +10495,8 @@ fn given_call_presence_when_same_file_unit_parent_qualified_wrapper_calls_owner_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10470,7 +10561,8 @@ fn given_call_presence_when_same_file_unit_shadow_calls_wrapper_name_then_activa
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10539,7 +10631,8 @@ fn given_call_presence_when_test_calls_two_hop_production_wrapper_then_activatio
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10618,7 +10711,10 @@ fn parse_c_quoted_path(raw: &str) -> Option<String> {
     let ch = chars.next()?;
     match ch {
         '"' => Some(String::new()),
-        '\\' => Some(parse_c_escape(&mut chars).to_string()),
+        '\\' => {
+            parse_c_escape(&mut chars);
+            Some(String::new())
+        }
         _ => Some(ch.to_string()),
     }
 }
@@ -10693,7 +10789,8 @@ fn given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn collect_pipeline_context() -> String {
@@ -10766,7 +10863,8 @@ fn given_call_presence_when_same_file_wrapper_extends_owner_call_then_activation
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_outputs(input: &str) -> Vec<String> {
@@ -10827,7 +10925,8 @@ fn given_call_presence_when_same_file_wrapper_unwraps_or_defaults_owner_then_act
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_output(input: &str) -> String {
@@ -15207,7 +15306,8 @@ fn normalize_beta(input: &str) -> String {
     let gamma = PathBuf::from("src/gamma.rs");
     let gamma_src = r#"
 pub fn compute_gamma(input: &str) -> String {
-    normalize_gamma(input)
+    normalize_gamma(input);
+    Default::default()
 }
 
 fn normalize_gamma(input: &str) -> String {

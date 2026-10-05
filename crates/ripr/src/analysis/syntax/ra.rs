@@ -1277,15 +1277,7 @@ fn extract_parser_probe_shapes(
     {
         let range = call_expr.syntax().text_range();
         let call_text = slice_text(text, range.start(), range.end());
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::CallDeletion,
-            range.start(),
-            range.end(),
-        );
+        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, call_expr.syntax());
         if has_return_value_text(&call_text) && !call_is_argument(&call_expr) {
             push_probe_shape(
                 &mut shapes,
@@ -1317,15 +1309,7 @@ fn extract_parser_probe_shapes(
     {
         let range = method_call.syntax().text_range();
         let method_text = slice_text(text, range.start(), range.end());
-        push_probe_shape(
-            &mut shapes,
-            line_index,
-            text,
-            source,
-            ProbeShapeKind::CallDeletion,
-            range.start(),
-            range.end(),
-        );
+        push_call_deletion_probe_shape(&mut shapes, line_index, text, source, method_call.syntax());
         if method_call
             .name_ref()
             .is_some_and(|name| is_effect_call_name(&name.syntax().text().to_string()))
@@ -1510,6 +1494,7 @@ fn push_probe_shape_with_text(
         end_byte: u32::from(end) as usize,
         kind,
         text,
+        value_consumed: false,
     });
 }
 
@@ -1567,6 +1552,141 @@ fn has_return_value_text(text: &str) -> bool {
         || trimmed.contains(" Ok(")
         || trimmed.contains(" Some(")
         || trimmed.contains("None")
+}
+
+fn push_call_deletion_probe_shape(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    text: &str,
+    source: &Arc<str>,
+    call: &ra_ap_syntax::SyntaxNode,
+) {
+    let range = call.text_range();
+    let before = shapes.len();
+    push_probe_shape(
+        shapes,
+        line_index,
+        text,
+        source,
+        ProbeShapeKind::CallDeletion,
+        range.start(),
+        range.end(),
+    );
+    if shapes.len() > before
+        && let Some(shape) = shapes.last_mut()
+    {
+        shape.value_consumed = call_value_is_consumed(call);
+    }
+}
+
+/// Whether a call's value feeds a consumer: a condition or scrutinee, a
+/// named binding, an operand, an argument, a receiver, a field or index
+/// base, an element, or the function's non-unit return (through block
+/// tails, `if` branches and match arms). Deleting such a call does not
+/// compile, so no mutant answers the repo-scope `call_presence` question;
+/// the consumer's own seam carries the behavior (#6677). Any other
+/// position, including a statement, `let _ =`, a `_`-prefixed binding and a
+/// closure body, reads as unconsumed so the `call_presence` seam is kept.
+fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    let mut node = call.clone();
+    while let Some(parent) = node.parent() {
+        match parent.kind() {
+            K::PAREN_EXPR
+            | K::TRY_EXPR
+            | K::AWAIT_EXPR
+            | K::REF_EXPR
+            | K::CAST_EXPR
+            | K::BLOCK_EXPR
+            | K::MATCH_ARM_LIST => {}
+            K::STMT_LIST => {
+                let is_tail = ast::StmtList::cast(parent.clone())
+                    .and_then(|list| list.tail_expr())
+                    .is_some_and(|tail| tail.syntax() == &node);
+                if !is_tail {
+                    return false;
+                }
+            }
+            K::FN => {
+                return ast::Fn::cast(parent)
+                    .and_then(|function| function.ret_type())
+                    .and_then(|ret| ret.ty())
+                    .is_some_and(|ty| ty.syntax().text().to_string().trim() != "()");
+            }
+            K::IF_EXPR | K::WHILE_EXPR => {
+                let is_condition = parent
+                    .children()
+                    .find_map(ast::Expr::cast)
+                    .is_some_and(|condition| condition.syntax() == &node);
+                if is_condition {
+                    return true;
+                }
+                // A `while` body's value is discarded; an `if` branch's
+                // value is the `if` expression's value.
+                if parent.kind() == K::WHILE_EXPR {
+                    return false;
+                }
+            }
+            K::MATCH_EXPR => {
+                let is_scrutinee = ast::MatchExpr::cast(parent.clone())
+                    .and_then(|expr| expr.expr())
+                    .is_some_and(|scrutinee| scrutinee.syntax() == &node);
+                if is_scrutinee {
+                    return true;
+                }
+            }
+            K::FOR_EXPR => {
+                return ast::ForExpr::cast(parent)
+                    .and_then(|expr| expr.iterable())
+                    .is_some_and(|iterable| iterable.syntax() == &node);
+            }
+            K::MATCH_ARM => {
+                let is_arm_value = ast::MatchArm::cast(parent.clone())
+                    .and_then(|arm| arm.expr())
+                    .is_some_and(|value| value.syntax() == &node);
+                if !is_arm_value {
+                    return false;
+                }
+            }
+            K::MATCH_GUARD
+            | K::LET_EXPR
+            | K::BIN_EXPR
+            | K::PREFIX_EXPR
+            | K::ARG_LIST
+            | K::METHOD_CALL_EXPR
+            | K::CALL_EXPR
+            | K::FIELD_EXPR
+            | K::INDEX_EXPR
+            | K::RETURN_EXPR
+            | K::RECORD_EXPR_FIELD
+            | K::TUPLE_EXPR
+            | K::ARRAY_EXPR
+            | K::RANGE_EXPR => return true,
+            K::LET_STMT => {
+                let Some(stmt) = ast::LetStmt::cast(parent) else {
+                    return false;
+                };
+                let is_initializer = stmt
+                    .initializer()
+                    .is_some_and(|init| init.syntax() == &node);
+                return is_initializer && stmt.pat().is_some_and(|pat| !pat_discards_value(&pat));
+            }
+            _ => return false,
+        }
+        node = parent;
+    }
+    false
+}
+
+/// `let _ = f()` and `let _unused = f()` keep the call only for its effect.
+fn pat_discards_value(pat: &ast::Pat) -> bool {
+    match pat {
+        ast::Pat::WildcardPat(_) => true,
+        ast::Pat::IdentPat(ident) => ident
+            .name()
+            .is_some_and(|name| name.text().starts_with('_')),
+        _ => false,
+    }
 }
 
 fn call_is_argument(call: &ast::CallExpr) -> bool {

@@ -1789,6 +1789,7 @@ fn far_above_threshold_discounts() {
                         end_byte: 1_074,
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },
@@ -1851,6 +1852,7 @@ fn far_above_threshold_discounts() {
                         end_byte: 1_074,
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },

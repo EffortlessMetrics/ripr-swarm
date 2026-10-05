@@ -308,7 +308,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// predecessor proximity-only confirmation after that semantic change.
 /// `1.40`: probe shapes gain the parser-owned end byte (#5336); old fact
 /// entries lack span geometry and must cold-recompute.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.40";
+/// `1.41`: a call whose value is consumed emits no `call_presence` seam
+/// (#6677). Old entries would keep those seams.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.41";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -388,7 +390,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.40";
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
+/// `0.47`: same consumed-call transition as full `1.41` (#6677).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -470,7 +473,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
+/// `0.47`: same consumed-call transition as full `1.41` (#6677).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -621,7 +625,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// derived file-call storage. Retained per-function calls are authoritative;
 /// either predecessor family must rebuild this combined file-fact shape.
 /// `1.29`: probe shapes gain the parser-owned end byte (#5336).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.29";
+/// `1.30`: `call_deletion` shapes record whether the call's value is
+/// consumed (#6677). Older facts would read every call as unconsumed.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.30";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3898,7 +3904,8 @@ mod tests {
         // (#5415 step 3); legacy payloads carry a dead copy.
         // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
         // 1.28 -> 1.29: probe shapes gain the parser-owned end byte (#5336).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.29");
+        // 1.30: consumed-call shape flag (#6677).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.30");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3954,7 +3961,8 @@ mod tests {
         // keeps at most weak oracle credit and keeps the gap open (#6026).
         // 1.38: compose #5713 with landed #6701; refuse both predecessors.
         // 1.39 -> 1.40: probe shapes gain the parser-owned end byte (#5336).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.40");
+        // 1.41: consumed calls emit no call_presence seam (#6677).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.41");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3987,8 +3995,9 @@ mod tests {
         // as the outer cache (#6026).
         // 0.44: same combined #5713/#6701 transition as full 1.38.
         // 0.45 -> 0.46: seams gain optional span geometry (#5336).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.46");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.46");
+        // 0.47: same consumed-call transition as full 1.41 (#6677).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
     }
 
     #[test]
