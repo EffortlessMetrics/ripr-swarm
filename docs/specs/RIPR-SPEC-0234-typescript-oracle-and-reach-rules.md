@@ -232,19 +232,26 @@ identifier and a template literal stay `broad_error` / weak.
 
 **Rule 4. A payload that passes on both versions is not exact.** A
 payload whose whole text is `Error` reads `broad_error` / weak, because
-every thrown error is an `Error`; `globalThis.Error` already reads
-`broad_error` under the uppercase-first gate. A second exception
-covers a message-only change, one where every token that differs between
-the old and new changed line lies inside a string literal. The literal
-text of a template literal counts; a `${...}` interpolation does not, so
-a changed interpolation is not message-only. On such a
-change a payload credits only if it excludes the old message. A class
-payload (`TypeError`, `Errors.ParseError`) reads `broad_error` / weak,
-because the same class is thrown on both versions. A string payload is a
+every thrown error is an `Error`, unless the old side of the changed line
+throws a primitive literal (`throw "bad"` changed to
+`throw new Error("bad")`), which no class check matches;
+`globalThis.Error` already reads `broad_error` under the uppercase-first
+gate. A second exception covers a message-only change: the changed line
+is a `throw` line or a `Promise.reject(...)` line, and every token that
+differs between its old and new text lies inside a string literal in the
+message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
+literal text of a template literal counts; a `${...}` interpolation does
+not, so a changed interpolation is not message-only. On such a change a
+payload credits only if it excludes the old message. A class payload
+(`TypeError`, `Errors.ParseError`) reads `broad_error` / weak, because
+the same class is thrown on both versions. A string payload is a
 substring match in Jest and Vitest, so it reads `exact_error_variant`
-only when it is not a substring of a string literal on the old side;
-`toThrow("blank")` after `"not blank"` changed to `"blank"` reads
-`broad_error` / weak. On any other change, class and string payloads keep
+only when it is not a substring of the old message. The old message is
+the old-side message argument with adjacent literals of a `+` chain
+joined (`"ba" + "d"` is `bad`); when any operand of that chain is not a
+literal, the payload reads `broad_error` / weak. `toThrow("blank")` after
+`"not blank"` changed to `"blank"` reads `broad_error` / weak. On any
+other change, class and string payloads keep
 RIPR-SPEC-0097's reading: a class swap, or a changed condition that
 decides whether the throw runs, can fail a class check (the seam family
 filter still decides the class; see example 13). An object payload is
@@ -296,13 +303,13 @@ strong:
   an all-literal object whose `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must not be a substring of a string literal on the
-old side, an object `message` must not equal one, and an anchored regex
-credits only when ripr can match it as a plain literal (no
-metacharacters between the anchors other than escapes) whose text, after
-removing a leading `Identifier: ` prefix (`node:assert` tests the regex
-against `String(err)`, such as `Error: blank`), differs from every
-old-side literal; otherwise each reads `broad_error` / weak. A
+change, a chai string must not be a substring of the old message (as
+rule 4 assembles it), an object `message` must not equal it, and an
+anchored regex credits only when ripr can match it as a plain literal
+(no metacharacters between the anchors other than escapes) whose text,
+after removing a leading `Identifier: ` prefix (`node:assert` tests the
+regex against `String(err)`, such as `Error: blank`), differs from the
+old message; otherwise each reads `broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
@@ -618,6 +625,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
     strong (unchanged): the change is not message-only. The class stays
     `weakly_exposed` (unchanged), because the changed line is a predicate
     and the seam family filter admits no error oracle for a predicate.
+    With the throw line changed from `throw "empty";` to
+    `throw new Error("empty");`, `toThrow(Error)`: `exact_error_variant` /
+    strong, `exposed` (unchanged; the old side throws a primitive).
 14. Same change; `expect(() => parse("")).to.throw("blank")` with chai
     `expect`: `exact_error_variant` / strong, `exposed` (today
     `broad_error` / weak, `weakly_exposed`; rule 10, #6686). With the old
