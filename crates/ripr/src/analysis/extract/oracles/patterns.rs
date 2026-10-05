@@ -3,6 +3,7 @@ use super::arguments::{
     equality_assertion_arguments,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
+use crate::analysis::extract::mask_comments_and_strings;
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -265,7 +266,52 @@ fn line_references_variable(line: &str, var: &str) -> bool {
 }
 
 pub(super) fn is_broad_error_assertion(line: &str) -> bool {
-    line.contains("is_err") || line.contains("Err(_)")
+    let masked = mask_comments_and_strings(line);
+    has_method_segment(&masked, "is_err") || masked.contains("Err(_)")
+}
+
+/// RIPR-SPEC-0231 rule 4: `.unwrap(`, `.expect(` and the side checks
+/// `is_ok`, `is_some` and `is_none` as whole method names.
+pub(super) fn is_smoke_check(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains(".unwrap(")
+        || masked.contains(".expect(")
+        || has_method_segment(&masked, "is_ok")
+        || has_method_segment(&masked, "is_some")
+        || has_method_segment(&masked, "is_none")
+}
+
+/// RIPR-SPEC-0231 rule 4: `is_ok()` with `is_err()`, or `is_some()` with
+/// `is_none()`, joined by `||` accepts every value.
+pub(super) fn tests_both_sides(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains("||")
+        && ((has_method_segment(&masked, "is_ok") && has_method_segment(&masked, "is_err"))
+            || (has_method_segment(&masked, "is_some") && has_method_segment(&masked, "is_none")))
+}
+
+/// `name` as a whole method name: after `.` or `::`, and not followed by
+/// more identifier characters except the combinator forms `name_and` (and
+/// `is_none_or`). `is_okay` and `this_errs` are not `is_ok` / `is_err`.
+fn has_method_segment(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(index, _)| {
+        let before = text[..index].trim_end();
+        let qualified = before.ends_with('.') || before.ends_with("::");
+        let rest = &text[index + name.len()..];
+        let rest = rest
+            .strip_prefix("_and")
+            .or_else(|| {
+                (name == "is_none")
+                    .then(|| rest.strip_prefix("_or"))
+                    .flatten()
+            })
+            .unwrap_or(rest);
+        let whole = !rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        qualified && whole
+    })
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
@@ -403,6 +449,88 @@ pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
     has_observer_token && (lower.contains("assert") || lower.contains("expect"))
 }
 
+/// RIPR-SPEC-0231 rule 5: step 9 credits an effect observer only when a
+/// whole identifier segment (`events_sent`, `sentCount`, `events`) names the
+/// effect, in the asserted subject rather than only in a free function call
+/// such as `is_present()`. The words never match inside another word
+/// (`present`, `statement`, `consent`).
+pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
+    const OBSERVER_WORDS: [&str; 11] = [
+        "event",
+        "emitted",
+        "published",
+        "sent",
+        "saved",
+        "persist",
+        "state",
+        "stored",
+        "metric",
+        "counter",
+        "recorded",
+    ];
+    let lower = line.to_ascii_lowercase();
+    if !(lower.contains("assert") || lower.contains("expect")) {
+        return false;
+    }
+    identifiers_with_position(line).any(|(start, identifier)| {
+        let free_call = line[start + identifier.len()..]
+            .trim_start()
+            .starts_with('(')
+            && !line[..start].trim_end().ends_with('.');
+        !free_call
+            && identifier_segments(identifier).any(|segment| {
+                OBSERVER_WORDS.contains(&segment.as_str())
+                    || segment
+                        .strip_suffix('s')
+                        .is_some_and(|base| OBSERVER_WORDS.contains(&base))
+            })
+    })
+}
+
+fn identifiers_with_position(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut start = None;
+    let mut out = Vec::new();
+    for (index, ch) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        let ident = ch.is_ascii_alphanumeric() || ch == '_';
+        match (start, ident) {
+            (None, true) => start = Some(index),
+            (Some(begin), false) => {
+                let word = &text[begin..index];
+                if word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                    out.push((begin, word));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out.into_iter()
+}
+
+/// `_`-separated and case-split segments, lowercased: `sentCount` gives
+/// `sent` and `count`.
+fn identifier_segments(identifier: &str) -> impl Iterator<Item = String> + '_ {
+    identifier.split('_').flat_map(|part| {
+        let mut segments = Vec::new();
+        let mut current = String::new();
+        let mut previous_lower = false;
+        for ch in part.chars() {
+            if ch.is_ascii_uppercase() && previous_lower && !current.is_empty() {
+                segments.push(std::mem::take(&mut current));
+            }
+            previous_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+            current.push(ch.to_ascii_lowercase());
+        }
+        if !current.is_empty() {
+            segments.push(current);
+        }
+        segments
+    })
+}
+
 pub(super) fn is_custom_assertion_helper(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.contains('!')
@@ -427,13 +555,13 @@ pub(super) fn is_clear_exact_custom_assertion_helper(line: &str) -> bool {
     } else {
         arguments.len() >= 2
     };
-    argument_count_supports_exact
-        && (name.contains("_eq")
-            || name.contains("_equal")
-            || name.contains("_matches")
-            || name.ends_with("eq")
-            || name.ends_with("equal")
-            || name.ends_with("matches"))
+    // RIPR-SPEC-0231 rule 6: only an equality name is strong. Excluding a
+    // `ne`, `not` or `neq` segment is rule 1's case (#6670), not this check.
+    let segments = name.split('_').collect::<Vec<_>>();
+    let last = segments.last().copied();
+    let equality_name = matches!(last, Some("eq" | "equal" | "equals"))
+        || (segments.len() > 1 && matches!(last, Some("matches")));
+    argument_count_supports_exact && equality_name
 }
 
 fn custom_assertion_helper_name(line: &str) -> Option<String> {
