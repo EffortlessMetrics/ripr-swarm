@@ -4,9 +4,11 @@
 //! The skeleton discovers one manifest per bench, validates it strictly,
 //! verifies every `sha256:`-bound fixture file (the same rendering as
 //! `ripr::agent::provenance::sha256_file`), and writes a versioned
-//! `ripr-agentic-bench-v1` JSON/Markdown receipt pair. It claims fixture and
-//! provenance readiness only; each bench's behavioral oracle runs under its
-//! own `cargo test` command, named in the receipt.
+//! `ripr-agentic-bench-v1` JSON/Markdown receipt pair. After writing that
+//! receipt it returns `Err` when any bench is not `ready`, so dispatch exits
+//! nonzero. A clean all-ready run stays `Ok`. It claims fixture and provenance
+//! readiness only; each bench's behavioral oracle runs under its own
+//! `cargo test` command, named in the receipt.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -19,6 +21,10 @@ const MANIFEST_SCHEMA: &str = "ripr-agentic-bench-manifest-v1";
 const DEFAULT_FIXTURES_DIR: &str = "benchmarks/agentic";
 
 pub(crate) fn agentic_bench(args: &[String]) -> Result<(), String> {
+    agentic_bench_into(args, &crate::reports_dir())
+}
+
+fn agentic_bench_into(args: &[String], reports_dir: &Path) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
@@ -32,14 +38,16 @@ pub(crate) fn agentic_bench(args: &[String]) -> Result<(), String> {
     let report = build_report(&options, &benches);
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize agentic bench report: {err}"))?;
-    crate::write_report("agentic-bench.json", &format!("{json_text}\n"))?;
-    crate::write_report("agentic-bench.md", &report_markdown(&report))?;
+    crate::write_report_in(reports_dir, "agentic-bench.json", &format!("{json_text}\n"))?;
+    crate::write_report_in(reports_dir, "agentic-bench.md", &report_markdown(&report))?;
     println!("Wrote target/ripr/reports/agentic-bench.json");
     println!("Wrote target/ripr/reports/agentic-bench.md");
-    Ok(())
+    refuse_unless_all_ready(&benches)
 }
 
-const USAGE: &str = "usage: cargo xtask agentic-bench [--bench <id>] [--fixtures <dir>]";
+const USAGE: &str = "\
+usage: cargo xtask agentic-bench [--bench <id>] [--fixtures <dir>]
+Writes target/ripr/reports/agentic-bench.{json,md}, then exits nonzero unless every bench is ready.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Options {
@@ -425,6 +433,30 @@ fn validate_edit_cage_surface(manifest: &Manifest) -> Result<(), String> {
     Ok(())
 }
 
+fn refuse_unless_all_ready(benches: &[BenchOutcome]) -> Result<(), String> {
+    let ready = benches
+        .iter()
+        .filter(|bench| bench.status == "ready")
+        .count();
+    if !benches.is_empty() && ready == benches.len() {
+        return Ok(());
+    }
+    let first_note = benches
+        .iter()
+        .find(|bench| bench.status != "ready")
+        .map(|bench| {
+            format!(
+                "; first not-ready bench `{}` status `{}`",
+                bench.bench, bench.status
+            )
+        })
+        .unwrap_or_default();
+    Err(format!(
+        "agentic-bench: inconclusive ({ready} of {} ready){first_note}; see target/ripr/reports/agentic-bench.json",
+        benches.len()
+    ))
+}
+
 fn build_report(options: &Options, benches: &[BenchOutcome]) -> Value {
     let ready = benches
         .iter()
@@ -493,8 +525,11 @@ fn report_markdown(report: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_bench_id, normalize_repo_path, parse_options, valid_digest, verify_bench,
+        agentic_bench_into, normalize_bench_id, normalize_repo_path, parse_options, sha256_file,
+        valid_digest, verify_bench,
     };
+    use serde_json::{Value, json};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_bench_filter_and_fixtures_dir() -> Result<(), String> {
@@ -568,6 +603,172 @@ mod tests {
                 "expected dir-id bench label, got {}",
                 outcome.bench
             ));
+        }
+        Ok(())
+    }
+
+    fn unique_temp(label: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock error: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-agentic-bench-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create {label} temp dir: {err}"))?;
+        Ok(dir)
+    }
+
+    fn write_manifest(dir: &Path, id: &str, digest: &str) -> Result<(), String> {
+        let body = json!({
+            "schema_version": "ripr-agentic-bench-manifest-v1",
+            "bench": id,
+            "bench_index": "B0",
+            "title": "Ready control",
+            "stimulus": "control",
+            "oracle_states": ["pass"],
+            "oracle_command": "true",
+            "selected_target": { "path": "input/src.rs", "scope": "exact" },
+            "allowed_surface": [{ "path": "input", "scope": "subtree" }],
+            "fixtures": [{ "path": "input/src.rs", "sha256": digest }],
+            "bounds": { "max_paths": 8, "max_file_bytes": 1024, "max_total_bytes": 4096 }
+        });
+        std::fs::write(dir.join("manifest.json"), format!("{body}\n"))
+            .map_err(|err| format!("write manifest {id}: {err}"))
+    }
+
+    fn write_ready_bench(root: &Path, id: &str) -> Result<(), String> {
+        let dir = root.join(id);
+        std::fs::create_dir_all(dir.join("input"))
+            .map_err(|err| format!("create ready bench {id}: {err}"))?;
+        let fixture_path = dir.join("input").join("src.rs");
+        std::fs::write(&fixture_path, b"fn ready() {}\n")
+            .map_err(|err| format!("write ready fixture {id}: {err}"))?;
+        let digest = sha256_file(&fixture_path)?;
+        write_manifest(&dir, id, &digest)
+    }
+
+    fn read_json_receipt(reports: &Path) -> Result<Value, String> {
+        let text = std::fs::read_to_string(reports.join("agentic-bench.json"))
+            .map_err(|err| format!("read json receipt: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("parse json receipt: {err}"))
+    }
+
+    fn bench_status<'a>(report: &'a Value, id: &str) -> Result<&'a str, String> {
+        let benches = report["benches"]
+            .as_array()
+            .ok_or_else(|| "receipt benches array missing".to_string())?;
+        benches
+            .iter()
+            .find(|bench| bench["bench"].as_str() == Some(id))
+            .and_then(|bench| bench["status"].as_str())
+            .ok_or_else(|| format!("receipt missing status for {id}"))
+    }
+
+    #[test]
+    fn agentic_bench_writes_receipts_then_errors_when_any_bench_is_not_ready() -> Result<(), String>
+    {
+        let fixtures = unique_temp("not-ready-fixtures")?;
+        let reports = unique_temp("not-ready-reports")?;
+        write_ready_bench(&fixtures, "ready-control")?;
+        std::fs::create_dir_all(fixtures.join("missing-one"))
+            .map_err(|err| format!("create missing bench: {err}"))?;
+        let invalid_dir = fixtures.join("invalid-one");
+        std::fs::create_dir_all(&invalid_dir)
+            .map_err(|err| format!("create invalid bench: {err}"))?;
+        std::fs::write(invalid_dir.join("manifest.json"), "{")
+            .map_err(|err| format!("write truncated manifest: {err}"))?;
+        let drift_dir = fixtures.join("drift-one");
+        std::fs::create_dir_all(drift_dir.join("input"))
+            .map_err(|err| format!("create drift bench: {err}"))?;
+        std::fs::write(drift_dir.join("input").join("src.rs"), b"fn drift() {}\n")
+            .map_err(|err| format!("write drift fixture: {err}"))?;
+        write_manifest(
+            &drift_dir,
+            "drift-one",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        )?;
+
+        let result = agentic_bench_into(
+            &[
+                "--fixtures".to_string(),
+                fixtures.to_string_lossy().into_owned(),
+            ],
+            &reports,
+        );
+        let report = read_json_receipt(&reports);
+        let markdown = std::fs::read_to_string(reports.join("agentic-bench.md"));
+        let _ = std::fs::remove_dir_all(&fixtures);
+        let _ = std::fs::remove_dir_all(&reports);
+
+        let err = match result {
+            Err(err) => err,
+            Ok(()) => {
+                return Err(
+                    "agentic_bench returned Ok on mixed not-ready benches; an always-0 advisory run is not the contract"
+                        .to_string(),
+                );
+            }
+        };
+        let report = report?;
+        let markdown = markdown.map_err(|err| format!("read markdown receipt: {err}"))?;
+        if !err.contains("inconclusive") || !err.contains("1 of 4 ready") {
+            return Err(format!("error should name the rollup, got {err}"));
+        }
+        if report["status"] != "inconclusive" {
+            return Err(format!("receipt status {:?}", report["status"]));
+        }
+        if bench_status(&report, "ready-control")? != "ready" {
+            return Err("ready control lost ready status".to_string());
+        }
+        if bench_status(&report, "missing-one")? != "missing_manifest" {
+            return Err("missing_manifest did not roll into the receipt".to_string());
+        }
+        if bench_status(&report, "invalid-one")? != "invalid_manifest" {
+            return Err("invalid_manifest did not roll into the receipt".to_string());
+        }
+        if bench_status(&report, "drift-one")? != "fixture_unverified" {
+            return Err("fixture_unverified did not roll into the receipt".to_string());
+        }
+        if !markdown.contains("`missing_manifest`")
+            || !markdown.contains("`invalid_manifest`")
+            || !markdown.contains("`fixture_unverified`")
+        {
+            return Err("markdown receipt dropped a fail-closed bench status".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn agentic_bench_all_ready_writes_receipts_and_returns_ok() -> Result<(), String> {
+        let fixtures = unique_temp("all-ready-fixtures")?;
+        let reports = unique_temp("all-ready-reports")?;
+        write_ready_bench(&fixtures, "ready-control")?;
+        let result = agentic_bench_into(
+            &[
+                "--fixtures".to_string(),
+                fixtures.to_string_lossy().into_owned(),
+            ],
+            &reports,
+        );
+        let report = read_json_receipt(&reports);
+        let markdown_exists = reports.join("agentic-bench.md").is_file();
+        let _ = std::fs::remove_dir_all(&fixtures);
+        let _ = std::fs::remove_dir_all(&reports);
+        result?;
+        let report = report?;
+        if report["status"] != "pass" {
+            return Err(format!("expected pass, got {:?}", report["status"]));
+        }
+        if report["ready_benches"] != 1 || report["bench_count"] != 1 {
+            return Err(format!(
+                "expected 1 of 1 ready, got ready_benches={:?} bench_count={:?}",
+                report["ready_benches"], report["bench_count"]
+            ));
+        }
+        if !markdown_exists {
+            return Err("markdown receipt missing on an all-ready run".to_string());
         }
         Ok(())
     }
