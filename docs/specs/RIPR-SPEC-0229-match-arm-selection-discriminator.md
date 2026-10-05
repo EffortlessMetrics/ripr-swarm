@@ -248,14 +248,24 @@ implies but does not spell out:
 - a bare variant input (`LowerCase`) is unresolved when the test's file
   imports that name from a path whose type segment is not the scrutinee's
   type, renames an import to it, or glob-imports another type's variants
-  (`use other::OtherRule::*`);
+  (`use other::OtherRule::*`). A bare or type-qualified input
+  (`RenameRule::LowerCase`) is also unresolved when the file imports its
+  leading name from outside the workspace roots
+  (`use other_crate::RenameRule;`). A module glob in a test file
+  (`use other_crate::prelude::*`) is not read and stays a known gap;
 - a bare lowercase pattern (`target =>`) is a binding only when the owner's
   file declares no `const` or `static` of that name, imports no item by
   that name, and has no glob import of a module, since Rust compares a
   pattern that names a constant by value;
-- only an `assert_eq!` operand confirms a selected arm: an `assert_ne!`
-  passes for many arm results (`assert_ne!(reason(None), 2)` holds whether
-  the arm yields 0 or 1).
+- only an `assert_eq!` operand confirms a selected arm: any `assert_ne!`
+  form (`debug_assert_ne!`, `prop_assert_ne!`) passes for many arm results
+  (`assert_ne!(reason(None), 2)` holds whether the arm yields 0 or 1);
+- an `assert_eq!` whose every operand names the owner
+  (`assert_eq!(reason(None), (reason(None)))`) never confirms, nor does
+  any assertion in a test that binds an owner call's result with `let`,
+  since that value may stand on the expected side and move with the arm.
+  The module-glob rule for bindings above is broad: a `use super::*` in an
+  inline test module of the owner's file demotes every binding arm there.
 
 ## Required Evidence
 

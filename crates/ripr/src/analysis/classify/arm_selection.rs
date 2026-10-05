@@ -305,36 +305,64 @@ impl ArmSelector {
         }
     }
 
-    /// Whether a bare variant input (`LowerCase`, no `::`) may name another
-    /// enum's variant in this test's file: an import binds the name from a
-    /// path whose type segment is not the scrutinee's type, renames an
-    /// item to it, or glob-imports another type's variants. A file whose
-    /// imports were not read is ambiguous.
-    fn bare_input_ambiguous(&self, test: &TestSummary, input: &str) -> bool {
+    /// Whether an input's leading name may resolve outside the scrutinee's
+    /// type in this test's file. For a bare variant (`LowerCase`) or a
+    /// type-qualified one (`RenameRule::LowerCase`), an import that binds
+    /// that name is ambiguous when it renames an item to it, roots outside
+    /// the workspace (`use other_crate::RenameRule;`), or, for a bare
+    /// variant, comes through another type; so is a glob of another type's
+    /// variants, or of the scrutinee type's name from outside the
+    /// workspace. A file whose imports were not read is ambiguous.
+    fn input_import_ambiguous(&self, test: &TestSummary, input: &str) -> bool {
         let Some(test_imports) = &self.test_imports else {
             return false;
         };
-        if input_qualifier(input).is_some() {
-            return false;
-        }
         let PatternHead::Variant { name, .. } = input_head(input) else {
             return false;
         };
+        let lead = match input_qualifier(input) {
+            Some(_) if input_path_root(input).is_some() => return false,
+            Some(qualifier) => qualifier.to_string(),
+            None => name,
+        };
+        let bare = input_qualifier(input).is_none();
         let Some(paths) = test_imports.get(&test.file) else {
             return true;
         };
         let scrutinee_type = self.scrutinee_type.as_deref();
+        let local_root = |path: &str| {
+            let root = path.split("::").next().unwrap_or("");
+            Some(root) == scrutinee_type || self.local_roots.iter().any(|local| local == root)
+        };
         paths.iter().any(|import| {
             let mut segments = import.path.rsplit("::");
             let last = segments.next().unwrap_or("");
             let parent = segments.next();
             match &import.alias {
-                Some(alias) => *alias == name,
+                Some(alias) => *alias == lead,
                 None if last == "*" => {
-                    parent.is_some_and(is_variant_name) && parent != scrutinee_type
+                    bare && parent.is_some_and(is_variant_name)
+                        && (parent != scrutinee_type || !local_root(&import.path))
                 }
-                None => last == name && (scrutinee_type.is_none() || parent != scrutinee_type),
+                None if last != lead => false,
+                None if !local_root(&import.path) => true,
+                None => bare && (scrutinee_type.is_none() || parent != scrutinee_type),
             }
+        })
+    }
+
+    /// Whether the test binds an owner call's result (`let expected =
+    /// reason(None);`): that value may stand on the expected side of an
+    /// assertion and move with the arm, so no assertion in the test
+    /// confirms a selection.
+    pub(in crate::analysis) fn binds_owner_result(&self, test: &TestSummary) -> bool {
+        let masked = mask_comments_and_strings(&test.body);
+        masked.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("let ")
+                && line
+                    .find('=')
+                    .is_some_and(|eq| !whole_word_offsets(&line[eq..], &self.owner).is_empty())
         })
     }
 
@@ -354,8 +382,8 @@ impl ArmSelector {
     /// An `assert_ne!` never does: `assert_ne!(reason(None), 2)` passes
     /// whether the arm yields 0 or 1, so selecting the arm shows nothing.
     pub(in crate::analysis) fn assertion_selects(&self, assertion_text: &str) -> bool {
-        let masked = mask_comments_and_strings(assertion_text);
-        if !whole_word_offsets(&masked, "assert_ne").is_empty() {
+        // Any `*assert_ne` (`debug_assert_ne!`, `prop_assert_ne!`) too.
+        if mask_comments_and_strings(assertion_text).contains("assert_ne") {
             return false;
         }
         let Some(operands) = assertion_comparison_operands(assertion_text) else {
@@ -412,7 +440,7 @@ impl ArmSelector {
             }
             for call in calls {
                 let input = self.call_input(&call)?;
-                if self.bare_input_ambiguous(test, input) {
+                if self.input_import_ambiguous(test, input) {
                     return None;
                 }
                 inputs.push(input.to_string());
@@ -1512,6 +1540,16 @@ mod tests {
         assert!(selector.assertion_selects("assert_eq!(reason(None), 0);"));
         // `None => 0` changed to `None => 1` passes `!= 2` either way.
         assert!(!selector.assertion_selects("assert_ne!(reason(None), 2);"));
+        assert!(!selector.assertion_selects("debug_assert_ne!(reason(None), 2);"));
+        assert!(!selector.assertion_selects("prop_assert_ne!(reason(None), 2);"));
+        assert!(selector.assertion_selects("debug_assert_eq!(reason(None), 0);"));
+        // A bound owner result may stand on the expected side.
+        assert!(selector.binds_owner_result(&test_with(
+            "fn t() {\n    let expected = reason(None);\n    assert_eq!(reason(None), expected);\n}\n"
+        )));
+        assert!(!selector.binds_owner_result(&test_with(
+            "fn t() {\n    let expected = 0;\n    assert_eq!(reason(None), expected);\n}\n"
+        )));
         // Both sides run the arm, so the comparison holds whatever it yields.
         assert!(!selector.assertion_selects("assert_eq!(reason(None), (reason(None)));"));
         assert!(!selector.assertion_selects("assert_eq!(reason(None), reason(None) + 0);"));
@@ -1562,6 +1600,8 @@ mod tests {
             "use other_crate::{OtherRule::{LowerCase}};\n",
             "use other_crate::OtherRule::*;\n",
             "use crate::RenameRule::UpperCase as LowerCase;\n",
+            "use other_crate::RenameRule::LowerCase;\n",
+            "use other_crate::RenameRule::*;\n",
         ] {
             with_imports(&mut selector, foreign);
             assert_eq!(selector.observed_inputs(&test), None, "{foreign}");
@@ -1569,6 +1609,26 @@ mod tests {
         // A test file whose imports were not read is ambiguous.
         selector.test_imports = Some(Default::default());
         assert_eq!(selector.observed_inputs(&test), None);
+        // A same-named type imported from outside the workspace is another type.
+        let qualified = test_with(
+            "fn t() {\n    assert_eq!(RenameRule::LowerCase.apply_to_variant(original), lower);\n}\n",
+        );
+        let with_qualified_imports = |selector: &mut ArmSelector, source: &str| {
+            selector.test_imports = Some(
+                [(qualified.file.clone(), flattened_use_paths(source))]
+                    .into_iter()
+                    .collect(),
+            );
+        };
+        with_qualified_imports(&mut selector, "use other_crate::RenameRule;\n");
+        assert_eq!(selector.observed_inputs(&qualified), None);
+        with_qualified_imports(&mut selector, "use crate::RenameRule;\n");
+        assert_eq!(
+            selector
+                .observed_inputs(&qualified)
+                .map(|observed| observed.selection),
+            Some(ArmSelection::Selects)
+        );
         Ok(())
     }
 

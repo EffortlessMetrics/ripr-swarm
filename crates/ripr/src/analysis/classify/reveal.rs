@@ -437,10 +437,12 @@ fn analyze_related_assertions(
         // mention of the owner is a direct call this module reads. A
         // `let reason = |x| ..` closure or any other local use of the name
         // may shadow the owner, so its calls say nothing about the owner.
+        // A `let` bound to an owner call may carry the arm's result to the
+        // expected side, so such a test confirms nothing either.
         let match_context = RevealMatchContext {
-            arm_inputs_readable: match_context
-                .arm_selector
-                .is_some_and(|selector| selector.observed_inputs(test).is_some()),
+            arm_inputs_readable: match_context.arm_selector.is_some_and(|selector| {
+                selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
+            }),
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
