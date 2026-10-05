@@ -44,7 +44,7 @@ use super::{
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
+use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
     is_detectable_python_source_name, is_python_excluded_dir_everywhere,
@@ -593,7 +593,12 @@ impl Backend {
                 diagnostics
             }
             Ok(Err(err)) => {
-                if self.refresh_request_is_current(request) && !is_cancellation_error(&err) {
+                // #4860: the attempt's token, not the error text, says whether
+                // the work stopped because a checkpoint handed it an abort. A
+                // wrapped cancellation is still a cancellation; an ordinary
+                // failure that reads like one is still a failure.
+                let cancelled = request.cancellation.observed_abort().is_some();
+                if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(
                         request,
                         err,
@@ -603,7 +608,7 @@ impl Backend {
                     .await;
                     return RefreshAttemptOutcome::Failed;
                 }
-                if !is_cancellation_error(&err) {
+                if !cancelled {
                     self.client
                         .log_message(
                             MessageType::WARNING,
