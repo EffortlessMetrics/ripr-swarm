@@ -84,11 +84,11 @@ target/ripr/reports/ripr-plus.last-good.md
 
 `ripr-plus.json` then records the failed run as `indeterminate`. When both
 files are saved, the error message names the saved JSON path; when a save
-fails, the message lists the failures instead and may not name a saved path. The Markdown copy is saved only when the previous
-run wrote one. When the previous run wrote none, any older saved `.md` is removed.
-The copy goes by file presence only: ripr does not check that the `.md` matches
+fails, the message lists the failures instead and may not name a saved path. The Markdown copy is saved whenever
+`ripr-plus.md` exists, whichever run wrote it. When no `.md` exists, any older
+saved `.md` is removed. The copy goes by file presence only: ripr does not check that the `.md` matches
 the `.json`, so if the previous run wrote its `.json` and then failed to write
-its `.md`, the saved `.md` can be from an earlier run. Read the `.json` as the
+its `.md`, the saved `.md` can predate that `.json`. Read the `.json` as the
 record. If
 only one file of the pair could be saved, the message says the receipt was kept
 only partly. An `indeterminate` receipt never becomes the last good one, so a
