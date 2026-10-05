@@ -31,8 +31,8 @@ same tree:
 | `cargo build --release --locked -p ripr` in the workspace (same profile, 4 cores) | 751 |
 | `cargo build --release --locked` on the packaged 0.11.0 crate (what `cargo install ripr --locked` builds, 4 cores) | 275 |
 
-The 640 s figure ran beside light unrelated work, so read the first three rows
-as rough, not an exact ratio. The 751 s and 275 s rows came from `cargo build`,
+The first three rows did not record a core count and the 640 s figure ran beside
+light unrelated work, so read them as rough, not an exact ratio. The 751 s and 275 s rows came from `cargo build`,
 not `cargo install`, and the packaged-crate row is a local build of the output of
 `cargo package`, not a download from crates.io, which carries no 0.11.0 yet.
 
@@ -42,10 +42,10 @@ s, the largest being `rmcp`, `oxc_parser`, `ra_ap_syntax` and
 `rustpython-parser` at 9 to 24 s each). The workspace `[profile.release]` sets
 `lto = true` and `codegen-units = 1`, and the published crate carries no
 `[profile]` section, so a crates.io install compiles with cargo's default release
-profile and takes about 2.7 times less time than a workspace build such as the
+profile and takes about 2.7 times as little time as a workspace build (275 s against 751 s) such as the
 git install in the README. As an experiment, thin LTO with 16 codegen units
 built the workspace in 266 s; on a tiny crate `ripr check` took the same 7 ms,
-and on the 627,000-line `ripr` workspace it took about 5% longer (10.5 s against
+and on the `ripr` workspace itself, a large Rust workspace, it took about 5% longer (10.5 s against
 10.0 s) with an 11% larger binary. The release profile was not changed, since it
 also builds the prebuilt archives. `cargo xtask first-run --install-published`
 times the source route and the scoreboard records it as
