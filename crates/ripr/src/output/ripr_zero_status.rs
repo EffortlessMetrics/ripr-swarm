@@ -294,7 +294,14 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     .to_string();
     let delta_visible_unresolved =
         delta.counts.still_present + delta.counts.new_policy_eligible + delta.counts.acknowledged;
-    let target_from_gap_ledger = gap_ledger.supplied && gap_ledger.status == ParseStatus::Loaded;
+    // A partial-denominator ledger (blocked, partial-scope, findings-bounded,
+    // or incomplete-outcome producer run) is disclosed but never selected as
+    // the target denominator: its zero would erase visible delta debt. The
+    // delta keeps the debt signal while the report stays incomplete (#6095
+    // review).
+    let target_from_gap_ledger = gap_ledger.supplied
+        && gap_ledger.status == ParseStatus::Loaded
+        && !gap_ledger.partial_denominator;
     let visible_unresolved = if target_from_gap_ledger {
         gap_ledger.ripr_zero_targets
     } else {
@@ -2660,6 +2667,64 @@ mod tests {
         assert!(rendered.contains("\"state\": \"achieved\""), "{rendered}");
         assert!(
             rendered.contains("\"target_source\": \"gap_decision_ledger\""),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_keeps_delta_debt_under_a_failed_gap_ledger() -> Result<(), String> {
+        // A failed (blocked) ledger must not erase visible delta debt: the
+        // delta keeps the not_yet signal while the report stays incomplete
+        // and preserves the producer warnings (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 2,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": ["parse ledger-source.json failed: source file not found"]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"not_yet\""), "{rendered}");
+        assert!(rendered.contains("\"visible_unresolved\": 2"), "{rendered}");
+        assert!(
+            rendered.contains("\"target_source\": \"baseline_debt_delta\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("producer warning: parse ledger-source.json failed"),
             "{rendered}"
         );
         Ok(())
