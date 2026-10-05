@@ -24,10 +24,12 @@ Linked issues:
 - #1239 (import-alias owner call, RIPR-SPEC-0102)
 - #4103 (default-import and dynamic-import owner credit)
 - #4554 (workspace package-name resolution)
+- #6654 (corpus cases scored false actionable under the first draft)
 
 Linked PRs:
 
-- None yet
+- #6686 (TypeScript verdict corpus; mutation evidence for rule 10)
+
 
 Support-tier impact:
 
@@ -43,7 +45,10 @@ Support-tier impact:
   assertion from `unknown` to a weak or smoke strength, which matches the
   negated forms RIPR-SPEC-0027 (chai `.not`) and RIPR-SPEC-0085 (`t.not`)
   already state; no class moves from it, because only a strong oracle
-  reaches `exposed`.
+  reaches `exposed`. Rule 10 adds credit from mutation evidence (#6686):
+  a literal message check in chai `throw` or `node:assert`
+  `throws`/`rejects` caught every mutant of its line, so the uncredited
+  reading was a false actionable verdict.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
 
@@ -265,16 +270,41 @@ mirrors RIPR-SPEC-0233 rule 1.
   `node:assert`; the other equality forms and `match` are
   `relational_check` / weak; `ok`, chai `is*` and a callable `assert(x)`
   are `smoke_only` / smoke; `throws`, `doesNotThrow`, `rejects` and
-  `doesNotReject` are `broad_error` / weak. A binding shadowed in the test
+  `doesNotReject` are `broad_error` / weak, except as rule 10 states. A binding shadowed in the test
   body, a callback parameter or an enclosing describe scope does not
   count.
 - chai BDD: `equal`, `equals`, `eq`, `eql`, `eqls` are `exact_value` /
   strong, or `relational_check` / weak under `not`; `throw`, `throws` and
-  `Throw` are `broad_error` / weak with or without an argument; `include`,
+  `Throw` are `broad_error` / weak, except as rule 10 states; `include`,
   `match`, `above`, `below`, `least`, `most`, `lengthOf` and the like are
   `relational_check` / weak; the property terminals `true`, `false`, `ok`,
   `null`, `undefined` and `exist` are `smoke_only` / smoke. Any other
   chain word or terminal yields no assertion.
+
+**Rule 10. A literal message check in chai or `node:assert` pins the
+error.** Added 2026-10-05 after the TypeScript verdict corpus (#6686)
+showed each shape catching every mutant of its line while ripr reported
+an actionable `weakly_exposed`. These read `exact_error_variant` /
+strong:
+
+- chai BDD `throw`, `throws` or `Throw`, not under `not`, with exactly
+  one argument that is a string literal. chai matches it as a substring
+  of the message, as Jest matches `toThrow("...")`.
+- `node:assert` `throws` or `rejects` (not chai `assert`, whose
+  signature differs) whose second argument is a regex literal anchored
+  with `^` and `$`, with no unescaped `|` outside a character class, or
+  an all-literal object whose `message` is a string literal.
+
+Rule 4's message-only guard applies to all of them: on a message-only
+change, a chai string must not be a substring of a string literal on the
+old side, an object `message` must not equal one, and an anchored regex
+credits only when ripr can match it as a plain literal (no
+metacharacters between the anchors other than escapes) whose text, after
+removing a leading `Identifier: ` prefix (`node:assert` tests the regex
+against `String(err)`, such as `Error: blank`), differs from every
+old-side literal; otherwise each reads `broad_error` / weak. A
+class argument, an unanchored regex, an identifier and a template literal
+stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
 ### Aggregation
 
@@ -483,6 +513,13 @@ rejected alternative. Any can be reversed later without touching the rest.
     matcher never yields `exposed`, matching RIPR-SPEC-0231 step 9.
     Rejected: strong for `toHaveBeenCalledWith` with literals, which no
     spec promises.
+12. **chai and `node:assert` message checks (#6686).** Adopted: rule 10,
+    because the corpus mutants show the first draft's `broad_error`
+    reading was a false actionable verdict for a literal message check,
+    the same evidence the Jest table already credits. Rejected: keep them
+    weak, which leaves those cases scored false actionable (#6654).
+    Rejected: credit any `throws` argument, because a bare or unanchored
+    regex can admit both messages.
 
 ## Required Evidence
 
@@ -493,8 +530,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1 and 7 move a finding to a stronger class only for an awaited
-  root (rule 1) or an alias-rename local (rule 7).
+- Rules 1, 7 and 10 move a finding to a stronger class only for an
+  awaited root (rule 1), an alias-rename local (rule 7) or a literal
+  chai or `node:assert` message check (rule 10).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
 - No TypeScript finding has class `reachable_unrevealed`.
@@ -558,7 +596,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `unknown`, `weakly_exposed` (unchanged).
 11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
-    "") { throw new Error("empty"); } return s; }`, changed to `"blank"`;
+    "") { throw new Error("empty"); } return s; }`, formatted with the
+    `throw` on its own line, which is the changed line: `"empty"` changed
+    to `"blank"`;
     test `expect(() => parse("")).toThrow("blank")`:
     `exact_error_variant` / strong, `exposed` (unchanged). With the old
     message `"not blank"` instead of `"empty"`: `broad_error` / weak,
@@ -579,7 +619,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `weakly_exposed` (unchanged), because the changed line is a predicate
     and the seam family filter admits no error oracle for a predicate.
 14. Same change; `expect(() => parse("")).to.throw("blank")` with chai
-    `expect`: `broad_error` / weak, `weakly_exposed` (unchanged).
+    `expect`: `exact_error_variant` / strong, `exposed` (today
+    `broad_error` / weak, `weakly_exposed`; rule 10, #6686). With the old
+    message `"not blank"`: `broad_error` / weak, `weakly_exposed`
+    (unchanged). `to.throw(TypeError)` and `to.throw()`: `broad_error` /
+    weak (unchanged).
 15. Base change; only `expect(() => price(150)).toThrow("bad")`: class
     `weakly_exposed`; `related_tests[0]` reads `exact_error_variant` /
     strong (unchanged; display issue filed).
@@ -655,6 +699,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `typescript_mock_only_observer`, because the unmocked file credits on
     its own (today `exposed` with it). With only `tests/b.test.ts`: as
     example 31.
+34. Same base `parse`, changed to `"blank"`, under `node:test` with
+    `import assert from "node:assert";`: `assert.throws(() => parse(""),
+    /^Error: blank$/)`: `exact_error_variant` / strong, `exposed` (today
+    `broad_error` / weak, `weakly_exposed`; rule 10). With `/blank/`:
+    `broad_error` / weak (unchanged; not anchored). With `/^Error:
+    (empty|blank)$/`: `broad_error` / weak (unchanged).
+35. An async owner `charge(n)` whose line `throw new Error("charge must be
+    nonnegative")` changed to `"charge must be positive"`; test `await
+    assert.rejects(charge(-1), { message: "charge must be positive" })`:
+    `exact_error_variant` / strong, `exposed` (today `broad_error` / weak,
+    `weakly_exposed`; rule 10). With `{ name: "Error" }`: `broad_error` /
+    weak (unchanged; no `message`).
 
 ## Test Mapping
 
@@ -673,14 +729,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
-- Planned: one unit test per changed example (5, 6, 7, 8, 13, 16, 18, 19,
-  22, 23, 24, 31, 32, 33), and a verdict corpus holding all 33 examples, each with
+- Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
+  19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
+  35 examples, each with
   the asserted parsed subject (registered test, collected assertion,
   relation) checked before the class.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4 and 9
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4, 9
+  and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
   `oracle_for_matcher`, `safe_error_class_payload_text`).
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 1
