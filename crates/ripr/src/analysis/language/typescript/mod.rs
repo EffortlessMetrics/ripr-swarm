@@ -72,6 +72,7 @@ mod paths;
 mod probe_shape;
 mod related_tests;
 mod static_limit;
+mod table_rows;
 #[cfg(test)]
 mod tests;
 mod tests_extract;
@@ -101,6 +102,7 @@ pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use static_limit::*;
+pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;

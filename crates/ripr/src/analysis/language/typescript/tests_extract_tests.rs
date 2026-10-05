@@ -110,7 +110,14 @@ test.only.sequential.each([
     assert_eq!(tests[0].local_name, "discounts %#");
     assert_eq!(tests[1].local_name, "adds concurrently %#");
     assert_eq!(tests[2].local_name, "normalizes sequentially %#");
-    assert!(tests.iter().all(|test| test.assertions.len() == 1));
+    // An inline literal table reads one concrete assertion per row.
+    assert_eq!(
+        tests
+            .iter()
+            .map(|test| test.assertions.len())
+            .collect::<Vec<_>>(),
+        vec![2, 1, 1]
+    );
 }
 
 #[test]

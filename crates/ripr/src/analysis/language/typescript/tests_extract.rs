@@ -1613,6 +1613,13 @@ pub(crate) fn test_name_and_assertions_from_call(
         bindings
     };
     let bindings = &bindings;
+    // An inline literal `test.each` table reads as one concrete case per
+    // row; any other table keeps the row-parameter assertions.
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(

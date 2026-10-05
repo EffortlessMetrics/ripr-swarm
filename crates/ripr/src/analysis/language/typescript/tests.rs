@@ -3642,8 +3642,17 @@ fn extract_tests_recognizes_test_each_table_calls() {
     );
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0].name, "discounts %#");
-    assert_eq!(tests[0].assertions.len(), 1);
-    assert_eq!(tests[0].assertions[0].matcher, "toBe");
+    // An inline literal table reads one concrete assertion per row.
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert!(tests[0].assertions.iter().all(|a| a.matcher == "toBe"));
+    assert_eq!(
+        tests[0]
+            .assertions
+            .iter()
+            .map(|a| a.expected_value_or_variant.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("90"), Some("140")]
+    );
     assert!(tests[0].body_text.contains("applyDiscount("));
 }
 
@@ -15479,6 +15488,7 @@ mod out_dir_specifier_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
 mod spec0234_owner_tests;
+mod table_case_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

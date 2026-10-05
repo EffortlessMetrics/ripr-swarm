@@ -504,3 +504,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — typescript_jest_vitest_assertion_facts (12)
+
+Reason:
+RIPR-SPEC-0027: inline literal test.each/it.each tables now read one concrete case per row; the applyDiscount finding (still exposed) drops typescript_table_case_unresolved and names the row oracle applyDiscount(150, 100) -> 140; the notifyStatus finding (still weakly_exposed) names the row literal mock payload toHaveBeenCalledWith(ready). No class moves.
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
