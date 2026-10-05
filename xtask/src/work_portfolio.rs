@@ -1647,26 +1647,87 @@ pub(crate) fn compile_work_portfolio(
         if members.len() < 2 {
             continue;
         }
-        let edge_id = format!("edge:duplicate_family:{requirement}");
-        let mut evidence = vec![format!("shared requirement `{requirement}`")];
-        if let Some(graph) = &captured.cargo_allow {
-            for requirement_row in &graph.requirements {
-                if requirement_row.id == requirement {
-                    for slice in &requirement_row.slices {
-                        evidence.push(format!(
-                            "slice `{}` delta `{}` issues {:?}",
-                            slice.id, slice.delta_id, slice.issue_refs
+        // Every member must hold an accepted contract in both paths: a
+        // duplicate-family edge never rests on draft or challenged work.
+        let accepted: Vec<u64> = members
+            .iter()
+            .copied()
+            .filter(|number| {
+                issues
+                    .iter()
+                    .find(|issue| issue.number == *number)
+                    .is_some_and(|issue| issue.contract_state == "accepted")
+            })
+            .collect();
+        if accepted.len() < 2 {
+            boundaries.insert(format!(
+                "duplicate-family grouping for `{requirement}` withheld: fewer than two member issues hold an accepted contract"
+            ));
+            continue;
+        }
+        let requirement_row = captured
+            .cargo_allow
+            .as_ref()
+            .and_then(|graph| graph.requirements.iter().find(|row| row.id == requirement));
+        match requirement_row {
+            Some(requirement_row) => {
+                // The captured authority exists: refuse to group distinct
+                // deltas of one requirement as duplicates.
+                let has_delta_identity = requirement_row
+                    .slices
+                    .iter()
+                    .any(|slice| !slice.delta_id.is_empty());
+                if has_delta_identity {
+                    let common: BTreeSet<String> = accepted
+                        .iter()
+                        .map(|number| {
+                            requirement_row
+                                .slices
+                                .iter()
+                                .filter(|slice| slice.issue_refs.contains(number))
+                                .map(|slice| slice.delta_id.clone())
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .reduce(|left, right| {
+                            left.intersection(&right).cloned().collect()
+                        })
+                        .unwrap_or_default();
+                    if common.is_empty() {
+                        boundaries.insert(format!(
+                            "duplicate-family grouping for `{requirement}` withheld: member issues resolve distinct deltas; no shared accepted delta"
                         ));
-                    }
-                    for spec in &requirement_row.spec_refs {
-                        evidence.push(format!("spec `{spec}`"));
+                        continue;
                     }
                 }
             }
-        } else {
-            boundaries.insert(format!(
-                "cargo-allow graph unavailable: duplicate-family evidence for `{requirement}` rests on issue metadata only"
-            ));
+            None => {
+                // Degraded path: the graph or requirement row is unavailable,
+                // so the edge stays visible as advisory evidence with the
+                // degraded basis named (never fabricated authority).
+                if captured.cargo_allow.is_none() {
+                    boundaries.insert(format!(
+                        "cargo-allow graph unavailable: duplicate-family evidence for `{requirement}` rests on issue metadata only"
+                    ));
+                } else {
+                    boundaries.insert(format!(
+                        "requirement `{requirement}` is absent from the captured cargo-allow graph: duplicate-family evidence rests on issue metadata only"
+                    ));
+                }
+            }
+        }
+        let members = accepted;
+        let edge_id = format!("edge:duplicate_family:{requirement}");
+        let mut evidence = vec![format!("shared requirement `{requirement}`")];
+        if let Some(requirement_row) = requirement_row {
+            for slice in &requirement_row.slices {
+                evidence.push(format!(
+                    "slice `{}` delta `{}` issues {:?}",
+                    slice.id, slice.delta_id, slice.issue_refs
+                ));
+            }
+            for spec in &requirement_row.spec_refs {
+                evidence.push(format!("spec `{spec}`"));
+            }
         }
         let subjects: Vec<String> = members
             .iter()
@@ -2521,7 +2582,12 @@ pub(crate) fn build_candidates_view(
         }
         command.push_str(&format!(" --limit {}", total as usize));
         retrieval_commands.push(command);
-        retrieval_commands.push("cargo xtask work portfolio --json".to_string());
+        let mut portfolio_command = "cargo xtask work portfolio".to_string();
+        if let Some(captured) = captured {
+            portfolio_command.push_str(&format!(" --captured {captured}"));
+        }
+        portfolio_command.push_str(" --json");
+        retrieval_commands.push(portfolio_command);
     }
     let boundaries = snapshot.partial_data_boundaries.clone();
     let view = WorkCandidatesViewV1 {
@@ -3986,6 +4052,24 @@ mod tests {
         let full = build_candidates_view(&snapshot, None, None, 25, None)?;
         if full.counts.selected != 12 || full.counts.omitted != 0 {
             return Err("the larger limit must retrieve the complete set".to_string());
+        }
+        let scoped = build_candidates_view(
+            &snapshot,
+            None,
+            None,
+            1,
+            Some("fixtures/work_portfolio/corpus"),
+        )?;
+        if scoped.counts.omitted == 0
+            || !scoped
+                .retrieval_commands
+                .iter()
+                .all(|command| command.contains("--captured fixtures/work_portfolio/corpus"))
+        {
+            return Err(format!(
+                "every retrieval command must preserve the caller's captured directory: {:?}",
+                scoped.retrieval_commands
+            ));
         }
         let default_ids: Vec<String> = view
             .candidates
