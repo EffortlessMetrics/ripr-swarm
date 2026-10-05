@@ -1124,7 +1124,7 @@ fn run_pipeline_for_diff_text(
             .iter()
             .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath)
     {
-        super::workspace::discover_python_test_files(&options.root)
+        super::workspace::discover_python_test_files(&options.root)?
     } else {
         None
     };

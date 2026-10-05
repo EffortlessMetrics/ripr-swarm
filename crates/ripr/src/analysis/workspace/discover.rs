@@ -238,10 +238,15 @@ fn is_named_python_test(path: &Path) -> bool {
 }
 
 /// Count Python test files in the workspace with a bounded, no-follow walk that
-/// skips the same directories as the other discovery walks. `None` when none
-/// exist. Used only to name, in human output, that a Rust change may be covered
-/// by tests ripr does not link to Rust.
-pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTests> {
+/// skips the same directories as the other discovery walks. `Ok(None)` when no
+/// Python test was seen, including when the entry cap stopped the walk before
+/// one was found: the note only names tests ripr saw, so an absent note is not
+/// a claim that none exist. A cancelled walk is an error, not a partial count.
+/// Used only to name, in human output, that a Rust change may be covered by
+/// tests ripr does not link to Rust.
+pub(crate) fn discover_python_test_files(
+    root: &Path,
+) -> Result<Option<UnlinkedPythonTests>, String> {
     let mut count = 0usize;
     let mut example: Option<PathBuf> = None;
     let mut visited = 0usize;
@@ -252,9 +257,7 @@ pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTe
             continue;
         };
         for entry in entries.flatten() {
-            if cancellation::checkpoint().is_err() {
-                break 'walk;
-            }
+            cancellation::checkpoint()?;
             visited += 1;
             if visited > PYTHON_TEST_WALK_ENTRY_CAP {
                 capped = true;
@@ -286,12 +289,14 @@ pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTe
             }
         }
     }
-    let example = example?;
-    Some(UnlinkedPythonTests {
+    let Some(example) = example else {
+        return Ok(None);
+    };
+    Ok(Some(UnlinkedPythonTests {
         count,
         example: example.to_string_lossy().replace('\\', "/"),
         at_least: capped,
-    })
+    }))
 }
 
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
@@ -394,6 +399,26 @@ mod tests {
     }
 
     #[test]
+    fn discover_python_test_files_reports_cancellation_instead_of_a_partial_count()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-pytest-cancel-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("tests"))?;
+        fs::write(dir.join("tests/test_a.py"), "")?;
+        let token = cancellation::AnalysisCancellationToken::new();
+        assert!(token.cancel(cancellation::AnalysisAbortKind::Superseded));
+        let result = cancellation::with_token(&token, || discover_python_test_files(&dir));
+        let _ = fs::remove_dir_all(&dir);
+        let error = result.err().ok_or("a cancelled walk must be an error")?;
+        assert!(cancellation::is_cancellation_error(&error), "{error}");
+        Ok(())
+    }
+
+    #[test]
     fn discover_python_test_files_counts_and_skips_ignored_dirs()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir().join(format!(
@@ -415,7 +440,7 @@ mod tests {
         fs::write(dir.join("tests/test_a.py"), "")?;
         fs::write(dir.join("tests/__init__.py"), "")?;
         fs::write(dir.join("target/test_ignored.py"), "")?;
-        let found = discover_python_test_files(&dir);
+        let found = discover_python_test_files(&dir)?;
         assert_eq!(
             found,
             Some(UnlinkedPythonTests {
@@ -427,7 +452,7 @@ mod tests {
         fs::remove_file(dir.join("tests/test_a.py"))?;
         fs::remove_file(dir.join("tests/test_b.py"))?;
         fs::remove_file(dir.join("tests/__init__.py"))?;
-        assert_eq!(discover_python_test_files(&dir), None);
+        assert_eq!(discover_python_test_files(&dir)?, None);
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
