@@ -434,15 +434,14 @@ fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
     let Some(problem) = checkout_problem(repo, dir) else {
         return Ok(true);
     };
-    // A checkout at the pinned revision whose tree has edits or extra files
-    // (say a `mutants.out/` written inside it) may hold someone's work, so it
-    // is reported, never deleted. Only a missing, empty or interrupted
-    // checkout is replaced.
-    if dir.join(".git").exists()
-        && git(dir, &["rev-parse", "HEAD"]).is_ok_and(|head| head == repo.revision)
-    {
+    // A checkout whose tree has edits or extra files (say a `mutants.out/`
+    // written inside it), or with commits on top of the shallow pin, may hold
+    // someone's work, so it is reported, never deleted, whatever revision it
+    // sits at. Only a missing, empty or interrupted checkout, or a clean one
+    // at an earlier pin, is replaced.
+    if let Some(work) = local_work(dir) {
         return Err(format!(
-            "{} is at the pinned revision but {problem}; clean it or move it, then fetch again",
+            "{} {work} ({problem}); clean it or move it, then fetch again",
             dir.display()
         ));
     }
@@ -486,6 +485,26 @@ fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
         return Err(problem);
     }
     Ok(false)
+}
+
+/// Work in an existing checkout that a re-fetch would destroy, or `None`
+/// when there is none to lose. A fetch that failed before checkout has no
+/// HEAD and nothing to lose. Pins are fetched with `--depth 1`, so a pinned
+/// commit has no parent: a HEAD with one carries commits made here.
+fn local_work(dir: &Path) -> Option<&'static str> {
+    if !dir.join(".git").exists()
+        || git(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err()
+    {
+        return None;
+    }
+    if git(dir, &["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok() {
+        return Some("has commits on top of the fetched revision");
+    }
+    match git(dir, &["status", "--porcelain", "--untracked-files=normal"]) {
+        Ok(status) if status.is_empty() => None,
+        Ok(_) => Some("has local edits or untracked files"),
+        Err(_) => Some("has a working tree whose status could not be read"),
+    }
 }
 
 /// Why `dir` is not the pinned subject, or `None` when it is. pilot reads
@@ -851,18 +870,20 @@ impl Cut {
             }
             // A pick without an owner counts as its own function, so a
             // missing field can only understate repetition, never hide it.
+            // Keyed by file and owner, as pilot spreads its picks, so two
+            // same-named functions in different files stay two functions.
+            let file = row.get("file").and_then(Value::as_str).unwrap_or("");
             let owner = row
                 .get("owner")
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| {
                     format!(
-                        "{}:{}",
-                        row.get("file").and_then(Value::as_str).unwrap_or(""),
+                        "line {}",
                         row.get("line").and_then(Value::as_u64).unwrap_or(0)
                     )
                 });
-            owners.insert(owner);
+            owners.insert((file.to_string(), owner));
         }
         cut.distinct_functions = owners.len();
         cut

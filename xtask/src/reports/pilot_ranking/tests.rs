@@ -244,6 +244,81 @@ fn pick(verdict: &str, owner: Option<&str>, line: u64) -> Value {
 }
 
 #[test]
+fn same_named_functions_in_two_files_stay_two_functions() {
+    let mut other = pick("refuted", Some("parse"), 2);
+    other["file"] = json!("src/b.rs");
+    let judged = vec![pick("confirmed", Some("parse"), 1), other];
+    assert_eq!(Cut::of(&judged, 10).distinct_functions, 2);
+}
+
+/// A scratch git checkout under the target directory, emptied first.
+fn scratch_checkout(name: &str) -> Result<PathBuf, String> {
+    let dir = PathBuf::from("target/ripr/pilot-ranking/test-scratch").join(name);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|err| format!("remove {}: {err}", dir.display()))?;
+    }
+    fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
+    git(&dir, &["init", "--quiet"])?;
+    Ok(dir)
+}
+
+fn commit(dir: &Path, file: &str) -> Result<(), String> {
+    fs::write(dir.join(file), "x\n").map_err(|err| format!("write {file}: {err}"))?;
+    git(dir, &["add", file])?;
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            file,
+        ],
+    )?;
+    Ok(())
+}
+
+/// A re-fetch replaces only what holds no one's work: an interrupted fetch
+/// or a clean checkout of one commit (an earlier shallow pin). Edits,
+/// untracked files and commits on top are refused at any revision.
+#[test]
+fn refetch_refuses_local_work_at_any_revision() -> Result<(), String> {
+    let interrupted = scratch_checkout("interrupted")?;
+    assert_eq!(local_work(&interrupted), None);
+
+    let clean = scratch_checkout("clean")?;
+    commit(&clean, "a.rs")?;
+    assert_eq!(local_work(&clean), None);
+
+    let untracked = scratch_checkout("untracked")?;
+    commit(&untracked, "a.rs")?;
+    fs::write(untracked.join("notes.txt"), "mine\n").map_err(|err| err.to_string())?;
+    assert!(local_work(&untracked).is_some_and(|work| work.contains("untracked")));
+
+    let edited = scratch_checkout("edited")?;
+    commit(&edited, "a.rs")?;
+    fs::write(edited.join("a.rs"), "edited\n").map_err(|err| err.to_string())?;
+    assert!(local_work(&edited).is_some_and(|work| work.contains("edits")));
+
+    let committed = scratch_checkout("committed")?;
+    commit(&committed, "a.rs")?;
+    commit(&committed, "b.rs")?;
+    assert!(local_work(&committed).is_some_and(|work| work.contains("commits")));
+
+    // The refusal reaches fetch: the marked checkout survives.
+    fs::write(committed.join(".git").join(OWNER_MARKER), "demo\n")
+        .map_err(|err| err.to_string())?;
+    assert!(materialize(&repo(), &committed).is_err_and(|err| err.contains("commits on top")));
+    assert!(committed.join("b.rs").is_file());
+    Ok(())
+}
+
+#[test]
 fn cuts_count_precision_and_distinct_functions_within_k() {
     let judged = vec![
         pick("confirmed", Some("src/a.rs::f"), 1),
