@@ -1298,9 +1298,11 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
 /// unterminated `'` before an unquoted token, plus any later quote, would
 /// pass that check. Walk quote state so a closer of `'a '` cannot reopen
 /// around a following unquoted token. The opening quote must be a delimiter
-/// (start of the string or after whitespace). A closer followed by a word
-/// character is an apostrophe, not the end of the argument (`it's`); `;`,
-/// backticks, and other token boundaries after the closer remain valid.
+/// (start of the string or after whitespace), so unquoted contractions such
+/// as `don't` do not open a quote. Once open, POSIX single quotes close on
+/// the next `'`, even when a word character follows (`'a'{ref}` is quoted
+/// `a` concatenated with an unquoted ref). A closer followed by `; then`
+/// remains a closer.
 fn recovery_ref_occurrence_is_shell_quoted(text: &str, at: usize, len: usize) -> bool {
     let after = at + len;
     let adjacent = at > 0
@@ -1319,29 +1321,12 @@ fn inside_closed_single_quoted_argument(text: &str, start: usize, end: usize) ->
             continue;
         }
         if in_quote {
-            if !quote_is_in_word_apostrophe(text, i) {
-                in_quote = false;
-            }
+            in_quote = false;
         } else if i == 0 || text[..i].ends_with(char::is_whitespace) {
             in_quote = true;
         }
     }
-    if !in_quote {
-        return false;
-    }
-    let Some(rel) = text.get(end..).and_then(|rest| rest.find('\'')) else {
-        return false;
-    };
-    !quote_is_in_word_apostrophe(text, end + rel)
-}
-
-fn quote_is_in_word_apostrophe(text: &str, quote_at: usize) -> bool {
-    let after = quote_at + 1;
-    after < text.len()
-        && text[after..]
-            .chars()
-            .next()
-            .is_some_and(|next| next.is_alphanumeric() || next == '_')
+    in_quote && text.get(end..).is_some_and(|rest| rest.contains('\''))
 }
 
 #[test]
@@ -1418,6 +1403,20 @@ fn odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted() {
     assert!(
         !recovery_ref_occurrence_is_shell_quoted(&separated, at, hostile.len()),
         "unquoted ref between two quoted fragments must fail: {separated}"
+    );
+
+    // POSIX: a single quote closes even when a word character follows.
+    // `'a'{ref}` is quoted `a` concatenated with an unquoted ref. An
+    // in-word apostrophe heuristic would keep the quote open and accept it.
+    let glued = format!("git fetch origin -- 'a'{hostile} ' b'");
+    let at = glued.find(hostile);
+    assert!(at.is_some(), "fixture must carry the ref: {glued}");
+    let Some(at) = at else {
+        return;
+    };
+    assert!(
+        !recovery_ref_occurrence_is_shell_quoted(&glued, at, hostile.len()),
+        "unquoted ref glued to a closed quote must fail: {glued}"
     );
 }
 
