@@ -775,6 +775,58 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// A HEAD read that also detects an A-B-A swap between two reads (#5930).
+/// The `head` is the commit `current_git_head` reports; `reflog_top` is the
+/// newest reflog entries' fingerprint and `reflog_len` is the total HEAD
+/// reflog entry count. Two snapshots are equal only when all three match,
+/// so a swap that returns HEAD to the same commit still shows as movement.
+/// The count is the append-sensitive position: every HEAD update appends
+/// exactly one reflog entry, so a repeated A-B-A cycle advances the count
+/// even when the newest entries read identically at both snapshots (the
+/// window alone collides there because `%ct` is the commit timestamp, not
+/// the update time). An unreadable or missing reflog degrades to an empty
+/// fingerprint with count zero (HEAD-only comparison, the previous
+/// behavior) rather than failing flows in repositories without reflogs;
+/// that residual is documented, not silent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HeadIdentity {
+    pub(crate) head: String,
+    pub(crate) reflog_top: String,
+    pub(crate) reflog_len: usize,
+}
+
+pub(crate) fn current_git_head_identity(root: &Path) -> Result<HeadIdentity, String> {
+    let head = current_git_head(root)?;
+    // Lenient by design (see struct docs): only the HEAD read is strict.
+    // One spawn reads the whole HEAD reflog so the count and the window
+    // are one consistent snapshot; the newest three formatted entries keep
+    // single-cycle detection independent of the count.
+    let (reflog_len, reflog_top) =
+        match git_spawn(root, &["log", "-g", "--format=%H %ct %gs", "HEAD"]) {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let entries: Vec<&str> = text
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                let top = entries
+                    .iter()
+                    .take(3)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (entries.len(), top)
+            }
+            _ => (0, String::new()),
+        };
+    Ok(HeadIdentity {
+        head,
+        reflog_top,
+        reflog_len,
+    })
+}
+
 /// The object type Git reports for a well-formed revision, or `None` when the
 /// object is absent. Callers must establish repository liveness first: any
 /// non-zero `git cat-file` exit is read as absence, not as an infrastructure
@@ -1260,6 +1312,85 @@ mod tests {
             return Err(error);
         }
         Ok(root)
+    }
+
+    fn commit_file(root: &Path, name: &str, body: &str) -> Result<(), String> {
+        std::fs::write(root.join(name), body)
+            .map_err(|error| format!("write fixture file: {error}"))?;
+        run_git(root, &["add", "--", name])?;
+        run_git(root, &["commit", "--quiet", "-m", name])?;
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_detects_an_a_b_a_swap_between_reads() -> Result<(), String> {
+        // Issue #5930: a HEAD swap that returns to the same commit inside
+        // an evaluation window is invisible to commit comparison, so the
+        // after-phase `current` check must compare head identities. The
+        // swap is sequenced between the two reads (the deterministic
+        // equivalent of a mid-evaluation interleave): no timing involved.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let before = current_git_head_identity(&root)?;
+        // A quiet re-read with no movement must stay equal: no false positive.
+        let steady = current_git_head_identity(&root)?;
+        assert_eq!(before, steady);
+        // A -> B -> A: HEAD ends where it started, but the reflog grew.
+        commit_file(&root, "b.txt", "b")?;
+        run_git(&root, &["reset", "--quiet", "--soft", "HEAD~1"])?;
+        let after = current_git_head_identity(&root)?;
+        assert_eq!(
+            before.head, after.head,
+            "the old commit-only check would pass this swap"
+        );
+        assert_ne!(
+            before, after,
+            "head identity must detect the A-B-A swap: {before:?} vs {after:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_counts_repeated_a_b_a_cycles_apart() -> Result<(), String> {
+        // #6827 review: the newest-entries window alone collides across a
+        // repeated A-B-A cycle (reset messages and `%ct` commit timestamps
+        // repeat), so the reflog length must discriminate. The first
+        // snapshot is taken after three alternating resets (the window
+        // reads A, B, A); another B-to-A cycle reproduces that window
+        // byte-identically while the count advances.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let a = current_git_head(&root)?;
+        commit_file(&root, "b.txt", "b")?;
+        let b = current_git_head(&root)?;
+        for target in [&a, &b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let first = current_git_head_identity(&root)?;
+        for target in [&b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let second = current_git_head_identity(&root)?;
+        assert_eq!(
+            first.head, second.head,
+            "the window-collision setup must return HEAD to the same commit"
+        );
+        assert_eq!(
+            first.reflog_top, second.reflog_top,
+            "the window must collide here or this test proves nothing about the count"
+        );
+        assert_eq!(
+            second.reflog_len,
+            first.reflog_len + 2,
+            "two more HEAD updates must advance the reflog count by two"
+        );
+        assert_ne!(
+            first, second,
+            "head identity must detect the repeated A-B-A cycle: {first:?} vs {second:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
