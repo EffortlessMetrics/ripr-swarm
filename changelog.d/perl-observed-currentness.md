@@ -1,6 +1,7 @@
 <!-- section: Fixed -->
 - Perl: a fact-packet finding whose source is on disk (digest verified) and
-  whose change range contains a line the diff adds is now
+  whose change range contains a line the diff adds, with matching text in
+  the source, is now
   `candidate_current`. It now appears in the default human report, SARIF
   results, GitHub annotations, `finding_alignment`
   items and the diff badge's exposure-gap count, as candidate-current Python

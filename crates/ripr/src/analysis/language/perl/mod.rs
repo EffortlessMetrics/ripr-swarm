@@ -381,8 +381,9 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
 /// #6586: a Perl change is candidate-current only when the consumer observed
 /// it: the file is on disk under the analysis root after resolving symlinks
 /// (so ingestion verified its digest against the packet) and the diff adds a
-/// line inside the change's range. Anything else, including fixture-only packets and changes
-/// the diff does not touch, stays the explicit unknown.
+/// line inside the change's range whose text matches the source at that line.
+/// Anything else, including fixture-only packets, stale diffs and changes the
+/// diff does not touch, stays the explicit unknown.
 fn perl_change_currentness(
     root: &std::path::Path,
     changed_files: &[ChangedFile],
@@ -401,12 +402,30 @@ fn perl_change_currentness(
     if !source.starts_with(&canonical_root) || !source.is_file() {
         return SourceCurrentness::UnresolvedSubject;
     }
+    // The diff's added line must also exist in the digest-verified source at
+    // that coordinate with the same text, so a stale or foreign diff cannot
+    // promote a finding to a candidate edit target.
+    let Ok(text) = std::fs::read_to_string(&source) else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    let source_lines = text.lines().collect::<Vec<_>>();
+    let source_line = |line: usize| {
+        let text = source_lines.get(line.checked_sub(1)?)?;
+        Some(if line == 1 {
+            text.trim_start_matches('\u{feff}')
+        } else {
+            text
+        })
+    };
     let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
     let added_in_range = changed_files
         .iter()
         .filter(|changed| changed.path == std::path::Path::new(&file.path))
         .flat_map(|changed| &changed.added_lines)
-        .any(|added| lines.contains(&added.line));
+        .any(|added| {
+            lines.contains(&added.line)
+                && source_line(added.line) == Some(added.text.trim_end_matches('\r'))
+        });
     if added_in_range {
         SourceCurrentness::CandidateCurrent
     } else {

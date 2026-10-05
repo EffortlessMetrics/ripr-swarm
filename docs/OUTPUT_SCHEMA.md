@@ -1114,7 +1114,8 @@ The evidence-first fields are additive in schema `0.2`:
   that seeded the probe. A Perl fact-packet finding is `candidate_current`
   only when its source is on disk under the root after resolving symlinks
   (its digest verified at ingestion; an unreadable source rejects the packet)
-  and the diff adds a line inside the packet change's range;
+  and the diff adds a line inside the packet change's range whose text
+  matches the source at that line;
   otherwise it stays `unresolved_subject` (#6586). Like candidate-current
   Python and TypeScript findings, such a Perl finding reaches SARIF results,
   GitHub annotations, `finding_alignment` items and the diff badge's

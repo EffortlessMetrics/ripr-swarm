@@ -4128,23 +4128,34 @@ fn perl_finding_is_candidate_current_only_for_an_observed_changed_line() -> Resu
         }
     }
     let _guard = TempDirGuard(root.clone());
-    let source = "package My::App;\nsub discount { return $_[0] / 2 }\n1;\n";
+    // Lines 14-16 all carry the added text, so only the range check can
+    // reject the line-14 and line-16 diffs below.
+    let changed_text = "    return $amount / 2;";
+    let lines_with = |line15: &str, ending: &str| {
+        let mut lines = vec!["# filler"; 13];
+        lines.extend([changed_text, line15, changed_text, "1;"]);
+        lines.join(ending) + ending
+    };
+    let source = lines_with(changed_text, "\n");
+    let crlf_source = lines_with(changed_text, "\r\n");
+    let stale_source = lines_with("    return $amount;", "\n");
+    let short_source = "package My::App;\nsub discount { return $_[0] / 2 }\n1;\n".to_string();
     let packet_path = root.join("facts.json");
     let added = |path: &str, line: usize| ChangedFile {
         path: std::path::PathBuf::from(path),
         added_lines: vec![ChangedLine {
             line,
-            text: "    return $amount / 2;".to_string(),
+            text: changed_text.to_string(),
             new_side_line: line,
         }],
         removed_lines: Vec::new(),
     };
     let currentness =
-        |on_disk: bool, changed: &[ChangedFile]| -> Result<SourceCurrentness, String> {
+        |on_disk: Option<&str>, changed: &[ChangedFile]| -> Result<SourceCurrentness, String> {
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("lib/My")).map_err(|error| error.to_string())?;
             let mut packet = EXACT_RETURN_PACKET.to_string();
-            if on_disk {
+            if let Some(source) = on_disk {
                 std::fs::write(root.join("lib/My/App.pm"), source)
                     .map_err(|error| error.to_string())?;
                 packet = packet.replace(
@@ -4165,23 +4176,28 @@ fn perl_finding_is_candidate_current_only_for_an_observed_changed_line() -> Resu
             Ok(finding.source_currentness)
         };
     // The change spans line 15 of lib/My/App.pm.
-    assert_eq!(
-        currentness(true, &[added("lib/My/App.pm", 15)])?,
-        SourceCurrentness::CandidateCurrent
-    );
+    for current in [&source, &crlf_source] {
+        assert_eq!(
+            currentness(Some(current), &[added("lib/My/App.pm", 15)])?,
+            SourceCurrentness::CandidateCurrent
+        );
+    }
     for (on_disk, changed) in [
         // Fixture-only packet: no source to verify.
-        (false, vec![added("lib/My/App.pm", 15)]),
+        (None, vec![added("lib/My/App.pm", 15)]),
         // The diff does not add a line inside the change.
-        (true, vec![added("lib/My/App.pm", 14)]),
-        (true, vec![added("lib/My/App.pm", 16)]),
-        (true, vec![added("lib/My/Other.pm", 15)]),
-        (true, Vec::new()),
+        (Some(&source), vec![added("lib/My/App.pm", 14)]),
+        (Some(&source), vec![added("lib/My/App.pm", 16)]),
+        (Some(&source), vec![added("lib/My/Other.pm", 15)]),
+        (Some(&source), Vec::new()),
+        // A stale diff: the source has different text, or no line 15.
+        (Some(&stale_source), vec![added("lib/My/App.pm", 15)]),
+        (Some(&short_source), vec![added("lib/My/App.pm", 15)]),
     ] {
         assert_eq!(
-            currentness(on_disk, &changed)?,
+            currentness(on_disk.map(String::as_str), &changed)?,
             SourceCurrentness::UnresolvedSubject,
-            "{on_disk} {changed:?}"
+            "{on_disk:?} {changed:?}"
         );
     }
     Ok(())
@@ -4207,7 +4223,9 @@ fn perl_finding_through_a_symlink_out_of_the_root_stays_unresolved() -> Result<(
     let outside = base.join("outside/My");
     std::fs::create_dir_all(root.join("lib")).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
-    let source = "package My::App;\nsub discount { return $_[0] / 2 }\n1;\n";
+    let mut lines = vec!["# filler"; 14];
+    lines.extend(["    return $amount / 2;", "1;"]);
+    let source = &(lines.join("\n") + "\n");
     std::fs::write(outside.join("App.pm"), source).map_err(|error| error.to_string())?;
     let changed = [ChangedFile {
         path: std::path::PathBuf::from("lib/My/App.pm"),

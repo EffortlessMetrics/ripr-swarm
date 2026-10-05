@@ -48,7 +48,8 @@ producer claims: a finding is `candidate_current` only when its source file
 is on disk under the analysis root after resolving symlinks (so ingestion
 verified the packet's
 digest against it) and the diff adds a line inside the packet change's
-range. A source that exists but cannot be read rejects the packet at
+range whose text matches the verified source at that line, so a stale diff
+cannot promote a finding. A source that exists but cannot be read rejects the packet at
 ingestion, so it never counts as verified. A fixture-only packet, or a change
 the diff does not add a line to, stays `unresolved_subject`. Candidate-current
 Perl findings pass the same `is_candidate_actionable` filters as Python and
