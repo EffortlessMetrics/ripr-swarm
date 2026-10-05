@@ -566,13 +566,19 @@ fn remove_replaced_generation_files(
     }
 }
 
-/// True when no directory between `root` (exclusive) and `path` (exclusive) is a
+/// True when `root` and no directory between it and `path` (exclusive) is a
 /// symlink, so a delete through `path` cannot leave the cache. An unreadable
 /// component counts as unsafe: cleanup is best effort, so it skips.
 fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
+    // The entry directory itself must be a real directory, or every descendant
+    // check below would run inside the symlink target.
+    match std::fs::symlink_metadata(root) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return false,
+    }
     let mut current = root.to_path_buf();
     let mut components = relative.components().peekable();
     while let Some(component) = components.next() {
@@ -1948,6 +1954,33 @@ mod tests {
         );
         ignore_remove_dir_all(&dir);
         ignore_remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory()
+    -> Result<(), String> {
+        let base = isolated_dir("cleanup-symlink-root");
+        ignore_remove_dir_all(&base);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("g1-1-0")).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("g1-1-0/victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        let entry = base.join("entry");
+        std::os::unix::fs::symlink(&outside, &entry).map_err(|err| err.to_string())?;
+        let refs = vec![ShardedCacheShardRef {
+            index: 0,
+            file: "g1-1-0/victim.json".to_string(),
+            seams: 1,
+        }];
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 1, refs, None, Vec::new());
+        remove_replaced_generation_files(&entry, &previous, "3-3-0");
+        assert!(
+            outside.join("g1-1-0/victim.json").exists(),
+            "a symlinked entry directory must not be a delete root"
+        );
+        ignore_remove_dir_all(&base);
         Ok(())
     }
 

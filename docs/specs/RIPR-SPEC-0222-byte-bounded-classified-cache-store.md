@@ -82,7 +82,7 @@ proving a universal RSS threshold.
   hour (a terminated or superseded writer leaves them). The previous
   manifest is integrity-validated before any of its files are deleted,
   and only files under `g*/` are ever deleted. A listed path with a
-  symlinked directory component is skipped, so a delete cannot leave the
+  symlinked directory component, or under a symlinked entry directory, is skipped, so a delete cannot leave the
   cache. The check and the delete are not atomic: an attacker who can swap a
   directory for a symlink in the cache directory between them, with a forged
   digest-valid manifest, can still redirect one delete. The per-key
@@ -185,6 +185,7 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_only_deletes_files_inside_generation_directories`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::symlink_guard_rejects_parent_and_root_components`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_publication_sweeps_an_old_orphan_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::tampered_previous_manifest_never_deletes_the_live_manifest`
