@@ -2285,7 +2285,11 @@ fn bracketed_expr_has_type(
             // A bare `( .. )` is a parenthesised expression only when nothing
             // callable precedes it: `f(..)`, `m::<T>(..)`, `mac!(..)`, `x[0](..)`
             // and `(f)(..)` are calls whose result type is unknown.
+            // `return (..)`, `break (..)` and a match arm's `=> (..)` still
+            // open a parenthesised expression.
             let callable_before = before > 0
+                && !ends_with_expression_keyword(&bytes[..before])
+                && !bytes[..before].ends_with(b"=>")
                 && (is_ident_byte(bytes[before - 1])
                     || matches!(bytes[before - 1], b'>' | b'!' | b')' | b']' | b'?')
                     || !bytes[before - 1].is_ascii());
@@ -2316,8 +2320,16 @@ fn bracketed_expr_has_type(
 fn path_start(bytes: &[u8], end: usize) -> usize {
     let mut start = end;
     loop {
-        while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
-            start -= 1;
+        // Colons only in `::` pairs: a lone `:` is a field or type
+        // separator (`field:Site::new()`), not part of the path.
+        loop {
+            if start > 0 && is_ident_byte(bytes[start - 1]) {
+                start -= 1;
+            } else if start >= 2 && bytes[start - 1] == b':' && bytes[start - 2] == b':' {
+                start -= 2;
+            } else {
+                break;
+            }
         }
         if start == 0 || bytes[start - 1] != b'>' {
             return start;
@@ -2331,6 +2343,19 @@ fn path_start(bytes: &[u8], end: usize) -> usize {
             return start;
         }
     }
+}
+
+/// Whether `bytes` ends with a keyword that takes an expression operand, so a
+/// following `(` groups an expression instead of calling a function.
+fn ends_with_expression_keyword(bytes: &[u8]) -> bool {
+    let word_start = bytes
+        .iter()
+        .rposition(|byte| !is_ident_byte(*byte))
+        .map_or(0, |index| index + 1);
+    matches!(
+        &bytes[word_start..],
+        b"return" | b"break" | b"yield" | b"in" | b"if" | b"while" | b"match" | b"else"
+    )
 }
 
 /// Index of the bracket opening the one closed at `close`, or `None`.
@@ -5380,6 +5405,13 @@ let r = try_parse_summary(\"x\");",
             ("if cond { Site::new() } else { other() }.build();", false),
             ("match v { _ => Site::new() }.build();", false),
             ("(Site::FACTORY()).build();", false),
+            ("return (Site::new()).build();", true),
+            ("let s = Site::new(); return (s).build();", true),
+            ("match v { _ => (Site::new()).build() };", true),
+            ("within(Site::new()).build();", false),
+            ("let w = W { field:Site::new().build() };", true),
+            ("let w = W { field:Site { langs: 1 }.build() };", true),
+            ("let w = W { field:Cache::new().build() };", false),
         ];
         for (body, expected) in cases {
             let summary = test("tests/site.rs", "t", body);
