@@ -28,6 +28,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
             );
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
+        mark_default_exported_bindings(&ret.program.body, &mut owners);
         let entries = module_entries_by_owner(&ret.program.body, source);
         for owner in &mut owners {
             if owner.class_name.is_none()
@@ -221,6 +222,51 @@ fn without_reassigned_commonjs_exports(
         })
         .map(|(owner, _)| owner)
         .collect()
+}
+
+/// Mark a top-level function owner as the module's default export when a
+/// separate statement exports its binding as `default`: `export default
+/// price;` or a source-less `export { price as default }` (RIPR-SPEC-0234
+/// rule 5). Without this, a default import of such an owner would lose its
+/// declaration anchor. Only class-free owners qualify: a method is never the
+/// module's default export itself.
+fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
+    let mut default_locals: Vec<String> = Vec::new();
+    for stmt in body {
+        match stmt {
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::Identifier(ident) = &export.declaration {
+                    default_locals.push(ident.name.to_string());
+                }
+            }
+            Statement::ExportNamedDeclaration(export)
+                if export.declaration.is_none() && export.source.is_none() =>
+            {
+                for specifier in &export.specifiers {
+                    if specifier.export_kind == ImportOrExportKind::Type {
+                        continue;
+                    }
+                    if module_export_name_text(&specifier.exported).as_deref() == Some("default")
+                        && let Some(local) = module_export_name_text(&specifier.local)
+                    {
+                        default_locals.push(local);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if default_locals.is_empty() {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner.class_name.is_none()
+            && owner.owner_kind != OwnerKind::ModuleFunction
+            && default_locals.contains(&owner.name)
+        {
+            owner.exported_as_default = true;
+        }
+    }
 }
 
 /// `module.exports` as a static member expression on the bare `module`

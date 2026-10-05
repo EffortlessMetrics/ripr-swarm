@@ -166,12 +166,28 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 /// `oracle_kind` (always populated live) plus an optional `observed_expression`
 /// token / side-channel check; absence of `observed_expression` no longer
 /// re-promotes a swallowed side effect to Exposed.
+///
+/// ### Whole identifiers and alias locals (RIPR-SPEC-0234 rules 6 and 7)
+///
+/// In the value branch "references the owner" and "contains a changed token"
+/// are whole-identifier occurrences ([`ts_references_identifier`]): `address`
+/// does not reference `add`, while the member segment in `ns.price(` does
+/// reference `price`. The observed expression (and the one-hop initializer)
+/// also references the owner when it names the `local` of an
+/// `import { owner as local }` that gives the same test its
+/// `ImportAliasOwnerCall` relation. A default-import local gets no such
+/// credit. The effect side-channel test below stays a substring test
+/// (Decision 4): there a miss grants credit, so tightening it would add
+/// credit.
 pub(crate) fn ts_changed_value_is_observed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
-    owner_name: &str,
+    owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
 ) -> bool {
+    let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
     // families (ReturnValue / FieldConstruction). All other families keep the
     // pre-guard (always-confirmed) behaviour.
@@ -229,13 +245,28 @@ pub(crate) fn ts_changed_value_is_observed(
                 let Some(ref observed) = assertion.observed_expression else {
                     continue;
                 };
-                if observed.contains(owner_name) {
+                // Rule 7: the owner's names for this test are the owner name
+                // plus the alias-rename locals behind an
+                // `ImportAliasOwnerCall` relation.
+                let mut owner_names: Vec<&str> = vec![owner_name];
+                if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+                    owner_names.extend(import_alias_owner_locals(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    ));
+                }
+                // Rule 6: whole-identifier occurrences only.
+                if owner_names
+                    .iter()
+                    .any(|name| ts_references_identifier(observed, name))
+                {
                     return true;
                 }
-                if !changed_tokens.is_empty()
-                    && changed_tokens
-                        .iter()
-                        .any(|tok| observed.contains(tok.as_str()))
+                if changed_tokens
+                    .iter()
+                    .any(|tok| ts_references_identifier(observed, tok))
                 {
                     return true;
                 }
@@ -247,7 +278,7 @@ pub(crate) fn ts_changed_value_is_observed(
                 // assert-the-return-value pattern.
                 if ts_observed_local_aliases_owner(
                     observed,
-                    owner_name,
+                    &owner_names,
                     &changed_tokens,
                     &candidate.test.body_text,
                 ) {
@@ -328,7 +359,7 @@ pub(crate) fn ts_changed_value_is_observed(
 /// fail-closed downgrade.
 fn ts_observed_local_aliases_owner(
     observed: &str,
-    owner_name: &str,
+    owner_names: &[&str],
     changed_tokens: &[String],
     test_body: &str,
 ) -> bool {
@@ -368,8 +399,14 @@ fn ts_observed_local_aliases_owner(
                     .map(|p| rhs_start + p)
                     .unwrap_or(test_body.len());
                 let rhs = &test_body[rhs_start..rhs_end];
-                if rhs.contains(owner_name)
-                    || changed_tokens.iter().any(|tok| rhs.contains(tok.as_str()))
+                // RIPR-SPEC-0234 rules 6 and 7: the same whole-identifier
+                // test, over the owner name and its alias-rename locals.
+                if owner_names
+                    .iter()
+                    .any(|name| ts_references_identifier(rhs, name))
+                    || changed_tokens
+                        .iter()
+                        .any(|tok| ts_references_identifier(rhs, tok))
                 {
                     return true;
                 }
@@ -378,6 +415,27 @@ fn ts_observed_local_aliases_owner(
         search_from = after.max(abs + 1);
     }
     false
+}
+
+/// `true` when `text` contains `ident` as a whole identifier: the characters
+/// on both sides of the occurrence are not `[A-Za-z0-9_$]` (RIPR-SPEC-0234
+/// rule 6). A member segment counts (`ns.price(` references `price`);
+/// `address` does not reference `add`. An empty `ident` never matches.
+pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    if ident.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    text.match_indices(ident).any(|(at, _)| {
+        let before_ok = at == 0 || bytes.get(at - 1).is_none_or(|&b| !is_ident_byte(b));
+        let after_ok = bytes
+            .get(at + ident.len())
+            .is_none_or(|&b| !is_ident_byte(b));
+        before_ok && after_ok
+    })
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.
@@ -2575,7 +2633,14 @@ pub(crate) fn classify_change_with_alias_state(
         );
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
-        && ts_changed_value_is_observed(&probe_shape, line_text, &owner.name, &related_candidates);
+        && ts_changed_value_is_observed(
+            &probe_shape,
+            line_text,
+            owner,
+            &related_candidates,
+            alias_map,
+            workspace_root,
+        );
 
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if related.is_empty()
     {

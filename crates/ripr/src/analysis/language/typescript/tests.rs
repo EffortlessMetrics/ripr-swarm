@@ -15477,6 +15477,7 @@ mod module_entry_tests;
 mod out_dir_specifier_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
+mod spec0234_owner_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

@@ -770,15 +770,7 @@ pub(crate) fn owner_call_relation(
     // owner file and `local(...)` in the test body.  Shadow guard: if `local`
     // is re-declared inside the test body the `cv(...)` call reaches the shadow,
     // not the owner — do NOT credit `ImportAliasOwnerCall` in that case.
-    if let Some(_import) = test.imports_in_file.iter().find(|import| {
-        !import.namespace
-            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-            && import.imported.as_deref() == Some(owner.name.as_str())
-            && import.local != owner.name
-            && contains_call_name(&test.body_text, &import.local)
-            && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
-            && !enclosing_scope_shadows(test, &import.local)
-    }) {
+    if !import_alias_owner_locals(test, owner, alias_map, workspace_root).is_empty() {
         return Some(TypeScriptRelationKind::ImportAliasOwnerCall);
     }
     // Named (or namespace) import of the owner from the owner's module with a
@@ -1620,6 +1612,32 @@ fn require_source_from_text(init: &str) -> Option<String> {
     Some(body[..end].to_string())
 }
 
+/// The locals of every `import { owner as local }` from the owner's module
+/// that gives `test` its `ImportAliasOwnerCall` relation: a non-namespace
+/// rename of the owner, called as `local(` in the body and not shadowed by a
+/// body-local or enclosing-scope declaration. The relation arm and the
+/// RIPR-SPEC-0234 rule 7 observation credit share this one predicate.
+pub(crate) fn import_alias_owner_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'t str> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            !import.namespace
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && import.imported.as_deref() == Some(owner.name.as_str())
+                && import.local != owner.name
+                && contains_call_name(&test.body_text, &import.local)
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
+        })
+        .map(|import| import.local.as_str())
+        .collect()
+}
+
 /// #4103 shape 1: `true` when a declaration anchors a bare `ownerName(...)`
 /// call to the owner under analysis — the test lives in the owner's own
 /// file, it imports the owner (named import, or a default/require binding
@@ -1642,7 +1660,10 @@ fn direct_owner_call_has_declaration_anchor(
         import.local == owner.name
             && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
             && match import.imported.as_deref() {
-                Some(name) => name == owner.name || name == "default",
+                // RIPR-SPEC-0234 rule 5: a default binding anchors the bare
+                // call only when the owner IS the module's default export.
+                Some("default") => owner.exported_as_default,
+                Some(name) => name == owner.name,
                 // A bare namespace binding without a default/name record is
                 // not an anchor for a bare call.
                 None => false,
@@ -2081,8 +2102,16 @@ fn owner_name_shadowed_by_unrelated_import(
                     alias_map,
                     workspace_root,
                 )
+                // RIPR-SPEC-0234 rule 5: a default binding under the owner's
+                // name binds the module's default export; when the owner is
+                // not that default export it is an unrelated binding that
+                // shadows the owner name.
                 || import.imported.as_deref().is_some_and(|imported| {
-                    imported != owner.name.as_str() && imported != "default"
+                    if imported == "default" {
+                        !owner.exported_as_default
+                    } else {
+                        imported != owner.name.as_str()
+                    }
                 })
         })
 }
