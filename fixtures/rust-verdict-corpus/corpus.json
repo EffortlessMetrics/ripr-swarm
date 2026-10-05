@@ -11350,7 +11350,7 @@
         ]
       },
       "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0197.",
-      "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built.",
+      "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built (#6676).",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -11448,7 +11448,7 @@
         ]
       },
       "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0197, RIPR-SPEC-0231.",
-      "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built.",
+      "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built (#6676).",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -11885,7 +11885,7 @@
         ]
       },
       "reasoning": "Field-assignment activation: the test sets `manifest.version = CURRENT - 1` and then `CURRENT`, a same-file constant with a bounded offset. RIPR-SPEC-0001's field-assignment rule names this assignment form; its worked example is an `==` predicate, so this case extends the cell to a `<` boundary. Both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
-      "hard_case": "A comparison against a named constant reads infection_unknown in either operand order (with the constant on the left ripr sees no literal boundary; on the right it says it cannot see the constant's value), so the field assignments `CURRENT - 1` and `CURRENT` never become activation evidence. A return_value probe on the line reads propagation_unknown.",
+      "hard_case": "A comparison against a named constant reads infection_unknown in either operand order (with the constant on the left ripr sees no literal boundary; on the right it says it cannot see the constant's value), so the field assignments `CURRENT - 1` and `CURRENT` never become activation evidence. A return_value probe on the line reads propagation_unknown (#6671).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "limited",
@@ -11936,7 +11936,7 @@
         ]
       },
       "reasoning": "Field-assignment activation through an opaque right-hand side: the test sets `manifest.version = lookup(4)` and `lookup(5)`. RIPR-SPEC-0001 forbids crediting opaque assignments and asks for `field_assignment_value_unresolved`; at runtime both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
-      "hard_case": "ripr reads the boundary of `CURRENT - 2 > manifest.version` as the literal 2 and collects the lookup() arguments 4 and 5 as test literals, so it reports a missing boundary input (weakly_exposed) instead of RIPR-SPEC-0001's field_assignment_value_unresolved stop. Read as 5, the boundary would match the literal inside lookup(5) and credit an opaque assignment. A return_value probe on the line reads exposed.",
+      "hard_case": "ripr reads the boundary of `CURRENT - 2 > manifest.version` as the literal 2 and collects the lookup() arguments 4 and 5 as test literals, so it reports a missing boundary input (weakly_exposed) instead of RIPR-SPEC-0001's field_assignment_value_unresolved stop. Read as 5, the boundary would match the literal inside lookup(5) and credit an opaque assignment. A return_value probe on the line reads exposed (#6671).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
@@ -12135,7 +12135,7 @@
         ]
       },
       "reasoning": "Boundary inside a private helper reached through order_discount; the test passes computed arguments (`base + 1`, `base`). RIPR-SPEC-0159's computed-argument stop covers hop call-site arguments, and the only hop argument here is the caller's own parameter, so no spec says how a computed test-side argument resolves. The pins at 10 and 9 catch both listed mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0159.",
-      "hard_case": "Reach is weak: ripr relates the tests to the private is_bulk only by sharing its file, not through order_discount. Its activation rows also read `base + 1` as the literal 1 (observed qty values 1 and 9), so it asks for a `qty == 10` input the test already supplies.",
+      "hard_case": "Reach is weak: ripr relates the tests to the private is_bulk only by sharing its file, not through order_discount. Its activation rows also read `base + 1` as the literal 1 (observed qty values 1 and 9), so it asks for a `qty == 10` input the test already supplies (#6672).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
@@ -12185,7 +12185,7 @@
         ]
       },
       "reasoning": "Error return observed through a Result match whose Ok arm panics and whose Err arm assert_eqs the variant. RIPR-SPEC-0175 treats an assert_eq! arm as neither terminal nor pinning (its routing form is a guarded accept arm beside a loud catch-all), so no spec credits this shape. Both mutants (wrong variant, Ok) fail the test. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0197.",
-      "hard_case": "The Err arm's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1), and RIPR-SPEC-0175 credits neither an assert_eq! arm nor this shape, so a test that catches both mutants reads reachable_unrevealed.",
+      "hard_case": "The Err arm's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1), and RIPR-SPEC-0175 credits neither an assert_eq! arm nor this shape, so a test that catches both mutants reads reachable_unrevealed (#6673).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
@@ -12287,7 +12287,7 @@
         ]
       },
       "reasoning": "Boundary on a counter that grows once per input byte (chunk-size parsing): the boundary value 16 is never a literal in the test; it is the length of `[b'f'; 16]` and `[b'f'; 17]`. One test pins both sides exactly. All three mutants fail. 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
-      "hard_case": "`count` is a local counter, not a parameter, so ripr has no input row to map it to (observed count values: unknown) and asks for a `count == 16` input that the 16- and 17-byte inputs already supply.",
+      "hard_case": "`count` is a local counter, not a parameter, so ripr has no input row to map it to (observed count values: unknown) and asks for a `count == 16` input that the 16- and 17-byte inputs already supply (#6674).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
@@ -12389,7 +12389,7 @@
         ]
       },
       "reasoning": "Bitwise arithmetic: `(hi << 8) | lo` with operands swapped; mutants of the edited `lo | (hi << 8)` replace `|` with `&` and `<<` with `>>`, as cargo-mutants does. The `^` replacement is omitted because the two operands never share a bit, so it is equivalent. The exact pin pack(0x12, 0x34) == 0x1234 fails on both. 2 of 2 listed mutants fail cargo test. No RIPR spec defines a bitwise-operator cell.",
-      "hard_case": "The exact pin of the packed value reads as unconfirmed observation: ripr cannot tell that assert_eq!(pack(..), 0x1234) observes the bitwise expression.",
+      "hard_case": "The exact pin of the packed value reads as unconfirmed observation: ripr cannot tell that assert_eq!(pack(..), 0x1234) observes the bitwise expression (#6675).",
       "labeling_observation": {
         "ripr_commit": "fddf363",
         "full_checkout_verdict": "gap",
