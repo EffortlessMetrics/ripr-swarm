@@ -285,12 +285,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.32`: weak grip requires established activation; a seam whose
 /// activation is unknown classifies `activation_unknown`, not
 /// `weakly_gripped` (#5946). Old entries would keep the weak-grip class.
-/// `1.32` -> `1.33`: a related test whose exact-value assertion statically
+/// `1.33`: `assert!(owner(..))` on a bool owner pins its whole result
+/// (RIPR-SPEC-0197); predecessor weak predicate/return readings must miss.
+/// `1.33` -> `1.34`: a related test whose exact-value assertion statically
 /// contradicts the owner's fold (#6026) keeps at most Weak oracle credit,
 /// keeps the seam's gap open, and names the contradiction in the evidence
 /// summary. Old classified entries would keep serving the wrong-valued
 /// assertion's `strongly_gripped` closure for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.33";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.34";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -359,9 +361,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.33";
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
-/// `0.38` -> `0.39`: same statically-contradicted exact-value assertion
-/// transition as full `1.33` (#6026).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
+/// `0.39`: same bool-owner pin transition as full `1.33`.
+/// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
+/// transition as full `1.34` (#6026).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.40";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -432,9 +435,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
-/// `0.38` -> `0.39`: same statically-contradicted exact-value assertion
-/// transition as full `1.33` (#6026).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
+/// `0.39`: same bool-owner pin transition as full `1.33`.
+/// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
+/// transition as full `1.34` (#6026).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.40";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -565,7 +569,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.20`: unguarded wildcard pattern assertions are weak, not exact strong
 /// oracles (#5397). Predecessor strong wildcard facts must not replay. The
 /// concurrent assertion-admission candidate #5359 uses generation `1.19`.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.20";
+/// `1.21`: bodies and shape text are spans into the entry's `source`, not
+/// allocated strings (#5415 step 2). Predecessor payloads carry bare-string
+/// bodies that the span wire rejects, so they must cold-recompute.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.21";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3776,7 +3783,9 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.20");
+        // 1.20 -> 1.21: bodies and shape text are spans into `source`
+        // (#5415 step 2); bare-string predecessor bodies must not replay.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.21");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3825,9 +3834,10 @@ mod tests {
         // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
         // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
         // 1.31 -> 1.32: weak grip requires established activation (#5946).
-        // 1.32 -> 1.33: a statically contradicted exact-value assertion
+        // 1.32 -> 1.33: bool-owner `assert!` pins (RIPR-SPEC-0197).
+        // 1.33 -> 1.34: a statically contradicted exact-value assertion
         // keeps at most weak oracle credit and keeps the gap open (#6026).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.33");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.34");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3853,10 +3863,11 @@ mod tests {
         // 0.35 -> 0.36: same related-test table body as the outer cache.
         // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
         // 0.37 -> 0.38: same weak-grip activation transition as the outer cache.
-        // 0.38 -> 0.39: same statically-contradicted-exact-value transition
+        // 0.38 -> 0.39: same bool-owner pin transition as the outer cache.
+        // 0.39 -> 0.40: same statically-contradicted-exact-value transition
         // as the outer cache (#6026).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.39");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.40");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.40");
     }
 
     #[test]
@@ -3929,6 +3940,49 @@ mod tests {
             other => {
                 return Err(format!(
                     "unknown probe-shape kind must quarantine at decode, got {other:?}"
+                ));
+            }
+        }
+        cache.store_file_facts(&key, &facts)?;
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)) {
+            return Err("re-stored valid facts must serve the quarantined key".to_owned());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_entry_with_legacy_bare_string_body_loads_corrupt_ignored() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #5415 step 2: a 1.20-shaped payload (bare-string bodies) placed at
+        // a 1.21 entry path must quarantine at decode, never silently load.
+        // This pins the full cache-load path, not just JSON-value rejection.
+        let scratch = integrity_scratch("legacy-bare-string-body")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        if facts.functions.is_empty() {
+            return Err("fixture must decode at least one function".to_owned());
+        }
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)) {
+            return Err("seeded file facts must warm hit".to_owned());
+        }
+        let entry = cache.entry_path(&key);
+        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
+            "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
+        );
+        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        match cache.load_file_facts(&key) {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
+            other => {
+                return Err(format!(
+                    "legacy bare-string body must quarantine at decode, got {other:?}"
                 ));
             }
         }
@@ -4734,7 +4788,7 @@ mod tests {
         let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn value() {}\n");
         let facts = FileFacts {
             path: PathBuf::from("src/lib.rs"),
-            source: "pub fn value() {}\n".to_owned(),
+            source: "pub fn value() {}\n".into(),
             ..FileFacts::default()
         };
         file_cache
@@ -4791,10 +4845,10 @@ mod tests {
         }
         let mut signed: FileFactCacheEnvelope =
             codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?;
-        signed.file_facts.source = "changed semantic source".to_owned();
+        signed.file_facts.source = "changed semantic source".into();
         std::fs::write(&entry, codec::encode_file_facts(&signed)?)
             .map_err(|err| err.to_string())?;
-        if !matches!(file_cache.load_file_facts(&key), CacheLoad::Hit(ref loaded) if loaded.source == "changed semantic source")
+        if !matches!(file_cache.load_file_facts(&key), CacheLoad::Hit(ref loaded) if loaded.source.as_ref() == "changed semantic source")
         {
             return Err(
                 "recomputed valid checksum is integrity, not writer authentication".to_owned(),
@@ -6951,7 +7005,7 @@ mod tests {
         let key = RepoFileFactCacheKey::new(&path, b"pub fn cached() {}\n");
         let facts = FileFacts {
             path: path.clone(),
-            source: "pub fn cached() {}\n".to_string(),
+            source: "pub fn cached() {}\n".into(),
             ..FileFacts::default()
         };
 
@@ -6984,7 +7038,7 @@ mod tests {
         let changed_key = RepoFileFactCacheKey::new(&path, b"pub fn cached() -> i32 { 2 }\n");
         let facts = FileFacts {
             path: path.clone(),
-            source: "pub fn cached() -> i32 { 1 }\n".to_string(),
+            source: "pub fn cached() -> i32 { 1 }\n".into(),
             ..FileFacts::default()
         };
 

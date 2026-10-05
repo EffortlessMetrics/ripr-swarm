@@ -1486,7 +1486,7 @@ fn test_passes_boundary_constant(
         index
             .files()
             .get(&indexed.test.file)
-            .map(|facts| facts.data().source.as_str()),
+            .map(|facts| facts.data().source.as_ref()),
         &constant.name,
     ) {
         return false;
