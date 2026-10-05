@@ -1019,7 +1019,7 @@ The evidence-first fields are additive in schema `0.2`:
   class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,
   `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`)
   appear only under `weakly_exposed` and `reachable_unrevealed`, and
-  `no_call_path` is also set for every row under `no_static_path`. `no_call_path`: linked by name or file location only, no
+  `no_call_path` is also the fallback for rows that no per-test value already marks under `no_static_path`. `no_call_path`: linked by name or file location only, no
   call to the changed code. `no_assertion`: the test has no assertion ripr
   recognizes. `assertion_not_observing`: the test asserts, but none of its
   assertions observe the changed value; `oracle` then carries the first
