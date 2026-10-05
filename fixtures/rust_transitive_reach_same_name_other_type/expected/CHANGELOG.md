@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (3)
+
+Reason:
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after; classifications, stages, JSON, and ids unchanged
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

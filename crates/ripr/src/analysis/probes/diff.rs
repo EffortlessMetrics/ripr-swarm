@@ -326,7 +326,8 @@ fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
 /// canonical text with a prefix and suffix (`if `/` {`, `let x = f(`/`);`)
 /// and the removed line carries the same framing, `before` keeps only the
 /// framed span so it reads against `after` like for like. Any other shape
-/// (different framing, multi-line canonical text, no framing at all) keeps
+/// (different framing, multi-line canonical text, no framing at all, or a
+/// canonical text that occurs more than once in the added line) keeps
 /// the removed line whole rather than guessing a span.
 fn project_removed_onto_span(removed: &str, added_line: &str, canonical_text: &str) -> String {
     let added_line = added_line.trim();
@@ -337,6 +338,11 @@ fn project_removed_onto_span(removed: &str, added_line: &str, canonical_text: &s
     let Some(start) = added_line.find(canonical_text) else {
         return removed.to_string();
     };
+    // A second occurrence leaves the parser-selected one ambiguous; framing
+    // taken from the wrong occurrence could cut the wrong span.
+    if added_line.rfind(canonical_text) != Some(start) {
+        return removed.to_string();
+    }
     let prefix = &added_line[..start];
     let suffix = &added_line[start + canonical_text.len()..];
     if prefix.is_empty() && suffix.is_empty() {
@@ -982,7 +988,7 @@ mod tests {
                         start_line: 3,
                         end_line: 3,
                         start_byte: 3,
-                        kind: PROBE_SHAPE_PREDICATE.to_string(),
+                        kind: ProbeShapeKind::Predicate,
                         text: "amount >= threshold".to_string(),
                     }],
                     ..FileFacts::default()
@@ -1025,6 +1031,12 @@ mod tests {
         assert_eq!(
             project_removed_onto_span("x(); if a > b {", "if a > b {", ""),
             "x(); if a > b {"
+        );
+        // A repeated canonical text does not say which occurrence the parser
+        // selected, so the removed line stays whole.
+        assert_eq!(
+            project_removed_onto_span("if a > b || a >= b {", "if a >= b || a >= b {", "a >= b"),
+            "if a > b || a >= b {"
         );
     }
 
