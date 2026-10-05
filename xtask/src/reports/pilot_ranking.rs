@@ -523,21 +523,32 @@ fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
     if let Some(problem) = checkout_problem(repo, dir) {
         return Err(problem);
     }
+    // Record the commit this fetch checked out: any other HEAD later (a
+    // commit on top, an amend) was made here and is never replaced.
+    fs::write(&marker, format!("{}\n{}\n", repo.url, repo.revision))
+        .map_err(|err| format!("write {}: {err}", marker.display()))?;
     Ok(false)
 }
 
 /// Work in an existing checkout that a re-fetch would destroy, or `None`
 /// when there is none to lose. A fetch that failed before checkout has no
-/// HEAD and nothing to lose. Pins are fetched with `--depth 1`, so a pinned
-/// commit has no parent: a HEAD with one carries commits made here.
+/// HEAD and nothing to lose. A finished fetch records the commit it checked
+/// out in its marker, so a HEAD that differs (a commit on top, an amend)
+/// was made here. A directory without the marker is left to the ownership
+/// check, which never replaces it.
 fn local_work(dir: &Path) -> Option<&'static str> {
-    if !dir.join(".git").exists()
-        || git(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err()
-    {
+    let marker = dir.join(".git").join(OWNER_MARKER);
+    if !marker.is_file() {
         return None;
     }
-    if git(dir, &["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok() {
-        return Some("has commits on top of the fetched revision");
+    let Ok(head) = git(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]) else {
+        return None;
+    };
+    let fetched = fs::read_to_string(&marker)
+        .ok()
+        .and_then(|text| text.lines().nth(1).map(|line| line.trim().to_string()));
+    if fetched.as_deref() != Some(head.as_str()) {
+        return Some("is at a commit fetch did not check out (a commit or amend made here)");
     }
     match git(dir, &["status", "--porcelain", "--untracked-files=normal"]) {
         Ok(status) if status.is_empty() => None,

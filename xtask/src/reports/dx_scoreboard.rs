@@ -1055,20 +1055,32 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
                 "pilot-ranking pooled.{cut} counts more confirmed, refuted or distinct picks than its {picks} picks"
             ));
         }
-        let rate = if field == "picks" {
-            Some(picks as f64)
-        } else {
-            match &entry[field] {
-                Value::Null => None,
-                rate => Some(
-                    rate.as_f64()
-                        .filter(|rate| (0.0..=1.0).contains(rate))
-                        .ok_or_else(|| {
-                            format!("pilot-ranking pooled.{cut}.{field} must be between 0 and 1")
-                        })?,
-                ),
-            }
+        // The rate is derived from the validated counts, so a receipt whose
+        // stated ratio disagrees with its own counts cannot pass the gate.
+        let ratio = |numerator: u64, denominator: u64| {
+            (denominator > 0).then(|| numerator as f64 / denominator as f64)
         };
+        let rate = match field {
+            "picks" => Some(picks as f64),
+            "precision" => ratio(confirmed, confirmed + refuted),
+            "scored_share" => ratio(confirmed + refuted, picks),
+            _ => ratio(distinct, picks),
+        };
+        if field != "picks" {
+            let stated = entry[field].as_f64();
+            let agrees = match (stated, rate) {
+                (None, None) => entry[field].is_null(),
+                (Some(stated), Some(rate)) => (stated - rate).abs() < 1e-9,
+                _ => false,
+            };
+            if !agrees {
+                return Err(format!(
+                    "pilot-ranking pooled.{cut}.{field} is {}, but its counts give {}",
+                    entry[field],
+                    rate.map_or_else(|| "null".to_string(), |rate| rate.to_string())
+                ));
+            }
+        }
         let mut evidence = if field == "distinct_function_share" {
             format!("{distinct} distinct functions in {picks} picks")
         } else {

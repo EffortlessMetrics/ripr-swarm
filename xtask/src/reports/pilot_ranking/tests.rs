@@ -294,37 +294,70 @@ fn commit(dir: &Path, file: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Marks `dir` as a finished fetch of its current HEAD, as `materialize` does.
+fn mark_fetched(dir: &Path) -> Result<(), String> {
+    let head = git(dir, &["rev-parse", "HEAD"])?;
+    fs::write(
+        dir.join(".git").join(OWNER_MARKER),
+        format!("demo\n{head}\n"),
+    )
+    .map_err(|err| err.to_string())
+}
+
 /// A re-fetch replaces only what holds no one's work: an interrupted fetch
-/// or a clean checkout of one commit (an earlier shallow pin). Edits,
-/// untracked files and commits on top are refused at any revision.
+/// or a clean checkout of the commit fetch recorded (an earlier pin). Edits,
+/// untracked files, commits on top and amends are refused at any revision.
 #[test]
 fn refetch_refuses_local_work_at_any_revision() -> Result<(), String> {
     let interrupted = scratch_checkout("interrupted")?;
+    fs::write(interrupted.join(".git").join(OWNER_MARKER), "demo\n")
+        .map_err(|err| err.to_string())?;
     assert_eq!(local_work(&interrupted), None);
 
     let clean = scratch_checkout("clean")?;
     commit(&clean, "a.rs")?;
+    mark_fetched(&clean)?;
     assert_eq!(local_work(&clean), None);
 
     let untracked = scratch_checkout("untracked")?;
     commit(&untracked, "a.rs")?;
+    mark_fetched(&untracked)?;
     fs::write(untracked.join("notes.txt"), "mine\n").map_err(|err| err.to_string())?;
     assert!(local_work(&untracked).is_some_and(|work| work.contains("untracked")));
 
     let edited = scratch_checkout("edited")?;
     commit(&edited, "a.rs")?;
+    mark_fetched(&edited)?;
     fs::write(edited.join("a.rs"), "edited\n").map_err(|err| err.to_string())?;
     assert!(local_work(&edited).is_some_and(|work| work.contains("edits")));
 
+    let amended = scratch_checkout("amended")?;
+    commit(&amended, "a.rs")?;
+    mark_fetched(&amended)?;
+    git(
+        &amended,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "--amend",
+            "-m",
+            "mine",
+        ],
+    )?;
+    assert!(local_work(&amended).is_some_and(|work| work.contains("did not check out")));
+
     let committed = scratch_checkout("committed")?;
     commit(&committed, "a.rs")?;
+    mark_fetched(&committed)?;
     commit(&committed, "b.rs")?;
-    assert!(local_work(&committed).is_some_and(|work| work.contains("commits")));
-
     // The refusal reaches fetch: the marked checkout survives.
-    fs::write(committed.join(".git").join(OWNER_MARKER), "demo\n")
-        .map_err(|err| err.to_string())?;
-    assert!(materialize(&repo(), &committed).is_err_and(|err| err.contains("commits on top")));
+    assert!(materialize(&repo(), &committed).is_err_and(|err| err.contains("did not check out")));
     assert!(committed.join("b.rs").is_file());
     Ok(())
 }

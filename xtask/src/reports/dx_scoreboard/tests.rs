@@ -1842,7 +1842,11 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
 
     // Nothing scored is no precision, not a perfect or zero one.
     let mut unscored = receipt.clone();
-    unscored["pooled"]["top5"]["precision"] = Value::Null;
+    unscored["pooled"]["top5"] = json!({
+        "picks": 25, "confirmed": 0, "refuted": 0, "unscored": 25,
+        "precision": null, "scored_share": 0.0,
+        "distinct_functions": 20, "distinct_function_share": 0.8,
+    });
     let samples = parse_ingest(&unscored, &config)?;
     assert!(
         samples
@@ -1853,7 +1857,14 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
 
     let mut malformed = receipt.clone();
     malformed["pooled"]["top10"]["precision"] = json!(1.5);
-    assert!(parse_ingest(&malformed, &config).is_err_and(|err| err.contains("between 0 and 1")));
+    assert!(parse_ingest(&malformed, &config).is_err_and(|err| err.contains("its counts give")));
+    // In range but not what the counts say: 13 confirmed of 35 is not 1.0.
+    let mut inconsistent = receipt.clone();
+    inconsistent["pooled"]["top10"]["precision"] = json!(1.0);
+    assert!(parse_ingest(&inconsistent, &config).is_err_and(|err| err.contains("its counts give")));
+    let mut hidden = receipt.clone();
+    hidden["pooled"]["top10"]["precision"] = Value::Null;
+    assert!(parse_ingest(&hidden, &config).is_err_and(|err| err.contains("its counts give")));
     let mut overcounted = receipt;
     overcounted["pooled"]["top10"]["confirmed"] = json!(40);
     assert!(parse_ingest(&overcounted, &config).is_err_and(|err| err.contains("more confirmed")));

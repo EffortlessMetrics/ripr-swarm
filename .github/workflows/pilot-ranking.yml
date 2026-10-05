@@ -29,6 +29,7 @@ on:
       - "metrics/dx-scoreboard/pilot-ranking-baseline.json"
       - "xtask/src/reports/pilot_ranking.rs"
       - "xtask/src/reports/pilot_ranking/**"
+      - "xtask/src/reports/mutation_spot_check.rs"
       - "xtask/src/reports/mutation_spot_check/pilot.rs"
       - "xtask/src/reports/dx_scoreboard.rs"
       - "benchmarks/dx_scoreboard/scoreboards.toml"
