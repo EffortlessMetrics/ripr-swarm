@@ -218,6 +218,7 @@ fn assert_verify(path: &Path, root: &Path) -> TestResult {
 /// receipt selected. A suffix-only oracle would accept a different checkout.
 fn recovery_case(absolute: bool) -> TestResult {
     let parent = unique_temp_workspace("receipt-recovery-native");
+    std::fs::create_dir(&parent)?;
     let _cleanup = FixtureCleanup(parent.clone());
     let selected = parent.join("team\\repo 'quoted'");
     let decoy = parent.join("team/repo 'quoted'");
