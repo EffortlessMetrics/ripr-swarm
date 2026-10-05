@@ -23228,3 +23228,64 @@ fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_share
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
+
+/// #6033 review: a cage-refused after phase must not leave a success-shaped
+/// projection of the refused attempt in place of a previous attempt's
+/// artifacts either. When all three shared workflow paths already exist
+/// (preseeded here with sentinel bytes), the phase renames their bytes
+/// aside, and a terminal cage failure restores exactly those original
+/// bytes while withdrawing the phase's fresh artifacts.
+#[test]
+fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = built_repair_fixture("agent-repair-cage-violated-preseeded")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+
+    // Preseed all three shared paths the way an earlier loop's projections
+    // would have left them.
+    let preseeded = [
+        (
+            "target/ripr/workflow/after.repo-exposure.json",
+            "{\"stale\":\"after\"}",
+        ),
+        (
+            "target/ripr/workflow/agent-verify.json",
+            "{\"stale\":\"verify\"}",
+        ),
+        (
+            "target/ripr/workflow/analysis-outcome.json",
+            "{\"stale\":\"analysis-outcome\"}",
+        ),
+    ];
+    for (relative, contents) in preseeded {
+        std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
+        std::fs::write(root.join(relative), contents)?;
+    }
+
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
+
+    // The pre-attempt bytes are restored verbatim; the refused attempt's
+    // fresh projection is gone.
+    for (relative, contents) in preseeded {
+        let restored = std::fs::read_to_string(root.join(relative))?;
+        assert_eq!(
+            restored, contents,
+            "{relative} must carry the pre-attempt bytes after the refusal"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}

@@ -121,16 +121,19 @@ fn equality_assertion_shape(oracle_text: &str) -> Option<(bool, Vec<String>)> {
     Some((asserts_inequality, arguments))
 }
 
-/// The call arguments when `operand` is a bare-path call to `owner_name`
-/// (`owner(..)` or `module::owner(..)`). A method call
-/// (`receiver.owner(..)`) names a different entity than the free function
-/// the seam owns, so it is not evaluated rather than folded against the
-/// wrong body.
+/// The call arguments when `operand` is a bare-name call to `owner_name`
+/// (`owner(..)`). See the in-function guard for why receivers and
+/// qualified paths stay not evaluable.
 fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
     let open = super::named_call_open_paren_index(trimmed, owner_name)?;
     let before = trimmed[..open - owner_name.len()].trim_end();
-    if !(before.is_empty() || before.ends_with("::")) {
+    // A bare name only: a method receiver names a different entity than the
+    // free function the seam owns, and a qualified path cannot be resolved
+    // to the owner's module from the assertion alone, so both stay not
+    // evaluable rather than folding against a body the assertion never
+    // called (#6701 review).
+    if !before.is_empty() {
         return None;
     }
     let inside = super::delimited_contents_at(trimmed, open)?;
@@ -184,6 +187,7 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
         return None;
     }
     let mut names = Vec::new();
+    let mut widths = Vec::new();
     for param in param_list.params() {
         let ast::Pat::IdentPat(ident) = param.pat()? else {
             return None;
@@ -193,10 +197,33 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
             return None;
         }
         names.push(ident.name()?.text().to_string());
+        // A declared-width parameter bounds the inputs the real function
+        // accepts; an argument outside it names a call that cannot compile.
+        let width = param
+            .ty()
+            .and_then(|ty| declared_integer_range(&ty.syntax().text().to_string()));
+        widths.push(width);
     }
     if names.len() != arguments.len() {
         return None;
     }
+    for (width, value) in widths.iter().zip(arguments.iter().copied()) {
+        if let Some((low, high)) = width
+            && !(*low..=*high).contains(&value)
+        {
+            return None;
+        }
+    }
+    // The fold uses the return type's declared width when it is a
+    // recognized integer type: release builds wrap at that width, so a
+    // mathematical result outside it does not describe a value the owner
+    // can return and the pair stays not evaluable instead of contradicting
+    // a passing wrapping assertion (#6701 review).
+    // No recognized return type: the fold keeps exact i128 arithmetic,
+    // which can only withhold credit.
+    let fold_range = function
+        .ret_type()
+        .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
     let block = function.body()?;
     let environment: BTreeMap<String, i128> =
         names.into_iter().zip(arguments.iter().copied()).collect();
@@ -205,7 +232,30 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
     let masked =
         crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
     let tokens = tokenize(&masked)?;
-    fold_block(&tokens, &environment)
+    fold_block(&tokens, &environment, fold_range)
+}
+
+/// The inclusive value range a recognized Rust integer type admits, or
+/// `None` for anything else (including `u128`/`i128`, whose exact range
+/// exceeds the fold's i128 arithmetic). `usize`/`isize` assume the 64-bit
+/// targets the analyzer's evidence is produced for.
+fn declared_integer_range(ty: &str) -> Option<(i128, i128)> {
+    // The parser's return-type node carries its `->` arrow; parameter types
+    // are bare.
+    let compact = ty.replace(' ', "").trim_start_matches("->").to_string();
+    match compact.as_str() {
+        "u8" => Some((0, i128::from(u8::MAX))),
+        "u16" => Some((0, i128::from(u16::MAX))),
+        "u32" => Some((0, i128::from(u32::MAX))),
+        "u64" => Some((0, i128::from(u64::MAX))),
+        "usize" => Some((0, i128::from(u64::MAX))),
+        "i8" => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
+        "i16" => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
+        "i32" => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+        "i64" => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+        "isize" => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -318,6 +368,20 @@ struct Parser<'a> {
     tokens: &'a [Token],
     position: usize,
     environment: &'a BTreeMap<String, i128>,
+    /// The owner return type's declared width, when recognized. Every
+    /// integer produced inside the body must fit it: release builds wrap at
+    /// the declared width, so a mathematical value outside the range does
+    /// not describe a value the owner can return.
+    range: Option<(i128, i128)>,
+}
+
+impl<'a> Parser<'a> {
+    fn check_range(&self, value: i128) -> Option<i128> {
+        match self.range {
+            Some((low, high)) if !(low..=high).contains(&value) => None,
+            _ => Some(value),
+        }
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -449,10 +513,10 @@ impl<'a> Parser<'a> {
             let Value::Int(right_value) = right else {
                 return None;
             };
-            left = Value::Int(match op {
+            left = Value::Int(self.check_range(match op {
                 "+" => left_value.checked_add(right_value)?,
                 _ => left_value.checked_sub(right_value)?,
-            });
+            })?);
         }
     }
 
@@ -473,11 +537,11 @@ impl<'a> Parser<'a> {
             let Value::Int(right_value) = right else {
                 return None;
             };
-            left = Value::Int(match op {
+            left = Value::Int(self.check_range(match op {
                 "*" => left_value.checked_mul(right_value)?,
                 "/" => left_value.checked_div(right_value)?,
                 _ => left_value.checked_rem(right_value)?,
-            });
+            })?);
         }
     }
 
@@ -486,7 +550,7 @@ impl<'a> Parser<'a> {
             let Value::Int(value) = self.parse_unary()? else {
                 return None;
             };
-            return Some(Value::Int(value.checked_neg()?));
+            return Some(Value::Int(self.check_range(value.checked_neg()?)?));
         }
         if self.eat_symbol("!") {
             let value = self.parse_unary()?;
@@ -573,6 +637,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         tokens: &tokens,
         position: 0,
         environment,
+        range: None,
     };
     let value = parser.parse_expression()?;
     if parser.position != tokens.len() {
@@ -584,12 +649,18 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
     }
 }
 
-/// Fold a `{ .. }` block with `environment` as the parameter bindings.
-fn fold_block(tokens: &[Token], environment: &BTreeMap<String, i128>) -> Option<i128> {
+/// Fold a `{ .. }` block with `environment` as the parameter bindings and
+/// `range` as the return type's declared width (no width when `None`).
+fn fold_block(
+    tokens: &[Token],
+    environment: &BTreeMap<String, i128>,
+    range: Option<(i128, i128)>,
+) -> Option<i128> {
     let mut parser = Parser {
         tokens,
         position: 0,
         environment,
+        range,
     };
     let value = parser.parse_block_value()?;
     if parser.position != tokens.len() {
@@ -686,12 +757,15 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
     }
 
     #[test]
-    fn qualified_owner_path_call_folds() -> Result<(), String> {
+    fn qualified_owner_path_call_is_not_evaluable() -> Result<(), String> {
+        // A qualified path may name a same-named function in another module;
+        // the assertion alone cannot resolve it to the seam owner, so the
+        // fold stays silent instead of contradicting against the wrong body.
         let verdict = verdict_for_owner(
             BOUNDARY_OWNER,
             "assert_eq!(crate::discounted_total(5_000, 5_000), 5_000);",
-        );
-        assert!(matches!(verdict?, ExactValueVerdict::Contradicted { .. }));
+        )?;
+        assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
         Ok(())
     }
 
@@ -863,6 +937,62 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
 "#;
         let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(10, 0), 0)?;");
         assert_eq!(verdict?, ExactValueVerdict::NotEvaluable);
+        Ok(())
+    }
+
+    #[test]
+    fn debug_equality_macros_folds_like_plain_equality() -> Result<(), String> {
+        let wrong = verdict_for_owner(
+            BOUNDARY_OWNER,
+            "debug_assert_eq!(discounted_total(5_000, 5_000), 5_000);",
+        )?;
+        assert!(matches!(wrong, ExactValueVerdict::Contradicted { .. }));
+        let correct = verdict_for_owner(
+            BOUNDARY_OWNER,
+            "debug_assert_eq!(discounted_total(5_000, 5_000), 3_500);",
+        )?;
+        assert_eq!(correct, ExactValueVerdict::Consistent);
+        let wrong_ne = verdict_for_owner(
+            BOUNDARY_OWNER,
+            "debug_assert_ne!(discounted_total(5_000, 5_000), 3_500);",
+        )?;
+        assert!(matches!(wrong_ne, ExactValueVerdict::Contradicted { .. }));
+        Ok(())
+    }
+
+    #[test]
+    fn declared_width_overflow_is_not_evaluable() -> Result<(), String> {
+        // `fn next(x: u8) -> u8 { x + 1 }` at 255 wraps in release builds;
+        // the mathematical fold (256) does not describe a value the owner
+        // can return, so the pair stays not evaluable instead of
+        // contradicting a passing wrapping assertion.
+        let owner = "pub fn next(x: u8) -> u8 { x + 1 }";
+        let adapter = RaRustSyntaxAdapter;
+        let facts = adapter
+            .summarize_file(
+                std::path::Path::new("src/lib.rs"),
+                &format!(
+                    "{owner}
+"
+                ),
+            )
+            .map_err(|error| format!("owner source summarizes: {error}"))?;
+        let owner_fn = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "next")
+            .ok_or("owner function is indexed")?;
+        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 0);");
+        assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
+        // A value outside the declared width cannot be returned at all, so
+        // an assertion pinning one stays not evaluable too.
+        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 256);");
+        assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
+        // Inside the declared width the same shape folds normally.
+        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 3);");
+        assert_eq!(verdict, ExactValueVerdict::Consistent);
+        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 4);");
+        assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
         Ok(())
     }
 

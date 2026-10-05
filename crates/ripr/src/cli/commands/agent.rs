@@ -723,6 +723,17 @@ fn run_agent_repair_with_identity(
             attempt_id.as_str()
         );
     }
+    // One outcome resolution for the after phase's shared workflow
+    // artifacts (#6033): whatever the exit path, the pre-attempt backups are
+    // either restored or discarded exactly once.
+    if let Some(artifacts) = refusal.workflow_artifacts.take() {
+        let terminal = refusal.terminal_finish.is_some();
+        if result.is_ok() {
+            artifacts.resolve(true, terminal, refusal.tail_reached);
+        } else {
+            artifacts.resolve(false, terminal, refusal.tail_reached);
+        }
+    }
     // A deliberate named refusal once the after phase selected its attempt
     // (typed) is recorded above and maps to the decision exit code 3.
     // Operational errors after selection stay ordinary failures: exit 2.
@@ -807,6 +818,15 @@ struct AfterPhaseRefusalContext {
     /// artifacts it wrote, so `agent status` does not present them as
     /// current loop artifacts beside a terminal attempt (#6033).
     terminal_finish: Option<TerminalAttemptFinish>,
+    /// Set when the after phase tracked the shared workflow artifacts (an
+    /// attempt was selected and the phase began publishing). The outcome
+    /// resolver runs once on the phase result and decides whether the
+    /// pre-attempt backups are restored or discarded.
+    workflow_artifacts: Option<SharedWorkflowArtifacts>,
+    /// Set when the after phase's tail began running, so a failure after
+    /// artifact publication keeps the fresh projections for a retryable
+    /// attempt while a pre-tail failure restores the pre-attempt state.
+    tail_reached: bool,
 }
 
 /// What a finished-but-refused attempt carries into the failure envelope.
@@ -824,8 +844,14 @@ struct TerminalAttemptFinish {
 /// earlier attempt's projections are not this phase's to clean.
 struct SharedWorkflowArtifacts {
     paths: Vec<PathBuf>,
-    preexisting: Vec<bool>,
+    /// For a path that already existed when the phase began: the backup the
+    /// original bytes were renamed to. `None` when the path was absent, so
+    /// the phase's own artifact is fresh and is withdrawn on a terminal
+    /// refusal.
+    backups: Vec<Option<PathBuf>>,
 }
+
+const WORKFLOW_ARTIFACT_BACKUP_SUFFIX: &str = ".ripr-preattempt-backup";
 
 impl SharedWorkflowArtifacts {
     fn track(root: &Path) -> Self {
@@ -834,18 +860,76 @@ impl SharedWorkflowArtifacts {
             root.join("target/ripr/workflow/agent-verify.json"),
             root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
         ];
-        let preexisting = paths.iter().map(|path| path.exists()).collect();
-        Self { paths, preexisting }
+        let mut backups = Vec::with_capacity(paths.len());
+        for path in &paths {
+            let mut backup_name = path
+                .extension()
+                .map(|extension| extension.to_os_string())
+                .unwrap_or_default();
+            backup_name.push(WORKFLOW_ARTIFACT_BACKUP_SUFFIX);
+            let backup = path.with_extension(backup_name);
+            if !path.exists() && backup.exists() {
+                // Crash recovery: a previous run renamed the original aside
+                // and died before resolving it. Restore, then re-decide.
+                let _ = std::fs::rename(&backup, path);
+            }
+            if path.exists() && std::fs::rename(path, &backup).is_ok() {
+                // Preserve the previous projection's bytes: the phase is
+                // about to overwrite the path, and a terminal refusal must
+                // leave the pre-attempt state standing, not a success-shaped
+                // projection of the refused attempt (#6701 review).
+                backups.push(Some(backup));
+                continue;
+            }
+            backups.push(None);
+        }
+        Self { paths, backups }
     }
 
-    /// Removes exactly the artifacts this phase created. Best-effort: a
-    /// failed removal leaves the artifact and the status projection with it,
-    /// which is the pre-#6033 behavior, never a worse one.
+    /// Removes exactly the artifacts this phase created (a terminal refusal
+    /// leaves no loop projection beside the terminal attempt). Best-effort:
+    /// a failed removal leaves the artifact and the status projection with
+    /// it, which is never a worse state than the pre-#6033 behavior.
     fn withdraw_fresh_artifacts(&self) {
-        for (path, preexisting) in self.paths.iter().zip(&self.preexisting) {
-            if !*preexisting {
+        for (path, backup) in self.paths.iter().zip(&self.backups) {
+            if backup.is_none() {
                 let _ = std::fs::remove_file(path);
             }
+        }
+    }
+
+    /// Puts the pre-attempt projections back in place.
+    fn restore_backups(&self) {
+        for (path, backup) in self.paths.iter().zip(&self.backups) {
+            if let Some(backup) = backup {
+                let _ = std::fs::rename(backup, path);
+            }
+        }
+    }
+
+    /// The phase's own artifacts are the current state; the backups are
+    /// stale copies of what they replaced.
+    fn discard_backups(&self) {
+        for backup in self.backups.iter().flatten() {
+            let _ = std::fs::remove_file(backup);
+        }
+    }
+
+    /// One resolution for the phase result: on success the fresh artifacts
+    /// stand; on a terminal refusal the fresh artifacts are withdrawn and
+    /// the pre-attempt state restored; on a retryable failure after the
+    /// tail the fresh artifacts stand for the retry; and any earlier
+    /// failure restores the pre-attempt state.
+    fn resolve(self, phase_ok: bool, terminal: bool, tail_reached: bool) {
+        if phase_ok {
+            self.discard_backups();
+        } else if terminal {
+            self.withdraw_fresh_artifacts();
+            self.restore_backups();
+        } else if tail_reached {
+            self.discard_backups();
+        } else {
+            self.restore_backups();
         }
     }
 }
@@ -1087,9 +1171,10 @@ fn run_agent_repair_phase(
                 attempt.manifest_path.display()
             );
             // #6033: remember which shared workflow artifacts existed before
-            // this phase wrote its own, so a cage-refused attempt can have
-            // the fresh ones withdrawn instead of presented as current.
-            let shared_workflow_artifacts = SharedWorkflowArtifacts::track(&root);
+            // this phase wrote its own (preserving the previous projection's
+            // bytes), so the outcome resolver can withdraw the fresh ones
+            // and restore the pre-attempt state when the cage refuses.
+            refusal.workflow_artifacts = Some(SharedWorkflowArtifacts::track(&root));
 
             // The retained before snapshot and packet are the transaction's
             // authority. The repository-global after, verify, receipt, and
@@ -1239,6 +1324,10 @@ fn run_agent_repair_phase(
             // verify document beside a terminal attempt is exactly the green
             // repair story the driver cannot trust.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
+                // A failure past this point leaves the phase's fresh
+                // projections standing when the attempt stays retryable
+                // (the outcome resolver keys on this flag).
+                refusal.tail_reached = true;
                 use crate::app::python_repair_binding::{
                     ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
                 };
@@ -1498,9 +1587,6 @@ fn run_agent_repair_phase(
                             None => print!("{rendered_verify}"),
                         }
                         refusal.stdout_document_printed = true;
-                    }
-                    if refusal.terminal_finish.is_some() {
-                        shared_workflow_artifacts.withdraw_fresh_artifacts();
                     }
                     return Err(error);
                 }

@@ -38,9 +38,11 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- Classified-seam cache generations bump (`1.31` -> `1.32` full and sharded
-  `0.37` -> `0.38` compact and sharded) because warm entries would keep
-  serving the contradicted assertion's strong credit.
+- Classified-seam cache generations bump — full `1.33` -> `1.34` and
+  sharded/compact `0.39` -> `0.40`, stacked above the #5946 weak-grip
+  (`1.32`/`0.38`) and #6718 bool-owner pin (`1.33`/`0.39`) transitions this
+  PR rebased over — because warm entries would keep serving the
+  contradicted assertion's strong credit.
 - No repo-exposure schema version bump: the evidence-record shape is
   unchanged; only values and evidence summaries move.
 
