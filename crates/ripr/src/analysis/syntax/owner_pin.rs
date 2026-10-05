@@ -554,7 +554,9 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
                 let real = krate
                     .name_ref()
                     .is_some_and(|name| unraw(name.text()) == "serial_test");
-                if unraw(&binding) == "serial_test" && !real {
+                if (unraw(&binding) == "serial_test" && !real)
+                    || PRELUDE_MACROS.contains(&unraw(&binding))
+                {
                     return false;
                 }
             }
@@ -566,6 +568,11 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
             UseBinding::Name(binding) => {
                 let real = leaf.path.len() == 1 && leaf.path[0] == "serial_test";
                 if unraw(binding) == "serial_test" && !real {
+                    return false;
+                }
+                // `derive`, the std derives and `test` are prelude macros an
+                // import can rebind, which voids the allowlist below.
+                if PRELUDE_MACROS.contains(&unraw(binding)) {
                     return false;
                 }
             }
@@ -589,7 +596,8 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
     true
 }
 
-/// Built-in attributes and std derives expand to no new items. A
+/// Built-in attributes and std derives expand to no new items, provided the
+/// caller has refused any import rebinding a `PRELUDE_MACROS` name. A
 /// `serial_test` lock is trusted here because it is the crate's only when the
 /// surrounding check passes; a bare name must be bound to a lock (renames
 /// included).
@@ -617,17 +625,6 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
         "macro_use",
         "macro_export",
     ];
-    const STD_DERIVES: &[&str] = &[
-        "Debug",
-        "Clone",
-        "Copy",
-        "PartialEq",
-        "Eq",
-        "PartialOrd",
-        "Ord",
-        "Hash",
-        "Default",
-    ];
     let Some(path) = attr.path() else {
         // `cfg(..)` parses as its own meta kind with no path.
         return attr.simple_name().as_deref() == Some("cfg");
@@ -653,6 +650,35 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
     BUILTIN.contains(&path.as_str())
         || (!path.contains("::") && bare_lock_bound_in_module(&path, module))
 }
+
+const STD_DERIVES: &[&str] = &[
+    "Debug",
+    "Clone",
+    "Copy",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Default",
+];
+
+/// Prelude macro names `attribute_emits_no_items` trusts that an import can
+/// rebind. Built-in attributes (`cfg`, `inline`, ..) cannot be rebound: an
+/// import of one is an ambiguity error.
+const PRELUDE_MACROS: &[&str] = &[
+    "derive",
+    "test",
+    "Debug",
+    "Clone",
+    "Copy",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Default",
+];
 
 fn unraw(name: &str) -> &str {
     name.strip_prefix("r#").unwrap_or(name)

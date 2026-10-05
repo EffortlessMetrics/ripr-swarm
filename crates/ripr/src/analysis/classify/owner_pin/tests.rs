@@ -614,6 +614,11 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         "#[derive(my_macros::EmitMod)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
         "#[cfg_attr(all(), my_macros::emit_mod)]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
         "use my_macros::serial;\n#[serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        // An import can rebind a prelude derive or `derive` itself.
+        "use my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use my_macros::emit_mod as derive;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use serial_test::serial;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial]",
+        "extern crate my_macros as Debug;\n#[test]\n#[serial_test::serial]",
         // The bare import's `serial_test` must be the crate too, and an
         // out-of-line module's `super::*` may bring another one.
         "use super::*;\nuse serial_test::serial;\n#[test]\n#[serial]",
@@ -649,6 +654,8 @@ fn serial_test_locks_resolve_in_the_tests_own_module() {
     let bare = "use demo::weight;\nuse serial_test::serial;\nmod tests {\nuse super::*;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
     let shadowed = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\nuse serial_test::serial;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
     assert!(weight_admitted(shadowed).is_empty(), "{shadowed}");
+    let rebound = "use demo::weight;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(rebound).is_empty(), "{rebound}");
     // The bare lock is bound only through the glob, which proves nothing.
     assert!(weight_admitted(bare).is_empty(), "{bare}");
 }
