@@ -424,7 +424,7 @@ fn normalized_contract_state(
         None => Ok(None),
         Some(value) => serde_json::from_value(serde_json::Value::String(value.clone()))
             .map(Some)
-            .map_err(|_| format!("`{value}` is not a closed contract state")),
+            .map_err(|_error| format!("`{value}` is not a closed contract state")),
     }
 }
 
@@ -2594,24 +2594,16 @@ mod tests {
     {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "narrow_accepted_contract_bug")?.clone();
-        let mutations: [(&str, fn(&mut IssueLifecycleContractPlanRowV1)); 9] = [
-            ("work items", |row| row.planning.work_items.clear()),
-            ("edit cages", |row| row.planning.edit_cages.clear()),
-            ("semantic conflict resources", |row| {
-                row.planning.conflict_resources.clear()
-            }),
-            ("proof commands", |row| row.planning.proof_commands.clear()),
-            ("stop conditions", |row| {
-                row.planning.stop_conditions.clear()
-            }),
-            ("non-goals", |row| row.planning.non_goals.clear()),
-            ("acceptance", |row| row.planning.acceptance_covered.clear()),
-            ("shape rationale", |row| {
-                row.planning.shape_rationale.clear()
-            }),
-            ("portfolio placement", |row| {
-                row.planning.portfolio_placement.clear()
-            }),
+        let sections = [
+            "work items",
+            "edit cages",
+            "semantic conflict resources",
+            "proof commands",
+            "stop conditions",
+            "non-goals",
+            "acceptance",
+            "shape rationale",
+            "portfolio placement",
         ];
         let expected = |section: &str| match section {
             "acceptance" => "covers no acceptance row".to_string(),
@@ -2619,9 +2611,20 @@ mod tests {
             "portfolio placement" => "records no portfolio placement".to_string(),
             other => format!("clears its mandatory {other}"),
         };
-        for (section, mutate) in mutations {
+        for section in sections {
             let mut mutated = row.clone();
-            mutate(&mut mutated);
+            match section {
+                "work items" => mutated.planning.work_items.clear(),
+                "edit cages" => mutated.planning.edit_cages.clear(),
+                "semantic conflict resources" => mutated.planning.conflict_resources.clear(),
+                "proof commands" => mutated.planning.proof_commands.clear(),
+                "stop conditions" => mutated.planning.stop_conditions.clear(),
+                "non-goals" => mutated.planning.non_goals.clear(),
+                "acceptance" => mutated.planning.acceptance_covered.clear(),
+                "shape rationale" => mutated.planning.shape_rationale.clear(),
+                "portfolio placement" => mutated.planning.portfolio_placement.clear(),
+                other => return Err(format!("unknown plan section `{other}`")),
+            }
             let failures = assess_contract_plan_row(&mutated);
             let needle = expected(section);
             if !failures.iter().any(|failure| failure.contains(&needle)) {
