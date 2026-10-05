@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 mod macro_boundary;
 mod tuple_match;
+mod wildcard_arm;
 
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
@@ -168,8 +169,10 @@ impl ClassifiedProbeEvidence {
             },
         );
 
-        let discriminate =
-            tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        let discriminate = tuple_match::discrimination(context, &observe, &discriminate)
+            // #6616: a trailing `_` arm has no pattern token to confirm.
+            .or_else(|| wildcard_arm::discrimination(context, &observe, &discriminate))
+            .unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
         // boundary input from one test and a discriminating oracle from
         // another. Infection and discrimination stay independently scored;
