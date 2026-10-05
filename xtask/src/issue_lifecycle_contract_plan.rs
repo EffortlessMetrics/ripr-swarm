@@ -3844,7 +3844,10 @@ mod tests {
             contract.root.config_identity = contract.author.config_identity.clone();
         }
         let failures = assess_contract_plan_row(&config_alias);
-        if !failures.iter().any(|failure| failure.contains("root config identity")) {
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("root config identity"))
+        {
             return Err(format!(
                 "a root config aliased to the author must fail the law, got {failures:?}"
             ));
