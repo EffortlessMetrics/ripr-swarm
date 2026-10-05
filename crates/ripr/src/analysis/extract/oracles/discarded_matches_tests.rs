@@ -811,7 +811,7 @@ fn wrapped_discarded_matchers_retain_actual_scrutinee_observers() -> Result<(), 
 }
 
 #[test]
-fn terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins() -> Result<(), String> {
+fn terminal_panic_matcher_guards_equal_their_assertion_twins() -> Result<(), String> {
     for (pattern, kind, strength) in [
         ("2", OracleKind::ExactValue, OracleStrength::Strong),
         ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
@@ -821,7 +821,6 @@ fn terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins() -> Resul
             format!("assert!({{ matches!(value, {pattern}) }});"),
             format!("if !{{ matches!(value, {pattern}) }} {{ return Err(()); }}"),
             format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
-            format!("if !matches!(value, {pattern}) {{ bail!(\"bad\"); }}"),
         ] {
             let source = terminal_matcher_twin_source(&statement);
             let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
@@ -871,6 +870,7 @@ fn nonfirst_quoted_and_recovered_failure_macros_cannot_pin_a_matcher() -> Result
         "if !matches!(value, 2) { let _setup = 0; panic!(\"bad\"); }",
         "if !matches!(value, 2) { recover(bail!(\"bad\")); }",
         "if !matches!(value, 2) { /* panic!(bad); */ let _setup = 0; }",
+        "if !matches!(value, 2) { bail!(\"unresolved custom macro\"); }",
     ] {
         let source = terminal_matcher_twin_source(statement);
         let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;

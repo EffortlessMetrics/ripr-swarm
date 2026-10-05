@@ -101,7 +101,7 @@ are scoped or reviewed.
   manufacture a guard's assertion twin.
   Wrapped discarded matcher statements cannot borrow a sibling assertion;
   actual observers inside pure block scrutinees keep their own coordinates.
-  Negated block conditions and first whole panic/bail failure statements retain
+  Negated block conditions and first whole panic failure statements retain
   their consumed assertion twins without importing failure payload tokens.
   File-fact generation 1.25 and classified generations 1.36/0.42 invalidate
   favorable or guard-blind predecessor facts

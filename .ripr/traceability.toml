@@ -9593,7 +9593,7 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonmatcher_blocks_keep_their_actual_observer_coordinates",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_cannot_borrow_sibling_observers",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_retain_actual_scrutinee_observers",
-  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins",
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_panic_matcher_guards_equal_their_assertion_twins",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonfirst_quoted_and_recovered_failure_macros_cannot_pin_a_matcher",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls",
   "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::err_return_guard_is_an_oracle_equal_to_its_assert_twin",

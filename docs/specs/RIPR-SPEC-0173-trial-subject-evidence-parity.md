@@ -118,7 +118,8 @@ turn a scalar value pin into an error-variant pin. Guard spans stay inside
 the claimed Trial, and body/sibling assertions retain their own coordinates.
 This adds no general control-flow or execution promise.
 The first failure statement may be a whole Err return or SPEC0154's narrowly
-supported `panic!(...)`/`bail!(...)` invocation. Negated condition blocks and
+supported `panic!(...)` invocation; unresolved custom `bail!` guards stay outside
+this bounded authority. Negated condition blocks and
 brace-delimited matcher inputs are balanced before selecting the actual body;
 the Trial closure remains the outer bound. Unknown wrapped discarded matchers
 cannot borrow a sibling observer through the lexical helper fallback.

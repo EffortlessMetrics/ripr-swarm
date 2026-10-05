@@ -4994,8 +4994,9 @@ fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
                 format!("assert!({{ matches!(value, {pattern}) }});"),
                 format!("if !{{ matches!(value, {pattern}) }} {{ return Err(\"bad\".into()); }}"),
                 format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
-                format!("if !matches!(value, {pattern}) {{ bail!(\"bad\"); }}"),
+                format!("if !matches!(value, {pattern}) {{ bail!(\"unresolved\"); }}"),
             ] {
+                let deferred_custom_macro = statement.contains("bail!");
                 let root = temp_dir("terminal-block-and-failure")?;
                 let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
                 let source = registered_matcher_control_source(&statement, helper_callback);
@@ -5022,6 +5023,19 @@ fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
                     );
                 }
                 for facts in [&subject.assertions, &test.assertions] {
+                    if deferred_custom_macro {
+                        let [sibling] = facts.as_slice() else {
+                            return Err(format!(
+                                "unresolved custom macro supplied matcher credit: {facts:?}"
+                            )
+                            .into());
+                        };
+                        assert_eq!(sibling.line, 7 - shift);
+                        assert_eq!(sibling.kind, OracleKind::ExactValue);
+                        assert_eq!(sibling.strength, OracleStrength::Strong);
+                        assert_eq!(sibling.observed_tokens, ["sibling"]);
+                        continue;
+                    }
                     let [matcher, sibling] = facts.as_slice() else {
                         return Err(format!("terminal block/failure evidence missing (helper={helper_callback}): {statement}: {facts:?}").into());
                     };

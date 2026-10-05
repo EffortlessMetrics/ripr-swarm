@@ -292,7 +292,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.33` generations lack one transition and must miss this combination.
 /// `1.35`: terminal guards retain balanced condition operands and later body
 /// openers; quoted body bait cannot invent an assertion twin (#5713).
-/// `1.36`: wrapped discarded matchers lose sibling credit; first panic!/bail!
+/// `1.36`: wrapped discarded matchers lose sibling credit; first panic!
 /// guards and negated block conditions retain their consumed twins (#5713).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.36";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
@@ -582,7 +582,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// predecessor family may replay favorable or guard-blind file facts.
 /// `1.24`: balanced terminal-guard conditions and first-failure admission
 /// replace truncated or quoted-body twins; guard-blind facts must miss.
-/// `1.25`: wrapped matcher projection and first panic!/bail! guard facts (#5713).
+/// `1.25`: wrapped matcher projection and first panic! guard facts (#5713).
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.25";
 
 /// Keep the best-effort classified-seam cache from turning a successful live

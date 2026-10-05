@@ -1884,23 +1884,16 @@ fn terminal_failure_statement(body: &str) -> Option<(usize, &'static str)> {
     }
     let masked = mask_comments_and_strings(body);
     let first = masked.trim_start();
-    for (name, display) in [("panic!", "panic!(..)"), ("bail!", "bail!(..)")] {
-        let Some(arguments) = first.strip_prefix(name).map(str::trim_start) else {
-            continue;
-        };
-        if !arguments.starts_with('(') {
-            continue;
-        }
-        let open = masked.len() - arguments.len();
-        let contents = delimited_contents_at(body, open)?;
-        let end = open + contents.len() + 2;
-        if invocation_covers_statement(masked[..end].trim(), name)
-            && matches!(masked[end..].trim_start().chars().next(), Some(';' | '}'))
-        {
-            return Some((end, display));
-        }
+    let arguments = first.strip_prefix("panic!")?.trim_start();
+    if !arguments.starts_with('(') {
+        return None;
     }
-    None
+    let open = masked.len() - arguments.len();
+    let contents = delimited_contents_at(body, open)?;
+    let end = open + contents.len() + 2;
+    (invocation_covers_statement(masked[..end].trim(), "panic!")
+        && matches!(masked[end..].trim_start().chars().next(), Some(';' | '}')))
+    .then_some((end, "panic!(..)"))
 }
 
 /// Keep source after the recognized header row's first failure statement.
@@ -1919,7 +1912,7 @@ fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
 }
 
 /// Shared by lexical guards and traversed inline-trial guard spans. The
-/// actual first body statement must return Err or invoke panic!/bail!; only the assertion twin's
+/// actual first body statement must return Err or invoke panic!; only the assertion twin's
 /// condition determines kind, strength and observed tokens.
 pub(crate) fn terminal_err_return_guard_oracle(
     statement: &str,
@@ -1979,7 +1972,7 @@ where
 /// other condition returns `None` — exactness is never inferred from
 /// messages or names.
 ///
-/// Fail-closed gates: a whole Err return or supported panic!/bail! invocation
+/// Fail-closed gates: a whole Err return or supported panic! invocation
 /// must be the guard body's first statement. Quoted/commented failure text,
 /// preceding statements and recovery expressions never credit. The condition
 /// must not carry a top-level `&&`/`||` (a compound's correct negation is
