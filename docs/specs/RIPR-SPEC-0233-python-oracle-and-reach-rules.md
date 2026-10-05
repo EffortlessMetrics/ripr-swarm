@@ -145,7 +145,8 @@ Only the test function's own body is read. The walker enters `if`, `for`,
 
 `assert <expr>`, first match wins:
 
-1. a comparison with any `==` in its chain: `exact_value` / strong;
+1. a comparison with any `==` in its chain: `exact_value` / strong
+   (rule 1 narrows this to chains whose operators are all `==`);
 2. any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
    `in`, `not in`): `relational_check` / weak;
 3. a call to `isinstance`: `relational_check` / weak;
@@ -180,19 +181,24 @@ table.
 
 ### Oracle admission rules
 
-1. **Duplicative equality is not exact.** An `==` comparison, or an
-   `assertEqual` or `assertDictEqual` call, whose two compared operands
-   are the same token sequence, ignoring whitespace outside string
-   literals, assigns
-   `relational_check` / weak. It cannot discriminate a change to the code
-   both sides run. This mirrors RIPR-SPEC-0231 step 3.
+1. **Duplicative or mixed equality is not exact.** An `==` comparison,
+   or an `assertEqual` or `assertDictEqual` call, whose two compared
+   operands are the same token sequence, ignoring whitespace outside
+   string literals, assigns `relational_check` / weak. It cannot
+   discriminate a change to the code both sides run. This mirrors
+   RIPR-SPEC-0231 step 3. A comparison chain that mixes `==` with any
+   other operator (`int('1') == 1 < parse('x')`) also assigns
+   `relational_check` / weak: the operand the owner result sits in may be
+   compared only by the other operator.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`
    `match=` value, or an `assertRaisesRegex` expected-regex argument,
    that is a string literal (any `r`, `b` or `u` prefix) whose content is
    empty or is one of `.*`, `.+`, `^`, `$`, `^.*$` or `(?s).*` assigns
    `broad_error` / weak. It pins only the exception class, as the call
-   without the pattern does. A pattern that is not a literal keeps
-   `exact_error_variant` / strong.
+   without the pattern does. A literal pattern containing an unescaped
+   `|` also assigns `broad_error` / weak, because an alternation can admit
+   both the old and the new message (`'empty|blank'`). A pattern that is
+   not a literal keeps `exact_error_variant` / strong.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -393,8 +399,11 @@ the rule; ripr still reports only what the static shape shows.
     `places` or the fifth for `delta`; the fourth is `msg`), the call is `relational_check` /
     weak, because static evidence cannot tell whether the band excludes
     the pre-change value. The corpus evidence covers the default form
-    only.
-    `assertNotAlmostEqual` stays unrecorded.
+    only. A change smaller than the tolerance is not discriminated, and
+    ripr does not compute the size of a change; that is the same limit
+    Decision 6 accepts for `pytest.approx`, whose default relative
+    tolerance of `1e-6` is coarser. `assertNotAlmostEqual` stays
+    unrecorded.
 13. **The callable of an exception assertion is called.** In a call
     statement whose last segment is `assertRaises` or `assertRaisesRegex`,
     or `raises` read as `pytest.raises`, the positional argument right
@@ -565,7 +574,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
 4. `assert isinstance(parse('1'), int)`: `relational_check` / weak
    (unchanged).
 5. `assert parse('1') == 2 and other == 3`: `smoke_only` / smoke,
-   `weakly_exposed` (unchanged).
+   `weakly_exposed` (unchanged). `assert int('1') == 1 < parse('1')`:
+   `relational_check` / weak, `weakly_exposed` (today `exact_value` /
+   strong, `exposed`, inferred; rule 1).
 6. `assert parse('1') == parse('1')`: `relational_check` / weak,
    `weakly_exposed` (today `exact_value` / strong, `exposed`). The same for
    `self.assertEqual(parse('1'), parse('1'))`. `assert norm('a b') ==
@@ -607,7 +618,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
 19. Error owner, `with pytest.raises(KeyError, match='.*'): perr('')`:
     `broad_error` / weak, `weakly_exposed` (today `exact_error_variant` /
     strong, `exposed`). With `pytest.raises(Exception, match='')`:
-    `broad_error` / weak, `weakly_exposed` (class unchanged).
+    `broad_error` / weak, `weakly_exposed` (class unchanged). With
+    `match='empty|blank'` and the raise line changed only in its
+    message, from `'empty'` to `'blank'`: `broad_error` / weak,
+    `weakly_exposed` (today `exact_error_variant` / strong, `exposed`,
+    inferred; rule 2).
 20. Error owner, `self.assertRaisesRegex(KeyError, 'empty', perr, '')` in
     a `unittest.TestCase`: relation `syntactic_call`,
     `exact_error_variant` / strong, `exposed` (today `same_stem`, oracle
