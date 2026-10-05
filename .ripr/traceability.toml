@@ -2717,6 +2717,24 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unaliased_dotted_python_imports_use_bound_root_for_activation",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_and_aliased_activation_controls_do_not_credit_python_tests",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::active_python_oracle_keeps_credit_beside_a_disabled_test",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_exact_python_oracle_cannot_lend_credit_to_an_active_smoke_test",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unrelated_python_decorator_names_do_not_disable_active_oracles",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_python_boundary_input_cannot_activate_an_active_neighbor_oracle",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::marked_python_test_body_rebinding_cannot_manufacture_an_active_boundary",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_python_import_alias_cannot_supply_an_active_tests_observer_identity",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::skipped_python_base_class_controls_an_overridden_test",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::python_test_body_imports_cannot_rebind_definition_scope_activation",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::disabled_python_mock_cannot_suppress_an_independent_active_oracle",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::python_method_body_does_not_use_class_local_owner_imports",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::python_later_imports_cannot_rewrite_applied_activation_controls",
+  "xtask/src/fixture_contracts/native_python.rs::tests::retained_native_test_matrix_is_bound",
+  "xtask/src/fixture_contracts/native_python.rs::tests::zero_setup_error_wrong_subject_and_suppressed_failure_are_not_passes",
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_retained_evidence_is_bound",
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_rejects_zero_setup_failure_and_wrong_oracle",
   "xtask/src/fixture_contracts/upstream_python.rs::tests::upstream_python_ignores_volatile_test_timing",
@@ -7168,6 +7186,7 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_operand_error_lexeme_does_not_confirm_observation",
   "xtask/src/tests.rs::evidence_promotion_human_oracle_line_matches_real_rust_evidence",
   "xtask/src/tests.rs::evidence_promotion_human_oracle_line_rejects_diagnostic_overrides",
   "xtask/src/tests.rs::evidence_promotion_semantic_assertions_retain_related_test_identity",
@@ -7224,6 +7243,7 @@ fixtures = [
   "fixtures/wildcard_oracle_guarded_original",
   "fixtures/wildcard_oracle_guarded_wrong",
   "fixtures/benches_harness_evidence",
+  "fixtures/error_path_operand_error_lexeme",
   "fixtures/evidence-promotion-honesty-corpus",
   "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
@@ -7269,6 +7289,7 @@ fixtures = [
   "fixtures/typescript_adversarial_mocked_barrel",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/reveal.rs",
   "xtask/src/main.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
