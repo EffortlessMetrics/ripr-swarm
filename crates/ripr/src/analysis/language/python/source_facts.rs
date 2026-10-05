@@ -285,7 +285,11 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         false,
         &PythonTestModule {
             imports: &imports,
-            admission: &PythonAdmissionContext::of_module(&module.body, &imports),
+            admission: &PythonAdmissionContext::of_module(
+                &module.body,
+                &imports,
+                &dotted_dir(file),
+            ),
         },
         &mut snapshot.tests,
     );
@@ -1390,4 +1394,20 @@ fn is_log_call_name(name: &str) -> bool {
         name.rsplit('.').next(),
         Some("debug" | "info" | "warning" | "warn" | "error" | "exception" | "critical" | "log")
     ) && (name.starts_with("logging.") || name.starts_with("logger."))
+}
+
+/// The dotted directory of a source file: `e2e/api` for `e2e/api/test_m.py`
+/// reads `e2e.api`; a file at the root reads "".
+fn dotted_dir(file: &Path) -> String {
+    file.parent()
+        .map(|dir| {
+            dir.components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .unwrap_or_default()
 }

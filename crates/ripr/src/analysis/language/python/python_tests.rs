@@ -2830,6 +2830,51 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             none,
         ),
         (
+            "helper stored in a local",
+            "from tests.helpers import run_case\ndef test_x():\n    runner = run_case\n    runner(apply_discount(1))\n",
+            unresolved,
+        ),
+        (
+            "helper passed to map",
+            "from tests.helpers import run_case\ndef test_x():\n    list(map(run_case, [apply_discount(1)]))\n",
+            unresolved,
+        ),
+        (
+            "exit stored in a local",
+            "import sys\ndef test_x():\n    stop = sys.exit\n    stop(apply_discount(1))\n",
+            unresolved,
+        ),
+        (
+            "exec stored in a local",
+            "def test_x():\n    run = exec\n    run('apply_discount(1)')\n",
+            unresolved,
+        ),
+        (
+            "pytest.warns stored in a local",
+            "import pytest\ndef test_x():\n    w = pytest.warns\n    with w(UserWarning):\n        apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "filterwarnings error mark",
+            "import pytest\n@pytest.mark.filterwarnings('error')\ndef test_x():\n    apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "warnings.simplefilter",
+            "import warnings\ndef test_x():\n    warnings.simplefilter('error')\n    apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "module constant passed as a value",
+            "LIMIT = 20\ndef test_x():\n    apply_discount(LIMIT)\n",
+            none,
+        ),
+        (
+            "method on a computed value",
+            "def test_x(tmp_path):\n    (tmp_path / 'out').write_text(str(apply_discount(1)))\n    'a,b'.split(',')\n",
+            none,
+        ),
+        (
             "pytest.raises",
             "import pytest\ndef test_x():\n    with pytest.raises(ValueError):\n        apply_discount(-1)\n",
             recognized,
@@ -2887,6 +2932,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
         (
             "inherited helper from an imported base",
             "from tests.base import Base\nclass TestX(Base):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "decorated test class",
+            "def wrap(cls):\n    return cls\n@wrap\nclass TestX:\n    def test_x(self):\n        apply_discount(20)\n",
             unresolved,
         ),
         (

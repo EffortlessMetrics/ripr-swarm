@@ -19,10 +19,13 @@
 //! the absence of the row and the file's `unsupported_syntax` limitation, not
 //! by a value here.
 //!
-//! Known blind spot: the scan sees one file. An autouse fixture in a
-//! `conftest.py` or an assertion installed by a pytest plugin can still fail
-//! a `NoAssertionLike` test (#6657). A `no_assertion` miss must account for
-//! that before it is emitted.
+//! Known blind spots: the scan sees one file. An autouse fixture in a
+//! `conftest.py`, an assertion installed by a pytest plugin, or a helper
+//! imported by bare name from a sibling module that pytest's rootdir
+//! insertion makes importable (`from utils import run_case` beside the test)
+//! can still fail a `NoAssertionLike` test (#6657). A module imported from
+//! the test file's own directory or below is treated as test support. A
+//! `no_assertion` miss must account for the rest before it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
 //! fact and is not folded into this state.
@@ -65,22 +68,32 @@ pub(super) struct PythonAdmissionContext {
     /// Classes whose bases or keywords RIPR cannot see into (an imported
     /// base, a metaclass): inherited setup hooks may assert.
     opaque_classes: BTreeSet<String>,
-    /// An autouse fixture, or a `pytestmark` that applies `usefixtures`.
+    /// An autouse fixture, or a `pytestmark` that applies `usefixtures` or
+    /// `filterwarnings` (which can turn a warning into a failure).
     has_implicit_fixture: bool,
     /// A setup or teardown hook (`setUp`, `teardown_method`, `setup_module`,
     /// ...) in this file whose body is assertion-like. The runner calls it
     /// around tests without the test naming it.
     has_assertion_like_lifecycle: bool,
+    /// The dotted directory of the file (see `TestScope::module_dir`).
+    module_dir: String,
 }
 
 impl PythonAdmissionContext {
-    pub(super) fn of_module(statements: &[Stmt], imports: &[PythonImport]) -> Self {
-        let mut context = Self::default();
+    pub(super) fn of_module(
+        statements: &[Stmt],
+        imports: &[PythonImport],
+        module_dir: &str,
+    ) -> Self {
+        let mut context = Self {
+            module_dir: module_dir.to_string(),
+            ..Self::default()
+        };
         let mut lifecycle_bodies = Vec::new();
         context.collect(statements, &mut lifecycle_bodies);
         // Defined names are complete only after the whole module is seen.
         context.has_assertion_like_lifecycle = lifecycle_bodies.iter().any(|body| {
-            let scope = TestScope::of_body(&[], body, None);
+            let scope = TestScope::of_body(module_dir, &[], body, None);
             let mut scan = BodyScan {
                 context: &context,
                 imports,
@@ -113,7 +126,10 @@ impl PythonAdmissionContext {
                     let opaque_base = class.bases.iter().any(|base| {
                         !expr_full_name(base).is_some_and(|name| SAFE_TEST_BASES.contains(&name.as_str()))
                     });
-                    if opaque_base || !class.keywords.is_empty() {
+                    // A class decorator can rewrite or wrap every test
+                    // method, so its tests are never extraction-complete.
+                    let opaque_decorator = !class.decorator_list.is_empty();
+                    if opaque_base || opaque_decorator || !class.keywords.is_empty() {
                         self.opaque_classes.insert(class.name.to_string());
                     }
                     self.collect(&class.body, lifecycle);
@@ -121,7 +137,7 @@ impl PythonAdmissionContext {
                 Stmt::Assign(assign)
                     if assign.targets.iter().any(|target| {
                         matches!(target, Expr::Name(name) if name.id.as_str() == "pytestmark")
-                    }) && mentions_usefixtures(&assign.value) =>
+                    }) && applies_implicit_mark(&assign.value) =>
                 {
                     self.has_implicit_fixture = true;
                 }
@@ -222,12 +238,18 @@ fn is_test_support_path(path: &str) -> bool {
 }
 
 /// Qualified callees that end or fail a test without an `assert`.
+/// `warnings.simplefilter("error")` turns any later warning into a failure;
+/// the filter action is not read, so every filter call counts.
 const FAILING_CALLEES: &[&str] = &[
+    "_thread.interrupt_main",
     "os._exit",
     "os.abort",
     "os.kill",
+    "os.killpg",
+    "signal.raise_signal",
     "sys.exit",
-    "_thread.interrupt_main",
+    "warnings.filterwarnings",
+    "warnings.simplefilter",
 ];
 
 /// The `pytest.` members that only build values or marks. Every other
@@ -235,7 +257,9 @@ const FAILING_CALLEES: &[&str] = &[
 /// the test.
 fn is_inert_pytest_member(qualified: &str) -> bool {
     matches!(qualified, "pytest.approx" | "pytest.param")
-        || (qualified.starts_with("pytest.mark.") && !qualified.contains("usefixtures"))
+        || (qualified.starts_with("pytest.mark.")
+            && !qualified.contains("usefixtures")
+            && !qualified.contains("filterwarnings"))
 }
 
 /// Built-ins that compute values and cannot fail a test by themselves.
@@ -330,6 +354,24 @@ const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "tmpdir_factory",
 ];
 
+fn has_assertion_like_prefix(name: &str) -> bool {
+    let lowered = name.to_ascii_lowercase();
+    ASSERTION_LIKE_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
+}
+
+/// Built-ins that can fail or end a test, or run code RIPR cannot read.
+const UNSAFE_BUILTINS: &[&str] = &[
+    "__import__",
+    "breakpoint",
+    "compile",
+    "eval",
+    "exec",
+    "exit",
+    "quit",
+];
+
 /// Callee name prefixes that read as an assertion or a failure. They only
 /// ever withhold `NoAssertionLike` (a method on a test-bound value such as
 /// `result.verify()`), never grant it.
@@ -386,7 +428,12 @@ pub(super) fn assertion_admission(
     if opaque_fixture {
         return PythonAssertionAdmission::Unresolved;
     }
-    let scope = TestScope::of_body(test.parameters, test.body, parametrize_argnames);
+    let scope = TestScope::of_body(
+        &context.module_dir,
+        test.parameters,
+        test.body,
+        parametrize_argnames,
+    );
     let mut scan = BodyScan {
         context,
         imports: test.imports,
@@ -425,15 +472,16 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
         })
 }
 
-fn mentions_usefixtures(expr: &Expr) -> bool {
+fn applies_implicit_mark(expr: &Expr) -> bool {
     match expr {
-        Expr::Call(call) => mentions_usefixtures(&call.func),
+        Expr::Call(call) => applies_implicit_mark(&call.func),
         Expr::Attribute(attribute) => {
-            attribute.attr.as_str() == "usefixtures" || mentions_usefixtures(&attribute.value)
+            matches!(attribute.attr.as_str(), "usefixtures" | "filterwarnings")
+                || applies_implicit_mark(&attribute.value)
         }
-        Expr::Name(name) => name.id.as_str() == "usefixtures",
-        Expr::List(list) => list.elts.iter().any(mentions_usefixtures),
-        Expr::Tuple(tuple) => tuple.elts.iter().any(mentions_usefixtures),
+        Expr::Name(name) => matches!(name.id.as_str(), "usefixtures" | "filterwarnings"),
+        Expr::List(list) => list.elts.iter().any(applies_implicit_mark),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(applies_implicit_mark),
         // Anything else may compute marks RIPR cannot read.
         _ => true,
     }
@@ -443,6 +491,9 @@ fn mentions_usefixtures(expr: &Expr) -> bool {
 /// loops over, imports, catches or defines. A method on one of these values
 /// is the test's own computation, not a hidden helper.
 struct TestScope {
+    /// The dotted directory of the test file (`e2e` for `e2e/test_m.py`).
+    /// A module imported from there or below is test support.
+    module_dir: String,
     builtin_fixtures: BTreeSet<String>,
     argnames: BTreeSet<String>,
     locals: BTreeSet<String>,
@@ -450,6 +501,7 @@ struct TestScope {
 
 impl TestScope {
     fn of_body(
+        module_dir: &str,
         parameters: &[String],
         body: &[Stmt],
         parametrize_argnames: Option<&BTreeSet<String>>,
@@ -457,6 +509,7 @@ impl TestScope {
         let mut locals = BTreeSet::new();
         bound_names(body, &mut locals);
         Self {
+            module_dir: module_dir.to_string(),
             builtin_fixtures: parameters
                 .iter()
                 .filter(|name| PYTEST_BUILTIN_FIXTURES.contains(&name.as_str()))
@@ -822,6 +875,18 @@ impl BodyScan<'_> {
                     self.assertion_like = true;
                     return;
                 }
+                if let Some(name) = expr_full_name(expr) {
+                    if self.value_is_assertion_like(&name) {
+                        self.assertion_like = true;
+                        return;
+                    }
+                    // The whole dotted chain was judged as one name; its
+                    // prefixes (`pytest.mark` in `pytest.mark.skip`) are not
+                    // separate references.
+                    if matches!(attribute.value.as_ref(), Expr::Name(_) | Expr::Attribute(_)) {
+                        return;
+                    }
+                }
                 self.expr(&attribute.value);
             }
             Expr::Subscript(subscript) => {
@@ -838,10 +903,10 @@ impl BodyScan<'_> {
             }
             // A same-module function or class passed or stored as a value
             // (`run = run_case`) may be called later.
+            // A forbidden callee bound or passed as a value (`run = run_case`,
+            // `map(run_case, xs)`, `stop = sys.exit`) may be called later.
             Expr::Name(name) => {
-                if self.context.defined_names.contains(name.id.as_str())
-                    && !self.scope.locals.contains(name.id.as_str())
-                {
+                if self.value_is_assertion_like(name.id.as_str()) {
                     self.assertion_like = true;
                 }
             }
@@ -856,21 +921,58 @@ impl BodyScan<'_> {
         if matches!(call.func.as_ref(), Expr::Call(_)) {
             return true;
         }
-        match expr_full_name(call.func.as_ref()) {
-            Some(name) => self.name_is_assertion_like(&name),
-            None => true,
+        match (expr_full_name(call.func.as_ref()), call.func.as_ref()) {
+            (Some(name), _) => self.name_is_assertion_like(&name),
+            // A method on a computed value (`(tmp_path / "x").write_text(...)`,
+            // `"a,b".split(",")`) acts on that value; the value itself is
+            // walked separately.
+            (None, Expr::Attribute(attribute))
+                if !matches!(attribute.value.as_ref(), Expr::Subscript(_)) =>
+            {
+                has_assertion_like_prefix(attribute.attr.as_str())
+            }
+            (None, _) => true,
         }
+    }
+
+    /// Whether a name used as a value, not called here, is something that
+    /// could fail the test once called. Unlike a call, an unknown global used
+    /// as a value (a module constant) is not suspect by itself.
+    fn value_is_assertion_like(&self, name: &str) -> bool {
+        let segments: Vec<&str> = name.split('.').collect();
+        let root = segments.first().copied().unwrap_or(name);
+        let last = segments.last().copied().unwrap_or(name);
+        if matches!(root, "self" | "cls") || self.scope.argnames.contains(root) {
+            return false;
+        }
+        if has_assertion_like_prefix(last) {
+            return true;
+        }
+        if self.scope.locals.contains(root) {
+            return false;
+        }
+        if self.scope.builtin_fixtures.contains(root) {
+            return matches!(last, "getfixturevalue" | "getfuncargvalue");
+        }
+        if let Some(qualified) = self.imported_name(name) {
+            return self.import_is_assertion_like(&qualified);
+        }
+        self.context.defined_names.contains(root) || UNSAFE_BUILTINS.contains(&root)
+    }
+
+    fn import_is_assertion_like(&self, qualified: &str) -> bool {
+        is_test_support_path(qualified)
+            || (!self.scope.module_dir.is_empty()
+                && qualified.starts_with(&format!("{}.", self.scope.module_dir)))
+            || FAILING_CALLEES.contains(&qualified)
+            || (qualified.starts_with("pytest.") && !is_inert_pytest_member(qualified))
     }
 
     fn name_is_assertion_like(&self, name: &str) -> bool {
         let segments: Vec<&str> = name.split('.').collect();
         let root = segments.first().copied().unwrap_or(name);
         let last = segments.last().copied().unwrap_or(name);
-        let lowered = last.to_ascii_lowercase();
-        if ASSERTION_LIKE_PREFIXES
-            .iter()
-            .any(|prefix| lowered.starts_with(prefix))
-        {
+        if has_assertion_like_prefix(last) {
             return true;
         }
         if matches!(root, "self" | "cls") {
@@ -892,9 +994,7 @@ impl BodyScan<'_> {
             return segments.len() == 1;
         }
         if let Some(qualified) = self.imported_name(name) {
-            return is_test_support_path(&qualified)
-                || FAILING_CALLEES.contains(&qualified.as_str())
-                || (qualified.starts_with("pytest.") && !is_inert_pytest_member(&qualified));
+            return self.import_is_assertion_like(&qualified);
         }
         if self.context.defined_names.contains(root) {
             return true;
