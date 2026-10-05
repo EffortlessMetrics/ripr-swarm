@@ -700,13 +700,13 @@ fn run_agent_repair_with_identity(
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal, identity);
     if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
-        && let Err(record_error) =
-            crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
-                root,
-                store.as_deref(),
-                attempt_id,
-                &after_refusal_reason(error, &refusal.narration),
-            )
+        && let Err(record_error) = record_after_phase_refusal(
+            root,
+            store.as_deref(),
+            attempt_id,
+            error,
+            &after_refusal_reason(error, &refusal.narration),
+        )
     {
         eprintln!(
             "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
@@ -734,6 +734,33 @@ fn run_agent_repair_with_identity(
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
+    }
+}
+
+/// Records a refused after phase on its attempt, choosing the authority by the
+/// refusal family. A receipt refused on trusted-surface grounds (#5262) fires
+/// only after the durable finish committed the after verdict, so the
+/// resumable authority would refuse the write ("already has an after
+/// verdict"); the terminal authority records that observation beside the
+/// verdict it describes, which is what `agent status` reads for a finished
+/// attempt whose receipt is missing. Every other recorded refusal happens
+/// while the attempt is still resumable and keeps the resumable authority and
+/// its concurrent-finish guard.
+fn record_after_phase_refusal(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    error: &str,
+    reason: &str,
+) -> Result<(), String> {
+    if error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL) {
+        crate::app::repair_attempt::record_repair_attempt_terminal_receipt_refusal_from(
+            root, store, attempt_id, reason,
+        )
+    } else {
+        crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+            root, store, attempt_id, reason,
+        )
     }
 }
 
@@ -1791,7 +1818,7 @@ fn repair_after_trusted_surface_recovery_lines(
         format!("attempt `{attempt_id}` passed its edit cage but its receipt was refused: {error}."),
         "the refusal means a tracked file differs from the attempt's before-phase head outside the allowed test surface: most often a production change that was already uncommitted when the attempt started, or a production edit made during the loop; the edit cage cannot see either as an edit of this attempt.".to_string(),
         format!(
-            "to recover: if the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, undo it (`git checkout {} -- <path>`) or set it aside (`git stash`). Then start a new attempt: set your test edit aside (`git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",
+            "to recover: first inspect what moved (`git diff -- <path>`). If the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, set it aside without losing it (`git stash`). Only `git checkout {} -- <path>` restores the before-phase content, and it discards uncommitted work irrecoverably, so run it only when the change is disposable. Then start a new attempt: set your test edit aside (`git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",
             attempt.repository_head
         ),
     ]
@@ -2220,6 +2247,158 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// Prepares and finishes one real attempt so the refusal-recording
+    /// dispatch is exercised against durable manifests, not mocks.
+    fn prepare_and_finish_sample_attempt(
+        root: &Path,
+        label: &str,
+    ) -> Result<crate::app::repair_attempt::RepairAttemptManifest, String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, finish_repair_attempt, write_edit_cage_baseline,
+        };
+        use crate::edit_cage::HeadMovement;
+
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)
+            .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
+        let before = workflow.join(format!("before-{label}.json"));
+        let packet = workflow.join(format!("packet-{label}.json"));
+        let baseline = workflow.join(format!("baseline-{label}.json"));
+        std::fs::write(&before, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", before.display()))?;
+        let packet_text = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        })
+        .to_string();
+        std::fs::write(&packet, packet_text.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
+        let policy = edit_cage_policy_from_packet(&packet_text, "seam:sample")?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        let prepared = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id: "seam:sample",
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+            store: None,
+        })?;
+        let test_path = root.join("tests/target.rs");
+        std::fs::create_dir_all(
+            test_path
+                .parent()
+                .ok_or_else(|| "test path has no parent".to_string())?,
+        )
+        .map_err(|error| format!("create tests dir failed: {error}"))?;
+        std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
+            .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
+        let retained_packet = root.join(
+            crate::app::repair_attempt::find_manifest_artifact_by_role(
+                &prepared.manifest,
+                "agent_packet",
+            )
+            .ok_or("prepared attempt has no retained agent_packet")?
+            .path
+            .clone(),
+        );
+        finish_repair_attempt(
+            root,
+            &prepared.manifest.repair_attempt_id,
+            &retained_packet,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        Ok(prepared.manifest)
+    }
+
+    /// The recording dispatch routes by refusal family (#5262 review): the
+    /// trusted-surface refusal — which only ever fires after the durable
+    /// finish — records beside the committed after verdict through the
+    /// terminal authority, while every other family keeps the resumable
+    /// authority, whose concurrent-finish guard refuses beside a verdict.
+    #[test]
+    fn after_phase_refusal_recording_routes_trusted_surface_to_the_terminal_authority()
+    -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            RepairAttemptState, TRUSTED_SURFACE_REFUSAL_TAIL, load_repair_attempt_manifest,
+        };
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        // The attempt authority requires an exact Git top-level, so the
+        // fixture is a real repository, not a plain temp directory.
+        let root = unique_command_test_dir("refusal-recording-dispatch");
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        run_git(&root, &["init"]).map_err(|error| format!("fixture git init: {error}"))?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )
+        .map_err(|error| format!("fixture git email: {error}"))?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])
+            .map_err(|error| format!("fixture git name: {error}"))?;
+        let readme = root.join("README.md");
+        std::fs::write(&readme, "# test\n")
+            .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        run_git(&root, &["add", "."]).map_err(|error| format!("fixture git add: {error}"))?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])
+            .map_err(|error| format!("fixture git commit: {error}"))?;
+        let result = (|| -> Result<(), String> {
+            let manifest = prepare_and_finish_sample_attempt(&root, "dispatch")?;
+            let attempt_id = &manifest.repair_attempt_id;
+
+            let trusted_error = format!(
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: src/lib.rs"
+            );
+            record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                &trusted_error,
+                "repair receipt observed repository path outside trusted edit surface: src/lib.rs. To recover: commit the production change, then start a new attempt.",
+            )?;
+            let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
+            let refusal = recorded
+                .last_after_refusal
+                .ok_or("the trusted-surface refusal was not recorded on the finished attempt")?;
+            if !refusal.reason.contains("To recover") {
+                return Err(format!("recorded refusal lost the recovery: {refusal:?}"));
+            }
+            if recorded.after.is_none() || recorded.state != RepairAttemptState::ReadyToFinish {
+                return Err("the terminal record moved the attempt's finish".to_string());
+            }
+
+            let other_error =
+                "repair attempt changed while the after phase ran; retry the after phase";
+            match record_after_phase_refusal(&root, None, attempt_id, other_error, "changed") {
+                Err(error) if error.contains("already has an after verdict") => {}
+                other => {
+                    return Err(format!(
+                        "the resumable authority must stay guarded beside a verdict: {other:?}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        result
     }
 
     #[test]

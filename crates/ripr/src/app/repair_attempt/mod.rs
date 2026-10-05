@@ -1924,6 +1924,60 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
 }
 
+/// Records why the receipt of an already finished attempt refused, beside the
+/// committed after verdict (#5262). The after phase's trusted-surface refusal
+/// fires only after `finish_repair_attempt` has committed the verdict, so the
+/// resumable authority above refuses the write by design; the narration the
+/// after phase printed must still reach `agent status`, which reads this
+/// record for a finished attempt whose receipt is missing. The caller asserts
+/// the refusal was observed after this attempt's durable finish, and the
+/// locked commit keeps that assertion honest: the write is refused when the
+/// attempt carries no after verdict (that observation belongs to the
+/// resumable authority) and when the after verdict moved between the read and
+/// the locked commit (a concurrent finish would supersede the observation
+/// this refusal describes). Only `last_after_refusal` moves; state, verdict,
+/// and bindings are re-validated and byte-preserved.
+pub(crate) fn record_repair_attempt_terminal_receipt_refusal_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    let (store, manifest_path, base_bytes, base_manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
+    let after = base_manifest.after.clone().ok_or_else(|| {
+        format!(
+            "repair attempt {} has no after verdict; record the refusal with the resumable authority instead",
+            attempt_id.as_str()
+        )
+    })?;
+    let reason = bounded_refusal_reason(reason);
+    if reason.is_empty() {
+        return Err("an after-phase refusal needs a non-empty reason".to_string());
+    }
+    let mut manifest = base_manifest;
+    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+        reason,
+        repository_head: crate::agent::artifact::current_git_head(&root).ok(),
+        recorded_unix_ms: current_unix_ms()?,
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.after.as_ref() != Some(&after) {
+            return Err(format!(
+                "repair attempt {} moved while its receipt refusal was recorded",
+                attempt_id.as_str()
+            ));
+        }
+        Ok(())
+    })?;
+    read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
+}
+
 /// Upper bound on a recorded after-phase refusal message.
 const REPAIR_ATTEMPT_REFUSAL_MAX_BYTES: usize = 4096;
 
@@ -4008,6 +4062,73 @@ mod tests {
                 return Err(format!(
                     "dirty production content must be the only violation: {violations:?}"
                 ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// The terminal receipt-refusal authority records the narration beside a
+    /// committed after verdict (#5262 review): the late trusted-surface
+    /// refusal fires only after `finish_repair_attempt`, so the resumable
+    /// authority refuses it by design and the recovery route would otherwise
+    /// never reach `agent status`. Pins that the record lands, that state and
+    /// the after verdict are untouched, and that the resumable authority
+    /// stays guarded for this attempt.
+    #[test]
+    fn terminal_receipt_refusal_records_beside_the_after_verdict() -> Result<(), String> {
+        let root = test_repo_root("terminal-receipt-refusal")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "a")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let attempt_id = &finished.repair_attempt_id;
+            let reason = "repair receipt observed repository path outside trusted edit surface: src.rs. to recover: commit the production change, then start a new attempt.";
+
+            record_repair_attempt_terminal_receipt_refusal_from(&root, None, attempt_id, reason)?;
+            let manifest = load_repair_attempt_manifest(&root, attempt_id)?;
+            let refusal = manifest.last_after_refusal.as_ref().ok_or_else(|| {
+                "the terminal receipt refusal was not recorded on the manifest".to_string()
+            })?;
+            if !refusal.reason.contains("to recover:") {
+                return Err(format!(
+                    "recorded refusal lost the recovery route: {refusal:?}"
+                ));
+            }
+            if manifest.after.is_none() || manifest.state != RepairAttemptState::ReadyToFinish {
+                return Err(format!(
+                    "the terminal record moved the attempt's finish: state {:?}, after present {}",
+                    manifest.state,
+                    manifest.after.is_some()
+                ));
+            }
+
+            // The resumable authority stays guarded beside the committed
+            // verdict: only the trusted-surface family routes to the terminal
+            // writer.
+            match record_repair_attempt_after_refusal_from(&root, None, attempt_id, "resumable") {
+                Err(error) if error.contains("already has an after verdict") => {}
+                other => {
+                    return Err(format!(
+                        "resumable refusal authority must stay guarded: {other:?}"
+                    ));
+                }
+            }
+            // The terminal authority refuses an attempt that never finished:
+            // its observation belongs to the resumable authority.
+            let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
+            match record_repair_attempt_terminal_receipt_refusal_from(
+                &root,
+                None,
+                &awaiting.manifest.repair_attempt_id,
+                reason,
+            ) {
+                Err(error) if error.contains("no after verdict") => {}
+                other => {
+                    return Err(format!(
+                        "terminal authority must refuse an attempt without a verdict: {other:?}"
+                    ));
+                }
             }
             Ok(())
         })();
