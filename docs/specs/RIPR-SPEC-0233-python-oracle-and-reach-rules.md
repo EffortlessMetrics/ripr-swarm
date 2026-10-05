@@ -24,6 +24,8 @@ Linked issues:
 - #4567 (owner call through a module and result locals)
 - #4765 (same-class transitive reach, RIPR-SPEC-0201)
 - #6603 (mutation evidence for rules 12 to 14, from the #6597 corpus)
+- #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
+  fixture verdicts in the #6597 corpus; rules 15 to 19)
 
 Linked PRs:
 
@@ -63,13 +65,24 @@ Support-tier impact:
   the test shape of examples 8, 20 and 21 fails on a non-equivalent
   mutant of its owner, so today's `weakly_exposed` is a false actionable
   verdict there. Those findings move to `exposed`.
+- Rules 15 to 19 (amended 2026-10-05) come from the same corpus (#6599,
+  #6600, #6601). Rules 15, 16, 17 and 19 add credit where the corpus
+  case's test fails on a non-equivalent mutant of its owner, so the
+  uncredited `weakly_exposed` is a false actionable verdict: an `and`
+  chain of exact comparisons, a boundary written as a constant plus or
+  minus an integer, an assertion on the stream, file, mock call or field
+  the changed line writes, and a Hypothesis `@example` row. Rules 18 and
+  19 remove credit: an expected value computed through the changed owner,
+  and a property test whose generated inputs carry the boundary.
 
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - No schema version bump. No new oracle kind, strength, relation,
-  `static_limit_kind`, `oracle_alignment` or `alignment_reason` value.
+  `static_limit_kind` or `oracle_alignment` value. Rule 17 adds one
+  `alignment_reason` token, `strong_oracle_observes_changed_effect_channel`
+  (`direct`); RIPR-SPEC-0028 lists it.
 
 ## Problem
 
@@ -457,6 +470,71 @@ the rule; ripr still reports only what the static shape shows.
     the owner-name credit branch even when the change is only the
     exception message and the comparison holds the old message.
 
+### Admissions from the Python verdict corpus
+
+These five rules were added on 2026-10-05 from the Python verdict corpus
+(#6597): #6599 (false actionable), #6600 (false `exposed`) and #6601
+(Hypothesis inputs read as fixtures). As with rules 12 to 14, a corpus
+mutant calibrates the rule; ripr reports only the static shape.
+
+15. **An `and` chain asserts each conjunct.** `assert A and B` fails when
+    either conjunct is false, so it is read as the strongest of its
+    conjuncts under the table, rule 1 applying to each. The assertion
+    text for rule 4 is the whole `assert`, so an exact conjunct on
+    something else does not credit a weak conjunct on the owner. `or`,
+    `not` and any other boolean form stay `smoke_only` / smoke.
+16. **A constant offset is a static boundary operand.** In a changed
+    comparison, an operand `C - k` or `C + k`, where `k` is an integer
+    literal and `C` a literal or a module constant resolving to one, is
+    the boundary value `C - k` or `C + k` for boundary activation, as a
+    plain constant is today. A `return` of a comparison still reads as a
+    return value unless both operands are plain names or literals, so
+    `return total + 1 > limit` keeps its return-value probe.
+17. **An assertion on the written channel observes a changed effect.**
+    When the changed line is a statement whose effect is a write rather
+    than a value, a strong assertion in a related test that calls the
+    owner credits `direct` with reason
+    `strong_oracle_observes_changed_effect_channel` when it compares, with
+    `==`, the channel that line writes:
+    - `print(...)` or `sys.stdout.write(...)`: `capsys`, `capfd` or their
+      binary forms' `readouterr().out`, inline or through a local the
+      test binds once to `readouterr()`; `print(..., file=sys.stderr)` or
+      `sys.stderr.write(...)`: the same with `.err`. The capture must be
+      a test parameter.
+    - `p.write_text(...)` or `p.write_bytes(...)` on an owner parameter
+      `p`: `L.read_text()` or `L.read_bytes()` of a local `L` the test
+      passes whole to an owner call.
+    - `p.m(...)` on another owner parameter: `L.m.assert_called_once_with(`,
+      `L.m.assert_called_with(` or `L.m.assert_any_call(` for a local `L`
+      passed whole to an owner call, with at least one argument and every
+      argument pinned. That mock assertion is read as strong for this
+      credit only. An argument-free `assert_called_once()`, an `ANY`
+      matcher or a starred argument accepts whatever the changed call
+      passes, so it does not credit.
+    - `self.a = ...` or an augmented assignment in a method owner:
+      `L.a`, where `L` is a local bound to the owner's class whose
+      method the test calls (rule 9's bound receiver).
+    Rule 6 still applies on the error path.
+18. **A self-computed expected value does not credit.** Following
+    RIPR-SPEC-0035, an assertion does not credit when every compared
+    operand that names the owner is computed with a top-level
+    arithmetic operator and another operand is a call to something else:
+    `assert checkout(1000) == 1000 + tax(1000)` for a changed `tax`. A
+    change to `tax` moves both sides together. `assert tax(1000) + 1 ==
+    81` still credits, because its other side is a literal.
+19. **Hypothesis inputs are generated, not fixtures.** The parameters a
+    `@given(...)` decorator supplies (positional strategies fill the
+    rightmost positional parameters, keyword strategies the named ones;
+    an unpairable `@given` supplies them all) are not pytest fixtures, so
+    they never produce `unresolved_pytest_fixture`. `@example(...)` rows
+    bind those parameters like literal `parametrize` cases; a chained
+    `@example(...).xfail()` or `.via(...)` row is skipped. A `@given`
+    test gives `static_unknown`, `property_based_test`, only when it has
+    assertions and either none is strong, or it has no `@example` row and
+    its body reads a generated parameter. A `@given` test with no
+    assertion reads reach-only like any other test, because it has no
+    oracle for the generated inputs to hide.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -554,6 +632,24 @@ rejected alternative. Any can be reversed later without touching the rest.
 10. **Non-transparent decorators.** Adopted: unchanged, `@property` and
     `@functools.lru_cache` stay `decorator_indirection`. Rejected for now:
     make `@property` transparent, because it adds credit.
+11. **`and` chains.** Adopted (2026-10-05, #6599): rule 15, the strongest
+    conjunct. The first draft kept example 5's `smoke_only` reading, but
+    the corpus case `py-spec0233-ex05-and-chain` fails on its mutant, so
+    that reading is a false actionable verdict. Rejected: credit an `or`
+    chain's strongest operand, because either side alone can pass.
+12. **Effect channels.** Adopted: rule 17 with its own
+    `alignment_reason`, so a consumer can tell an effect observation from
+    a return-value one. Rejected: reuse `strong_oracle_observes_changed_sink_token`,
+    because no changed-line token appears in the assertion. Rejected: any
+    capture, file or mock read in the test, because only the channel the
+    changed line writes, read through the value the test passed in,
+    observes that line.
+13. **Hypothesis.** Adopted: rule 19. A generated input still hides the
+    boundary unless an `@example` row pins it, so a strong assertion on a
+    generated parameter stays `property_based_test`; a test that asserts
+    nothing is a gap, not a limit, so it keeps its actionable verdict.
+    Rejected: treat every `@given` test as a limit, which hides the
+    "asserts nothing" gap of `py-hypothesis-label-no-crash`.
 
 ## Required Evidence
 
@@ -564,14 +660,15 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Every "unchanged" example keeps its kind, strength, relation and class.
 - Golden drift lists every Python finding whose class, relation or
   `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
-  13, 14) and
-  credit removed (rules 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13).
+  13, 14, 15, 16, 17, 19) and
+  credit removed (rules 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 18, 19).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
 
 ## Non-Goals
 
-- No new oracle kind, strength, relation, limit kind or alignment value.
+- No new oracle kind, strength, relation, limit kind or alignment value,
+  apart from rule 17's `alignment_reason` token.
 - No helper body resolution, fixture resolution or import graph.
 - No change to the boundary activation rule, the changed-default rule, the
   dunder rules or RIPR-SPEC-0201.
@@ -598,8 +695,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `relational_check` / weak, `weakly_exposed` (unchanged; 0028 amended).
 4. `assert isinstance(parse('1'), int)`: `relational_check` / weak
    (unchanged).
-5. `assert parse('1') == 2 and other == 3`: `smoke_only` / smoke,
-   `weakly_exposed` (unchanged). `assert int('1') == 1 < parse('1')`:
+5. `assert parse('1') == 2 and other == 3`: `exact_value` / strong,
+   `exposed`, `direct` (today `smoke_only` / smoke, `weakly_exposed`;
+   rule 15). `assert parse('1') == 2 or other == 3`: `smoke_only` /
+   smoke, `weakly_exposed` (unchanged). `assert int('1') == 1 < parse('1')`:
    `relational_check` / weak, `weakly_exposed` (today `exact_value` /
    strong, `exposed`, inferred; rule 1).
 6. `self.assertEqual(1 + 1, 2, parse('x'))`: `weakly_exposed` (today
@@ -756,6 +855,43 @@ and the test is `tests/test_subject.py`, which imports each owner from
     unchanged). With `def handle(x):` whose `except ValueError:` line is
     changed to `except:`, and only `assert handle(1) == 1`: error-path
     family, `weakly_exposed` (today `exposed`, inferred; rule 5).
+35. Module `LIMIT = 5000` and `def fee(s):` / `if s > LIMIT - 1:` /
+    `return 0` / `return 499`, the `if` line changed from `s >= LIMIT`;
+    test `assert fee(4999) == 499`: `exposed` (today `weakly_exposed`;
+    rule 16). Test `assert fee(6000) == 0` only: `weakly_exposed`
+    (unchanged; the boundary is not activated).
+36. Owner `def greet(n): print(f'hello {n}')`, changed from `'hi {n}'`;
+    test `def test_g(capsys):` / `greet('a')` /
+    `assert capsys.readouterr().out == 'hello a\n'`: `exposed`, `direct`,
+    `strong_oracle_observes_changed_effect_channel` (today
+    `weakly_exposed`, `orthogonal`; rule 17). Test
+    `assert greet('a') is None` only: `weakly_exposed` (unchanged).
+37. Owner `def notify(c, u): c.send(u, 'welcome')`, changed from
+    `'hi'`; test `c = Mock()` / `notify(c, 'u')` /
+    `c.send.assert_called_once_with('u', 'welcome')`: `exposed` (today
+    `weakly_exposed`; rule 17). With `c.send.assert_called_once()` or
+    `c.send.assert_called_once_with('u', ANY)`: `weakly_exposed`
+    (unchanged). Owner
+    `def save(p, t): p.write_text(t.lower())` and a test that passes `f`
+    and asserts `f.read_text() == 'a'`: `exposed` (rule 17). Owner method
+    `def bump(self): self.count = self.count + 2` and a test
+    `c = Counter()` / `c.bump()` / `assert c.count == 2`: `exposed`
+    (rule 17); with `assert c.count > 0`: `weakly_exposed` (unchanged).
+38. Owner `def tax(x): return x * 8 // 100`, changed from `x * 7 // 100`,
+    and `def checkout(x): return x + tax(x)` in the same module; test
+    `assert checkout(1000) == 1000 + tax(1000)`: `weakly_exposed` (today
+    `exposed`; rule 18). Test `assert tax(1000) + 1 == 81`: `exposed`
+    (unchanged).
+39. Owner `def passed(score): return score >= 50`, changed from
+    `score > 50`. Test `@given(st.integers(0, 100))` / `@example(49)` /
+    `@example(50)` / `def test_p(score):` /
+    `assert passed(score) == (score >= 50)`: `exposed` (today
+    `static_unknown`, `property_based_test`; rule 19). Without the
+    `@example` rows: `static_unknown`, `property_based_test`
+    (unchanged). A `@given` test `def test_p(tmp_path, score):` that only
+    calls `passed(score)`: `score` is not a fixture, and the finding is
+    `weakly_exposed` (today `static_unknown`,
+    `unresolved_pytest_fixture`; rule 19).
 
 ## Test Mapping
 
@@ -776,6 +912,18 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `src_layout_same_named_function_from_other_module_does_not_credit_exposed`,
   `static_limit_detection_covers_python_preview_limit_kinds`,
   `classify_change_opaque_custom_assertion_helper_fails_closed`.
+- Rules 15 to 19:
+  `crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs`
+  pins a crediting and a non-crediting form of each (examples 5, 35 to
+  39, and rules 1, 2, 4 and 9 alongside them);
+  `python/hypothesis.rs` unit tests pin `@given` pairing and `@example`
+  rows.
+- Corpus (#6597): `py-spec0233-ex05-and-chain` (rule 15),
+  `py-pytest-shipping-threshold` and `py-unittest-fee-waiver-mixin`
+  (rule 16), `py-fixtures-report-file`, `py-unittest-transfer-notify` and
+  `py-unittest-deposit-add` (rule 17), `py-pytest-tax-self-computed`
+  (rule 18), and `py-hypothesis-passing-threshold` and
+  `py-hypothesis-label-no-crash` (rule 19).
 - Planned: one `classify_change_with_old` test per acceptance example,
   and an order-swap test that runs examples 12, 13, 17 and 18 in both
   orders.
@@ -807,7 +955,14 @@ and the test is `tests/test_subject.py`, which imports each owner from
 - `crates/ripr/src/analysis/language/python/probe_shape.rs`: error-path
   family (rule 5), unchanged.
 - `crates/ripr/src/analysis/language/python/static_limits.rs`: limit
-  order and token detection (rule 8).
+  order and token detection (rule 8), the `property_based_test` condition
+  (rule 19).
+- `crates/ripr/src/analysis/language/python/boundary.rs`: offset operands
+  (rule 16).
+- `crates/ripr/src/analysis/language/python/effect_alignment.rs`: effect
+  channels (rule 17) and self-computed expected values (rule 18).
+- `crates/ripr/src/analysis/language/python/hypothesis.rs` and
+  `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
 
 ## Metrics
 

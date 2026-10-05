@@ -420,3 +420,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — python_property_based_limit (10)
+
+Reason:
+RIPR-SPEC-0233 rule 19: Hypothesis @given parameters are generated inputs, not pytest fixtures, so the test_fixtures evidence line is gone; class unchanged (#6601)
+
+Command:
+`cargo xtask goldens bless python_property_based_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -129,8 +129,8 @@
       "owner_kind": "function",
       "changed_sink": "KeyError, empty",
       "observed_sink": "assert parse(\"42\") == 42",
-      "oracle_alignment": "direct",
-      "alignment_reason": "strong_oracle_observes_owner_name",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
       "source_currentness": "candidate_current"
     }
   ],

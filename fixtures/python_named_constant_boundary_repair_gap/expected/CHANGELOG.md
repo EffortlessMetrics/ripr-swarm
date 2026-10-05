@@ -95,3 +95,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — python_named_constant_boundary_repair_gap (9)
+
+Reason:
+RIPR-SPEC-0233 rule 4: observed_sink is the assertion that earns credit, not the last-ranked one; class unchanged (#6600)
+
+Command:
+`cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

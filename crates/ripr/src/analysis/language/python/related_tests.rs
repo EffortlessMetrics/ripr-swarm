@@ -1376,6 +1376,15 @@ fn owner_class_locals(test: &PythonTest, owner: &PythonOwner, class: &str) -> Ve
         {
             locals.push(import.alias.clone());
         }
+        // The class through a module receiver that reaches the owner's module
+        // (`from shared import calc`, then `calc.Calculator`), like a
+        // module-qualified free-function call (#4567).
+        for receiver in submodule_receivers(import, owner, &test.file) {
+            let qualified = format!("{receiver}.{class}");
+            if !test_rebinds_import_alias(test, &import.alias) && !locals.contains(&qualified) {
+                locals.push(qualified);
+            }
+        }
     }
     locals
 }
@@ -1426,6 +1435,41 @@ pub(super) fn body_calls_method_on_owner_bound_receiver(
         return true;
     }
     false
+}
+
+/// Locals `v` the test binds once to a construction of the owner's class
+/// (`v = Cls(...)`, `Cls` imported from the owner's module) and then calls the
+/// owner `method` on (`v.method(...)`): the receiver whose state the owner
+/// method writes. Pattern 3 of [`body_calls_method_on_owner_bound_receiver`].
+pub(super) fn owner_method_bound_locals(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+) -> Vec<String> {
+    let body = test.body_text.as_str();
+    let mut locals = Vec::new();
+    for class_local in owner_class_locals(test, owner, class) {
+        let construct = format!("{class_local}(");
+        let constructions: Vec<usize> = body
+            .match_indices(&construct)
+            .filter(|(idx, _)| {
+                python_callee_start_has_boundary(body, *idx)
+                    && !line_prefix_looks_like_comment_or_string(body, *idx)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        if constructions.len() == 1
+            && let Some(var) = binding_target_for_construction(body, constructions[0])
+            && assignment_count(body, &var) == 1
+            && !binds_other_than_assignment(test, &var)
+            && contains_attribute_call(body, &var, method)
+            && !locals.contains(&var)
+        {
+            locals.push(var);
+        }
+    }
+    locals
 }
 
 /// Relation-layer receiver-identity evidence for a method/classmethod owner: a

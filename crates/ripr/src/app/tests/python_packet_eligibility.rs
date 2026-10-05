@@ -22,17 +22,17 @@ fn check_output_python_bound_receiver_direct_card_is_agent_packet_eligible() -> 
             .map_err(|error| format!("create test fixture: {error}"))?;
         fs::write(
             root.join("src/pricing.py"),
-            "class Parser:\n    def parse(self, text):\n        if not text:\n            raise KeyError(\"empty\")\n        return int(text)\n",
+            "class Parser:\n    def parse(self, value):\n        if value >= 10:\n            return 1\n        return 0\n",
         )
         .map_err(|error| format!("write source fixture: {error}"))?;
         fs::write(
             root.join("tests/test_pricing.py"),
-            "from src.pricing import Parser\n\ndef test_parse_ok():\n    parser = Parser()\n    assert parser.parse(\"42\") == 42\n",
+            "from src.pricing import Parser\n\ndef test_parse_large():\n    parser = Parser()\n    assert parser.parse(42) == 1\n",
         )
         .map_err(|error| format!("write test fixture: {error}"))?;
         fs::write(
             root.join("diff.patch"),
-            "diff --git a/src/pricing.py b/src/pricing.py\nindex 1111111..2222222 100644\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,5 +1,5 @@\n class Parser:\n     def parse(self, text):\n         if not text:\n-            raise ValueError(\"empty\")\n+            raise KeyError(\"empty\")\n         return int(text)\n",
+            "diff --git a/src/pricing.py b/src/pricing.py\nindex 1111111..2222222 100644\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,5 +1,5 @@\n class Parser:\n     def parse(self, value):\n-        if value > 10:\n+        if value >= 10:\n             return 1\n         return 0\n",
         )
         .map_err(|error| format!("write diff fixture: {error}"))?;
         let config =

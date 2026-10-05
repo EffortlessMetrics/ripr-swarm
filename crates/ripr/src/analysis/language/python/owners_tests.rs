@@ -297,6 +297,10 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
@@ -310,13 +314,25 @@ pub(super) fn collect_tests_from_statements(
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     ),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures: fixture_parameter_names(&function.args, framework)
+                        .into_iter()
+                        .filter(|name| !generated_inputs.contains(name))
+                        .collect(),
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
+                    // pytest does not parametrize unittest methods; Hypothesis
+                    // `@example` rows run under either framework.
                     parametrize: (framework == "pytest")
                         .then(|| parametrize_cases(source, &function.decorator_list))
                         .flatten()
+                        .or_else(|| {
+                            super::hypothesis::example_cases(
+                                source,
+                                &function.args,
+                                &function.decorator_list,
+                            )
+                        })
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -333,6 +349,10 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
@@ -346,13 +366,25 @@ pub(super) fn collect_tests_from_statements(
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     ),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures: fixture_parameter_names(&function.args, framework)
+                        .into_iter()
+                        .filter(|name| !generated_inputs.contains(name))
+                        .collect(),
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
+                    // pytest does not parametrize unittest methods; Hypothesis
+                    // `@example` rows run under either framework.
                     parametrize: (framework == "pytest")
                         .then(|| parametrize_cases(source, &function.decorator_list))
                         .flatten()
+                        .or_else(|| {
+                            super::hypothesis::example_cases(
+                                source,
+                                &function.args,
+                                &function.decorator_list,
+                            )
+                        })
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(

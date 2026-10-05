@@ -513,6 +513,12 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
+  changed write (`print`, a file write, a call on a passed collaborator, or
+  a `self` field) whose strong oracle compares the channel that write
+  reaches: captured output, the file read back, a mock call pinned with
+  arguments, or the field read through a bound receiver (RIPR-SPEC-0233
+  rule 17).
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the

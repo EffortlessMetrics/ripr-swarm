@@ -60,6 +60,8 @@ use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
 mod discriminators;
+mod effect_alignment;
+mod hypothesis;
 mod module_constants;
 mod no_behavior;
 mod oracles;
@@ -282,6 +284,8 @@ struct PythonTest {
     parametrized: bool,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
+    /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
+    generated_inputs: Vec<String>,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
     /// How the test and its module can rebind names and attributes; guards
@@ -303,6 +307,11 @@ struct PythonImport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonAssertion {
     text: String,
+    /// The text every alignment gate reads (RIPR-SPEC-0233 rule 4): an
+    /// `assert` without its failure message, a comparison call's compared
+    /// operands without `msg`, and an exception assertion's `with` item
+    /// together with its body. `text` stays the reported oracle.
+    gate_text: String,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
@@ -868,3 +877,6 @@ mod reexport_tests;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod verdict_corpus_tests;

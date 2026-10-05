@@ -270,6 +270,9 @@ fn module_constant<'a>(
 /// An operand's value independent of any test call: its own literal, or the
 /// literal of the module constant it names.
 fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+    if let Some((base, offset)) = integer_offset(operand) {
+        return static_operand(base, constants).and_then(|value| shifted_integer(&value, offset));
+    }
     literal_value(operand)
         .or_else(|| module_constant(operand, constants).map(|constant| constant.value.clone()))
 }
@@ -316,8 +319,12 @@ pub(super) fn python_return_comparison(line_text: &str) -> Option<&str> {
         return None;
     };
     let (left, right) = simple_comparison_operands(expression, start, len)?;
-    let whole_sides =
-        expression.get(..start)?.trim() == left && expression.get(start + len..)?.trim() == right;
+    // An offset operand (`total + 1 > limit`) is a boundary inside an `if`,
+    // but a returned arithmetic expression keeps its return-value family.
+    let whole_sides = is_simple_operand(&left)
+        && is_simple_operand(&right)
+        && expression.get(..start)?.trim() == left
+        && expression.get(start + len..)?.trim() == right;
     whole_sides.then_some(expression)
 }
 
@@ -385,15 +392,27 @@ fn simple_comparison_operands(
     let right_side = condition.get(operator_start + operator_len..)?.trim_start();
 
     let left_start = trailing_operand_start(left_side);
-    let left = &left_side[left_start..];
     let before_left = left_side[..left_start].trim_end();
+
+    let mut left_start = left_start;
+    let mut before_left = before_left;
+    // `C - 1 < x`: a trailing integer literal may close a `base +/- N` operand.
+    if let Some(extended) = leading_offset_start(left_side, left_start) {
+        left_start = extended;
+        before_left = left_side[..left_start].trim_end();
+    }
+    let left = &left_side[left_start..];
     let left_boundary_ok = before_left.is_empty()
         || before_left.ends_with('(')
         || ["not", "and", "or", "if"]
             .into_iter()
             .any(|keyword| ends_with_keyword(before_left, keyword));
 
-    let right_end = leading_operand_end(right_side);
+    let mut right_end = leading_operand_end(right_side);
+    // `x > C - 1`: a simple operand followed by `+ N` or `- N`.
+    if let Some(extended) = trailing_offset_end(right_side, right_end) {
+        right_end = extended;
+    }
     let right = &right_side[..right_end];
     let after_right = right_side[right_end..].trim_start();
     let right_boundary_ok = after_right.is_empty()
@@ -402,8 +421,72 @@ fn simple_comparison_operands(
             .into_iter()
             .any(|keyword| starts_with_keyword(after_right, keyword));
 
-    (left_boundary_ok && right_boundary_ok && is_simple_operand(left) && is_simple_operand(right))
+    let operand_ok = |operand: &str| {
+        is_simple_operand(operand)
+            || integer_offset(operand).is_some_and(|(base, _)| is_simple_operand(base))
+    };
+    (left_boundary_ok && right_boundary_ok && operand_ok(left) && operand_ok(right))
         .then(|| (left.to_string(), right.to_string()))
+}
+
+/// A `base + N` / `base - N` operand with an integer literal offset, the
+/// rewritten form of an inclusive bound (`x >= C` as `x > C - 1`). Returns the
+/// base text and the signed offset.
+fn integer_offset(operand: &str) -> Option<(&str, i128)> {
+    let idx = operand.rfind(['+', '-'])?;
+    let base = operand[..idx].trim_end();
+    let digits = operand[idx + 1..].trim_start();
+    if base.is_empty() || digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let magnitude: i128 = digits.parse().ok()?;
+    let offset = if operand[idx..].starts_with('-') {
+        -magnitude
+    } else {
+        magnitude
+    };
+    Some((base, offset))
+}
+
+/// End of `text[..end]` extended over a following `+ N` / `- N` integer offset.
+fn trailing_offset_end(text: &str, end: usize) -> Option<usize> {
+    let rest = &text[end..];
+    let after_space = rest.trim_start();
+    let sign = after_space
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '+' | '-'))?;
+    let digits = after_space[sign.len_utf8()..].trim_start();
+    let digit_len = digits.chars().take_while(char::is_ascii_digit).count();
+    if digit_len == 0 || digits[digit_len..].starts_with(|ch: char| is_operand_char(ch)) {
+        return None;
+    }
+    Some(text.len() - digits.len() + digit_len)
+}
+
+/// Start of a `base + N` / `base - N` operand whose integer literal begins at
+/// `start` in `text`, when the text before it is `base +` or `base -`.
+fn leading_offset_start(text: &str, start: usize) -> Option<usize> {
+    let literal = &text[start..];
+    if literal.is_empty() || !literal.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let before = text[..start].trim_end();
+    let sign = before
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '+' | '-'))?;
+    let before_sign = before[..before.len() - sign.len_utf8()].trim_end();
+    let base_start = trailing_operand_start(before_sign);
+    let base = &before_sign[base_start..];
+    is_simple_operand(base).then_some(base_start)
+}
+
+/// An integer value shifted by `offset`; None for any non-integer value.
+fn shifted_integer(value: &str, offset: i128) -> Option<String> {
+    let canonical = canonical_decimal(value)?;
+    let integer: i128 = canonical.parse().ok()?;
+    Some(integer.checked_add(offset)?.to_string())
 }
 
 /// Byte offset where the operand that ends `text` starts: a quoted string
@@ -751,6 +834,10 @@ fn resolve_operand(
     row: &CallRow,
     constants: &[PythonModuleConstant],
 ) -> Option<String> {
+    if let Some((base, offset)) = integer_offset(operand) {
+        return resolve_operand(base, row, constants)
+            .and_then(|value| shifted_integer(&value, offset));
+    }
     static_operand(operand, constants)
         .or_else(|| row.bindings.get(operand).map(|b| b.value.clone()))
 }

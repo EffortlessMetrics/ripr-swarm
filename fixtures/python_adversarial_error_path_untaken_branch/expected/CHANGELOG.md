@@ -344,3 +344,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+## Pending — python_adversarial_error_path_untaken_branch (13)
+
+Reason:
+RIPR-SPEC-0233 rule 6: the error-path gate reads the one crediting assertion, so a value assertion that names the owner no longer reads direct; class unchanged (#6600)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,3 +1,7 @@
+use super::effect_alignment::{
+    ChangedEffect, assertion_observes_effect, expected_computed_through_owner,
+};
+use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
     oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
 };
@@ -8,7 +12,7 @@ use super::{
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
-use crate::domain::{OracleStrength, OwnerKind, RelatedTest};
+use crate::domain::{OracleKind, OracleStrength, OwnerKind, ProbeFamily, RelatedTest};
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
 /// coverage is that a strong oracle credits `exposed` only when it *observes the
 /// changed sink*, not merely reaches the owner. This carries which token
@@ -24,6 +28,18 @@ pub(super) struct SinkAlignment {
     /// One of `direct | alias | changed_sink_token | orthogonal | unknown`.
     pub(super) oracle_alignment: String,
     pub(super) alignment_reason: String,
+    /// The assertion that credited the alignment, when one did. The finding
+    /// reports it as its related test's oracle (RIPR-SPEC-0233 rule 4).
+    pub(super) credited: Option<CreditedAssertion>,
+}
+
+/// The one assertion whose gates all held for the crediting branch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CreditedAssertion {
+    pub(super) test_name: String,
+    pub(super) test_file: std::path::PathBuf,
+    pub(super) text: String,
+    pub(super) kind: OracleKind,
 }
 
 impl SinkAlignment {
@@ -50,6 +66,7 @@ impl SinkAlignment {
             observed_sink: None,
             oracle_alignment: "unknown".to_string(),
             alignment_reason: "no_strong_oracle".to_string(),
+            credited: None,
         }
     }
 }
@@ -460,22 +477,62 @@ pub(super) fn classify_sink_alignment_with_old(
         .iter()
         .filter(|test| test.oracle_strength.rank() >= OracleStrength::Strong.rank())
         .collect();
-    if strong_tests.is_empty() {
+    // A changed side effect (`print`, a file write, a call on a passed-in
+    // collaborator, a `self` field) may be observed through its channel.
+    let effect = ChangedEffect::of(line_text, owner);
+    let mock_tests: Vec<&RelatedTest> = if effect
+        .as_ref()
+        .is_some_and(ChangedEffect::admits_mock_assertion)
+    {
+        related
+            .iter()
+            .filter(|test| matches!(test.oracle_kind, OracleKind::MockExpectation))
+            .filter(|test| test.oracle_strength.rank() < OracleStrength::Strong.rank())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if strong_tests.is_empty() && mock_tests.is_empty() {
         return SinkAlignment::unknown(changed_sink);
     }
     let observed_sink = strong_tests
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())
         .and_then(|test| test.oracle.clone());
+    // RIPR-SPEC-0233 rule 6: an error-path change is observed only by an
+    // `exact_error_variant` assertion that itself credits a branch; a strong
+    // value assertion never runs the changed raise.
+    let error_path = matches!(classify_probe_shape(line_text).0, ProbeFamily::ErrorPath);
+    // RIPR-SPEC-0233 rule 4: every strong assertion of every strong related
+    // test is read, and each credit branch must hold on one assertion.
+    let mut units = alignment_units(&strong_tests, all_tests, error_path, effect.as_ref());
+    units.extend(alignment_units(
+        &mock_tests,
+        all_tests,
+        error_path,
+        effect.as_ref(),
+    ));
+    if units.is_empty() {
+        if strong_tests.is_empty() {
+            return SinkAlignment::unknown(changed_sink);
+        }
+        return SinkAlignment {
+            changed_sink,
+            observed_sink,
+            oracle_alignment: "orthogonal".to_string(),
+            alignment_reason: "strong_oracle_observes_different_sink".to_string(),
+            credited: None,
+        };
+    }
 
     // Owner-name tokens, split for identity-aware crediting. For a method /
     // classmethod owner the bare method name is collision-prone: a same-named
     // method on an unrelated class (`PaymentProcessor.validate` vs owner
     // `TokenValidator.validate`) shares the token `validate` yet is a different
-    // entity. Crediting `direct` from the bare method name alone is a silent
-    // false-`exposed`, so it requires owner-class identity (the class token is
-    // observed, or a strong observing test imports the owner's class). Class
-    // tokens and free-function names are unambiguous and credit directly.
+    // entity, so it credits only on a bound receiver. The class token is not
+    // identity alone either (RIPR-SPEC-0233 rule 9): `other.total() ==
+    // Cart.LIMIT` names the class but runs `total` on another receiver.
+    // Free-function names are their own identity.
     let is_method_owner = matches!(
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -490,16 +547,16 @@ pub(super) fn classify_sink_alignment_with_old(
     } else {
         None
     };
-    // Unambiguous identity tokens: every qualified-name segment except the bare
-    // method name of a method owner. For non-method owners this is the full set
-    // (a free-function name is its own identity).
-    let mut identity_tokens: Vec<String> = owner
-        .qualified_name
-        .split('.')
-        .filter(|token| !token.is_empty() && *token != "<module>")
-        .filter(|token| !(is_method_owner && *token == owner.name))
-        .map(str::to_string)
-        .collect();
+    let mut identity_tokens: Vec<String> = if is_method_owner {
+        Vec::new()
+    } else {
+        owner
+            .qualified_name
+            .split('.')
+            .filter(|token| !token.is_empty() && *token != "<module>")
+            .map(str::to_string)
+            .collect()
+    };
     if !is_method_owner && !owner.name.is_empty() && owner.name != "<module>" {
         identity_tokens.push(owner.name.clone());
     }
@@ -518,8 +575,12 @@ pub(super) fn classify_sink_alignment_with_old(
         .next()
         .unwrap_or(owner.name.as_str());
     let mut alias_tokens: Vec<String> = Vec::new();
+    // A method owner's only importable alias is its class's, which rule 9 does
+    // not count as identity alone; an aliased class reaches the bound-receiver
+    // branch instead (`from m import Cart as C`, `C().total()`).
     for test in all_tests
         .iter()
+        .filter(|_| !is_method_owner)
         .filter(|test| super::test_activation::activation_control(test).is_none())
     {
         for import in &test.imports {
@@ -596,187 +657,190 @@ pub(super) fn classify_sink_alignment_with_old(
         && method_name_token.is_none()
         && alias_tokens.is_empty()
         && change_only.is_empty()
+        && !is_method_owner
     {
         return SinkAlignment {
             changed_sink,
             observed_sink,
             oracle_alignment: "unknown".to_string(),
             alignment_reason: "module_owner_no_sink_token".to_string(),
+            credited: None,
         };
     }
 
-    let any_strong_observes = |group: &[String]| -> bool {
-        strong_tests.iter().any(|test| {
-            test.oracle.as_deref().is_some_and(|text| {
-                group
-                    .iter()
-                    .any(|token| oracle_text_observes_token(text, token))
-            })
-        })
+    let observes = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+        group
+            .iter()
+            .any(|token| oracle_text_observes_token(&unit.text, token))
     };
-    // Receiver identity for a method owner: a strong observing test must call the
-    // owner's method on a receiver statically bound to the owner class (inline
-    // construct, local binding, or a classmethod/direct call on the class). A bare
-    // method-name match — even with the owner class imported and mentioned — is not
-    // identity-bearing, because the asserted `.method(` may run on an unrelated
-    // receiver while the class is referenced (or merely named) elsewhere. This is
-    // the false-`exposed` guard at the relation layer.
-    let strong_test_binds_method_receiver = strong_test_calls_owner_method_on_bound_receiver(
-        owner,
-        owner_class_token.as_ref(),
-        method_name_token.as_ref(),
-        &strong_tests,
-        all_tests,
-    );
-    let method_name_observed = method_name_token
-        .as_ref()
-        .is_some_and(|token| any_strong_observes(std::slice::from_ref(token)));
+    // Receiver identity for a method owner: the test holding the assertion must
+    // call the owner's method on a receiver statically bound to the owner class
+    // (inline construct, local binding, or a classmethod/direct call on the
+    // class). A bare method-name match — even with the owner class imported and
+    // mentioned — is not identity-bearing, because the asserted `.method(` may
+    // run on an unrelated receiver while the class is referenced (or merely
+    // named) elsewhere. This is the false-`exposed` guard at the relation layer.
+    let binds_method_receiver = |unit: &AlignmentUnit<'_>| {
+        strong_test_calls_owner_method_on_bound_receiver(
+            owner,
+            owner_class_token.as_ref(),
+            method_name_token.as_ref(),
+            &[unit.related],
+            all_tests,
+        )
+    };
     // Free-function module identity: a non-method owner's bare function-name token
-    // credits `direct` only when a strong observing test imports it from the
-    // owner's module. A same-named free function imported from a different module
-    // (`from src.checker import validate` for owner `src.handler.validate`) is not
-    // identity-bearing — the false-`exposed` guard for free functions.
-    let free_fn_module_identity =
-        !is_method_owner && strong_test_imports_owner_from_module(&strong_tests, all_tests, owner);
+    // credits `direct` only when the test holding the assertion imports it from
+    // the owner's module. A same-named free function imported from a different
+    // module (`from src.checker import validate` for owner `src.handler.validate`)
+    // is not identity-bearing — the false-`exposed` guard for free functions.
+    let free_fn_module_identity = |unit: &AlignmentUnit<'_>| {
+        !is_method_owner && strong_test_imports_owner_from_module(&[unit.related], all_tests, owner)
+    };
+    // Method-owner identity is class and method name; a test whose imports
+    // name a same-named module of another project uses that project's class.
+    let method_owner_identity = |unit: &AlignmentUnit<'_>| {
+        is_method_owner
+            && !strong_tests_import_only_rival_modules(owner, &[unit.related], all_tests)
+    };
     // Owner output observed through a module-identified call (#4567): the
-    // strong oracle calls the owner through its module (`utils.sign(0) == 0`,
+    // assertion calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
     // bound once to such a call (`result = utils.sign(0)`, `assert result == 0`).
     // The call or local must be an asserted operand: nested in another call
     // (`always_true(utils.sign(0))`) it is not the value the oracle compares.
-    let module_call_observed = !is_method_owner
-        && strong_tests.iter().any(|related| {
-            let Some(text) = related.oracle.as_deref() else {
-                return false;
-            };
-            all_tests
-                .iter()
-                .filter(|test| test.name == related.name && test.file == related.file)
-                .filter(|test| super::test_activation::activation_control(test).is_none())
-                .any(|test| {
-                    let callees = owner_module_callees(test, owner);
-                    callees
+    let module_call_observed = |unit: &AlignmentUnit<'_>| {
+        !is_method_owner
+            && unit.test.is_some_and(|test| {
+                let callees = owner_module_callees(test, owner);
+                callees
+                    .iter()
+                    .any(|callee| oracle_operand_calls(&unit.text, callee))
+                    || owner_result_locals(test, &callees)
                         .iter()
-                        .any(|callee| oracle_operand_calls(text, callee))
-                        || owner_result_locals(test, &callees)
-                            .iter()
-                            .any(|local| oracle_operand_names(text, local))
-                })
-        });
-    // Method-owner identity is class and method name; a test whose imports
-    // name a same-named module of another project uses that project's class.
-    let method_owner_identity =
-        is_method_owner && !strong_tests_import_only_rival_modules(owner, &strong_tests, all_tests);
+                        .any(|local| oracle_operand_names(&unit.text, local))
+            })
+    };
     // Receiver/value identity for an attribute-assignment changed sink. The bare
     // attribute token (`status`) is collision-prone: a same-named field on an
     // unrelated receiver (`session.status` changed, oracle `conn.status == ...`)
     // would otherwise credit `changed_sink_token` on token coincidence. For an
-    // attribute write `recv.attr = value`, credit only when a strong oracle
+    // attribute write `recv.attr = value`, credit only when the assertion
     // observes the receiver-qualified `recv.attr`, OR observes the assigned VALUE
     // together with the attribute name (co-observation defeats a common-literal
     // value coinciding in an unrelated oracle, while keeping legitimate
     // `obj.attr == value` field assertions). Non-attribute changed lines (returns,
     // method calls, comparisons) are not gated and keep prior behavior.
-    let change_only_credit_ok = match parse_attribute_assignment(line_text) {
+    let attribute_assignment = parse_attribute_assignment(line_text);
+    let change_only_credit_ok = |unit: &AlignmentUnit<'_>| match attribute_assignment {
         None => true,
         Some((receiver, attr, rhs)) => {
             let qualified = [format!("{receiver}.{attr}")];
             let mut value_tokens = significant_change_tokens(rhs);
             value_tokens.retain(|token| token.len() >= 2);
             let attr_token = [attr.to_string()];
-            any_strong_observes(&qualified)
+            observes(unit, &qualified)
                 || (!value_tokens.is_empty()
-                    && any_strong_observes(&value_tokens)
-                    && any_strong_observes(&attr_token))
+                    && observes(unit, &value_tokens)
+                    && observes(unit, &attr_token))
         }
     };
     // Changed-element identity for a dict-literal field-construction change (#1290).
     // A dict-literal change is localized to specific key(s) (`{"port": 8080}` ->
-    // `9090` changes only `port`), but a strong oracle that merely calls the owner
+    // `9090` changes only `port`), but an assertion that merely calls the owner
     // and observes a SIBLING key (`build_config()["host"]`) or an aggregate
-    // (`len(...)`) does not discriminate the change. Credit only when a strong
-    // oracle observes the CHANGED element: its changed value, a subscript of the
-    // changed key, or a whole-collection comparison. Non-dict changes (and changes
-    // whose changed keys cannot be localized from the paired old line) are not gated
-    // and keep prior behavior (pass-through `true`).
-    let field_construction_credit_ok = if let Some((changed_keys, changed_values)) =
-        dict_changed_keys_and_values(old_line_text, line_text)
-    {
-        strong_tests.iter().any(|test| {
-            test.oracle.as_deref().is_some_and(|text| {
-                oracle_observes_changed_dict_element(text, &changed_keys, &changed_values)
-            })
-        })
-    } else if let Some((changed_indices, changed_values)) =
+    // (`len(...)`) does not discriminate the change. Credit only when the
+    // assertion observes the CHANGED element: its changed value, a subscript of
+    // the changed key, or a whole-collection comparison. Non-dict changes (and
+    // changes whose changed keys cannot be localized from the paired old line) are
+    // not gated and keep prior behavior (pass-through `true`).
+    let dict_change = dict_changed_keys_and_values(old_line_text, line_text);
+    let list_change = if dict_change.is_none() {
         list_changed_indices_and_values(old_line_text, line_text)
-    {
-        strong_tests.iter().any(|test| {
-            test.oracle.as_deref().is_some_and(|text| {
-                oracle_observes_changed_list_element(text, &changed_indices, &changed_values)
-            })
-        })
     } else {
-        true
+        None
+    };
+    let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
+        if let Some((changed_keys, changed_values)) = &dict_change {
+            oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
+        } else if let Some((changed_indices, changed_values)) = &list_change {
+            oracle_observes_changed_list_element(&unit.text, changed_indices, changed_values)
+        } else {
+            true
+        }
     };
     // F-string aggregate gate (#1290 1b): a length-invariant f-string change (only
-    // literal text changed, interpolations unchanged) observed SOLELY through a
-    // `len(...)` aggregate is not discriminated — the output length is identical, so
-    // `len` cannot notice the change. Downgrade only when every strong oracle is such
-    // a length aggregate; a string-equality oracle (`== "..."`) or a format-spec
-    // change (which alters an interpolation, so it is not length-invariant) keeps the
-    // credit. Pass-through `true` for any non-f-string change.
-    let fstring_credit_ok = match old_line_text {
-        Some(old) if fstring_change_is_length_invariant(old, line_text) => {
-            // Credit stands unless EVERY strong oracle is a PURE `len(...)` aggregate,
-            // which cannot discriminate a length-invariant f-string change. An oracle
-            // that ALSO observes the output exactly (a string-equality comparison, or
-            // the changed literal text) keeps the credit — fail open so this narrow
-            // false-`exposed` fix never introduces a false negative (e.g.
-            // `assert len(f(x)) == 4 and f(x) == "NO:7"`). (`strong_tests` is non-empty
-            // here — the empty case returned `unknown` above.)
-            let new_literals = fstring_template(line_text)
+    // literal text changed, interpolations unchanged) observed through a pure
+    // `len(...)` aggregate is not discriminated — the output length is identical,
+    // so `len` cannot notice the change. Under rule 11 the gate reads the one
+    // assertion that credits: a string-equality assertion (`== "..."`) or a
+    // format-spec change (which alters an interpolation, so it is not
+    // length-invariant) keeps the credit. Pass-through for any non-f-string change.
+    let length_invariant_literals = match old_line_text {
+        Some(old) if fstring_change_is_length_invariant(old, line_text) => Some(
+            fstring_template(line_text)
                 .map(|(literals, _)| literals)
-                .unwrap_or_default();
-            !strong_tests.iter().all(|test| {
-                test.oracle
-                    .as_deref()
-                    .is_some_and(|text| oracle_is_pure_len_aggregate(text, &new_literals))
-            })
-        }
-        _ => true,
+                .unwrap_or_default(),
+        ),
+        _ => None,
+    };
+    let fstring_credit_ok = |unit: &AlignmentUnit<'_>| {
+        length_invariant_literals
+            .as_deref()
+            .is_none_or(|literals| !oracle_is_pure_len_aggregate(&unit.text, literals))
     };
     // The literal-element and f-string gates (#1290) apply to EVERY credit branch —
     // like the #1249 every-branch lesson — so a sibling-key / aggregate-only oracle
     // cannot sneak `exposed` through the direct/alias/changed_sink_token path of a
     // localized literal change. Both are pass-through `true` for unrelated changes.
-    let (oracle_alignment, alignment_reason) = if any_strong_observes(&identity_tokens)
-        && (method_owner_identity || free_fn_module_identity)
-        && field_construction_credit_ok
-        && fstring_credit_ok
-    {
-        ("direct", "strong_oracle_observes_owner_name")
-    } else if method_name_observed
-        && strong_test_binds_method_receiver
-        && field_construction_credit_ok
-        && fstring_credit_ok
-    {
+    let owner_reference_tokens: Vec<String> = identity_tokens
+        .iter()
+        .chain(method_name_token.iter())
+        .chain(alias_tokens.iter())
+        .cloned()
+        .collect();
+    let gates_ok = |unit: &AlignmentUnit<'_>| {
+        field_construction_credit_ok(unit)
+            && fstring_credit_ok(unit)
+            && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
+    };
+    // A mock assertion credits only through the effect branch, where it pins
+    // the arguments of the very call the changed line makes.
+    let gates_ok = |unit: &AlignmentUnit<'_>| !unit.effect_only && gates_ok(unit);
+    let effect_observed = |unit: &AlignmentUnit<'_>| {
+        effect.as_ref().is_some_and(|effect| {
+            unit.test.is_some_and(|test| {
+                assertion_observes_effect(effect, &unit.text, test, owner)
+                    && (!is_method_owner || method_owner_identity(unit))
+            })
+        }) && field_construction_credit_ok(unit)
+            && fstring_credit_ok(unit)
+    };
+    let branches: [CreditBranch<'_, '_>; 6] = [
+        ("direct", "strong_oracle_observes_owner_name", &|unit| {
+            observes(unit, &identity_tokens)
+                && (method_owner_identity(unit) || free_fn_module_identity(unit))
+                && gates_ok(unit)
+        }),
         (
             "direct",
             "strong_oracle_observes_owner_method_on_bound_receiver",
-        )
-    } else if any_strong_observes(&alias_tokens)
-        && field_construction_credit_ok
-        && fstring_credit_ok
-    {
-        ("alias", "strong_oracle_observes_import_alias")
-    } else if module_call_observed && field_construction_credit_ok && fstring_credit_ok {
-        ("direct", "strong_oracle_observes_owner_call_through_module")
-    } else if any_strong_observes(&delta_tokens)
-        && change_only_credit_ok
-        && field_construction_credit_ok
-        && fstring_credit_ok
-        && (method_owner_identity || free_fn_module_identity)
-    {
+            &|unit| {
+                method_name_token
+                    .as_ref()
+                    .is_some_and(|token| observes(unit, std::slice::from_ref(token)))
+                    && binds_method_receiver(unit)
+                    && gates_ok(unit)
+            },
+        ),
+        ("alias", "strong_oracle_observes_import_alias", &|unit| {
+            observes(unit, &alias_tokens) && gates_ok(unit)
+        }),
+        (
+            "direct",
+            "strong_oracle_observes_owner_call_through_module",
+            &|unit| module_call_observed(unit) && gates_ok(unit),
+        ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a
         // different module must not credit `exposed` via this sibling branch
@@ -784,14 +848,128 @@ pub(super) fn classify_sink_alignment_with_old(
         (
             "changed_sink_token",
             "strong_oracle_observes_changed_sink_token",
-        )
-    } else {
-        ("orthogonal", "strong_oracle_observes_different_sink")
+            &|unit| {
+                observes(unit, &delta_tokens)
+                    && change_only_credit_ok(unit)
+                    && gates_ok(unit)
+                    && (method_owner_identity(unit) || free_fn_module_identity(unit))
+            },
+        ),
+        (
+            "direct",
+            "strong_oracle_observes_changed_effect_channel",
+            &effect_observed,
+        ),
+    ];
+    // Branches keep their order; within a branch the first crediting assertion
+    // in related-test order, then source order, is reported.
+    let credit = branches.iter().find_map(|(alignment, reason, credits)| {
+        units
+            .iter()
+            .find(|unit| credits(unit))
+            .map(|unit| (*alignment, *reason, unit))
+    });
+    let (oracle_alignment, alignment_reason, observed_sink, credited) = match credit {
+        Some((alignment, reason, unit)) => (
+            alignment,
+            reason,
+            Some(unit.reported.clone()),
+            Some(CreditedAssertion {
+                test_name: unit.related.name.clone(),
+                test_file: unit.related.file.clone(),
+                text: unit.reported.clone(),
+                kind: unit.kind.clone(),
+            }),
+        ),
+        None => (
+            "orthogonal",
+            "strong_oracle_observes_different_sink",
+            observed_sink,
+            None,
+        ),
     };
     SinkAlignment {
         changed_sink,
         observed_sink,
         oracle_alignment: oracle_alignment.to_string(),
         alignment_reason: alignment_reason.to_string(),
+        credited,
     }
+}
+
+/// A credit branch: its `oracle_alignment`, its `alignment_reason`, and the
+/// test it applies to one assertion.
+type CreditBranch<'f, 'a> = (
+    &'static str,
+    &'static str,
+    &'f dyn Fn(&AlignmentUnit<'a>) -> bool,
+);
+
+/// One strong assertion the alignment gates read (RIPR-SPEC-0233 rule 4).
+struct AlignmentUnit<'a> {
+    related: &'a RelatedTest,
+    test: Option<&'a PythonTest>,
+    /// The text every gate reads ([`super::PythonAssertion::gate_text`]).
+    text: String,
+    /// The assertion text a crediting finding reports.
+    reported: String,
+    kind: OracleKind,
+    /// A mock assertion admitted only to observe a changed call's arguments.
+    effect_only: bool,
+}
+
+/// Every strong assertion of every strong related test, in related-test order
+/// then source order. For an error-path change only `exact_error_variant`
+/// assertions are kept (rule 6). A related test whose source facts are not in
+/// `all_tests` contributes its one reported oracle.
+fn alignment_units<'a>(
+    strong_tests: &[&'a RelatedTest],
+    all_tests: &'a [PythonTest],
+    error_path: bool,
+    effect: Option<&ChangedEffect>,
+) -> Vec<AlignmentUnit<'a>> {
+    let admits = |kind: &OracleKind| !error_path || matches!(kind, OracleKind::ExactErrorVariant);
+    let admits_mock = effect.is_some_and(ChangedEffect::admits_mock_assertion);
+    let mut units = Vec::new();
+    for related in strong_tests {
+        let test = all_tests.iter().find(|test| {
+            test.name == related.name
+                && test.file == related.file
+                && super::test_activation::activation_control(test).is_none()
+        });
+        let before = units.len();
+        if let Some(test) = test {
+            units.extend(test.assertions.iter().filter_map(|assertion| {
+                let strong = assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    && admits(&assertion.oracle_kind);
+                let mock =
+                    admits_mock && matches!(assertion.oracle_kind, OracleKind::MockExpectation);
+                (strong || mock).then(|| AlignmentUnit {
+                    related,
+                    test: Some(test),
+                    text: assertion.gate_text.clone(),
+                    reported: assertion.text.clone(),
+                    kind: assertion.oracle_kind.clone(),
+                    effect_only: !strong,
+                })
+            }));
+        }
+        // A related test whose source facts carry no admitted assertion (one
+        // built without them) contributes its reported oracle.
+        if units.len() == before
+            && let Some(text) = related.oracle.as_ref()
+            && admits(&related.oracle_kind)
+            && related.oracle_strength.rank() >= OracleStrength::Strong.rank()
+        {
+            units.push(AlignmentUnit {
+                related,
+                test,
+                text: text.clone(),
+                reported: text.clone(),
+                kind: related.oracle_kind.clone(),
+                effect_only: false,
+            });
+        }
+    }
+    units
 }

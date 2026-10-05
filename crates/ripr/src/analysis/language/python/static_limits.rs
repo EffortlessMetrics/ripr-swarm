@@ -427,10 +427,30 @@ fn related_candidates_have_property_based_test_limit(
         .filter(|candidate| candidate.relation.uses_oracle())
         .any(|candidate| {
             test_uses_property_based_inputs(candidate.test)
-                && !candidate.test.assertions.iter().any(|assertion| {
-                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                })
+                && property_inputs_hide_the_discriminator(candidate.test)
         })
+}
+
+/// Whether a property-based test's generated inputs leave static evidence
+/// unable to tell if the changed discriminator is reached (#6601): it has an
+/// assertion but none strong, or a strong one whose inputs come only from
+/// strategies the test body reads, with no literal `@example` row. A test
+/// with no assertion has no oracle to read, so it reads reach-only like any
+/// other test; `@example` rows bind owner inputs like `parametrize` cases.
+fn property_inputs_hide_the_discriminator(test: &PythonTest) -> bool {
+    if test.assertions.is_empty() {
+        return false;
+    }
+    let strong = test
+        .assertions
+        .iter()
+        .any(|assertion| assertion.oracle_strength.rank() >= OracleStrength::Strong.rank());
+    !strong
+        || (test.parametrize.is_none()
+            && test
+                .generated_inputs
+                .iter()
+                .any(|input| body_uses_identifier(&test.body_text, input)))
 }
 
 fn test_uses_property_based_inputs(test: &PythonTest) -> bool {
