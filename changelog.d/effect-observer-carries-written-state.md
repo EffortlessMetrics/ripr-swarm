@@ -12,4 +12,4 @@
   method reading `low_stock` (such as `inv.reorder()`). When
   the written state cannot be bounded, any whole-object equality still
   confirms, and mock and snapshot observers are unchanged (RIPR-SPEC-0094,
-  Part D).
+  Part D) (#6628).

@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 72/203 | 0.3547 |
+| False verdicts (all cases) | 71/203 | 0.3498 |
 | False actionable (of discriminated) | 66/106 | 0.6226 |
-| False exposed (of not fully discriminated) | 6/97 | 0.0619 |
+| False exposed (of not fully discriminated) | 5/97 | 0.0515 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 73/203 | 0.3596 |
+| Ideal verdict | 74/203 | 0.3645 |
 | Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
@@ -16,7 +16,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 62/169 | 56/86 | 6/83 | 0/83 | 68/169 | 39/169 |
+| authored | 169 | 61/169 | 56/86 | 5/83 | 0/83 | 69/169 | 39/169 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -62,7 +62,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `pricing-quote-total-field` | authored | partially_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `ledger-ship-log-push` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
-| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
 | `ledger-receipt-remaining` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `ledger-insufficient-available` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `ledger-shipped-total` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
