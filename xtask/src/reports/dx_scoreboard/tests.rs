@@ -792,6 +792,61 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
 }
 
 #[test]
+fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl because only the row
+    // converter emits walk seconds and failed steps; the summary receipt cannot
+    // fail the gate on either.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let boards = vec!["first_run".to_string()];
+    let rows = |walk: f64, check_exit: i32| -> Result<Vec<Sample>, String> {
+        let text = [
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":{walk},"budget":60,"better":"lower"}}"#),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":{check_exit},"budget":0,"better":"equal"}}"#),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &boards,
+        &rows(5.0, 0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |walk: f64, exit: i32| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &boards,
+            &rows(walk, exit)?,
+            &context("runner-a"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(gate(5.0, 0)?["gate"]["status"].as_str(), Some("pass"));
+    let slower = gate(20.0, 0)?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.walk_secs"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    let failed = gate(5.0, 1)?;
+    assert_eq!(failed["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&failed).contains("first_run.failed_steps"),
+        "{}",
+        gate_failure_message(&failed)
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,

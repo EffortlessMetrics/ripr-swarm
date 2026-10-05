@@ -45,13 +45,13 @@ jobs:
 
       - name: Record the scoreboard without a baseline
         if: hashFiles('metrics/dx-scoreboard/first-run-baseline.json') == ''
-        run: cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run.json
+        run: cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl
 
       - name: Compare with the baseline
         if: hashFiles('metrics/dx-scoreboard/first-run-baseline.json') != ''
         run: >-
           cargo xtask dx-scoreboard --boards first_run
-          --ingest target/ripr/first-run/first-run.json
+          --ingest target/ripr/first-run/first-run-rows.jsonl
           --baseline metrics/dx-scoreboard/first-run-baseline.json
           --gate
 
