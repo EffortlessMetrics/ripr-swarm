@@ -14738,8 +14738,15 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
         "pilot wrote under the working directory {}",
         elsewhere.display()
     );
+    // Pilot renders human paths with forward separators on every platform,
+    // so the needle normalizes the same way (#6856).
     assert!(
-        stdout.contains(&packet.join("pilot-summary.md").display().to_string()),
+        stdout.contains(
+            &packet
+                .join("pilot-summary.md")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
         "{stdout}"
     );
     // The packet's loop commands must write into the analyzed repository,
@@ -14751,12 +14758,16 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
     let before = packets["next"]["before_snapshot_command"]
         .as_str()
         .ok_or_else(|| format!("the fixture must yield a repair loop: {packets}"))?;
-    let elsewhere_text = elsewhere.display().to_string();
+    // Commands render with forward separators on every platform, so both
+    // needles normalize the same way (#6856). Without this the launch-dir
+    // needle passes vacuously on Windows and the root needle always fails.
+    let elsewhere_text = elsewhere.to_string_lossy().replace('\\', "/");
+    let root_text = root.to_string_lossy().replace('\\', "/");
     assert!(
         !before.contains(&elsewhere_text),
         "the snapshot redirect names the launch directory: {before}"
     );
-    assert!(before.contains(&root_arg), "{before}");
+    assert!(before.contains(&root_text), "{before}");
     Ok(())
 }
 
