@@ -22634,3 +22634,82 @@ fn review_comments_help_survives_invalid_admission_environment()
     }
     Ok(())
 }
+
+/// #6033: a cage-violated after phase is the one failure shape that used to
+/// emit the success-shaped movement document on the documented stdout
+/// channel (`status: advisory`, gap closed) while the attempt terminated as
+/// `failed`. With `--json`, stdout must instead be the typed
+/// `repair_after_failure` envelope naming the terminal attempt state and the
+/// cage verdict, and the shared workflow artifacts the phase wrote must be
+/// withdrawn, so `agent status` does not present them as current loop
+/// artifacts beside the terminal attempt.
+#[test]
+fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The natural redirect shape from #4216: ripr output redirected into the
+    // checkout sits untracked in the tree, so the cage refuses the attempt.
+    let root = built_repair_fixture("agent-repair-cage-violated-stdout")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+
+    let stdout: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&after.stdout))
+        .map_err(|error| {
+        format!(
+            "after-phase stdout must be one JSON document: {error}: {}",
+            String::from_utf8_lossy(&after.stdout)
+        )
+    })?;
+    assert_eq!(stdout["kind"], "repair_after_failure", "{stdout}");
+    assert_eq!(stdout["schema_version"], "0.1", "{stdout}");
+    assert_eq!(stdout["attempt_id"], attempt_id, "{stdout}");
+    assert_eq!(stdout["attempt_state"], "failed", "{stdout}");
+    assert_eq!(stdout["edit_cage_verdict"], "violated", "{stdout}");
+    assert!(
+        stdout["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("not receipt-ready")),
+        "the envelope carries the terse final error: {stdout}"
+    );
+    assert!(
+        stdout.get("verify").is_none() && stdout.get("changed_seams").is_none(),
+        "no success-shaped movement document beside a terminal attempt: {stdout}"
+    );
+
+    // The artifacts this phase wrote are withdrawn; the before phase's
+    // retained projection is not this phase's to clean.
+    assert!(
+        !root
+            .join("target/ripr/workflow/after.repo-exposure.json")
+            .exists(),
+        "a refused after phase must not leave a fresh after snapshot as a current loop artifact"
+    );
+    assert!(
+        !root.join("target/ripr/workflow/agent-verify.json").exists(),
+        "a refused after phase must not leave a fresh verify document as a current loop artifact"
+    );
+    assert!(
+        !root
+            .join("target/ripr/workflow/analysis-outcome.json")
+            .exists(),
+        "a refused after phase must not leave a fresh analysis outcome as a current loop artifact"
+    );
+    assert!(
+        root.join("target/ripr/workflow/before.repo-exposure.json")
+            .exists(),
+        "the before phase's own artifact stays"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}

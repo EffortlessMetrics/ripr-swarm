@@ -50,6 +50,14 @@ const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 /// stays identifiable from `schema_version` alone.
 const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 
+/// The `repair_after_failure` stdout envelope (#6033): an after phase whose
+/// edit cage finished the attempt as not receipt-ready (violated,
+/// incomparable, stale). Its own version keeps every after-phase stdout
+/// shape identifiable from `schema_version` alone; the exit code for this
+/// path stays `2` — the attempt is terminal and the recovery is a new
+/// attempt, not a retry of this one.
+const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.1";
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
@@ -762,6 +770,54 @@ struct AfterPhaseRefusalContext {
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
     stdout_document_printed: bool,
+    /// Set when the tail reached the durable finish and the attempt ended
+    /// non-receipt-ready (violated, incomparable, or stale): the phase then
+    /// prints the typed `repair_after_failure` envelope instead of the bare
+    /// success-shaped verify document, and withdraws the shared workflow
+    /// artifacts it wrote, so `agent status` does not present them as
+    /// current loop artifacts beside a terminal attempt (#6033).
+    terminal_finish: Option<TerminalAttemptFinish>,
+}
+
+/// What a finished-but-refused attempt carries into the failure envelope.
+struct TerminalAttemptFinish {
+    attempt_id: String,
+    attempt_state: &'static str,
+    edit_cage_verdict: &'static str,
+}
+
+/// The shared workflow artifacts an after phase writes as projections for a
+/// loop that reaches its receipt. When the cage refuses the attempt instead,
+/// the artifacts this phase created are withdrawn (#6033) so `agent status`
+/// does not list them as present loop artifacts next to a terminal attempt.
+/// Artifacts that already existed before this phase stay untouched: an
+/// earlier attempt's projections are not this phase's to clean.
+struct SharedWorkflowArtifacts {
+    paths: Vec<PathBuf>,
+    preexisting: Vec<bool>,
+}
+
+impl SharedWorkflowArtifacts {
+    fn track(root: &Path) -> Self {
+        let paths = vec![
+            root.join("target/ripr/workflow/after.repo-exposure.json"),
+            root.join("target/ripr/workflow/agent-verify.json"),
+            root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+        ];
+        let preexisting = paths.iter().map(|path| path.exists()).collect();
+        Self { paths, preexisting }
+    }
+
+    /// Removes exactly the artifacts this phase created. Best-effort: a
+    /// failed removal leaves the artifact and the status projection with it,
+    /// which is the pre-#6033 behavior, never a worse one.
+    fn withdraw_fresh_artifacts(&self) {
+        for (path, preexisting) in self.paths.iter().zip(&self.preexisting) {
+            if !*preexisting {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 }
 
 /// The typed-refusal stdout document of an after phase that refused with a
@@ -783,6 +839,32 @@ fn render_repair_after_refusal_json(
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
         .map_err(|error| format!("serialize after-phase refusal document failed: {error}"))
+}
+
+/// The typed-failure stdout document of an after phase whose edit cage
+/// finished the attempt as not receipt-ready (#6033). This is the only
+/// failure shape that used to emit the success-shaped verify document:
+/// `status: advisory` with a gap-closed movement summary beside a terminal
+/// attempt. The envelope names the terminal attempt state and the cage
+/// verdict instead, so a driver that captures only stdout cannot read the
+/// refused phase as a green repair.
+fn render_repair_after_failure_json(
+    finish: &TerminalAttemptFinish,
+    error: &str,
+    narration: &[String],
+) -> Result<String, String> {
+    let document = serde_json::json!({
+        "schema_version": REPAIR_AFTER_FAILURE_SCHEMA_VERSION,
+        "kind": "repair_after_failure",
+        "attempt_id": finish.attempt_id,
+        "attempt_state": finish.attempt_state,
+        "edit_cage_verdict": finish.edit_cage_verdict,
+        "error": error.trim(),
+        "narration": narration,
+    });
+    serde_json::to_string_pretty(&document)
+        .map(|rendered| format!("{rendered}\n"))
+        .map_err(|error| format!("serialize after-phase failure document failed: {error}"))
 }
 
 impl AfterPhaseRefusalContext {
@@ -941,6 +1023,10 @@ fn run_agent_repair_phase(
                 "ripr: consuming attempt manifest {}",
                 attempt.manifest_path.display()
             );
+            // #6033: remember which shared workflow artifacts existed before
+            // this phase wrote its own, so a cage-refused attempt can have
+            // the fresh ones withdrawn instead of presented as current.
+            let shared_workflow_artifacts = SharedWorkflowArtifacts::track(&root);
 
             // The retained before snapshot and packet are the transaction's
             // authority. The repository-global after, verify, receipt, and
@@ -1083,7 +1169,12 @@ fn run_agent_repair_phase(
             // `verify` and the status report under `agent_status`; when the
             // tail refuses, the verify document alone is printed — the
             // refusal bytes this phase always produced, and still one document
-            // an orchestrator can parse with one JSON.parse call.
+            // an orchestrator can parse with one JSON.parse call. The one
+            // #6033 exception: when the cage finished the attempt as not
+            // receipt-ready, the printed document is the typed
+            // `repair_after_failure` envelope, because a success-shaped
+            // verify document beside a terminal attempt is exactly the green
+            // repair story the driver cannot trust.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
                     ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
@@ -1142,6 +1233,20 @@ fn run_agent_repair_phase(
                         return Err(error);
                     }
                 };
+                // #6033: record the terminal finish the moment the cage
+                // lands non-Compliant, so the tail's error path can print
+                // the typed failure envelope and withdraw this phase's
+                // shared artifacts instead of the success-shaped document.
+                if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    refusal.terminal_finish = Some(TerminalAttemptFinish {
+                        attempt_id: cage_after.attempt_id.as_str().to_string(),
+                        attempt_state: crate::app::repair_attempt::repair_attempt_state_for_finish(
+                            &cage_after,
+                        )
+                        .as_label(),
+                        edit_cage_verdict: cage_after.verdict.status.as_label(),
+                    });
+                }
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -1154,7 +1259,7 @@ fn run_agent_repair_phase(
                     &attempt.repository_head,
                     &cage_after,
                 ) {
-                    eprintln!("ripr: {line}");
+                    refusal.narrate(line);
                 }
 
                 // The receipt can refuse (for example an escape verdict is not
@@ -1284,9 +1389,32 @@ fn run_agent_repair_phase(
             let status_rendered = match after_tail(&mut *refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
+                    // #6033: a cage-refused attempt must not read as a green
+                    // repair on the documented stdout channel. The typed
+                    // failure envelope names the terminal attempt state and
+                    // the cage verdict; any other post-verify failure keeps
+                    // the bare verify document this phase always printed.
                     if json {
-                        print!("{rendered_verify}");
+                        match refusal.terminal_finish.as_ref() {
+                            Some(finish) => {
+                                match render_repair_after_failure_json(
+                                    finish,
+                                    &error,
+                                    &refusal.narration,
+                                ) {
+                                    Ok(rendered) => print!("{rendered}"),
+                                    Err(render_error) => {
+                                        eprintln!("ripr: {render_error}");
+                                        print!("{rendered_verify}");
+                                    }
+                                }
+                            }
+                            None => print!("{rendered_verify}"),
+                        }
                         refusal.stdout_document_printed = true;
+                    }
+                    if refusal.terminal_finish.is_some() {
+                        shared_workflow_artifacts.withdraw_fresh_artifacts();
                     }
                     return Err(error);
                 }

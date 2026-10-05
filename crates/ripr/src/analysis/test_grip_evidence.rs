@@ -14,6 +14,11 @@
 mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
+mod value_contradiction;
+
+use value_contradiction::{
+    ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict,
+};
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
@@ -302,25 +307,25 @@ fn evidence_for_seam_with_context(
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
-    sort_related_tests_for_seam(seam, context, &mut related_with_reason);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
         .iter()
         .map(|(indexed, _reason)| *indexed)
         .collect();
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
 
     let reach = reach_evidence(seam, &related, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
-    let propagate = propagate_evidence(seam, &related);
+    let propagate = propagate_evidence(seam, &related, owner_fn);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn);
 
     let related_tests: Vec<RelatedTestGrip> = related_with_reason
         .iter()
-        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
+        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context, owner_fn))
         .collect();
     let new_test_target = new_test_target_admission(seam, context);
 
@@ -372,9 +377,9 @@ pub(crate) fn compact_evidence_for_seam(
     let reach = reach_evidence(seam, &related, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
-    let propagate = propagate_evidence(seam, &related);
+    let propagate = propagate_evidence(seam, &related, owner_fn);
     let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related);
+    let discriminate = discriminate_evidence(seam, &related, owner_fn);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -1670,7 +1675,11 @@ fn comparable_value(value: &str) -> String {
         .collect()
 }
 
-fn propagate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidence {
+fn propagate_evidence(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
             StageState::No,
@@ -1684,7 +1693,7 @@ fn propagate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidenc
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
     let any_matching_sink = related
         .iter()
-        .any(|t| oracles_match_sink(seam, &t.assertions));
+        .any(|t| oracles_match_sink(seam, &t.assertions, owner_fn));
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1698,27 +1707,41 @@ fn propagate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidenc
     StageEvidence::new(state, Confidence::Low, summary)
 }
 
-fn oracles_match_sink(seam: &RepoSeam, oracles: &[OracleFact]) -> bool {
-    oracles.iter().any(|oracle| match seam.expected_sink() {
-        ExpectedSink::ReturnValue | ExpectedSink::OutputField => matches!(
-            oracle.kind,
-            OracleKind::ExactValue
-                | OracleKind::WholeObjectEquality
-                | OracleKind::Snapshot
-                | OracleKind::RelationalCheck
-        ),
-        ExpectedSink::ErrorChannel => matches!(
-            oracle.kind,
-            OracleKind::ExactErrorVariant | OracleKind::BroadError
-        ),
-        ExpectedSink::SideEffect => {
-            if direct_collection_mutation_receiver(seam.expression()).is_some() {
-                oracle_discriminates_seam(seam, oracle)
-            } else {
-                matches!(oracle.kind, OracleKind::MockExpectation)
+fn oracles_match_sink(
+    seam: &RepoSeam,
+    oracles: &[OracleFact],
+    owner_fn: Option<&FunctionSummary>,
+) -> bool {
+    oracles
+        .iter()
+        // A statically contradicted assertion propagates nothing: it pins
+        // the mutant's value, not the owner's (#6026).
+        .filter(|oracle| {
+            !matches!(
+                exact_value_assertion_verdict(owner_fn, &oracle.text),
+                ExactValueVerdict::Contradicted { .. }
+            )
+        })
+        .any(|oracle| match seam.expected_sink() {
+            ExpectedSink::ReturnValue | ExpectedSink::OutputField => matches!(
+                oracle.kind,
+                OracleKind::ExactValue
+                    | OracleKind::WholeObjectEquality
+                    | OracleKind::Snapshot
+                    | OracleKind::RelationalCheck
+            ),
+            ExpectedSink::ErrorChannel => matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::BroadError
+            ),
+            ExpectedSink::SideEffect => {
+                if direct_collection_mutation_receiver(seam.expression()).is_some() {
+                    oracle_discriminates_seam(seam, oracle)
+                } else {
+                    matches!(oracle.kind, OracleKind::MockExpectation)
+                }
             }
-        }
-    })
+        })
 }
 
 fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
@@ -1744,7 +1767,11 @@ fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
     StageEvidence::new(state, Confidence::Medium, summary)
 }
 
-fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidence {
+fn discriminate_evidence(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
             StageState::No,
@@ -1754,18 +1781,24 @@ fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvid
     }
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
+    let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            if oracle.strength.rank() > best.rank() {
-                best = oracle.strength.clone();
+            // A statically contradicted exact-value assertion keeps at most
+            // Weak credit: it pins the mutant's value and fails at baseline,
+            // so it must not grade the seam's discrimination up (#6026).
+            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle);
+            if let Some(contradiction) = contradiction {
+                contradictions.push(contradiction);
+            }
+            if strength.rank() > best.rank() {
+                best = strength.clone();
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam(seam, oracle)
-                && oracle.strength.rank() > best_matching.rank()
-            {
-                best_matching = oracle.strength.clone();
+            if oracle_discriminates_seam(seam, oracle) && strength.rank() > best_matching.rank() {
+                best_matching = strength;
             }
         }
     }
@@ -1787,13 +1820,37 @@ fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvid
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
-    let summary = format!(
+    let mut summary = format!(
         "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
         seam.kind().as_str(),
         best.as_str(),
         best_matching != OracleStrength::None
     );
+    if !contradictions.is_empty() {
+        summary.push_str("; ");
+        summary.push_str(&contradictions.join("; "));
+    }
     StageEvidence::new(state, Confidence::Medium, summary)
+}
+
+/// The strength an oracle may still claim, with its static-contradiction
+/// disclosure when the assertion is an equality over literals that the
+/// owner's fold contradicts. A consistent or not-evaluable verdict keeps the
+/// oracle's extracted strength and this module's prior behavior.
+fn effective_oracle_strength(
+    owner_fn: Option<&FunctionSummary>,
+    oracle: &OracleFact,
+) -> (OracleStrength, Option<String>) {
+    match exact_value_assertion_verdict(owner_fn, &oracle.text) {
+        ExactValueVerdict::Contradicted {
+            expected,
+            evaluated,
+        } => (
+            OracleStrength::Weak,
+            Some(contradiction_summary(&expected, evaluated)),
+        ),
+        _ => (oracle.strength.clone(), None),
+    }
 }
 
 /// Returns true when `oracle` is a discriminating match for `seam`.
@@ -2465,9 +2522,12 @@ fn related_test_grip(
     test: &TestSummary,
     reason: RelationReason,
     context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
 ) -> RelatedTestGrip {
-    let (kind, strength) = best_oracle(test, seam);
-    let summary = if matches!(strength, OracleStrength::None) {
+    let (kind, strength, contradiction) = best_oracle(test, seam, owner_fn);
+    let summary = if let Some(contradiction) = contradiction {
+        contradiction
+    } else if matches!(strength, OracleStrength::None) {
         "no oracle in test body".to_string()
     } else {
         match kind {
@@ -2524,32 +2584,51 @@ fn test_target_evidence(
     ))
 }
 
-fn best_oracle(test: &TestSummary, seam: &RepoSeam) -> (OracleKind, OracleStrength) {
+/// The strongest oracle a related test may still claim for `seam`, with the
+/// static-contradiction disclosure when that oracle is a statically
+/// contradicted equality assertion (#6026): such an oracle keeps Weak
+/// strength and names the contradiction in the receipt instead of crediting
+/// the mutant's asserted value as observed.
+fn best_oracle(
+    test: &TestSummary,
+    seam: &RepoSeam,
+    owner_fn: Option<&FunctionSummary>,
+) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;
+    let mut best_contradiction = None;
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
+    let mut best_matching_contradiction = None;
     for oracle in &test.assertions {
-        if oracle.strength.rank() > best_strength.rank() {
-            best_strength = oracle.strength.clone();
+        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle);
+        if strength.rank() > best_strength.rank() {
+            best_strength = strength.clone();
             best_kind = oracle.kind.clone();
-        } else if oracle.strength.rank() == best_strength.rank()
+            best_contradiction = contradiction.clone();
+        } else if strength.rank() == best_strength.rank()
             && oracle_kind_matches_seam(seam, &oracle.kind)
         {
             best_kind = oracle.kind.clone();
+            best_contradiction = contradiction.clone();
         }
         if oracle_discriminates_seam(seam, oracle)
-            && oracle.strength.rank() > best_matching_strength.rank()
+            && strength.rank() > best_matching_strength.rank()
         {
-            best_matching_strength = oracle.strength.clone();
+            best_matching_strength = strength;
             best_matching_kind = oracle.kind.clone();
+            best_matching_contradiction = contradiction;
         }
     }
     if seam.kind() == SeamKind::FieldConstruction && best_matching_strength != OracleStrength::None
     {
-        (best_matching_kind, best_matching_strength)
+        (
+            best_matching_kind,
+            best_matching_strength,
+            best_matching_contradiction,
+        )
     } else {
-        (best_kind, best_strength)
+        (best_kind, best_strength, best_contradiction)
     }
 }
 
