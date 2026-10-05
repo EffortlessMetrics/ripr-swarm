@@ -99,7 +99,7 @@ fn counts_toward_calibrated_ripr_zero(finding: &Finding) -> bool {
     finding.is_candidate_actionable() && !is_preview_evidence(finding)
 }
 
-fn is_calibrated_exposure_gap_class(class: ExposureClass) -> bool {
+fn is_calibrated_exposure_gap_class(class: &ExposureClass) -> bool {
     matches!(
         class,
         ExposureClass::WeaklyExposed
@@ -108,7 +108,7 @@ fn is_calibrated_exposure_gap_class(class: ExposureClass) -> bool {
     )
 }
 
-fn is_calibrated_unknown_class(class: ExposureClass) -> bool {
+fn is_calibrated_unknown_class(class: &ExposureClass) -> bool {
     matches!(
         class,
         ExposureClass::InfectionUnknown
@@ -152,9 +152,9 @@ pub fn ripr_badge_summary_with_suppressions(
         if !counts_toward_calibrated_ripr_zero(finding) {
             continue;
         }
-        if is_calibrated_exposure_gap_class(finding.class) {
+        if is_calibrated_exposure_gap_class(&finding.class) {
             gap_findings.push(finding);
-        } else if is_calibrated_unknown_class(finding.class) {
+        } else if is_calibrated_unknown_class(&finding.class) {
             unknowns += 1;
         }
     }
