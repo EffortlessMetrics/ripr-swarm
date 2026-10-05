@@ -107,10 +107,10 @@ pub(crate) fn root_display(root: &str) -> String {
 }
 
 /// Render a shell-redirect target rooted at the bound `--root` (issues
-/// #3872, #3999): the target is absolute with native Unix spelling and stable
-/// Windows separators, so a pasted
-/// funnel command reproduces the validated write location from any working
-/// directory under both shells and both .NET/provider resolution rules. An
+/// #3872, #3999). The root and already-absolute output keep native Unix spelling
+/// and stable Windows separators; relative remainders use stable separators.
+/// A pasted funnel command reproduces the validated write location from any
+/// working directory under both shells and both .NET/provider resolution rules. An
 /// already absolute target passes through (lexically cleaned); a relative target
 /// joins [`bound_root`].
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {

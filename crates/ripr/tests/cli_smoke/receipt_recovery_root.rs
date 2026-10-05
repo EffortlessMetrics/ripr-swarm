@@ -1,10 +1,10 @@
 use super::{
-    BOUNDARY_GAP_SEAM_ID, advance_fixture_head, assert_success, init_producer_fixture_repo,
-    renderer_shell_arg, spawn_command, unique_temp_workspace,
+    BOUNDARY_GAP_SEAM_ID, advance_fixture_head, assert_success, ignore_remove_dir_all,
+    init_producer_fixture_repo, renderer_shell_arg, spawn_command, unique_temp_workspace,
 };
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -15,6 +15,16 @@ const VERIFY: &str = "target/ripr/workflow/agent-verify.json";
 const RECEIPT: &str = "target/ripr/reports/agent-receipt.json";
 const CONTROL: &str = "target/ripr/workflow/control-verify.json";
 const DECOY_MARKER: &[u8] = b"independent slash-root verify marker\n";
+
+// Only this case's unique parent is owned here. Tear it down on early errors
+// and assertion unwinds as well as the checked success-path cleanup below.
+struct FixtureCleanup(PathBuf);
+
+impl Drop for FixtureCleanup {
+    fn drop(&mut self) {
+        ignore_remove_dir_all(&self.0);
+    }
+}
 
 fn cli(cwd: &Path, args: &[&str]) -> TestResult<Output> {
     // Use the existing owned, drained, deadline-bounded spawn site. Every CLI
@@ -208,6 +218,7 @@ fn assert_verify(path: &Path, root: &Path) -> TestResult {
 /// receipt selected. A suffix-only oracle would accept a different checkout.
 fn recovery_case(absolute: bool) -> TestResult {
     let parent = unique_temp_workspace("receipt-recovery-native");
+    let _cleanup = FixtureCleanup(parent.clone());
     let selected = parent.join("team\\repo 'quoted'");
     let decoy = parent.join("team/repo 'quoted'");
     let foreign = parent.join("foreign");
