@@ -930,3 +930,48 @@ fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
         })
         .collect()
 }
+
+#[test]
+fn committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels() -> Result<(), String> {
+    let dir = crate::dogfood::repo_rooted_fixture_path("fixtures/typescript-verdict-corpus");
+    let corpus = corpus_for_language(&dir, "typescript")?;
+    assert!(
+        corpus.cases.len() >= 40,
+        "typescript corpus shrank to {}",
+        corpus.cases.len()
+    );
+    assert!(
+        corpus
+            .subjects
+            .iter()
+            .all(|s| s.subject_id.starts_with("authored-ts-")),
+        "typescript subjects are authored-ts-<lib>-<name>"
+    );
+    for library in ["jest", "vitest", "mocha", "nodetest"] {
+        assert!(
+            corpus
+                .subjects
+                .iter()
+                .any(|s| s.subject_id.starts_with(&format!("authored-ts-{library}-"))),
+            "no {library} subject"
+        );
+    }
+    let report: Value = serde_json::from_str(&read(&dir.join("expected/report.json"))?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(report["language"], json!("typescript"));
+    let rows = report["rows"].as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), corpus.cases.len());
+    for (row, case) in rows.iter().zip(&corpus.cases) {
+        assert_eq!(row["case_id"], json!(case.case_id));
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}

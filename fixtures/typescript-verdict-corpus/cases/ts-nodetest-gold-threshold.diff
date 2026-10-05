@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -9,7 +9,7 @@ export function shippingFee(subtotalCents: number): number {
+ }
+ 
+ export function tierForPoints(points: number): string {
+-  if (points >= 5000) {
++  if (points > 4999) {
+     return "gold";
+   }
+   if (points >= 1000) {

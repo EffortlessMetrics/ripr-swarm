@@ -1,0 +1,12 @@
+diff --git a/src/parse.ts b/src/parse.ts
+index 0000000..1111111 100644
+--- a/src/parse.ts
++++ b/src/parse.ts
+@@ -1,6 +1,6 @@
+ export function parse(s: string): string {
+   if (s === "") {
+-    throw new Error("empty");
++    throw new Error("blank");
+   }
+   return s;
+ }

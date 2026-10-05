@@ -1,0 +1,10 @@
+diff --git a/src/total.ts b/src/total.ts
+index 0000000..1111111 100644
+--- a/src/total.ts
++++ b/src/total.ts
+@@ -1,4 +1,4 @@
+ export function orderTotal(qty: number, unit: number, fee: number): number {
+-  const subtotal = qty * unit;
++  const subtotal = unit * qty;
+   return subtotal + fee;
+ }

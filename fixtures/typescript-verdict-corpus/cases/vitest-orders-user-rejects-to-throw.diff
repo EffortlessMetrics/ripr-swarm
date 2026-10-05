@@ -1,0 +1,13 @@
+diff --git a/src/user.ts b/src/user.ts
+index 0000000..1111111 100644
+--- a/src/user.ts
++++ b/src/user.ts
+@@ -5,7 +5,7 @@
+ 
+ export async function loadUser(id: number): Promise<User> {
+   if (id <= 0) {
+-    throw new Error("user id must be positive");
++    throw new Error(`user id must be positive`);
+   }
+   return { id, name: "user" };
+ }

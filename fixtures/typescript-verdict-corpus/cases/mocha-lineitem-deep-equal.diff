@@ -1,0 +1,12 @@
+diff --git a/src/entry.ts b/src/entry.ts
+index 0000000..1111111 100644
+--- a/src/entry.ts
++++ b/src/entry.ts
+@@ -8,6 +8,6 @@
+   return {
+     sku,
+     qty,
+-    total: qty * unitCents,
++    total: unitCents * qty,
+   };
+ }

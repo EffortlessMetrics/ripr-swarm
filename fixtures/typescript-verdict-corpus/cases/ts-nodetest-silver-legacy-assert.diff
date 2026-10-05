@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -12,7 +12,7 @@ export function tierForPoints(points: number): string {
+   if (points >= 5000) {
+     return "gold";
+   }
+-  if (points >= 1000) {
++  if (points > 999) {
+     return "silver";
+   }
+   return "bronze";

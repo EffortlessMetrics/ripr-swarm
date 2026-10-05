@@ -1,0 +1,5 @@
+[languages]
+enabled = ["rust", "typescript"]
+
+[typescript]
+resolve_tsconfig_paths = false

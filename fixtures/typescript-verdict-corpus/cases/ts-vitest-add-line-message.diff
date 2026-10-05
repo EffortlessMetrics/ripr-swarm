@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -21,7 +21,7 @@ export function bulkDiscount(quantity: number): number {
+ 
+ export function addLine(lines: Line[], line: Line): Line[] {
+   if (line.quantity <= 0) {
+-    throw new RangeError("quantity must be positive");
++    throw new RangeError("quantity must be at least one");
+   }
+   return [...lines, line];
+ }

@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -2,7 +2,7 @@ export const FREE_SHIPPING_CENTS = 5000;
+ export const FLAT_SHIPPING_CENTS = 499;
+ 
+ export function shippingFee(subtotalCents: number): number {
+-  if (subtotalCents >= FREE_SHIPPING_CENTS) {
++  if (subtotalCents > FREE_SHIPPING_CENTS - 1) {
+     return 0;
+   }
+   return FLAT_SHIPPING_CENTS;

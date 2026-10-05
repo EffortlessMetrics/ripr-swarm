@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -13,7 +13,7 @@ export function lineTotal(line: Line): number {
+ }
+ 
+ export function bulkDiscount(quantity: number): number {
+-  if (quantity >= 10) {
++  if (quantity > 9) {
+     return 10;
+   }
+   return 0;

@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -40,7 +40,7 @@ export function isEmpty(lines: Line[]): boolean {
+ 
+ export function checkout(owner: string, lines: Line[], notifier: Notifier): number {
+   const total = lines.reduce((sum, line) => sum + lineTotal(line), 0);
+-  notifier.send(owner, `charged ${total}`);
++  notifier.send(owner, `charged ${total} cents`);
+   return total;
+ }
+ 

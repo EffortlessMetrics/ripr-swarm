@@ -139,6 +139,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_rejects_an_undeclared_language`
 - `each_language_owns_its_corpus_directory_and_run_paths`
 - `a_language_directory_must_declare_that_language`
+- `committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels`
 
 ## Implementation Mapping
 

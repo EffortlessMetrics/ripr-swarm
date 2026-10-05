@@ -1,0 +1,9 @@
+diff --git a/src/reserve.ts b/src/reserve.ts
+index 0000000..1111111 100644
+--- a/src/reserve.ts
++++ b/src/reserve.ts
+@@ -1,3 +1,3 @@
+ export function reserve(balance: number): number {
+-  return balance - 100;
++  return -100 + balance;
+ }

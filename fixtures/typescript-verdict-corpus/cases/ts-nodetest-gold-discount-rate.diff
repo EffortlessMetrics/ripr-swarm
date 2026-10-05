@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -20,7 +20,7 @@ export function tierForPoints(points: number): string {
+ 
+ export function discountCents(tier: string, subtotalCents: number): number {
+   if (tier === "gold") {
+-    return Math.floor((subtotalCents * 10) / 100);
++    return Math.floor((subtotalCents * 20) / 100);
+   }
+   if (tier === "silver") {
+     return Math.floor((subtotalCents * 5) / 100);

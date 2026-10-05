@@ -1,0 +1,13 @@
+diff --git a/src/profile.ts b/src/profile.ts
+index 0000000..1111111 100644
+--- a/src/profile.ts
++++ b/src/profile.ts
+@@ -1,7 +1,7 @@
+ export function buildProfile(name: string, age: number) {
+   return {
+     name,
+-    adult: age >= 18,
++    adult: age > 17,
+     tags: [] as string[],
+   };
+ }

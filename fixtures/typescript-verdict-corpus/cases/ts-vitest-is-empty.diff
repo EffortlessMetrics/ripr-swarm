@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -35,7 +35,7 @@ export function removeLine(lines: Line[], sku: string): Line[] {
+ }
+ 
+ export function isEmpty(lines: Line[]): boolean {
+-  return lines.length === 0;
++  return lines.length < 1;
+ }
+ 
+ export function checkout(owner: string, lines: Line[], notifier: Notifier): number {

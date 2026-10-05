@@ -1,0 +1,13 @@
+diff --git a/src/priceEx15.ts b/src/priceEx15.ts
+index 0000000..1111111 100644
+--- a/src/priceEx15.ts
++++ b/src/priceEx15.ts
+@@ -3,7 +3,7 @@
+     throw new Error("bad");
+   }
+   if (amount > 100) {
+-    return amount - 10;
++    return amount - 20;
+   }
+   return amount;
+ }
