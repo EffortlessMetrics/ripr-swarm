@@ -567,6 +567,10 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         "use ::serial_test::serial as locked;\n#[test]\n#[locked]",
         "use serial_test::file_serial;\n#[test]\n#[file_serial(db)]",
         "use super::*;\nuse serial_test::serial;\n#[test]\n#[serial]",
+        "extern crate serial_test;\n#[test]\n#[serial_test::serial]",
+        "use serial_test;\n#[test]\n#[serial_test::serial]",
+        // `macro_rules!` alone emits nothing at item position.
+        "macro_rules! helper { () => {}; }\n#[test]\n#[serial_test::serial]",
     ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
@@ -589,9 +593,23 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         // Importing another serial_test item does not bind `serial`.
         "use serial_test::parallel;\nuse my_macros::serial;\n#[test]\n#[serial]",
         "use serial_test::parallel;\n#[test]\n#[serial]",
-        // A competing binding of the same name anywhere in the file wins.
+        // A competing binding of the same name in the module refuses,
+        // raw spellings included.
         "use serial_test::serial;\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
-        // A foreign glob could bind any lock name.
+        "use serial_test::serial;\nuse my_macros::r#serial;\n#[test]\n#[serial]",
+        // Only the test's own module binds its attribute: an import in a
+        // function body, a sibling module or a macro token tree does not.
+        "mod a { use serial_test::serial; }\nuse my_macros::serial as r#serial;\n#[test]\n#[serial]",
+        "use my_macros::r#serial;\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        "macro_rules! bring { () => { use my_macros::serial; }; }\nbring!();\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        // A local `serial_test` shadows the crate for a qualified lock.
+        "mod serial_test { pub use my_macros::serial; }\n#[test]\n#[serial_test::serial]",
+        "use my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        "extern crate my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        // A glob or an item macro may bring one.
+        "use crate::common::*;\n#[test]\n#[serial_test::serial]",
+        "bring!();\n#[test]\n#[serial_test::serial]",
+        // A foreign glob may also bind the owner name.
         "use serial_test::serial;\nuse my_macros::*;\n#[test]\n#[serial]",
         "use serial_test::serial as _;\n#[test]\n#[serial]",
         "use serial_test::*;\n#[test]\n#[serial]",
@@ -601,6 +619,23 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+}
+
+#[test]
+fn serial_test_locks_resolve_in_the_tests_own_module() {
+    let module = |body: &str| {
+        format!(
+            "use demo::weight;\nmod tests {{\n{body}\n#[test]\n#[serial_test::serial]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n}}\n"
+        )
+    };
+    // `use super::*` reaches an enclosing module of this file, which binds
+    // no `serial_test`.
+    assert_eq!(weight_admitted(&module("use super::*;")).len(), 1);
+    let tests = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+    let bare = "use demo::weight;\nuse serial_test::serial;\nmod tests {\nuse super::*;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    // The bare lock is bound only through the glob, which proves nothing.
+    assert!(weight_admitted(bare).is_empty(), "{bare}");
 }
 
 #[test]

@@ -1,7 +1,8 @@
 <!-- section: Fixed -->
 - Rust tests marked with `serial_test`'s `#[serial]`, `#[parallel]`,
   `#[file_serial]` or `#[file_parallel]` (bare when a `use serial_test::..`
-  item binds that name, or path-qualified, with no arguments or bare lock keys)
+  item in the test's module binds that name, or path-qualified when nothing
+  local can shadow `serial_test`, with no arguments or bare lock keys)
   keep their owner-return pin, so an exact `assert_eq!` in them is credited
   like a plain `#[test]`. Other extra
   attributes still refuse the pin.

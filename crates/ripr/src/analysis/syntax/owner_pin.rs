@@ -326,7 +326,6 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .and_modify(|previous| *previous = false)
             .or_insert(admitted);
     }
-    let serial_test_locks = serial_test_lock_bindings(parse.tree().syntax());
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
     for function in parse
         .tree()
@@ -350,7 +349,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             || !supported_item_context(function.syntax())
             || function
                 .attrs()
-                .any(|attr| !runs_body_unchanged(&attr, &serial_test_locks))
+                .any(|attr| !runs_body_unchanged(&attr, function.syntax()))
         {
             continue;
         }
@@ -459,14 +458,13 @@ fn supported_item_context(item: &SyntaxNode) -> bool {
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
 /// `serial_test` locks, which run the unchanged body while holding a mutex or
-/// file lock. A bare lock name counts only when `serial_test_lock_bindings`
-/// binds it to serial_test with no competing import. Lock arguments are admitted only as bare key names
+/// file lock. Lock arguments are admitted only as bare key names
 /// (`#[serial(env, db)]`): `inner_attrs = [..]` hands the body to other
 /// attribute macros and `crate = ..` swaps the runtime that runs it, so any
 /// other argument refuses. Every other attribute (`ignore`, `should_panic`,
 /// an async runtime or a parameterizing macro) may skip, invert or rewrite
 /// the body, so it keeps the test out of the pin.
-fn runs_body_unchanged(attr: &ast::Attr, serial_test_locks: &BTreeSet<String>) -> bool {
+fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.simple_name().as_deref() == Some("test") {
         return true;
     }
@@ -477,12 +475,125 @@ fn runs_body_unchanged(attr: &ast::Attr, serial_test_locks: &BTreeSet<String>) -
         return false;
     };
     let path = path.syntax().text().to_string().replace(' ', "");
+    let Some(module) = test.parent() else {
+        return false;
+    };
     let admitted = match path.split_once("::") {
-        Some(("serial_test", leaf)) => SERIAL_TEST_LOCKS.contains(&leaf),
+        Some(("serial_test", leaf)) => {
+            SERIAL_TEST_LOCKS.contains(&leaf) && serial_test_path_is_the_crate(&module)
+        }
         Some(_) => false,
-        None => serial_test_locks.contains(&path),
+        None => bare_lock_bound_in_module(&path, &module),
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
+
+/// Whether a bare lock attribute `name` resolves to a serial_test lock in the
+/// test's own module (`module` is its item list or source file). Only an
+/// explicit `use serial_test::<lock>` (optionally renamed) that is a direct
+/// item of that module counts: an explicit import shadows globs and the
+/// `#[macro_use]` prelude, and a second explicit binding of the name there
+/// would not compile, so another one refuses. Imports in function bodies,
+/// sibling modules or macro token trees bind nothing for this attribute.
+fn bare_lock_bound_in_module(name: &str, module: &SyntaxNode) -> bool {
+    let name = unraw(name);
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != name {
+            continue;
+        }
+        let is_lock = leaf.path.len() == 2
+            && leaf.path[0] == "serial_test"
+            && SERIAL_TEST_LOCKS.contains(&leaf.path[1].as_str());
+        if !is_lock || bound {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+/// Whether `serial_test::..` in the test's module resolves to the extern
+/// crate: the module binds no item named `serial_test` (`mod`, `use .. as`,
+/// `extern crate .. as`), has no item-position macro call that could emit
+/// one, and imports no glob except `super::*` into an enclosing module of
+/// this file that satisfies the same rule. Any other glob may bring a
+/// `serial_test` that shadows the extern prelude, so it refuses.
+fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
+    for item in module.children().filter_map(ast::Item::cast) {
+        match &item {
+            ast::Item::MacroCall(_) => return false,
+            ast::Item::Module(inner)
+                if inner
+                    .name()
+                    .is_some_and(|name| unraw(name.text()) == "serial_test") =>
+            {
+                return false;
+            }
+            ast::Item::ExternCrate(krate) => {
+                let binding = match krate.rename() {
+                    Some(rename) => rename.name().map(|name| name.text().to_string()),
+                    None => krate.name_ref().map(|name| name.text().to_string()),
+                };
+                let Some(binding) = binding else {
+                    return false;
+                };
+                let real = krate
+                    .name_ref()
+                    .is_some_and(|name| unraw(name.text()) == "serial_test");
+                if unraw(&binding) == "serial_test" && !real {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    for leaf in module_use_leaves(module) {
+        match &leaf.binding {
+            UseBinding::Name(binding) => {
+                let real = leaf.path.len() == 1 && leaf.path[0] == "serial_test";
+                if unraw(binding) == "serial_test" && !real {
+                    return false;
+                }
+            }
+            UseBinding::Glob => {
+                let into_parent = leaf.path.len() == 1 && leaf.path[0] == "super";
+                let parent = module
+                    .parent()
+                    .filter(|owner| ast::Module::can_cast(owner.kind()))
+                    .and_then(|owner| owner.parent());
+                match parent {
+                    Some(parent) if into_parent => {
+                        if !serial_test_path_is_the_crate(&parent) {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+    }
+    true
+}
+
+fn unraw(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
+}
+
+/// The use leaves of the module's own direct `use` items.
+fn module_use_leaves(module: &SyntaxNode) -> Vec<UseLeaf> {
+    let mut leaves = Vec::new();
+    for item in module.children().filter_map(ast::Use::cast) {
+        if let Some(tree) = item.use_tree() {
+            flatten_use_tree(&tree, &[], &mut leaves);
+        }
+    }
+    leaves
 }
 
 /// No argument list, or one holding only identifiers and commas.
@@ -516,54 +627,6 @@ fn lock_arguments_are_bare_keys(attr: &ast::Attr) -> bool {
         })
 }
 
-const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
-
-/// Bare names that resolve to a serial_test lock anywhere in the file:
-/// `use serial_test::serial;` or `use serial_test::{serial as s};`.
-/// Resolution is file-wide, not per scope, so it fails closed: a name any
-/// other `use` also binds is left out, and so is every bare lock when a glob
-/// from another crate (`serial_test::*` included) could bind one. `use super::*`/`self::*`/
-/// `crate::*` globs re-export this file's own imports, which the scan already
-/// sees. A local `macro_rules! serial` is bang-only and cannot be an
-/// attribute, so it binds nothing here.
-fn serial_test_lock_bindings(root: &SyntaxNode) -> BTreeSet<String> {
-    let mut leaves = Vec::new();
-    for item in root.descendants().filter_map(ast::Use::cast) {
-        if let Some(tree) = item.use_tree() {
-            flatten_use_tree(&tree, &[], &mut leaves);
-        }
-    }
-    let mut locks = BTreeSet::new();
-    let mut competing = BTreeSet::new();
-    let mut foreign_glob = false;
-    for leaf in leaves {
-        let from_serial_test = leaf.path.first().map(String::as_str) == Some("serial_test");
-        match leaf.binding {
-            UseBinding::Glob => {
-                foreign_glob |= !matches!(
-                    leaf.path.first().map(String::as_str),
-                    Some("super" | "self" | "crate")
-                );
-            }
-            UseBinding::Name(name) => {
-                let is_lock = from_serial_test
-                    && leaf.path.len() == 2
-                    && SERIAL_TEST_LOCKS.contains(&leaf.path[1].as_str());
-                if is_lock {
-                    locks.insert(name);
-                } else {
-                    competing.insert(name);
-                }
-            }
-        }
-    }
-    if foreign_glob {
-        return BTreeSet::new();
-    }
-    locks.retain(|name| !competing.contains(name));
-    locks
-}
-
 struct UseLeaf {
     path: Vec<String>,
     binding: UseBinding,
@@ -584,7 +647,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: &[String], out: &mut Vec<UseLea
                 .text()
                 .to_string()
                 .split("::")
-                .map(|segment| segment.trim().to_string())
+                .map(|segment| unraw(segment.trim()).to_string())
                 .filter(|segment| !segment.is_empty()),
         );
     }
