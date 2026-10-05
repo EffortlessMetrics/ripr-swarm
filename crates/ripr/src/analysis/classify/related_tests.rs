@@ -2191,11 +2191,16 @@ fn skip_generic_args(bytes: &[u8], open: usize) -> Option<usize> {
     None
 }
 
+/// `whole_body`: `text` is the masked test body. A captured call line is raw
+/// and cut at line ends, so a bracketed receiver read from it could lose the
+/// callee before `(` (`f /* c */ (Site::new())` or `f\n(Site::new())`); only
+/// the whole masked body may resolve one.
 fn text_resolves_method_to_type(
     text: &str,
     method: &str,
     impl_type: &str,
     body_for_lets: &str,
+    whole_body: bool,
 ) -> bool {
     let bytes = text.as_bytes();
     let mut search = 0usize;
@@ -2214,7 +2219,9 @@ fn text_resolves_method_to_type(
                     {
                         return true;
                     }
-                } else if receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets) {
+                } else if whole_body
+                    && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
+                {
                     return true;
                 }
             }
@@ -2375,6 +2382,10 @@ fn plain_word_start(bytes: &[u8]) -> Option<usize> {
     if word_start > 0 && matches!(bytes[word_start - 1], b'#' | b'.' | b'$' | 0x80..=0xff) {
         return None;
     }
+    // `$ return` is still the metavariable `$return`.
+    if bytes[..word_start].trim_ascii_end().ends_with(b"$") {
+        return None;
+    }
     Some(word_start)
 }
 
@@ -2407,12 +2418,12 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type(
         return false;
     }
     let masked_body = mask_comments_and_strings(&test.body);
-    if text_resolves_method_to_type(&masked_body, method, impl_type, &masked_body) {
+    if text_resolves_method_to_type(&masked_body, method, impl_type, &masked_body, true) {
         return true;
     }
     test.calls.iter().any(|call| {
         call.name == method
-            && text_resolves_method_to_type(&call.text, method, impl_type, &masked_body)
+            && text_resolves_method_to_type(&call.text, method, impl_type, &masked_body, false)
     })
 }
 
@@ -5439,6 +5450,9 @@ let r = try_parse_summary(\"x\");",
             ("ñin (Site::new()).build();", false),
             ("$return (Site::new()).build();", false),
             ("$break 'a (Site::new()).build();", false),
+            ("$ return (Site::new()).build();", false),
+            ("$ /* c */ return (Site::new()).build();", false),
+            ("loop { break $ break (Site::new()).build(); }", false),
             ("'outer: loop { break 'outer (Site::new()).build(); }", true),
             ("loop { r#break 'a (Site::new()).build(); }", false),
             ("loop { other 'a (Site::new()).build(); }", false),
@@ -5448,6 +5462,43 @@ let r = try_parse_summary(\"x\");",
             assert_eq!(
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 expected,
+                "{body}"
+            );
+        }
+    }
+
+    // (#6605 review) A captured call line is raw and one line long: a comment
+    // or line break between the callee and `(` must not turn the call's
+    // argument into the receiver.
+    #[test]
+    fn bracketed_receiver_is_not_read_from_a_raw_call_line() {
+        let cases = [
+            (
+                "f /* c */ (Site::new()).build();",
+                "f /* c */ (Site::new()).build();",
+            ),
+            (
+                "let o = f\n    (Site::new()).build();",
+                "    (Site::new()).build();",
+            ),
+            (
+                "f // return\n    (Site::new()).build();",
+                "    (Site::new()).build();",
+            ),
+            (
+                "$ return (Site::new()).build();",
+                "$ return (Site::new()).build();",
+            ),
+        ];
+        for (body, line) in cases {
+            let mut summary = test("tests/site.rs", "t", body);
+            summary.calls = vec![CallFact {
+                line: 1,
+                name: "build".to_string(),
+                text: line.to_string(),
+            }];
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 "{body}"
             );
         }
