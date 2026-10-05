@@ -23,7 +23,8 @@ Linked issues:
 
 Support-tier impact:
 
-- None. The compiler is an offline typed projection over committed captured
+- None.
+- The compiler is an offline typed projection over committed captured
   inputs. It launches no agent, selects no work, claims nothing, edits
   nothing, calls no provider, reads no live GitHub state at compile time,
   and writes only `target/ripr/reports/work-portfolio.{json,md}` plus

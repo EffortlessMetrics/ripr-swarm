@@ -3315,7 +3315,7 @@ mod tests {
         if editor.candidates == 0 || rust.candidates == 0 {
             return Err("both editor and rust campaigns must carry eligible work".to_string());
         }
-        if empty.candidates != 0 || empty.issues != [] {
+        if empty.candidates != 0 || !empty.issues.is_empty() {
             return Err("the empty campaign must stay visible with zero candidates".to_string());
         }
         let issue1693 = candidate(&snapshot, 1693)?;
