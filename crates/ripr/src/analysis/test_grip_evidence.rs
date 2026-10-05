@@ -1245,7 +1245,9 @@ fn boundary_equality_overlap_score(
         if call.name != owner_fn.name {
             continue;
         }
-        let Some(args) = call_arguments(&call.text, &owner_fn.name) else {
+        let Some(args) = owner_call_text(&call.text, owner_fn)
+            .and_then(|text| call_arguments(text, &owner_fn.name))
+        else {
             continue;
         };
         let Some(left_arg) = args.get(left_operand.index) else {

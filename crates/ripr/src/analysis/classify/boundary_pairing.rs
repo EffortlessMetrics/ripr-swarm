@@ -176,7 +176,12 @@ fn owner_call_activates_boundary(
     if call.name != owner.name {
         return false;
     }
-    if let Some(arguments) = call_arguments(&call.text, &call.name)
+    // A free owner is activated only by its own call site, never by a
+    // same-named `Type::name(..)` on the line (#6713).
+    let Some(owner_text) = super::owner_call_text(&call.text, owner) else {
+        return false;
+    };
+    if let Some(arguments) = call_arguments(owner_text, &call.name)
         && argument_list_activates_boundary(probe, owner, test, &arguments)
     {
         return true;

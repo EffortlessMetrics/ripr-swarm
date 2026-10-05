@@ -3690,6 +3690,68 @@ fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() 
     Ok(())
 }
 
+/// #6713: a boundary test through a same-named associated function
+/// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
+/// boundary; the control spells the free call.
+#[test]
+fn given_free_fn_boundary_when_only_same_named_associated_fn_hits_it_then_boundary_stays_missing()
+-> Result<(), String> {
+    let boundary_debt = |test_body: &str| -> Result<Vec<String>, String> {
+        let prod_src = format!(
+            r#"
+pub fn over(amount: u64, limit: u64) -> bool {{
+    amount >= limit
+}}
+
+pub struct Gate;
+
+impl Gate {{
+    pub fn over(amount: u64, limit: u64) -> bool {{
+        amount > limit
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn gate() {{
+        {test_body}
+    }}
+}}
+"#
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression() == "amount >= limit"
+            })
+            .ok_or_else(|| "free over boundary seam present".to_string())?;
+        let evidence = evidence_for_seam(boundary, &index);
+        Ok(evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.clone())
+            .collect())
+    };
+
+    let type_path_only = boundary_debt("assert!(!Gate::over(100, 100));")?;
+    assert!(
+        !type_path_only.is_empty(),
+        "Gate::over(100, 100) must not close the free over's boundary"
+    );
+    let free_call = boundary_debt("assert!(over(100, 100));")?;
+    assert!(
+        free_call.is_empty(),
+        "over(100, 100) closes the boundary: {free_call:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn producer_records_real_rust_test_symbol_identity_for_inline_and_integration_tests()
 -> Result<(), String> {
