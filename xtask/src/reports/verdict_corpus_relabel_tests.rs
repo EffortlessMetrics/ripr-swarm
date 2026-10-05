@@ -80,6 +80,7 @@ fn test_command_args_accepts_only_plain_cargo_test() -> Result<(), String> {
         "cargo test --config build.rustc-wrapper=w",
         "cargo test -Zunstable-options",
         "cargo test -C /elsewhere",
+        "cargo test -vZunstable-options",
     ] {
         assert!(test_command_args(escape).err().is_some(), "{escape}");
     }
@@ -354,4 +355,35 @@ fn link_stays_inside_refuses_links_that_leave_the_copy() {
         Path::new("src"),
         Path::new("/etc/passwd")
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    let base = std::env::temp_dir().join(format!("ripr-relabel-link-test-{}", std::process::id()));
+    let checkout = base.join("checkout");
+    let io = |err: std::io::Error| err.to_string();
+    fs::create_dir_all(checkout.join("sub")).map_err(io)?;
+    fs::write(checkout.join("lib.rs"), "").map_err(io)?;
+    // Each link looks contained on its own: `sub/up` is the root, and
+    // `esc` walks down and back up through it, ending above the root.
+    symlink("..", checkout.join("sub/up")).map_err(io)?;
+    symlink("sub/up/sub/up/..", checkout.join("esc")).map_err(io)?;
+    assert!(link_stays_inside(
+        Path::new(""),
+        Path::new("sub/up/sub/up/..")
+    ));
+    let escaped = copy_checkout(&checkout, &base.join("copy"));
+    fs::remove_file(checkout.join("esc")).map_err(io)?;
+    let contained = copy_checkout(&checkout, &base.join("copy-ok"));
+    fs::remove_dir_all(&base).map_err(io)?;
+    assert!(
+        escaped
+            .as_ref()
+            .err()
+            .is_some_and(|err| err.contains("links outside the checkout")),
+        "{escaped:?}"
+    );
+    contained
 }

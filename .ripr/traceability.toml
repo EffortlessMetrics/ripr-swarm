@@ -12046,6 +12046,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_replayable_mutated_line_that_changes_the_anchor",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_mutated_line_on_a_behavior_change",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_test_command_the_replay_cannot_run",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::parse_args_defaults_and_rejects_conflicts",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::sample_order_is_deterministic_per_seed_and_rotates_across_seeds",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::test_command_args_accepts_only_plain_cargo_test",
@@ -12058,6 +12059,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::declares_workspace_reads_only_a_workspace_table",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::labeled_toolchain_names_the_rustup_release",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::link_stays_inside_refuses_links_that_leave_the_copy",
+  "xtask/src/reports/verdict_corpus_relabel_tests.rs::copy_checkout_refuses_a_chain_of_links_that_resolves_outside",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

@@ -148,10 +148,12 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
     // how it is driven would let a replay test something else and still pass.
     for word in rest.iter().take_while(|word| word.as_str() != "--") {
         let flag = word.split('=').next().unwrap_or(word);
-        if UNREPLAYABLE_CARGO_FLAGS.contains(&flag)
-            || flag.starts_with("-Z")
-            || flag.starts_with("-C")
-        {
+        // Short flags bundle (`-vZx` is `-v -Zx`), so check every letter.
+        let short_bundle = !flag.starts_with("--")
+            && flag
+                .strip_prefix('-')
+                .is_some_and(|letters| letters.contains(['Z', 'C']));
+        if UNREPLAYABLE_CARGO_FLAGS.contains(&flag) || short_bundle {
             return Err(format!(
                 "test command `{command}` passes `{flag}`, which the replay does not allow"
             ));
@@ -182,6 +184,18 @@ impl RunOutcome {
             Self::TestsFailed { .. } => "tests_failed",
             Self::BuildFailed { .. } => "build_failed",
             Self::TimedOut => "timed_out",
+        }
+    }
+
+    /// The label plus the failing tests, so runs that fail in different
+    /// tests read as different.
+    fn describe(&self) -> String {
+        match self {
+            Self::TestsFailed { failing_tests } if !failing_tests.is_empty() => format!(
+                "tests_failed [{}]",
+                failing_tests.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+            other => other.label().to_string(),
         }
     }
 }
@@ -312,7 +326,7 @@ pub(crate) fn mutant_drift(
     };
     // Runs that fail in different tests disagree as much as a pass and a fail.
     if observed.iter().any(|run| run != first) {
-        let seen: Vec<&str> = observed.iter().map(RunOutcome::label).collect();
+        let seen: Vec<String> = observed.iter().map(RunOutcome::describe).collect();
         drift.push(format!(
             "case `{case_id}` {what}: repeated runs disagree ({}); a flaky or timing-dependent test cannot carry a label",
             seen.join(", ")
@@ -403,7 +417,10 @@ impl Runner<'_> {
             // The caller's compiler settings must not reach the subject: a
             // `-D warnings` turns a deleted statement into a build failure,
             // a `--cfg` enables disabled tests, and `RUSTC` would bypass the
-            // labeled toolchain. Empty values are treated as unset.
+            // labeled toolchain. An empty wrapper disables it; an empty
+            // RUSTFLAGS-family value overrides every config-file rustflags,
+            // so a subject's own `.cargo/config.toml` rustflags are ignored
+            // too. An empty RUSTC_BOOTSTRAP keeps the toolchain stable.
             ("RUSTC", "rustc"),
             ("RUSTC_WRAPPER", ""),
             ("RUSTC_WORKSPACE_WRAPPER", ""),
@@ -412,6 +429,7 @@ impl Runner<'_> {
             ("CARGO_BUILD_RUSTFLAGS", ""),
             ("RUSTDOCFLAGS", ""),
             ("CARGO_ENCODED_RUSTDOCFLAGS", ""),
+            ("RUSTC_BOOTSTRAP", ""),
         ];
         let mut runs = Vec::with_capacity(self.args.repeat);
         for _ in 0..self.args.repeat {
@@ -524,18 +542,18 @@ fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<Pa
             subject.subject_id
         ));
     }
-    // Local edits to tracked files would replay a different subject.
+    // Local edits or stray untracked files would replay a different subject;
+    // gitignored build output does not show without `--ignored`.
     let args = vec![
         "-C".to_string(),
         checkout.to_string_lossy().into_owned(),
         "status".to_string(),
         "--porcelain".to_string(),
-        "--untracked-files=no".to_string(),
     ];
     let dirty = run_output_owned("git", &args)?;
     if !dirty.trim().is_empty() {
         return Err(format!(
-            "{} has local changes to tracked files; reset it to the pinned commit {pinned}",
+            "{} has local changes or untracked files; reset it to the pinned commit {pinned}",
             normalize_path(&checkout)
         ));
     }
@@ -543,7 +561,9 @@ fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<Pa
 }
 
 /// Copy a checkout's working tree, leaving out `.git` and `target`.
-fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
+    let root =
+        fs::canonicalize(from).map_err(|err| format!("resolve {}: {err}", normalize_path(from)))?;
     let mut stack = vec![PathBuf::new()];
     while let Some(rel) = stack.pop() {
         let source = from.join(&rel);
@@ -569,7 +589,13 @@ fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
                 })?;
                 // A link out of the checkout would let edits and mutants
                 // write through the copy into files the run does not own.
-                if !link_stays_inside(&rel, &link) {
+                // Resolve it for real, since a chain of links can each look
+                // contained; a dangling link falls back to the lexical check.
+                let resolved_inside = match fs::canonicalize(from.join(&child)) {
+                    Ok(resolved) => resolved.starts_with(&root),
+                    Err(_) => true,
+                };
+                if !resolved_inside || !link_stays_inside(&rel, &link) {
                     return Err(format!(
                         "{} links outside the checkout ({}); refusing to replay it",
                         normalize_path(&from.join(&child)),
@@ -905,23 +931,28 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
             .join(std::process::id().to_string()),
     };
     let mut results = Vec::new();
-    for case in &selected {
-        let owner = subject(&case.subject_id)
-            .ok_or_else(|| format!("case `{}` names an unknown subject", case.case_id))?;
-        eprintln!("verdict-corpus relabel: {}", case.case_id);
-        let result = relabel_case(&runner, dir, case, owner)?;
-        for line in &result.drift {
-            eprintln!("  drift: {line}");
+    let replayed = (|| {
+        for case in &selected {
+            let owner = subject(&case.subject_id)
+                .ok_or_else(|| format!("case `{}` names an unknown subject", case.case_id))?;
+            eprintln!("verdict-corpus relabel: {}", case.case_id);
+            let result = relabel_case(&runner, dir, case, owner)?;
+            for line in &result.drift {
+                eprintln!("  drift: {line}");
+            }
+            results.push(result);
         }
-        results.push(result);
-    }
-    // Trees are scratch; a failed removal leaves only disk use behind.
+        Ok::<(), String>(())
+    })();
+    // Trees are scratch, removed on error too; a failed removal leaves only
+    // disk use behind.
     if let Err(err) = fs::remove_dir_all(&runner.trees_root) {
         eprintln!(
             "verdict-corpus relabel: could not remove {}: {err}",
             normalize_path(&runner.trees_root)
         );
     }
+    replayed?;
 
     let drifted_cases = results.iter().filter(|r| !r.drift.is_empty()).count();
     let receipt = Receipt {

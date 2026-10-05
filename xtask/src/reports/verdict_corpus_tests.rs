@@ -474,6 +474,23 @@ fn validator_requires_a_replayable_mutated_line_that_changes_the_anchor() -> Res
 }
 
 #[test]
+fn validator_refuses_a_test_command_the_replay_cannot_run() -> Result<(), String> {
+    for command in [
+        "cargo test --manifest-path /elsewhere/Cargo.toml",
+        "make test",
+    ] {
+        let refused = tampered(|raw| {
+            raw["cases"][0]["truth"]["test_command"] = json!(command);
+        })?;
+        assert!(
+            refused.iter().any(|v| v.contains("cannot be replayed")),
+            "{command}: {refused:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn validator_refuses_a_mutated_line_on_a_behavior_change() -> Result<(), String> {
     let dir = repo_corpus_dir();
     let raw: Value =

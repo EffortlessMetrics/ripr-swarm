@@ -172,14 +172,17 @@ differs from `expected/report.md`. It refuses an
   compile, times out, or equals the edited line, when repeated runs disagree,
   and when `rustc --version` differs from the labeled toolchain. Authored
   subjects replay offline. Upstream excerpts replay only from a full checkout
-  at the pinned commit, with no local changes to tracked files, under
+  at the pinned commit, with no local changes or untracked files, under
   `--checkouts <dir>/<subject_id>`; without one they are listed as not
   replayed, never counted as passing. Cargo runs with
   `CARGO_NET_OFFLINE=true`, so a checkout's dependencies must already be in
   the cargo cache (`cargo fetch`), and with the caller's `RUSTC`, wrapper,
-  and `RUSTFLAGS`-family variables cleared. A checkout symlink that resolves
-  outside the checkout is refused, and the test command may not pass
-  `--manifest-path`, `--target-dir`, `--config`, `-Z`, or `-C` before `--`;
+  `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables cleared; the empty
+  `RUSTFLAGS` family also overrides config-file rustflags. A checkout
+  symlink that resolves outside the checkout, followed through any chain of
+  links, is refused, and the test command may not pass
+  `--manifest-path`, `--target-dir`, `--config`, or a short flag bundling
+  `-Z` or `-C` before `--`;
   `validate` refuses such a command too. `--sample` picks a deterministic
   subset, for the same set of checkouts, ordered by sha256 of the seed and
   case id, so a scheduled run can rotate seeds through the corpus. It writes
@@ -192,7 +195,9 @@ differs from `expected/report.md`. It refuses an
   later binary reads as not failing (fail-closed); a doctest name contains
   spaces and cannot be a `failing_test`; and the default `--work-dir` sits
   under this repository's `target`, so this repository's `.cargo/config.toml`
-  applies to subject builds.
+  applies to subject builds; other caller `CARGO_*` settings such as
+  `CARGO_PROFILE_*` overflow checks still reach the subject build; and a
+  killed run leaves its per-process tree directory behind.
 
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
@@ -305,6 +310,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `report_keeps_authored_rates_apart_from_upstream_rates`
 - `validator_requires_a_replayable_mutated_line_that_changes_the_anchor`
 - `validator_refuses_a_mutated_line_on_a_behavior_change`
+- `validator_refuses_a_test_command_the_replay_cannot_run`
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 
@@ -320,6 +326,7 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `declares_workspace_reads_only_a_workspace_table`
 - `labeled_toolchain_names_the_rustup_release`
 - `link_stays_inside_refuses_links_that_leave_the_copy`
+- `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
 
 ## Implementation Mapping
 
