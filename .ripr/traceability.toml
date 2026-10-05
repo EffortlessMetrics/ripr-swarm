@@ -12629,9 +12629,15 @@ metrics = [
 id = "RIPR-SPEC-0231"
 name = "Rust oracle kind and strength admission"
 spec = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_is_never_exact",
+  "crates/ripr/tests/cli_smoke.rs::repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip",
+]
+fixtures = [
+  "fixtures/inequality_assertion_not_exact",
+]
 code = [
+  "crates/ripr/src/analysis/extract/oracles/arguments.rs",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
   "crates/ripr/src/analysis/extract/oracles/scan.rs",

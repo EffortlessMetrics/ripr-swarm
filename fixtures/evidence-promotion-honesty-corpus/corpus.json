@@ -1223,6 +1223,47 @@
       ]
     },
     {
+      "id": "rust_inequality_assertion_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/inequality_assertion_not_exact",
+      "vector": "assert_ne_inequality_is_never_an_exact_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "score_is_not_zero",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_proximity_name_oracle_not_credited",
       "language": "rust",
       "tier": "pure",
