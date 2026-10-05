@@ -589,6 +589,28 @@ fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[Langua
     route(std::path::Path::new(path)).is_some_and(|language| languages.contains(&language))
 }
 
+/// Whether the all-no-path human note could name unlinked Python tests: a
+/// changed Rust file has a `no_static_path` finding and no finding is exposed,
+/// weakly exposed or reachable (`render_all_no_path_disclosure` suppresses the
+/// note then). A necessary condition only; the renderer applies the rest.
+fn python_test_note_possible<'a>(
+    rust_changed_files: usize,
+    classes: impl Iterator<Item = &'a crate::domain::ExposureClass>,
+) -> bool {
+    use crate::domain::ExposureClass;
+    let mut any_no_path = false;
+    for class in classes {
+        match class {
+            ExposureClass::NoStaticPath => any_no_path = true,
+            ExposureClass::Exposed
+            | ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed => return false,
+            _ => {}
+        }
+    }
+    rust_changed_files > 0 && any_no_path
+}
+
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -1117,13 +1139,12 @@ fn run_pipeline_for_diff_text(
         limitations,
     )?);
 
-    // #6340: the walk runs only when a changed Rust file has a no_static_path
-    // finding, so ordinary runs pay nothing.
-    let unlinked_python_tests = if rust_changed_files > 0
-        && findings
-            .iter()
-            .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath)
-    {
+    // #6340: the walk runs only when the human note can fire, so ordinary runs
+    // pay nothing.
+    let unlinked_python_tests = if python_test_note_possible(
+        rust_changed_files,
+        findings.iter().map(|finding| &finding.class),
+    ) {
         super::workspace::discover_python_test_files(&options.root)?
     } else {
         None
@@ -2022,6 +2043,22 @@ mod tests {
         // The verdict does not depend on the Python tests.
         assert_eq!(without.summary.no_static_path, with.summary.no_static_path);
         Ok(())
+    }
+
+    #[test]
+    fn python_test_note_gate_matches_the_renderer_eligibility() {
+        use crate::domain::ExposureClass::*;
+        let possible = |files: usize, classes: &[crate::domain::ExposureClass]| {
+            python_test_note_possible(files, classes.iter())
+        };
+        assert!(possible(1, &[NoStaticPath]));
+        assert!(possible(2, &[NoStaticPath, InfectionUnknown]));
+        assert!(!possible(0, &[NoStaticPath]), "no changed Rust file");
+        assert!(!possible(1, &[InfectionUnknown]), "no no_static_path");
+        assert!(!possible(1, &[NoStaticPath, Exposed]));
+        assert!(!possible(1, &[NoStaticPath, WeaklyExposed]));
+        assert!(!possible(1, &[NoStaticPath, ReachableUnrevealed]));
+        assert!(!possible(1, &[]));
     }
 
     #[test]

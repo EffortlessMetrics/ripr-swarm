@@ -147,9 +147,10 @@ When the disclosure fires and a changed Rust file produced a `no_static_path`
 finding, the note appends one sentence if the repository also contains Python
 test files (`test_*.py`, `*_test.py`, or any `.py` under `tests/` or `test/`,
 excluding virtualenvs, tool caches and the default ignored directories). It
-names the count (`at least N` when the bounded walk hit its entry cap), one
+names the count (`at least N` when the bounded walk hit its entry cap or could not read a directory), one
 example path, and says ripr does not link Python tests to Rust changes. It makes
-no claim about whether those tests would catch the change. The count is not part
+no claim about whether those tests would catch the change. The walk runs only when the note can fire (no finding is exposed, weakly exposed
+or reachable). The count is not part
 of any serialized output; verdicts, classes, JSON, SARIF and gate output are
 unchanged. A walk that finds no Python test adds nothing, and a cancelled walk
 fails the analysis rather than yielding a partial count.

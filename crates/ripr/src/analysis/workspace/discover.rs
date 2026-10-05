@@ -241,7 +241,9 @@ fn is_named_python_test(path: &Path) -> bool {
 /// skips the same directories as the other discovery walks. `Ok(None)` when no
 /// Python test was seen, including when the entry cap stopped the walk before
 /// one was found: the note only names tests ripr saw, so an absent note is not
-/// a claim that none exist. A cancelled walk is an error, not a partial count.
+/// a claim that none exist. A directory or entry the walk could not read makes
+/// the count a lower bound, like the cap. A cancelled walk is an error, not a
+/// partial count.
 /// Used only to name, in human output, that a Rust change may be covered by
 /// tests ripr does not link to Rust.
 pub(crate) fn discover_python_test_files(
@@ -253,11 +255,19 @@ pub(crate) fn discover_python_test_files(
     let mut stack = vec![root.to_path_buf()];
     let mut capped = false;
     'walk: while let Some(dir) = stack.pop() {
+        cancellation::checkpoint()?;
         let Ok(entries) = std::fs::read_dir(&dir) else {
+            // An unreadable directory means part of the tree was not inspected,
+            // so a count found elsewhere is only a lower bound.
+            capped = true;
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
             cancellation::checkpoint()?;
+            let Ok(entry) = entry else {
+                capped = true;
+                continue;
+            };
             visited += 1;
             if visited > PYTHON_TEST_WALK_ENTRY_CAP {
                 capped = true;
@@ -265,6 +275,7 @@ pub(crate) fn discover_python_test_files(
             }
             let path = entry.path();
             let Ok(kind) = entry.file_type() else {
+                capped = true;
                 continue;
             };
             if kind.is_dir() {

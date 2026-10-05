@@ -6540,7 +6540,8 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::no_path_note_names_python_tests_when_present",
   "crates/ripr/src/output/human.rs::tests::no_path_note_omits_python_sentence_without_the_discriminating_facts",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_counts_and_skips_ignored_dirs",
-  "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_reports_cancellation_instead_of_a_partial_count"
+  "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_reports_cancellation_instead_of_a_partial_count",
+  "crates/ripr/src/analysis/pipeline.rs::tests::python_test_note_gate_matches_the_renderer_eligibility"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -6548,7 +6549,8 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/human.rs",
-  "crates/ripr/src/analysis/workspace/discover.rs"
+  "crates/ripr/src/analysis/workspace/discover.rs",
+  "crates/ripr/src/analysis/pipeline.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0090-all-no-path-disclosure.md",
