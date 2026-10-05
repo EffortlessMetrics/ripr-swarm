@@ -105,6 +105,11 @@ stale metadata
 -> keep, repair, suppress with reason, or remove when resolved
 ```
 
+`review_after` may be `unix_ms:<millis>` or a `YYYY-MM-DD` calendar date
+(optionally RFC3339 with a `T` time). Calendar deadlines are compared with the
+UTC run date taken from `generated_at`. A supplied deadline that cannot be
+compared is counted as `unknown` and warned; it is not reported as `current`.
+
 Use shrink-only refreshes after focused tests move evidence:
 
 ```bash

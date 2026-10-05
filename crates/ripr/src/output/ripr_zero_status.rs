@@ -1263,10 +1263,10 @@ fn classify_review(review: Option<ReviewMetadata>, generated_at: &str) -> Metada
     if review.owner.is_none() || review.reason.is_none() || review.created_at.is_none() {
         return MetadataState::Missing;
     }
-    if is_stale_review(review_after, generated_at) {
-        MetadataState::Stale
-    } else {
-        MetadataState::Current
+    match deadline_health(review_after, generated_at) {
+        DeadlineHealth::Stale => MetadataState::Stale,
+        DeadlineHealth::Current => MetadataState::Current,
+        DeadlineHealth::Incomparable => MetadataState::Unknown,
     }
 }
 
@@ -1300,7 +1300,7 @@ fn warn_for_metadata(metadata: MetadataCounts, warnings: &mut Vec<String>) {
     }
     if metadata.unknown > 0 {
         warnings.push(format!(
-            "{} baseline entries have unparseable review metadata",
+            "{} baseline entries have unparseable or incomparable review metadata",
             metadata.unknown
         ));
     }
@@ -1499,14 +1499,73 @@ fn top_static_class(counts: &BTreeMap<String, usize>) -> Option<String> {
         .map(|(class, _count)| class.clone())
 }
 
-fn is_stale_review(review_after: &str, generated_at: &str) -> bool {
-    match (unix_ms(review_after), unix_ms(generated_at)) {
-        (Some(review_after), Some(generated_at)) => review_after < generated_at,
-        _ => match (iso_day(review_after), iso_day(generated_at)) {
-            (Some(review_after), Some(generated_at)) => review_after < generated_at,
-            _ => false,
-        },
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ReviewInstant {
+    UnixMs(i128),
+    IsoDay(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeadlineHealth {
+    Current,
+    Stale,
+    Incomparable,
+}
+
+fn deadline_health(review_after: &str, generated_at: &str) -> DeadlineHealth {
+    match compare_review_deadline(review_after, generated_at) {
+        Some(true) => DeadlineHealth::Stale,
+        Some(false) => DeadlineHealth::Current,
+        None => DeadlineHealth::Incomparable,
     }
+}
+
+/// `Some(true)` when `review_after` is strictly before `generated_at`.
+/// `None` when the two values cannot be compared.
+fn compare_review_deadline(review_after: &str, generated_at: &str) -> Option<bool> {
+    let deadline = parse_review_instant(review_after)?;
+    let now = parse_review_instant(generated_at)?;
+    match (&deadline, &now) {
+        (ReviewInstant::UnixMs(deadline), ReviewInstant::UnixMs(now)) => Some(deadline < now),
+        _ => Some(iso_day_of(&deadline)? < iso_day_of(&now)?),
+    }
+}
+
+fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
+    if let Some(ms) = unix_ms(value) {
+        return Some(ReviewInstant::UnixMs(ms));
+    }
+    iso_day(value).map(|day| ReviewInstant::IsoDay(day.to_string()))
+}
+
+fn iso_day_of(instant: &ReviewInstant) -> Option<String> {
+    match instant {
+        ReviewInstant::IsoDay(day) => Some(day.clone()),
+        ReviewInstant::UnixMs(ms) => unix_ms_to_iso_day(*ms),
+    }
+}
+
+fn unix_ms_to_iso_day(ms: i128) -> Option<String> {
+    const MILLIS_PER_DAY: i128 = 86_400_000;
+    let days = i64::try_from(ms.div_euclid(MILLIS_PER_DAY)).ok()?;
+    let (year, month, day) = days_to_civil_date(days);
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// Converts days since 1970-01-01 UTC to a civil `(year, month, day)` using the
+/// Howard Hinnant algorithm.
+fn days_to_civil_date(days_since_epoch: i64) -> (i64, i64, i64) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
@@ -1524,15 +1583,26 @@ fn unix_ms(value: &str) -> Option<i128> {
     value.strip_prefix("unix_ms:")?.parse().ok()
 }
 
-fn iso_day(value: &str) -> Option<String> {
-    let day = value.get(0..10)?;
-    if day.len() == 10
-        && day.as_bytes().get(4) == Some(&b'-')
-        && day.as_bytes().get(7) == Some(&b'-')
+fn iso_day(value: &str) -> Option<&str> {
+    let day = value.get(..10)?;
+    let bytes = day.as_bytes();
+    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
+        return None;
+    }
+    if !bytes.get(..4)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(5..7)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(8..10)?.iter().all(u8::is_ascii_digit)
     {
-        Some(day.to_string())
-    } else {
-        None
+        return None;
+    }
+    let month = day.get(5..7)?.parse::<u8>().ok()?;
+    let date = day.get(8..10)?.parse::<u8>().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&date) {
+        return None;
+    }
+    match value.as_bytes().get(10) {
+        None | Some(b'T') => Some(day),
+        _ => None,
     }
 }
 
@@ -1716,11 +1786,200 @@ pub(crate) use crate::output::path::display_path;
 #[cfg(test)]
 mod tests {
     use super::{
-        RiprZeroStatusInput, build_ripr_zero_status_report, render_ripr_zero_status_json,
-        render_ripr_zero_status_markdown,
+        MetadataState, ReviewMetadata, RiprZeroStatusInput, build_ripr_zero_status_report,
+        classify_review, render_ripr_zero_status_json, render_ripr_zero_status_markdown,
+        unix_ms_to_iso_day,
     };
     use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use serde_json::Value;
+
+    /// 2026-10-05 12:00:00 UTC — noon so same-day ISO deadlines compare on the
+    /// UTC calendar date, not on a midnight edge.
+    const RUN_AT_2026_10_05_NOON: &str = "unix_ms:1791201600000";
+    const PAST_UNIX_MS_2026_01_01: &str = "unix_ms:1767225600000";
+    const FUTURE_UNIX_MS_2026_12_31: &str = "unix_ms:1798675200000";
+
+    fn complete_review(review_after: &str) -> ReviewMetadata {
+        ReviewMetadata {
+            invalid: false,
+            owner: Some("team".into()),
+            reason: Some("baseline".into()),
+            created_at: Some("unix_ms:0".into()),
+            review_after: Some(review_after.into()),
+        }
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_iso_calendar_deadline_stale() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "plain YYYY-MM-DD past the run date must be stale, not silently current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 calendar deadlines must compare against the UTC run date"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "2026-10-05T12:00:00Z"),
+            MetadataState::Stale,
+            "ISO review_after vs RFC3339 generated_at must still evaluate"
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_unix_ms_deadline_stale() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review(PAST_UNIX_MS_2026_01_01)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_incomparable_review_after_unknown_not_current() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("not-a-deadline")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "unparseable review_after must not fail open to current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("unix_ms:not-millis")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-13-40")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "impossible calendar dates are incomparable, not current"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "not-a-timestamp"),
+            MetadataState::Unknown,
+            "a valid deadline against an unparseable generated_at is unknown"
+        );
+    }
+
+    #[test]
+    fn classify_review_keeps_current_and_future_deadlines_current() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-10-05")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current,
+            "same-day ISO deadline is not in the past"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-12-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review(FUTURE_UNIX_MS_2026_12_31)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Current
+        );
+    }
+
+    #[test]
+    fn unix_ms_to_iso_day_uses_utc_civil_date() {
+        assert_eq!(unix_ms_to_iso_day(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(
+            unix_ms_to_iso_day(1_767_225_600_000).as_deref(),
+            Some("2026-01-01")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(1_791_201_600_000).as_deref(),
+            Some("2026-10-05")
+        );
+    }
+
+    #[test]
+    fn ripr_zero_status_evaluates_iso_review_after_and_fails_closed_on_incomparable()
+    -> Result<(), String> {
+        let baseline = r#"{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "created_at": "unix_ms:0",
+          "entries": [
+            {"identity": {"seam_id": "iso-stale"}, "path": "src/iso.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-01-01"}},
+            {"identity": {"seam_id": "unix-stale"}, "path": "src/unix.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "unix_ms:1767225600000"}},
+            {"identity": {"seam_id": "iso-current"}, "path": "src/current.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-12-31"}},
+            {"identity": {"seam_id": "incomparable"}, "path": "src/bad.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "not-a-deadline"}}
+          ]
+        }"#;
+        let delta = r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "kind": "baseline_debt_delta",
+          "baseline": {"path": ".ripr/gate-baseline.json", "entries": 4},
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "warnings": []
+        }"#;
+
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: RUN_AT_2026_10_05_NOON.to_string(),
+            baseline_path: Some(".ripr/gate-baseline.json".to_string()),
+            delta_path: "target/ripr/reports/baseline-debt-delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: Some(Ok(baseline.to_string())),
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["baseline"]["metadata"]["stale"], 2, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["current"], 1, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["unknown"], 1, "{rendered}");
+        assert_eq!(
+            value["baseline"]["metadata"]["missing_metadata"], 0,
+            "{rendered}"
+        );
+        let warnings = value["warnings"]
+            .as_array()
+            .ok_or("warnings array missing")?;
+        let warning_text: Vec<&str> = warnings.iter().filter_map(Value::as_str).collect();
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| warning.contains("stale review metadata")),
+            "{warning_text:?}"
+        );
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| { warning.contains("unparseable or incomparable review metadata") }),
+            "{warning_text:?}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn ripr_zero_status_reports_not_yet_with_metadata_and_repair_route() -> Result<(), String> {

@@ -165,10 +165,13 @@ absent review metadata remain valid inputs.
 Baseline review status values:
 
 - `current` - metadata exists and the review window has not expired.
-- `stale` - `review_after` is in the past or the configured age threshold is
-  exceeded.
+- `stale` - `review_after` is in the past. `unix_ms:<millis>` deadlines compare
+  in milliseconds; `YYYY-MM-DD` and RFC3339 calendar deadlines compare against
+  the UTC run date taken from `generated_at`.
 - `missing_metadata` - owner, reason, created_at, or review_after is absent.
-- `unknown` - the report cannot parse enough metadata to classify the entry.
+- `unknown` - the report cannot parse enough metadata to classify the entry,
+  including a present `review_after` that cannot be compared with
+  `generated_at`. An incomparable deadline is not `current`.
 
 ## JSON Shape
 
@@ -432,7 +435,9 @@ The implementation adds tests for:
 - missing required baseline debt delta input producing an incomplete report;
 - Campaign 17 baseline ledgers without Campaign 18 metadata remaining
   compatible and visible;
-- metadata classification for current, stale, missing, and unknown entries;
+- metadata classification for current, stale, missing, and unknown entries,
+  including past-due ISO `YYYY-MM-DD` deadlines, unix_ms deadlines, and
+  incomparable `review_after` values that must not fail open to `current`;
 - RIPR 0 achieved, not yet, and unknown state calculation;
 - top debt area grouping by repo-relative path or configured area name;
 - repair-route selection from PR guidance, baseline debt delta, gate decision,
