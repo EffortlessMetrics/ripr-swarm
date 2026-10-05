@@ -101,6 +101,7 @@ impl ClassifiedProbeEvidence {
         // Built lazily: only a match arm beside an owner-calling test asks
         // whether a same-file test may run the owner (#6297).
         let proximity_reach = TransitiveReachIndex::new(context.index);
+        let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -168,9 +169,11 @@ impl ClassifiedProbeEvidence {
                 },
                 assertion_admitted: &assertion_admitted,
                 proximity_may_reach_owner: &|test| {
-                    context
-                        .owner_fn
-                        .is_none_or(|owner| proximity_reach.test_may_reach(test, &owner.name))
+                    context.owner_fn.is_none_or(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_may_reach(test)
+                    })
                 },
             },
         );

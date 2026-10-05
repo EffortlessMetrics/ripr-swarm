@@ -254,6 +254,111 @@ impl<'a> ReachGraph<'a> {
     }
 }
 
+/// Trait methods Rust calls through syntax, macros or scope rather than by
+/// name, so a test reaches them with no call fact (#6297 review).
+const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
+    "fmt",
+    "eq",
+    "ne",
+    "partial_cmp",
+    "cmp",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "rem",
+    "neg",
+    "not",
+    "bitand",
+    "bitor",
+    "bitxor",
+    "shl",
+    "shr",
+    "add_assign",
+    "sub_assign",
+    "mul_assign",
+    "div_assign",
+    "rem_assign",
+    "bitand_assign",
+    "bitor_assign",
+    "bitxor_assign",
+    "shl_assign",
+    "shr_assign",
+    "index",
+    "index_mut",
+    "deref",
+    "deref_mut",
+    "next",
+    "into_iter",
+    "drop",
+    "hash",
+    "clone",
+    "from",
+    "into",
+    "try_from",
+    "try_into",
+    "from_iter",
+    "as_ref",
+    "as_mut",
+    "borrow",
+    "borrow_mut",
+    "default",
+    "call",
+    "call_mut",
+    "call_once",
+    "branch",
+    "from_residual",
+    "from_output",
+];
+
+/// The reverse name walk from one owner, for asking whether a test may run
+/// it ([`TransitiveReachIndex::owner_reach`]).
+pub(in crate::analysis) struct OwnerReach<'g, 'a> {
+    graph: &'g ReachGraph<'a>,
+    owner_name: String,
+    reaching: HashSet<&'a str>,
+}
+
+impl OwnerReach<'_, '_> {
+    /// Whether `test` may run the owner, by name only (#6297). It may when
+    /// it calls the owner, calls a production function that reaches the
+    /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
+    /// with no indexed function: a std or trait method such as `parse` or
+    /// `to_string` can dispatch into the owner unseen. Only constructors and
+    /// indexed functions with no name path to the owner rule it out. Macro
+    /// bodies are the caller's concern.
+    pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact) -> bool {
+        // A trait method the language calls without naming it (`format!`
+        // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
+        // leaves no call fact, so a path to the owner through one means any
+        // test may run it.
+        if self
+            .reaching
+            .iter()
+            .any(|name| IMPLICIT_DISPATCH_METHODS.contains(name))
+        {
+            return true;
+        }
+        test.calls.iter().any(|call| {
+            let name = call.name.as_str();
+            // The test's own `fn` line is recorded under its name.
+            let own_declaration = name == test.name
+                && contains_identifier(&call.text, "fn")
+                && call.text.contains(&format!("fn {name}"));
+            !is_macro_call(name)
+                && !own_declaration
+                && (name == self.owner_name
+                    || self.reaching.contains(name)
+                    || (!self.graph.by_name.contains_key(name)
+                        && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
+        })
+    }
+}
+
 impl<'a> TransitiveReachIndex<'a> {
     pub(in crate::analysis) fn new(index: &'a RustIndex) -> Self {
         Self {
@@ -405,29 +510,15 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
-    /// Whether `test` may run a function named `owner_name`, by name only
-    /// (#6297). It may when it calls the owner, calls a production function
-    /// that reaches the owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a
-    /// lower-case name with no indexed function: a std or trait method such
-    /// as `parse` or `to_string` can dispatch into the owner unseen. Only
-    /// constructors and indexed functions with no name path to the owner
-    /// rule it out. Macro bodies are the caller's concern.
-    pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact, owner_name: &str) -> bool {
+    /// The names that may lead to `owner_name`, computed once so every
+    /// same-file test of one probe reuses the reverse walk (#6297).
+    pub(in crate::analysis) fn owner_reach(&self, owner_name: &str) -> OwnerReach<'_, 'a> {
         let graph = self.graph();
-        let reaching = graph.names_reaching(owner_name);
-        test.calls.iter().any(|call| {
-            let name = call.name.as_str();
-            // The test's own `fn` line is recorded under its name.
-            let own_declaration = name == test.name
-                && contains_identifier(&call.text, "fn")
-                && call.text.contains(&format!("fn {name}"));
-            !is_macro_call(name)
-                && !own_declaration
-                && (name == owner_name
-                    || reaching.contains(name)
-                    || (!graph.by_name.contains_key(name)
-                        && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
-        })
+        OwnerReach {
+            graph,
+            owner_name: owner_name.to_string(),
+            reaching: graph.names_reaching(owner_name),
+        }
     }
 
     /// Every production function, for checks that scan impl owners.
@@ -2059,6 +2150,52 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch() {
+        // #6297: `from_str` has no path to `seconds`, so a test calling only
+        // it and a constructor cannot run the owner; a wrapper, an unindexed
+        // lower-case call, or an owner behind `Display::fmt` (reached through
+        // `format!` with no call fact) may.
+        let plain = index_with(
+            vec![
+                make_fn("seconds", vec![]),
+                make_fn("seconds_bridge", vec!["seconds"]),
+                make_fn("from_str", vec![]),
+            ],
+            Vec::new(),
+        );
+        let plain_reach = TransitiveReachIndex::new(&plain);
+        let reach = plain_reach.owner_reach("seconds");
+        assert!(!reach.test_may_reach(&make_test("t", vec!["from_str", "Ok"])));
+        assert!(!reach.test_may_reach(&make_test("t", Vec::new())));
+        assert!(reach.test_may_reach(&make_test("t", vec!["seconds_bridge"])));
+        assert!(reach.test_may_reach(&make_test("t", vec!["seconds"])));
+        assert!(reach.test_may_reach(&make_test("t", vec!["to_string"])));
+        // The test's own `fn` line is not a call.
+        let mut own = make_test("from_str_fortnight", vec!["from_str"]);
+        own.calls.push(CallFact {
+            line: 1,
+            name: "from_str_fortnight".to_string(),
+            text: "fn from_str_fortnight() {".to_string(),
+        });
+        assert!(!reach.test_may_reach(&own));
+
+        let display = index_with(
+            vec![
+                make_fn("seconds", vec![]),
+                make_fn("fmt", vec!["seconds"]),
+                make_fn("from_str", vec![]),
+            ],
+            Vec::new(),
+        );
+        let display_reach = TransitiveReachIndex::new(&display);
+        assert!(
+            display_reach
+                .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
     }
 
     #[test]
