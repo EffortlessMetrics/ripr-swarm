@@ -2053,11 +2053,18 @@ fn scoreboard_summary(
     if cross {
         line.push_str(" A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements.");
     }
-    line.push_str(" Rows with no earlier measurement are first measurements.");
+    if bars.iter().any(measured_first_receipt) {
+        line.push_str(" A measured row with no earlier measurement is a first measurement.");
+    }
     if from_lane {
         line.push_str(" Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.");
     }
     line
+}
+
+fn measured_first_receipt(bar: &Bar) -> bool {
+    matches!(bar.status, Status::Meets | Status::Below)
+        && bar.trend.contains("no earlier measurement")
 }
 
 #[cfg(test)]
@@ -2861,6 +2868,21 @@ mod tests {
         Ok(())
     }
 
+    fn dummy_bar(id: &str, status: Status, trend: &str, value: Option<f64>) -> Bar {
+        Bar {
+            id: id.to_string(),
+            board: "CI adoption".to_string(),
+            title: id.to_string(),
+            value,
+            unit: "s".to_string(),
+            target: 30.0,
+            lower_is_better: true,
+            status,
+            trend: trend.to_string(),
+            basis: String::new(),
+        }
+    }
+
     #[test]
     fn scoreboard_header_does_not_claim_cross_class_trends_compare() {
         let summary = scoreboard_summary(
@@ -2869,21 +2891,73 @@ mod tests {
             1,
             0,
             String::new(),
-            &[Bar {
-                id: "speed.cold_pilot_ms".to_string(),
-                board: "Speed and memory".to_string(),
-                title: "cold".to_string(),
-                value: Some(1.0),
-                unit: "s".to_string(),
-                target: 1.0,
-                lower_is_better: true,
-                status: Status::Below,
-                trend: "earlier receipt on another runner class `local` (was 2 s)".to_string(),
-                basis: String::new(),
-            }],
+            &[dummy_bar(
+                "speed.cold_pilot_ms",
+                Status::Below,
+                "earlier receipt on another runner class `local` (was 2 s)",
+                Some(1.0),
+            )],
         );
         assert!(summary.contains("does not compare measurements"));
         assert!(!summary.contains("A trend names the earlier receipt it compares against"));
+    }
+
+    #[test]
+    fn scoreboard_header_does_not_call_unmeasured_rows_first_measurements() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let all = bars(&receipts)?;
+        assert!(
+            all.iter().any(|bar| {
+                bar.id == "ci.install_seconds"
+                    && bar.status == Status::NotMeasured
+                    && bar.trend.contains("no earlier measurement")
+            }),
+            "fixture must keep a scoreboard-owned unmeasured row"
+        );
+        assert!(
+            all.iter().any(|bar| {
+                matches!(bar.status, Status::Meets | Status::Below)
+                    && bar.trend.contains("no earlier measurement")
+            }),
+            "fixture must keep a measured first receipt"
+        );
+        let mut page = Page(String::new());
+        scoreboard(&mut page, &all);
+        assert!(
+            page.0
+                .contains("A measured row with no earlier measurement is a first measurement"),
+            "{}",
+            page.0
+        );
+        assert!(
+            !page
+                .0
+                .contains("Rows with no earlier measurement are first measurements"),
+            "{}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior() {
+        let summary = scoreboard_summary(
+            1,
+            0,
+            0,
+            1,
+            String::new(),
+            &[dummy_bar(
+                "ci.install_seconds",
+                Status::NotMeasured,
+                "no earlier measurement",
+                None,
+            )],
+        );
+        assert!(
+            !summary.contains("first measurement"),
+            "unmeasured rows are gaps, not first measurements: {summary}"
+        );
     }
 
     #[test]

@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-40 bars. ripr meets 14, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. Rows with no earlier measurement are first measurements. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+40 bars. ripr meets 14, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
