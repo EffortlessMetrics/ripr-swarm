@@ -58,8 +58,9 @@ TypeScript preview findings: SARIF results, GitHub annotations,
 ledger keeps Perl ineligible for gates, agent packets, PR comments and
 RIPR 0/RIPR+ counts.
 
-In this slice the disposition is informational for consumers and the
-probe's recorded location coordinate is unchanged: a removed-only probe
+Beyond the `is_candidate_actionable` filters above, the disposition is
+informational for consumers and the probe's recorded location coordinate is
+unchanged: a removed-only probe
 keeps the projected new-side coordinate that the new-file index, the flow
 and value classifiers, and IDE navigation already read (#1222 RANK-1).
 Re-coordinating deleted-side evidence — base-side identity, consumer
@@ -85,7 +86,9 @@ slice.
   evidence; the unknown is explicit, never guessed.
 - This slice changes no classification, stage, confidence, gate, count,
   actionability, repair-readiness, or location-coordinate outcome: the
-  golden corpus diff is exactly the additive field.
+  golden corpus diff is exactly the additive field. The later Perl rule
+  (#6586) changes only which Perl findings pass the `is_candidate_actionable`
+  filters described above.
 - Deserializing artifacts written before this field yields
   `unresolved_subject`, not a fabricated disposition.
 
@@ -121,8 +124,9 @@ This slice does not change gate, ledger, diagnostic, or repair actionability
 policy; does not change any recorded location coordinate (deleted-side
 re-coordination is the #3212 projection slice); does not retain rename maps
 in the diff parser (pure renames stay excluded with disclosure); does not
-resolve currentness for preview-language producers; and does not bump the
-check schema version.
+re-coordinate preview-language probes (a Perl probe keeps its owner's start
+line in the digest-verified source); and does not bump the check schema
+version.
 
 ## Implementation Mapping
 

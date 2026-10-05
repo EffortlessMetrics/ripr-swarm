@@ -1096,7 +1096,7 @@ The evidence-first fields are additive in schema `0.2`:
   actionable profile, SARIF results, GitHub annotations, and PR severe-gap
   counts exclude non-current findings while denominators keep everything;
   TS/JS/Python findings now resolve `candidate_current` from their
-  head-side probes and Perl stays the explicit unknown.
+  head-side probes, and Perl resolves it from the observed change (below).
   - `base_deleted` — the expression was removed on the candidate side. The
     retained evidence is base-side and the finding is not a candidate edit
     target; `probe.line` still records the projected new-side coordinate in
