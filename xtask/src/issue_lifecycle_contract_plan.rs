@@ -2714,8 +2714,9 @@ mod tests {
             .iter()
             .find(|row| row.snapshot.issue_number == 6225)
             .ok_or_else(|| "missing the issue 6225 row".to_string())?;
-        // Point the 6225 row at 6180's committed bytes and update the
-        // recorded digest, so only the payload binding can reject the swap.
+        // Point the 6225 row at 6180's committed bytes, update the recorded
+        // digest and mirror it into the embedded attempt, so only the payload
+        // binding can reject the swap.
         let mut swapped = row_6225.clone();
         swapped.snapshot.snapshot_path = Some("snapshots/issue-6180.json".to_string());
         let bytes = fs::read(contract_plan_root().join("snapshots/issue-6180.json"))
@@ -2724,6 +2725,7 @@ mod tests {
             "gh-issue-snapshot:sha256:{}",
             crate::blind_journey::sha256_hex(&bytes)
         );
+        swapped.attempt.issue.snapshot_id = swapped.snapshot.issue_snapshot_id.clone();
         let error = verify_contract_plan_row_snapshot(&swapped, &contract_plan_root())
             .err()
             .ok_or_else(|| "snapshot bytes from another issue must fail closed".to_string())?;
