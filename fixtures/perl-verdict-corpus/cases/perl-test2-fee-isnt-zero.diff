@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..fc2dbc8 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -36,7 +36,7 @@ sub deposit {
+ 
+ sub fee {
+     my ($amount) = @_;
+-    return $amount * 0.01;
++    return 0.01 * $amount;
+ }
+ 
+ sub net_change {

@@ -1,0 +1,13 @@
+diff --git a/lib/Account.pm b/lib/Account.pm
+index 1e1ba56..7411f41 100644
+--- a/lib/Account.pm
++++ b/lib/Account.pm
+@@ -36,7 +36,7 @@ sub close_out {
+ 
+ sub interest {
+     my ($balance) = @_;
+-    return $balance * 0.05;
++    return 0.05 * $balance;
+ }
+ 
+ sub freeze {

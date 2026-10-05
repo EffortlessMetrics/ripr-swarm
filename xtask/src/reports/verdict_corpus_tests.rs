@@ -88,7 +88,7 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         finding("reachable_unrevealed", 10, "base_deleted"),
         finding("reachable_unrevealed", 11, "candidate_current"),
     ]});
-    let anchored = anchored_findings(&check, &anchor(), None);
+    let anchored = anchored_findings(&check, &anchor(), None, "rust");
     assert_eq!(anchored.len(), 1);
     assert_eq!(case_verdict(&anchored), Verdict::Credited);
     let other = Anchor {
@@ -96,7 +96,7 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         line: 10,
     };
     assert_eq!(
-        case_verdict(&anchored_findings(&check, &other, None)),
+        case_verdict(&anchored_findings(&check, &other, None, "rust")),
         Verdict::Silent
     );
 }
@@ -186,11 +186,13 @@ fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
     let check = json!({"findings": [retargeted, other_binding, other_file]});
     // Without a `let` anchor the anchor line alone counts, and nothing sits
     // there.
-    assert!(anchored_findings(&check, &anchor(), None).is_empty());
-    assert!(anchored_findings(&check, &anchor(), Some("    end == 0")).is_empty());
+    assert!(anchored_findings(&check, &anchor(), None, "rust").is_empty());
+    assert!(anchored_findings(&check, &anchor(), Some("    end == 0"), "rust").is_empty());
     // A same-named `let` elsewhere in the diff has another initializer.
-    assert!(anchored_findings(&check, &anchor(), Some("    let end = a.len();")).is_empty());
-    let followed = anchored_findings(&check, &anchor(), Some(anchor_line));
+    assert!(
+        anchored_findings(&check, &anchor(), Some("    let end = a.len();"), "rust").is_empty()
+    );
+    let followed = anchored_findings(&check, &anchor(), Some(anchor_line), "rust");
     assert_eq!(followed.len(), 1, "{followed:#?}");
     assert_eq!(
         followed[0].pointer("/probe/line").and_then(Value::as_u64),
@@ -783,7 +785,7 @@ fn relativize_probe_files_strips_only_the_run_root() {
         json!("/elsewhere/src/lib.rs")
     );
     // `./src/lib.rs` already reads as root-relative; the foreign root does not.
-    assert_eq!(anchored_findings(&check, &anchor(), None).len(), 2);
+    assert_eq!(anchored_findings(&check, &anchor(), None, "rust").len(), 2);
 }
 
 #[test]
@@ -837,4 +839,292 @@ fn stored_paths_keep_vendored_rust_out_of_the_workspace() {
     assert_eq!(logical_path("LICENSE-MIT").as_deref(), Some("LICENSE-MIT"));
     // A bare `.rs` file under subjects is refused, not silently copied.
     assert_eq!(logical_path("src/lib.rs"), None);
+}
+
+#[test]
+fn a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(corpus.language, "rust");
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let json = render_report_json(&report)?;
+    assert!(!json.contains("\"language\""), "{json}");
+    assert!(render_report_markdown(&report).starts_with("# Rust verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn a_non_rust_corpus_names_its_language_in_both_reports() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let mut raw: Value =
+        serde_json::from_str(&read(&dir.join("corpus.json"))?).map_err(|err| err.to_string())?;
+    raw["language"] = json!("typescript");
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    assert!(validate(&corpus, &dir).is_empty());
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    assert!(render_report_json(&report)?.contains("\"language\": \"typescript\""));
+    assert!(render_report_markdown(&report).starts_with("# TypeScript verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn validator_rejects_an_undeclared_language() -> Result<(), String> {
+    let violations = tampered(|raw| raw["language"] = json!("cobol"))?;
+    assert!(
+        violations
+            .iter()
+            .any(|v: &String| v.contains("language `cobol`")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn each_language_owns_its_corpus_directory_and_run_paths() {
+    assert_eq!(
+        corpus_dir("rust").ok(),
+        Some(PathBuf::from(CORPUS_DIR)),
+        "the Rust corpus keeps its directory"
+    );
+    assert_eq!(
+        corpus_dir("typescript").ok(),
+        Some(PathBuf::from("fixtures/typescript-verdict-corpus"))
+    );
+    let refused = corpus_dir("../rust").err().unwrap_or_default();
+    assert!(refused.contains("is not one of"), "{refused}");
+    assert_eq!(
+        language_path(DEFAULT_OUT, "rust"),
+        PathBuf::from(DEFAULT_OUT)
+    );
+    assert_eq!(
+        language_path(DEFAULT_OUT, "perl"),
+        Path::new(DEFAULT_OUT).join("perl")
+    );
+    assert_eq!(language_flag("rust"), "");
+    assert_eq!(language_flag("python"), " --language python");
+}
+
+#[test]
+fn a_language_directory_must_declare_that_language() -> Result<(), String> {
+    let refused = corpus_for_language(&repo_corpus_dir(), "typescript")
+        .err()
+        .unwrap_or_default();
+    assert!(
+        refused.contains("declares language `rust`, not `typescript`"),
+        "{refused}"
+    );
+    corpus_for_language(&repo_corpus_dir(), "rust")?;
+    Ok(())
+}
+
+fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
+    corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "weakly_exposed",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect()
+}
+
+fn perl_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/perl-verdict-corpus")
+}
+
+fn tampered_perl(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
+    let dir = perl_corpus_dir();
+    let mut raw: Value =
+        serde_json::from_str(&read(&dir.join("corpus.json"))?).map_err(|err| err.to_string())?;
+    edit(&mut raw);
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    Ok(validate(&corpus, &dir))
+}
+
+#[test]
+fn committed_perl_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = corpus_for_language(&dir, "perl")?;
+    let violations = validate(&corpus, &dir);
+    assert!(violations.is_empty(), "{violations:#?}");
+    for library in ["testmore", "test2", "testexception"] {
+        assert!(
+            corpus.subjects.iter().any(|s| s
+                .subject_id
+                .starts_with(&format!("authored-perl-{library}-"))),
+            "no {library} subject"
+        );
+    }
+    let provenances: BTreeSet<&str> = corpus
+        .cases
+        .iter()
+        .filter_map(|c| c.perl_facts.as_ref())
+        .map(|f| f.provenance.as_str())
+        .collect();
+    assert_eq!(provenances, BTreeSet::from(["edited_producer", "producer"]));
+    Ok(())
+}
+
+#[test]
+fn perl_expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let report: Value = serde_json::from_str(&read(&dir.join("expected/report.json"))?)
+        .map_err(|err| err.to_string())?;
+    let rows = report["rows"].as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), corpus.cases.len());
+    for (row, case) in rows.iter().zip(&corpus.cases) {
+        assert_eq!(row["case_id"], json!(case.case_id));
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let provenance = case.perl_facts.as_ref().map(|f| f.provenance.as_str());
+        assert_eq!(
+            row["packet_provenance"],
+            json!(provenance),
+            "{}",
+            case.case_id
+        );
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validator_holds_perl_packets_to_their_pins_and_provenance() -> Result<(), String> {
+    let cases = [
+        (
+            "packet without facts",
+            Box::new(|raw: &mut Value| raw["cases"][0]["perl_facts"] = Value::Null)
+                as Box<dyn Fn(&mut Value)>,
+            "has no `perl_facts`",
+        ),
+        (
+            "moved packet",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["sha256"] = json!("0".repeat(64));
+            }),
+            "does not match its pinned sha256",
+        ),
+        (
+            "packet outside packets/",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["packet"] = json!("cases/x.json");
+            }),
+            "is not a safe path under packets/",
+        ),
+        (
+            "edited packet without edits",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["provenance"] = json!("edited_producer");
+            }),
+            "does not say what was edited",
+        ),
+        (
+            "producer packet with edits",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["edits"] = json!("set a sink");
+            }),
+            "mark it edited_producer",
+        ),
+        (
+            "no producer",
+            Box::new(|raw: &mut Value| raw["fact_producer"] = Value::Null),
+            "names no `fact_producer`",
+        ),
+        (
+            "short producer commit",
+            Box::new(|raw: &mut Value| raw["fact_producer"]["commit"] = json!("99458fd")),
+            "is not a 40-character lowercase hex sha",
+        ),
+        (
+            "uppercase producer commit",
+            Box::new(|raw: &mut Value| {
+                raw["fact_producer"]["commit"] = json!("99458FDE50B8204ECF7054779BB3670E6B5FDDA5");
+            }),
+            "is not a 40-character lowercase hex sha",
+        ),
+    ];
+    for (name, edit, expected) in cases {
+        let violations = tampered_perl(edit)?;
+        assert!(
+            violations.iter().any(|v| v.contains(expected)),
+            "{name}: {violations:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validator_refuses_perl_facts_and_a_producer_outside_a_perl_corpus() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        raw["fact_producer"] = json!({
+            "name": "p", "repository": "r", "commit": "0".repeat(40), "command": "c"
+        });
+        raw["cases"][0]["perl_facts"] = json!({
+            "packet": "packets/x.json", "sha256": "0", "provenance": "producer"
+        });
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`fact_producer` is for perl corpora")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("carries `perl_facts` in a `rust` corpus")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn perl_findings_count_while_their_subject_is_unresolved_and_rust_ones_do_not() {
+    let check = json!({"findings": [finding("exposed", 10, "unresolved_subject")]});
+    assert_eq!(anchored_findings(&check, &anchor(), None, "perl").len(), 1);
+    assert!(anchored_findings(&check, &anchor(), None, "rust").is_empty());
+    let stale = json!({"findings": [finding("exposed", 10, "stale")]});
+    assert!(anchored_findings(&stale, &anchor(), None, "perl").is_empty());
+}
+
+#[test]
+fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let producer = report
+        .by_packet_provenance
+        .get("producer")
+        .ok_or("no producer rates")?;
+    let edited = report
+        .by_packet_provenance
+        .get("edited_producer")
+        .ok_or("no edited rates")?;
+    assert_eq!(
+        producer.cases_total + edited.cases_total,
+        corpus.cases.len()
+    );
+    assert_eq!(
+        producer.false_actionable_rate.numerator + edited.false_actionable_rate.numerator,
+        report.false_actionable_rate.numerator
+    );
+    assert!(render_report_markdown(&report).contains("By fact-packet provenance"));
+    // The Rust report carries no provenance table, so its bytes stay put.
+    let rust = load_corpus(&repo_corpus_dir())?;
+    let rust_report = build_report(&rust, &gap_checks(&rust), &BTreeMap::new())?;
+    assert!(rust_report.by_packet_provenance.is_empty());
+    assert!(!render_report_json(&rust_report)?.contains("by_packet_provenance"));
+    Ok(())
 }

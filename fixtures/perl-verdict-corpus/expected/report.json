@@ -1,0 +1,925 @@
+{
+  "schema_version": "ripr_verdict_corpus_report.v1",
+  "spec": "RIPR-SPEC-0238",
+  "language": "perl",
+  "corpus_version": "2026-10-04.1",
+  "cases_total": 36,
+  "by_truth": {
+    "discriminated": 23,
+    "not_discriminated": 11,
+    "partially_discriminated": 2
+  },
+  "by_outcome": {
+    "abstained": 11,
+    "false_actionable": 9,
+    "false_exposed": 4,
+    "ideal": 12
+  },
+  "by_observed_verdict": {
+    "credited": 8,
+    "gap": 17,
+    "limited": 11
+  },
+  "false_verdict_rate": {
+    "numerator": 13,
+    "denominator": 36,
+    "rate": "0.3611"
+  },
+  "false_actionable_rate": {
+    "numerator": 9,
+    "denominator": 23,
+    "rate": "0.3913"
+  },
+  "false_exposed_rate": {
+    "numerator": 4,
+    "denominator": 13,
+    "rate": "0.3077"
+  },
+  "false_silent_rate": {
+    "numerator": 0,
+    "denominator": 13,
+    "rate": "0.0000"
+  },
+  "ideal_rate": {
+    "numerator": 12,
+    "denominator": 36,
+    "rate": "0.3333"
+  },
+  "abstention_rate": {
+    "numerator": 11,
+    "denominator": 36,
+    "rate": "0.3056"
+  },
+  "contradiction_rate": {
+    "numerator": 8,
+    "denominator": 36,
+    "rate": "0.2222"
+  },
+  "contradictions_by_code": {
+    "exposed_without_discriminator": 8
+  },
+  "by_origin": {
+    "authored": {
+      "cases_total": 36,
+      "by_observed_verdict": {
+        "credited": 8,
+        "gap": 17,
+        "limited": 11
+      },
+      "false_verdict_rate": {
+        "numerator": 13,
+        "denominator": 36,
+        "rate": "0.3611"
+      },
+      "false_actionable_rate": {
+        "numerator": 9,
+        "denominator": 23,
+        "rate": "0.3913"
+      },
+      "false_exposed_rate": {
+        "numerator": 4,
+        "denominator": 13,
+        "rate": "0.3077"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 13,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 12,
+        "denominator": 36,
+        "rate": "0.3333"
+      },
+      "abstention_rate": {
+        "numerator": 11,
+        "denominator": 36,
+        "rate": "0.3056"
+      }
+    }
+  },
+  "by_packet_provenance": {
+    "edited_producer": {
+      "cases_total": 9,
+      "by_observed_verdict": {
+        "credited": 2,
+        "gap": 4,
+        "limited": 3
+      },
+      "false_verdict_rate": {
+        "numerator": 5,
+        "denominator": 9,
+        "rate": "0.5556"
+      },
+      "false_actionable_rate": {
+        "numerator": 4,
+        "denominator": 8,
+        "rate": "0.5000"
+      },
+      "false_exposed_rate": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": "1.0000"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 1,
+        "denominator": 9,
+        "rate": "0.1111"
+      },
+      "abstention_rate": {
+        "numerator": 3,
+        "denominator": 9,
+        "rate": "0.3333"
+      }
+    },
+    "producer": {
+      "cases_total": 27,
+      "by_observed_verdict": {
+        "credited": 6,
+        "gap": 13,
+        "limited": 8
+      },
+      "false_verdict_rate": {
+        "numerator": 8,
+        "denominator": 27,
+        "rate": "0.2963"
+      },
+      "false_actionable_rate": {
+        "numerator": 5,
+        "denominator": 15,
+        "rate": "0.3333"
+      },
+      "false_exposed_rate": {
+        "numerator": 3,
+        "denominator": 12,
+        "rate": "0.2500"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 12,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 11,
+        "denominator": 27,
+        "rate": "0.4074"
+      },
+      "abstention_rate": {
+        "numerator": 8,
+        "denominator": 27,
+        "rate": "0.2963"
+      }
+    }
+  },
+  "rows": [
+    {
+      "case_id": "perl-testmore-discount-imported-boundary",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:14",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_exported_call_at_boundary",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-shipping-smoke-ok",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:23",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_ok_truthy_smoke",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-tier-far-from-boundary",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:31",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_far_from_boundary",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-points-cmp-ok-positive",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:38",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_cmp_ok_greater_than_zero",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-quote-is-deeply-total",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:48",
+      "behavior_family": "hash_field_value",
+      "test_shape": "testmore_is_deeply_whole_hash",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-round-cents-like",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:54",
+      "behavior_family": "return_value_format",
+      "test_shape": "testmore_like_format_regex",
+      "hard_case": false,
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-clamp-isnt",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:78",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_isnt_single_value",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-bulk-subtest",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:59",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_subtest_is_exported_call",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-tax-table-loop",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:64",
+      "behavior_family": "return_value_selection",
+      "test_shape": "testmore_table_driven_loop",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-bundle-helper-sub",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:72",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_helper_sub_wraps_is",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-cart-method-total",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Cart.pm:20",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_method_call",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-cart-dynamic-dispatch",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Cart.pm:26",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_through_dynamic_method_name",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-summary-deep-is-count",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-format-entry-like",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:18",
+      "behavior_family": "return_value_format",
+      "test_shape": "test2_like_prefix_regex",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-overdrawn-ok-smoke",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:23",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "test2_ok_truthy_smoke",
+      "hard_case": false,
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-withdraw-dies-like-message",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:28",
+      "behavior_family": "error_message",
+      "test_shape": "test2_like_dies_message",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-deposit-lives-only",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:34",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_ok_lives_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-fee-isnt-zero",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:39",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_isnt_single_value",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-net-change-imported",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:45",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_is_exported_call",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-test2-close-month-subtest",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:52",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "test2_subtest_is_at_boundary",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-withdraw-throws-message",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:19",
+      "behavior_family": "error_message",
+      "test_shape": "testexception_throws_ok_regex",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-transfer-boundary-pair",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:25",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testexception_throws_and_lives_pair",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-close-out-dies-ok",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:33",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testexception_dies_ok_far_from_boundary",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-interest-lives-ok",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:39",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testexception_lives_ok_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-freeze-class",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:44",
+      "behavior_family": "error_class",
+      "test_shape": "testexception_throws_ok_class",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testexception-lives-and-is",
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "anchor": "lib/Account.pm:50",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testexception_lives_and_wraps_is",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-testmore-can-ok-only",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:84",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_can_ok_use_ok_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "producer"
+    },
+    {
+      "case_id": "perl-0235-ex01-sink-unconfirmed",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_sink_unconfirmed",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex12-static-unknown-hint",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_static_unknown_hint",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex19-sink-whitespace",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_sink_spacing",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex23-missing-test-runner",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_missing_runner",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex24-framework-indirection",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_framework_indirection",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex25-dynamic-dispatch",
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "anchor": "lib/Ledger.pm:13",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_dynamic_dispatch",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex28-cross-test-oracle",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:31",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_far_from_boundary_cross_test",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": [
+        "exposed_without_discriminator"
+      ],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex13-method-receiver",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Cart.pm:20",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_method_receiver_relation",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    },
+    {
+      "case_id": "perl-0235-ex14-helper-call",
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "anchor": "lib/Shop/Pricing.pm:72",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_helper_call_relation",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "packet_provenance": "edited_producer"
+    }
+  ],
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Perl code or for ripr in general.",
+    "Every subject is authored to fill a cell of ripr's Perl oracle and reach rules; its rates are not real-world rates.",
+    "ripr does not parse Perl. Every verdict here is ripr's reading of a committed fact packet, so a wrong verdict can come from the producer's facts or from ripr's rules; the case reasoning says which.",
+    "edited_producer cases measure ripr's rules on facts the pinned producer does not emit; they are not evidence about the producer.",
+    "Truth comes from the listed hand-written mutants, not from exhaustive mutation; a discriminated label means every listed mutant made prove fail.",
+    "The harness does not run Perl, prove, the fact producer, mutation testing, or any network access."
+  ]
+}

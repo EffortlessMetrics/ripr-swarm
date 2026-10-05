@@ -1,4 +1,5 @@
-//! Labeled Rust verdict corpus (RIPR-SPEC-0219).
+//! Labeled verdict corpora (RIPR-SPEC-0219 for Rust, RIPR-SPEC-0238 for the
+//! per-language corpora that reuse this harness).
 //!
 //! Each case pairs a one-line edit in a pinned real crate with a runtime truth
 //! label: the edited behavior was mutated and the crate's own test suite was
@@ -7,7 +8,7 @@
 //! it against that label. It reports false-verdict and contradiction rates; it
 //! does not run mutation testing, and its rates describe this corpus only.
 
-use super::fixtures::ripr_fixture_binary;
+use super::fixtures::{ripr_fixture_binary, ripr_perl_fixture_binary};
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const CORPUS_DIR: &str = "fixtures/rust-verdict-corpus";
+/// Languages a corpus may declare. Each language keeps its own corpus
+/// directory, labels and expected report, so a verdict change in one language
+/// never re-blesses another (RIPR-SPEC-0238).
+pub(crate) const CORPUS_LANGUAGES: [&str; 4] = ["rust", "typescript", "python", "perl"];
+const DEFAULT_LANGUAGE: &str = "rust";
+/// ripr does not read Perl: its findings come from a fact packet an external
+/// producer writes (RIPR-SPEC-0064), so every Perl case carries one.
+const PERL_LANGUAGE: &str = "perl";
 const CORPUS_SCHEMA: &str = "ripr_verdict_corpus.v1";
 const REPORT_SCHEMA: &str = "ripr_verdict_corpus_report.v1";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
@@ -29,13 +38,70 @@ pub(crate) struct Corpus {
     pub(crate) schema_version: String,
     pub(crate) kind: String,
     pub(crate) spec: String,
+    /// The language every subject in this corpus is written in. Absent means
+    /// Rust, the corpus this harness was built for.
+    #[serde(default = "default_language")]
+    pub(crate) language: String,
     pub(crate) corpus_version: String,
     pub(crate) description: String,
     pub(crate) label_method: String,
     pub(crate) verdict_projection: String,
     pub(crate) non_claims: Vec<String>,
+    /// The pinned program that wrote every case's fact packet. Required for
+    /// Perl and absent for every other language.
+    #[serde(default)]
+    pub(crate) fact_producer: Option<FactProducer>,
     pub(crate) subjects: Vec<Subject>,
     pub(crate) cases: Vec<Case>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FactProducer {
+    pub(crate) name: String,
+    pub(crate) repository: String,
+    pub(crate) commit: String,
+    pub(crate) command: String,
+}
+
+/// A case's committed fact packet, passed to `ripr check --perl-facts`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PerlFacts {
+    pub(crate) packet: String,
+    pub(crate) sha256: String,
+    pub(crate) provenance: PacketProvenance,
+    /// What was changed in an edited packet, in words a reviewer can check
+    /// against the packet diff. Absent for a producer packet.
+    #[serde(default)]
+    pub(crate) edits: Option<String>,
+}
+
+/// Where a case's packet came from. A producer packet is the pinned
+/// producer's output byte for byte; an edited packet is a producer packet
+/// with named facts changed, to reach a packet shape a spec defines that the
+/// producer does not emit today. The report keeps their rates apart.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PacketProvenance {
+    Producer,
+    EditedProducer,
+}
+
+impl PacketProvenance {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Producer => "producer",
+            Self::EditedProducer => "edited_producer",
+        }
+    }
+}
+fn default_language() -> String {
+    DEFAULT_LANGUAGE.to_string()
+}
+
+fn is_default_language(language: &str) -> bool {
+    language == DEFAULT_LANGUAGE
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -113,6 +179,8 @@ pub(crate) struct Case {
     pub(crate) expected: Expected,
     pub(crate) reasoning: String,
     pub(crate) labeling_observation: LabelingObservation,
+    #[serde(default)]
+    pub(crate) perl_facts: Option<PerlFacts>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
@@ -313,8 +381,16 @@ fn probe_file(finding: &Value) -> String {
     file.strip_prefix("./").unwrap_or(&file).to_string()
 }
 
-fn is_candidate_current(finding: &Value) -> bool {
-    finding.get("source_currentness").and_then(Value::as_str) == Some("candidate_current")
+fn is_candidate_current(finding: &Value, language: &str) -> bool {
+    match finding.get("source_currentness").and_then(Value::as_str) {
+        Some("candidate_current") => true,
+        // The Perl adapter never resolves source currentness: the packet's
+        // producer saw the diff, ripr did not, so every Perl finding is the
+        // explicit unknown `unresolved_subject` (#3280). Counting it is this
+        // corpus's projection, not a currentness claim.
+        Some("unresolved_subject") => language == PERL_LANGUAGE,
+        _ => false,
+    }
 }
 
 /// The binding a changed `let` line declares, when the anchor is one.
@@ -405,6 +481,7 @@ pub(crate) fn anchored_findings<'a>(
     check: &'a Value,
     anchor: &Anchor,
     anchor_line: Option<&str>,
+    language: &str,
 ) -> Vec<&'a Value> {
     let relation = anchor_line.and_then(|line| declared_binding(line).map(|name| (line, name)));
     check
@@ -413,7 +490,7 @@ pub(crate) fn anchored_findings<'a>(
         .map(|findings| {
             findings
                 .iter()
-                .filter(|finding| is_candidate_current(finding))
+                .filter(|finding| is_candidate_current(finding, language))
                 .filter(|finding| probe_file(finding) == anchor.file)
                 .filter(|finding| {
                     finding.pointer("/probe/line").and_then(Value::as_u64)
@@ -593,12 +670,19 @@ pub(crate) struct CaseRow {
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
     pub(crate) contradictions: Vec<String>,
+    /// Where the case's fact packet came from; absent for languages ripr
+    /// reads itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) packet_provenance: Option<PacketProvenance>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Report {
     pub(crate) schema_version: String,
     pub(crate) spec: String,
+    /// Omitted for Rust so the Rust expected report keeps its bytes.
+    #[serde(skip_serializing_if = "is_default_language")]
+    pub(crate) language: String,
     pub(crate) corpus_version: String,
     pub(crate) cases_total: usize,
     pub(crate) by_truth: BTreeMap<String, usize>,
@@ -615,6 +699,11 @@ pub(crate) struct Report {
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
+    /// The verdict rates again, per fact-packet provenance (Perl only). An
+    /// edited packet reaches a shape the producer does not emit today, so
+    /// only the producer rates describe what a Perl user gets now.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) by_packet_provenance: BTreeMap<String, OriginRates>,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -670,8 +759,9 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
+    language: &str,
 ) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
-    let anchored = anchored_findings(check, &case.anchor, anchor_line);
+    let anchored = anchored_findings(check, &case.anchor, anchor_line, language);
     let followed_retarget = anchored
         .iter()
         .any(|f| f.pointer("/probe/line").and_then(Value::as_u64) != Some(case.anchor.line as u64));
@@ -692,7 +782,7 @@ pub(crate) fn case_row(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|f| is_candidate_current(f))
+        .filter(|f| is_candidate_current(f, language))
     {
         scored += 1;
         let codes = finding_contradictions(finding);
@@ -725,6 +815,7 @@ pub(crate) fn case_row(
         observed_classifications: classes,
         outcome: score(case.truth.state, observed),
         contradictions: contradictions.into_iter().collect(),
+        packet_provenance: case.perl_facts.as_ref().map(|facts| facts.provenance),
     };
     (row, scored, contradicted, code_counts)
 }
@@ -764,6 +855,7 @@ pub(crate) fn build_report(
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
+            &corpus.language,
         );
         findings_scored += scored;
         findings_contradicted += contradicted;
@@ -799,9 +891,20 @@ pub(crate) fn build_report(
             by_origin.insert(origin.as_str().to_string(), origin_rates(&subset));
         }
     }
+    let mut by_packet_provenance = BTreeMap::new();
+    for provenance in [PacketProvenance::Producer, PacketProvenance::EditedProducer] {
+        let subset: Vec<&CaseRow> = rows
+            .iter()
+            .filter(|r| r.packet_provenance == Some(provenance))
+            .collect();
+        if !subset.is_empty() {
+            by_packet_provenance.insert(provenance.as_str().to_string(), origin_rates(&subset));
+        }
+    }
     Ok(Report {
         schema_version: REPORT_SCHEMA.to_string(),
         spec: corpus.spec.clone(),
+        language: corpus.language.clone(),
         corpus_version: corpus.corpus_version.clone(),
         cases_total: rows.len(),
         by_truth,
@@ -816,6 +919,7 @@ pub(crate) fn build_report(
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         by_origin,
+        by_packet_provenance,
         rows,
         non_claims: corpus.non_claims.clone(),
     })
@@ -829,7 +933,10 @@ pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
 
 pub(crate) fn render_report_markdown(report: &Report) -> String {
     let mut out = String::new();
-    out.push_str("# Rust verdict corpus report\n\n");
+    out.push_str(&format!(
+        "# {} verdict corpus report\n\n",
+        language_title(&report.language)
+    ));
     out.push_str(&format!(
         "Spec: {}. Corpus version: {}. Cases: {}.\n\n",
         report.spec, report.corpus_version, report.cases_total
@@ -881,6 +988,26 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
             ));
         }
     }
+    if !report.by_packet_provenance.is_empty() {
+        out.push_str(
+            "\nBy fact-packet provenance. An edited packet changes named producer facts to reach a shape a spec defines that the producer does not emit today, so only the producer rates describe what a Perl user gets now.\n\n",
+        );
+        out.push_str("| Packet | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |\n");
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        for (provenance, rates) in &report.by_packet_provenance {
+            let cell = |r: &Ratio| format!("{}/{}", r.numerator, r.denominator);
+            out.push_str(&format!(
+                "| {provenance} | {} | {} | {} | {} | {} | {} | {} |\n",
+                rates.cases_total,
+                cell(&rates.false_verdict_rate),
+                cell(&rates.false_actionable_rate),
+                cell(&rates.false_exposed_rate),
+                cell(&rates.false_silent_rate),
+                cell(&rates.ideal_rate),
+                cell(&rates.abstention_rate),
+            ));
+        }
+    }
     out.push_str(
         "\n| Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |\n",
     );
@@ -916,6 +1043,25 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
         out.push_str(&format!("- {claim}\n"));
     }
     out
+}
+
+/// The `--language` argument a re-bless command needs; empty for Rust.
+fn language_flag(language: &str) -> String {
+    if is_default_language(language) {
+        String::new()
+    } else {
+        format!(" --language {language}")
+    }
+}
+
+fn language_title(language: &str) -> &str {
+    match language {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "python" => "Python",
+        "perl" => "Perl",
+        other => other,
+    }
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
@@ -978,6 +1124,13 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
     if corpus.non_claims.is_empty() {
         violations.push("`non_claims` is empty".to_string());
     }
+    if !CORPUS_LANGUAGES.contains(&corpus.language.as_str()) {
+        violations.push(format!(
+            "language `{}` is not one of {}",
+            corpus.language,
+            CORPUS_LANGUAGES.join(", ")
+        ));
+    }
     let mut subjects = BTreeMap::new();
     for subject in &corpus.subjects {
         if subjects
@@ -999,6 +1152,7 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id
             ));
         }
+        violations.extend(perl_facts_violations(case, &corpus.language, dir));
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -1006,6 +1160,36 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id, case.subject_id
             )),
         }
+    }
+    let is_perl = corpus.language == PERL_LANGUAGE;
+    match &corpus.fact_producer {
+        None if is_perl => violations.push(
+            "a perl corpus names no `fact_producer`; say which pinned producer wrote the packets"
+                .to_string(),
+        ),
+        Some(_) if !is_perl => violations.push(format!(
+            "`fact_producer` is for perl corpora; ripr reads `{}` itself",
+            corpus.language
+        )),
+        Some(producer) => {
+            if [&producer.name, &producer.repository, &producer.command]
+                .iter()
+                .any(|field| field.trim().is_empty())
+            {
+                violations.push("`fact_producer` has an empty field".to_string());
+            }
+            if producer.commit.len() != 40
+                || !producer
+                    .commit
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+            {
+                violations.push(
+                    "`fact_producer.commit` is not a 40-character lowercase hex sha".to_string(),
+                );
+            }
+        }
+        None => {}
     }
     let truths: BTreeSet<TruthState> = corpus.cases.iter().map(|c| c.truth.state).collect();
     for required in [TruthState::Discriminated, TruthState::NotDiscriminated] {
@@ -1015,6 +1199,57 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 required.as_str()
             ));
         }
+    }
+    violations
+}
+
+/// A Perl case must carry a packet whose bytes match its pin, under
+/// `packets/`; an edited packet must say what was edited and a producer
+/// packet must not. No other language takes a packet.
+pub(crate) fn perl_facts_violations(case: &Case, language: &str, dir: &Path) -> Vec<String> {
+    let id = &case.case_id;
+    let Some(facts) = &case.perl_facts else {
+        return if language == PERL_LANGUAGE {
+            vec![format!(
+                "perl case `{id}` has no `perl_facts`; ripr analyzes Perl only from a fact packet"
+            )]
+        } else {
+            Vec::new()
+        };
+    };
+    if language != PERL_LANGUAGE {
+        return vec![format!(
+            "case `{id}` carries `perl_facts` in a `{language}` corpus"
+        )];
+    }
+    let mut violations = Vec::new();
+    if !safe_relative(&facts.packet) || !facts.packet.starts_with("packets/") {
+        violations.push(format!(
+            "case `{id}` packet `{}` is not a safe path under packets/",
+            facts.packet
+        ));
+        return violations;
+    }
+    match fs::read(dir.join(&facts.packet)) {
+        Ok(bytes) if sha256_hex(&bytes) == facts.sha256 => {}
+        Ok(_) => violations.push(format!(
+            "case `{id}` packet `{}` does not match its pinned sha256; a changed packet needs the case relabeled before the sha256 is re-pinned",
+            facts.packet
+        )),
+        Err(err) => violations.push(format!(
+            "case `{id}` packet `{}` is unreadable: {err}",
+            facts.packet
+        )),
+    }
+    let edits = facts.edits.as_deref().map(str::trim).unwrap_or_default();
+    match facts.provenance {
+        PacketProvenance::EditedProducer if edits.is_empty() => violations.push(format!(
+            "case `{id}` has an edited packet but does not say what was edited"
+        )),
+        PacketProvenance::Producer if !edits.is_empty() => violations.push(format!(
+            "case `{id}` names edits but calls its packet the producer's output; mark it edited_producer"
+        )),
+        _ => {}
     }
     violations
 }
@@ -1601,7 +1836,12 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
     Ok((absolute(&work)?, absolute(&diff_path)?))
 }
 
-fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<String>), String> {
+fn run_case(
+    dir: &Path,
+    case: &Case,
+    work_root: &Path,
+    language: &str,
+) -> Result<(Value, Option<String>), String> {
     let (work, diff) = materialize(dir, case, work_root)?;
     let anchored_file = work.join(&case.anchor.file);
     let anchor_line = read(&anchored_file)?
@@ -1610,8 +1850,12 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         .map(str::to_string);
     let cache = std::path::absolute(work_root.join(".cache").join(&case.case_id))
         .map_err(|err| format!("resolve cache dir: {err}"))?;
-    let binary = ripr_fixture_binary()?;
-    let args = vec![
+    let binary = if language == PERL_LANGUAGE {
+        ripr_perl_fixture_binary()?
+    } else {
+        ripr_fixture_binary()?
+    };
+    let mut args = vec![
         "check".to_string(),
         "--root".to_string(),
         work.to_string_lossy().into_owned(),
@@ -1619,6 +1863,12 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         diff.to_string_lossy().into_owned(),
         "--json".to_string(),
     ];
+    if let Some(facts) = &case.perl_facts {
+        let packet = std::path::absolute(dir.join(&facts.packet))
+            .map_err(|err| format!("resolve {}: {err}", facts.packet))?;
+        args.push("--perl-facts".to_string());
+        args.push(packet.to_string_lossy().into_owned());
+    }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
     let mut check: Value = serde_json::from_str(&stdout).map_err(|err| {
@@ -1658,7 +1908,7 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
     let mut checks = Vec::new();
     let mut anchor_lines = BTreeMap::new();
     for case in &corpus.cases {
-        let (check, anchor_line) = run_case(dir, case, work_root)?;
+        let (check, anchor_line) = run_case(dir, case, work_root, &corpus.language)?;
         if let Some(line) = anchor_line {
             anchor_lines.insert(case.case_id.clone(), line);
         }
@@ -1689,37 +1939,87 @@ fn first_differing_line(expected: &str, actual: &str) -> String {
     "length differs".to_string()
 }
 
+/// The corpus directory for a language: `fixtures/<language>-verdict-corpus`.
+pub(crate) fn corpus_dir(language: &str) -> Result<PathBuf, String> {
+    if !CORPUS_LANGUAGES.contains(&language) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` is not one of {}",
+            CORPUS_LANGUAGES.join(", ")
+        ));
+    }
+    if is_default_language(language) {
+        return Ok(PathBuf::from(CORPUS_DIR));
+    }
+    Ok(PathBuf::from(format!("fixtures/{language}-verdict-corpus")))
+}
+
+/// Rust keeps the original output and run paths; every other language nests
+/// under its own name so two corpora never share a run copy or report.
+fn language_path(base: &str, language: &str) -> PathBuf {
+    if is_default_language(language) {
+        PathBuf::from(base)
+    } else {
+        Path::new(base).join(language)
+    }
+}
+
+/// A corpus loaded from a language's directory must declare that language,
+/// so `--language typescript` can never score a Rust corpus under the
+/// TypeScript name.
+fn corpus_for_language(dir: &Path, language: &str) -> Result<Corpus, String> {
+    let corpus = validated_corpus(dir)?;
+    if corpus.language != language {
+        return Err(format!(
+            "verdict-corpus: {} declares language `{}`, not `{language}`",
+            normalize_path(&dir.join("corpus.json")),
+            corpus.language
+        ));
+    }
+    Ok(corpus)
+}
+
 pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
-    let dir = Path::new(CORPUS_DIR);
     let mut iter = args.iter();
     let sub = iter.next().map(String::as_str).unwrap_or("check");
-    let mut out = PathBuf::from(DEFAULT_OUT);
+    let mut out = None;
+    let mut language = DEFAULT_LANGUAGE.to_string();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--out" => {
-                out = PathBuf::from(iter.next().ok_or("--out needs a directory")?);
+                out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
+            }
+            "--language" => {
+                language = iter
+                    .next()
+                    .ok_or("--language needs one of rust, typescript, python, perl")?
+                    .clone();
             }
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    let dir_buf = corpus_dir(&language)?;
+    let dir = dir_buf.as_path();
+    let out_given = out.is_some();
+    let out = out.unwrap_or_else(|| language_path(DEFAULT_OUT, &language));
     match sub {
         "validate" => {
-            if args.len() > 1 {
+            if out_given {
                 return Err(
-                    "verdict-corpus validate takes no options; `--out` applies to report and check"
+                    "verdict-corpus validate takes only --language; `--out` applies to report and check"
                         .to_string(),
                 );
             }
-            let corpus = validated_corpus(dir)?;
+            let corpus = corpus_for_language(dir, &language)?;
             println!(
-                "verdict-corpus: {} cases across {} subjects are valid",
+                "verdict-corpus: {} {} cases across {} subjects are valid",
                 corpus.cases.len(),
+                corpus.language,
                 corpus.subjects.len()
             );
             Ok(())
         }
         "report" | "check" => {
-            let corpus = validated_corpus(dir)?;
+            let corpus = corpus_for_language(dir, &language)?;
             // Read the golden before writing anything, so an `--out` that
             // aliases the expected directory cannot make the check pass.
             let expected_path = dir.join("expected").join("report.json");
@@ -1744,7 +2044,11 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                     normalize_path(&out)
                 ));
             }
-            let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
+            let report = run_corpus(
+                dir,
+                &corpus,
+                &language_path("target/ripr/verdict-corpus", &language),
+            )?;
             let json = render_report_json(&report)?;
             let markdown = render_report_markdown(&report);
             fs::create_dir_all(&out)
@@ -1767,9 +2071,10 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 && *expected_md != markdown
             {
                 return Err(format!(
-                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report --out {}`",
+                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report{} --out {}`",
                     normalize_path(&expected_md_path),
                     first_differing_line(expected_md, &markdown),
+                    language_flag(&language),
                     normalize_path(&dir.join("expected"))
                 ));
             }

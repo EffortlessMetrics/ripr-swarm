@@ -430,6 +430,9 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
                     | "rust-verdict-corpus"
+                    | "typescript-verdict-corpus"
+                    | "python-verdict-corpus"
+                    | "perl-verdict-corpus"
                     | "release_control"
                     | "release_denominator"
                     | "release_scope"
@@ -794,6 +797,35 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
         run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+    })
+}
+
+/// Memoized result of the one `cargo build -p ripr --features lang-perl` this
+/// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
+static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// The debug binary with the `lang-perl` preview adapter compiled in, for the
+/// Perl verdict corpus (RIPR-SPEC-0238): the default build refuses Perl
+/// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
+/// the Perl build is copied to its own `ripr-lang-perl` name, and when this
+/// process already built the default binary, that build is redone so a later
+/// Rust run never gets the Perl feature set. Only the `ripr` crate recompiles.
+pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
+    let shared = ripr_debug_binary();
+    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        fs::copy(&shared, &perl).map_err(|err| {
+            format!(
+                "copy {} to {} failed: {err}",
+                shared.display(),
+                perl.display()
+            )
+        })?;
+        if RIPR_BINARY_BUILD.get().is_some() {
+            run("cargo", &["build", "-p", "ripr"])?;
+        }
+        Ok(())
     })
 }
 

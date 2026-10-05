@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..c1fa1a4 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -51,7 +51,7 @@ sub quote {
+ 
+ sub round_cents {
+     my ($value) = @_;
+-    return sprintf('%.2f', $value);
++    return sprintf("%.2f", $value);
+ }
+ 
+ sub is_bulk {

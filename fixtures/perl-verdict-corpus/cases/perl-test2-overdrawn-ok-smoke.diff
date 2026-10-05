@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..fe79899 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -20,7 +20,7 @@ sub format_entry {
+ 
+ sub is_overdrawn {
+     my ($balance) = @_;
+-    return $balance < 0 ? 1 : 0;
++    return 0 > $balance ? 1 : 0;
+ }
+ 
+ sub withdraw {
