@@ -3224,10 +3224,13 @@ impl Backend {
             // shadow the new seam-evidence hover. Prefer the
             // seam-bearing diagnostic, then the finding-bearing one.
             // Caught by chatgpt-codex on PR #242.
-            let overlapping: Vec<&Diagnostic> = diagnostics
+            let mut overlapping: Vec<&Diagnostic> = diagnostics
                 .iter()
                 .filter(|d| diagnostic_covers_position(d, position))
                 .collect();
+            // A line-level diagnostic covers its whole line, so it must not
+            // shadow a column-precise one the cursor is on.
+            overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(

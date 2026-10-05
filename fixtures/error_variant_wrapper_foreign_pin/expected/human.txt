@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
   Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
-  Related test (1 of 4): tests/errors.rs:4 try_parse_summary_with_foreign_pin (assertion too weak to tell the old behavior from the new)
+  Related test (1 of 2): tests/errors.rs:4 try_parse_summary_with_foreign_pin (assertion too weak to tell the old behavior from the new)
   Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically
     establish that this boxed wrapper conversion carries the callee's error variant, so an existing
     exact downcast witness is not statically creditable. Verify via real mutation testing or deeper
@@ -23,7 +23,7 @@ Start here:
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach parse_summary: try_parse_summary_with_foreign_pin
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 10 more detail line(s) in --format human-full
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/error_variant_wrapper_foreign_pin/input --diff fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec

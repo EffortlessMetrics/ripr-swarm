@@ -186,6 +186,22 @@ close with that route instead of the Rust before/after snapshot commands. When
 Rust seams exist, the human output is unchanged and other languages are listed
 only in `pilot-summary.json` `language_routes` (#3906).
 
+Pilot's ranking is repo-wide, but a developer who just ran `ripr check` on a
+branch reads its top recommendation as the next step for that change. Pilot
+therefore loads the current change (the default base, resolved as `ripr check`
+resolves it, against the live working tree when it has uncommitted tracked
+changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
+lines first, and says in the terminal, Markdown and
+`pilot-summary.json` (`current_change`) whether the top recommendation is part
+of the change. When the change has no ranked seam, pilot says the
+recommendation is elsewhere in the repo and names `ripr check` for the change
+itself, with `--worktree` when the change is uncommitted, since plain `ripr
+check` reads committed history only. The terminal and Markdown "Inspected" block names the scope:
+change-first with a change, otherwise the whole repository, with a short reason
+when the change could not be loaded. With no change, or when the diff cannot be
+loaded, the ranking is unchanged, the human output differs only by that scope
+line, and a failed load never fails pilot (#1169).
+
 When a seam limit (the repo-exposure inventory limit or the pilot seam budget)
 cut the classified seams before ranking, `pilot-summary.md` must say so under
 "What Was Inspected": it names how many seams were ranked out of the outermost
@@ -397,6 +413,30 @@ then the terminal and Markdown output are unchanged and pilot-summary.json
 lists the other languages under language_routes with state supplementary.
 ```
 
+### Pilot says whether its top recommendation is part of the current change
+
+```text
+Given a branch whose committed or uncommitted change touches a ranked seam,
+when a user runs ripr pilot,
+then that seam ranks ahead of better-classed seams elsewhere and pilot says the
+top recommendation is part of the current change.
+
+Given a branch whose change touches no ranked seam,
+when a user runs ripr pilot,
+then pilot says the top recommendation is elsewhere in the repo, not part of
+the current change, and names ripr check for the change itself.
+
+Given a change that exists only as uncommitted edits in the working tree,
+when a user runs ripr pilot and the top recommendation is not part of it,
+then the ripr check command pilot names carries --worktree.
+
+Given no current change, or a root where the diff cannot be loaded,
+when a user runs ripr pilot,
+then the ranking is unchanged, the terminal and Markdown name the whole
+repository as pilot's scope, and pilot-summary.json records current_change
+state no_change or unavailable.
+```
+
 ### Outcome is public CLI
 
 ```text
@@ -493,6 +533,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_takes_one_seam_per_owner_before_a_second`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_spreads_owners_without_crossing_class_order`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_counts_an_owners_unlisted_seams_once`
