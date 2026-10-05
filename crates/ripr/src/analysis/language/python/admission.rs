@@ -24,7 +24,9 @@
 //! imported by bare name from a sibling module that pytest's rootdir
 //! insertion makes importable (`from utils import run_case` beside the test)
 //! can still fail a `NoAssertionLike` test (#6657). A module imported from
-//! the test file's own directory or below is treated as test support. A
+//! the test file's own directory or below is treated as test support; a
+//! test file at the repository root has no such directory, so its relative
+//! imports (`from . import checks`) are not caught (#6657). A
 //! `no_assertion` miss must account for the rest before it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
@@ -132,6 +134,23 @@ impl PythonAdmissionContext {
                     if opaque_base || opaque_decorator || !class.keywords.is_empty() {
                         self.opaque_classes.insert(class.name.to_string());
                     }
+                    // Class attributes (`checker = ApiChecker()`) run at
+                    // class creation and are reached through `self.`, so
+                    // they are scanned like setup hooks.
+                    lifecycle.extend(
+                        class
+                            .body
+                            .iter()
+                            .filter(|stmt| {
+                                !matches!(
+                                    stmt,
+                                    Stmt::FunctionDef(_)
+                                        | Stmt::AsyncFunctionDef(_)
+                                        | Stmt::ClassDef(_)
+                                )
+                            })
+                            .map(std::slice::from_ref),
+                    );
                     self.collect(&class.body, lifecycle);
                 }
                 Stmt::Assign(assign)
@@ -287,7 +306,6 @@ const INERT_BUILTINS: &[&str] = &[
     "float",
     "format",
     "frozenset",
-    "getattr",
     "hasattr",
     "hash",
     "hex",
@@ -324,7 +342,6 @@ const INERT_BUILTINS: &[&str] = &[
     "super",
     "tuple",
     "type",
-    "vars",
     "zip",
 ];
 
@@ -354,6 +371,27 @@ const PYTEST_BUILTIN_FIXTURES: &[&str] = &[
     "tmpdir_factory",
 ];
 
+/// A plain dotted name. Unlike `expr_full_name`, a call inside the chain
+/// (`type(self)._check`) yields `None`: the call's result, not the callee's
+/// name, decides what runs.
+fn dotted_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => dotted_name(attribute.value.as_ref())
+            .map(|prefix| format!("{prefix}.{}", attribute.attr)),
+        _ => None,
+    }
+}
+
+/// A dunder member (`self.__class__._check`, `sys.exit.__call__`) reaches
+/// the object model, so the chain no longer names what runs.
+fn has_dunder_member(segments: &[&str]) -> bool {
+    segments
+        .iter()
+        .skip(1)
+        .any(|segment| segment.starts_with("__"))
+}
+
 fn has_assertion_like_prefix(name: &str) -> bool {
     let lowered = name.to_ascii_lowercase();
     ASSERTION_LIKE_PREFIXES
@@ -369,7 +407,11 @@ const UNSAFE_BUILTINS: &[&str] = &[
     "eval",
     "exec",
     "exit",
+    "getattr",
+    "globals",
+    "locals",
     "quit",
+    "vars",
 ];
 
 /// Callee name prefixes that read as an assertion or a failure. They only
@@ -752,7 +794,7 @@ impl BodyScan<'_> {
     fn decorator(&mut self, decorator: &Expr) {
         if let Expr::Call(_) = decorator {
             self.expr(decorator);
-        } else if let Some(name) = expr_full_name(decorator) {
+        } else if let Some(name) = dotted_name(decorator) {
             if self.name_is_assertion_like(&name) {
                 self.assertion_like = true;
             }
@@ -875,7 +917,13 @@ impl BodyScan<'_> {
                     self.assertion_like = true;
                     return;
                 }
-                if let Some(name) = expr_full_name(expr) {
+                // An attribute of a call result (`import_module("sys").exit`)
+                // can name any callable.
+                if matches!(attribute.value.as_ref(), Expr::Call(_)) {
+                    self.assertion_like = true;
+                    return;
+                }
+                if let Some(name) = dotted_name(expr) {
                     if self.value_is_assertion_like(&name) {
                         self.assertion_like = true;
                         return;
@@ -921,13 +969,15 @@ impl BodyScan<'_> {
         if matches!(call.func.as_ref(), Expr::Call(_)) {
             return true;
         }
-        match (expr_full_name(call.func.as_ref()), call.func.as_ref()) {
+        match (dotted_name(call.func.as_ref()), call.func.as_ref()) {
             (Some(name), _) => self.name_is_assertion_like(&name),
             // A method on a computed value (`(tmp_path / "x").write_text(...)`,
             // `"a,b".split(",")`) acts on that value; the value itself is
-            // walked separately.
+            // walked separately. A method on a call or subscript result
+            // (`type(self)._check(x)`, `import_module("sys").exit()`) can
+            // reach any callable, so it stays assertion-like.
             (None, Expr::Attribute(attribute))
-                if !matches!(attribute.value.as_ref(), Expr::Subscript(_)) =>
+                if !matches!(attribute.value.as_ref(), Expr::Subscript(_) | Expr::Call(_)) =>
             {
                 has_assertion_like_prefix(attribute.attr.as_str())
             }
@@ -942,6 +992,9 @@ impl BodyScan<'_> {
         let segments: Vec<&str> = name.split('.').collect();
         let root = segments.first().copied().unwrap_or(name);
         let last = segments.last().copied().unwrap_or(name);
+        if has_dunder_member(&segments) {
+            return true;
+        }
         if matches!(root, "self" | "cls") || self.scope.argnames.contains(root) {
             return false;
         }
@@ -972,7 +1025,7 @@ impl BodyScan<'_> {
         let segments: Vec<&str> = name.split('.').collect();
         let root = segments.first().copied().unwrap_or(name);
         let last = segments.last().copied().unwrap_or(name);
-        if has_assertion_like_prefix(last) {
+        if has_assertion_like_prefix(last) || has_dunder_member(&segments) {
             return true;
         }
         if matches!(root, "self" | "cls") {

@@ -2941,6 +2941,41 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "getattr result stored in a local",
+            "import sys\ndef test_x():\n    f = getattr(sys, 'exit')\n    f(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "test-support object held as a class attribute",
+            "from tests.helpers import ApiChecker\nclass TestX:\n    checker = ApiChecker()\n    def test_x(self):\n        self.checker.run(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper reached through type(self)",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        type(self)._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper reached through __class__",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        self.__class__._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "failing callee through __call__",
+            "import sys\ndef test_x():\n    apply_discount(20)\n    sys.exit.__call__(1)\n",
+            unresolved,
+        ),
+        (
+            "method on an imported module object",
+            "import importlib\ndef test_x():\n    apply_discount(20)\n    importlib.import_module('sys').exit(1)\n",
+            unresolved,
+        ),
+        (
+            "class attribute that is a plain constant",
+            "class TestX:\n    rate = 20\n    def test_x(self):\n        apply_discount(self.rate)\n",
+            none,
+        ),
+        (
             "dynamic callee",
             "CHECKS = {}\ndef test_x():\n    CHECKS['discount'](apply_discount(20))\n",
             unresolved,
