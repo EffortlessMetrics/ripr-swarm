@@ -61,11 +61,13 @@ jobs:
       - name: Build ripr
         run: cargo build --release -p ripr --bin ripr
 
+      # Checkouts live outside target/: the Rust cache can restore parts of
+      # target/ without their .git, which fetch then refuses to replace.
       - name: Fetch the pinned crates
-        run: cargo xtask pilot-ranking fetch --allow-network
+        run: cargo xtask pilot-ranking fetch --allow-network --root "$RUNNER_TEMP/pilot-ranking"
 
       - name: Score pilot against the answer key
-        run: cargo xtask pilot-ranking score --ripr target/release/ripr
+        run: cargo xtask pilot-ranking score --ripr target/release/ripr --root "$RUNNER_TEMP/pilot-ranking"
 
       - name: Compare with the baseline
         run: >-
