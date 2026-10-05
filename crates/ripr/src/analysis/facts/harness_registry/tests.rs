@@ -207,6 +207,115 @@ fn helper_trial_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coor
     check_registered_terminal_matcher_guard_twins(true, true)
 }
 
+fn check_registered_guard_boundary(
+    helper_callback: bool,
+    literal_brace: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (assertion, guard, guard_sibling, call_line) = if literal_brace {
+        (
+            "assert!(matches!(score(\"{\"), _));",
+            "if !matches!(score(\"{\"), _) { return Err(\"bad\".into()); }",
+            7,
+            6,
+        )
+    } else {
+        (
+            "assert!(matches!(\nvalue,\n_\n));",
+            "if !matches!(\nvalue,\n_\n)\n{\nreturn Err(\"bad\".into());\n}",
+            13,
+            5,
+        )
+    };
+    for (statement, sibling_line) in [
+        (assertion, if literal_brace { 7 } else { 10 }),
+        (guard, guard_sibling),
+    ] {
+        let root = temp_dir("terminal-guard-boundary")?;
+        let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
+        let mut source = registered_matcher_control_source(&statement, helper_callback);
+        if literal_brace {
+            assert_eq!(source.matches("fn score() -> i32 { 2 }").count(), 1);
+            assert_eq!(source.matches("let value = score();").count(), 1);
+            source = source
+                .replace("fn score() -> i32 { 2 }", "fn score(_: &str) -> i32 { 2 }")
+                .replace("let value = score();", "let _setup = 0;");
+        }
+        write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+        declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+        let files = [PathBuf::from("tests/matcher.rs")];
+        let registrations = [custom_target_registration("tests/matcher.rs")];
+        let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+        let [subject] = index.harness_subjects.as_slice() else {
+            return Err("guard-boundary control lost its one registered subject".into());
+        };
+        assert_eq!(subject.registration_id, "mimic-suite");
+        assert_eq!(subject.name, "observes_score");
+        assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
+        let tests = index.tests();
+        assert_eq!(tests.len(), 1);
+        let test = tests.first().ok_or("guard-boundary TestFact missing")?;
+        assert_eq!(test.name, subject.name);
+        assert_eq!(test.file, subject.file);
+        let shift = usize::from(helper_callback);
+        for calls in [&subject.calls, &test.calls] {
+            assert!(
+                calls
+                    .iter()
+                    .any(|call| call.name == "score" && call.line == call_line - shift)
+            );
+        }
+        for facts in [&subject.assertions, &test.assertions] {
+            let [matcher, sibling] = facts.as_slice() else {
+                return Err(format!("registered guard-boundary evidence missing (helper={helper_callback}, literal={literal_brace}): {statement}: {facts:?}").into());
+            };
+            assert_eq!(matcher.line, 6 - shift);
+            assert_eq!(matcher.kind, OracleKind::RelationalCheck, "{matcher:?}");
+            assert_eq!(matcher.strength, OracleStrength::Weak, "{matcher:?}");
+            assert!(
+                matcher
+                    .observed_tokens
+                    .contains(&if literal_brace { "score" } else { "value" }.to_string())
+            );
+            if literal_brace {
+                assert!(matcher.text.contains("score(\"{\")"), "{matcher:?}");
+            }
+            assert_eq!(sibling.line, sibling_line - shift, "{sibling:?}");
+            assert_eq!(sibling.kind, OracleKind::ExactValue);
+            assert_eq!(sibling.strength, OracleStrength::Strong);
+            assert_eq!(
+                sibling.text.trim_end_matches(';'),
+                "assert_eq!(sibling(), 7)"
+            );
+            assert!(sibling.observed_tokens.contains(&"sibling".to_string()));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_trial_terminal_guard_literal_brace_keeps_wildcard_twin()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(false, true)
+}
+
+#[test]
+fn helper_trial_terminal_guard_literal_brace_keeps_wildcard_twin()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(true, true)
+}
+
+#[test]
+fn inline_trial_terminal_guard_later_body_brace_keeps_twin_and_sibling()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(false, false)
+}
+
+#[test]
+fn helper_trial_terminal_guard_later_body_brace_keeps_twin_and_sibling()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(true, false)
+}
+
 #[test]
 fn inline_trial_skips_multiline_inert_terminal_matcher_input()
 -> Result<(), Box<dyn std::error::Error>> {

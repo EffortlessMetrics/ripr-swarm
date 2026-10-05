@@ -386,6 +386,102 @@ fn parsed_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinate
     check_terminal_matcher_twins(true)
 }
 
+fn check_terminal_guard_boundary(parsed_route: bool, literal_brace: bool) -> Result<(), String> {
+    let (declaration, setup, assertion, guard, guard_sibling, call_line) = if literal_brace {
+        (
+            "fn score(_: &str) -> i32 { 2 }",
+            "let _setup = 0;",
+            "assert!(matches!(score(\"{\"), _));",
+            "if !matches!(score(\"{\"), _) { return Err(()); }",
+            7,
+            6,
+        )
+    } else {
+        (
+            "fn score() -> i32 { 2 }",
+            "let value = score();",
+            "assert!(matches!(\nvalue,\n_\n));",
+            "if !matches!(\nvalue,\n_\n)\n{\nreturn Err(());\n}",
+            13,
+            5,
+        )
+    };
+    // The accepted #5410 wildcard contract independently fixes this meaning.
+    // Check the genuine assertion before the guard, then require the same grip.
+    for (statement, sibling_line) in [
+        (assertion, if literal_brace { 7 } else { 10 }),
+        (guard, guard_sibling),
+    ] {
+        let source = format!(
+            "{declaration}\nfn sibling() -> i32 {{ 7 }}\n#[test]\n\
+             fn observes_score() -> Result<(), ()> {{\n{setup}\n{statement}\n\
+             assert_eq!(sibling(), 7);\nOk(())\n}}\n"
+        );
+        let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let [test] = parsed.tests.as_slice() else {
+            return Err("guard-boundary control lost its named subject".to_string());
+        };
+        if test.name != "observes_score"
+            || test.file != Path::new("src/lib.rs")
+            || !test
+                .calls
+                .iter()
+                .any(|call| call.name == "score" && call.line == call_line)
+        {
+            return Err(format!("guard-boundary owner call not reached: {test:?}"));
+        }
+        let lexical = extract_assertions(&source, 1);
+        let facts = if parsed_route {
+            &test.assertions
+        } else {
+            &lexical
+        };
+        let [matcher, sibling] = facts.as_slice() else {
+            return Err(format!(
+                "guard-boundary evidence missing (parsed={parsed_route}, literal={literal_brace}): {statement}: {facts:?}"
+            ));
+        };
+        if matcher.line != 6
+            || matcher.kind != OracleKind::RelationalCheck
+            || matcher.strength != OracleStrength::Weak
+            || !matcher
+                .observed_tokens
+                .contains(&if literal_brace { "score" } else { "value" }.to_string())
+            || (literal_brace && !matcher.text.contains("score(\"{\")"))
+            || sibling.line != sibling_line
+            || sibling.kind != OracleKind::ExactValue
+            || sibling.strength != OracleStrength::Strong
+            || sibling.text.trim_end_matches(';') != "assert_eq!(sibling(), 7)"
+            || !sibling.observed_tokens.contains(&"sibling".to_string())
+        {
+            return Err(format!(
+                "guard-boundary twin grip or sibling changed (parsed={parsed_route}, literal={literal_brace}): {facts:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn lexical_terminal_guard_literal_brace_keeps_wildcard_twin() -> Result<(), String> {
+    check_terminal_guard_boundary(false, true)
+}
+
+#[test]
+fn parsed_terminal_guard_literal_brace_keeps_wildcard_twin() -> Result<(), String> {
+    check_terminal_guard_boundary(true, true)
+}
+
+#[test]
+fn lexical_terminal_guard_later_body_brace_keeps_twin_and_sibling() -> Result<(), String> {
+    check_terminal_guard_boundary(false, false)
+}
+
+#[test]
+fn parsed_terminal_guard_later_body_brace_keeps_twin_and_sibling() -> Result<(), String> {
+    check_terminal_guard_boundary(true, false)
+}
+
 #[test]
 fn opaque_and_unnegated_terminal_matcher_guards_do_not_gain_credit() -> Result<(), String> {
     for statement in [

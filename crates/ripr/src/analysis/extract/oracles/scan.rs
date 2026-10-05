@@ -4079,8 +4079,37 @@ fn one_pathological_variant_arm() {
 
 #[cfg(test)]
 mod err_guard_parity_tests {
-    use super::extract_assertions;
+    use super::{err_return_guard_assertion, extract_assertions, terminal_err_return_guard_oracle};
     use crate::domain::{OracleKind, OracleStrength};
+
+    #[test]
+    fn quoted_return_text_and_prior_statements_are_not_terminal_failure_prefixes() {
+        let quoted_body = |value: i32| -> Result<(), ()> {
+            if !matches!(value, 2) {
+                let message = "{returnErr(";
+                let _ = message;
+            }
+            Ok(())
+        };
+        // This independent executed-Rust control establishes that the quoted
+        // text cannot distinguish the original and wrong values.
+        assert!(quoted_body(2).is_ok());
+        assert!(quoted_body(3).is_ok());
+        for statement in [
+            "if !matches!(value, 2) { let message = \"{returnErr(\"; let _ = message; }",
+            "if !matches!(value, 2) { /* {returnErr( */ }",
+            "if !matches!(value, 2) { let _prior = (); return Err(()); }",
+        ] {
+            assert!(
+                terminal_err_return_guard_oracle(statement, 10).is_none(),
+                "{statement}"
+            );
+            assert!(
+                err_return_guard_assertion(statement).is_none(),
+                "quoted or unsupported body credited: {statement}"
+            );
+        }
+    }
 
     #[test]
     fn err_return_guard_is_an_oracle_equal_to_its_assert_twin() {
