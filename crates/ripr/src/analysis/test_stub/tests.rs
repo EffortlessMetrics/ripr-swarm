@@ -584,6 +584,39 @@ pub fn gate(n: u8) -> u8 {
 }
 
 #[test]
+fn integration_stub_leaves_a_feature_gated_public_constant_as_a_fill_in() -> Result<(), String> {
+    const SOURCE: &str = "#[cfg(feature = \"special\")]
+pub const LIMIT: u8 = 3;
+pub fn gate(n: u8) -> u8 {
+    #[cfg(feature = \"special\")]
+    if n > LIMIT {
+        return n;
+    }
+    n
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "n > LIMIT",
+        SeamKind::PredicateBoundary,
+        boundary("n == LIMIT"),
+    )?;
+    let proposal = NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/gate.rs"),
+        owner: "demo::gate".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+    };
+    let stub =
+        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
+    assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
+    assert!(stub.derived_inputs.is_empty());
+    Ok(())
+}
+
+#[test]
 fn integration_stub_rebases_crate_paths_and_keeps_a_public_constant() -> Result<(), String> {
     const SOURCE: &str = "pub const LIMIT: u8 = 3;
 pub struct Tag;
