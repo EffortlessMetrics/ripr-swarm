@@ -1,4 +1,5 @@
 use super::HOVER_TEXT;
+use super::position::line_span_range;
 use super::state::{AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
@@ -39,7 +40,7 @@ pub(super) fn diagnostic_hover_response(diagnostic: &Diagnostic) -> Hover {
             kind: MarkupKind::Markdown,
             value: diagnostic_hover_markdown(diagnostic),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -49,7 +50,7 @@ pub(super) fn finding_hover_response(finding: &Finding, diagnostic: &Diagnostic)
             kind: MarkupKind::Markdown,
             value: finding_hover_markdown(diagnostic, finding),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -137,7 +138,7 @@ pub(super) fn classified_seam_hover_response(
             kind: MarkupKind::Markdown,
             value: classified_seam_hover_markdown(seam, snapshot),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -167,17 +168,36 @@ pub(super) fn diagnostic_at_position<'a>(
     diagnostics: &'a [Diagnostic],
     position: &Position,
 ) -> Option<&'a Diagnostic> {
-    // Prefer a column-precise diagnostic over a line-level zero-width one.
+    // Prefer a column-precise diagnostic over a line-level one.
     let mut covering = diagnostics
         .iter()
         .filter(|diagnostic| position_in_range(position, &diagnostic.range));
     let first = covering.next()?;
-    if first.range.start != first.range.end {
+    if !is_line_level_range(&first.range) {
         return Some(first);
     }
     covering
-        .find(|diagnostic| diagnostic.range.start != diagnostic.range.end)
+        .find(|diagnostic| !is_line_level_range(&diagnostic.range))
         .or(Some(first))
+}
+
+/// A line-level range carries no column evidence: it is either zero-width
+/// (a coarse origin published verbatim) or the projected full-line span
+/// that coarse origins, seams and gaps use (`line_span_range`). Hover must
+/// not let one shadow a column-precise diagnostic the cursor is on.
+pub(super) fn is_line_level_range(range: &Range) -> bool {
+    range.start == range.end || *range == line_span_range(range.start.line)
+}
+
+/// The range a hover highlights. A zero-width diagnostic is hoverable across
+/// its whole line, so its hover highlights that line rather than an empty
+/// span the cursor is never inside.
+fn hover_range(range: Range) -> Range {
+    if range.start == range.end {
+        line_span_range(range.start.line)
+    } else {
+        range
+    }
 }
 
 /// True if `diagnostic`'s range covers `position`. Useful for callers

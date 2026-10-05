@@ -14014,6 +14014,11 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
         };
         assert!(markup.value.contains("**ripr** `weakly_exposed`"));
         assert!(markup.value.contains("## RIPR Evidence"));
+        // The hover highlights the line the cursor is on, not the empty span.
+        assert_eq!(
+            hover.range,
+            Some(crate::lsp::position::line_span_range(line))
+        );
     }
     // The coarse range covers its own line only.
     assert!(
@@ -14028,51 +14033,61 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
 #[test]
 fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line()
 -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
     let precise_finding = sample_finding();
     let precise = diagnostic_for_finding(Path::new("/workspace"), &precise_finding);
     let line = precise.range.start.line;
-    let mut coarse_finding = sample_finding();
-    coarse_finding.id = "probe:pricing:88:coarse".to_string();
-    coarse_finding.probe.id = ProbeId(coarse_finding.id.clone());
-    coarse_finding.class = ExposureClass::NoStaticPath;
-    let mut coarse = diagnostic_for_finding(Path::new("/workspace"), &coarse_finding);
-    coarse.range = Range {
-        start: Position { line, character: 0 },
-        end: Position { line, character: 0 },
-    };
-    assert!(
-        precise.range.start != precise.range.end,
-        "fixture needs a precise range"
-    );
-    let inside = precise.range.start.character;
-    let past_end = precise.range.end.character + 2;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    // The coarse diagnostic comes first, so first-match scanning would pick it.
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![coarse, precise],
-        vec![coarse_finding, precise_finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
-        let Some(hover) = backend.hover_for_position(&hover_params(uri.clone(), line, character))
-        else {
-            return Err(format!("expected finding hover at {line}:{character}"));
-        };
-        let HoverContents::Markup(markup) = hover.contents else {
-            return Err("expected markup hover".to_string());
-        };
+    // Both line-level shapes: a zero-width range, and the full-line span that
+    // `range_from_encoded_origin` projects for a coarse origin.
+    let coarse_ranges = [
+        Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        crate::lsp::position::line_span_range(line),
+    ];
+    for coarse_range in coarse_ranges {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let mut coarse_finding = sample_finding();
+        coarse_finding.id = "probe:pricing:88:coarse".to_string();
+        coarse_finding.probe.id = ProbeId(coarse_finding.id.clone());
+        coarse_finding.class = ExposureClass::NoStaticPath;
+        let mut coarse = diagnostic_for_finding(Path::new("/workspace"), &coarse_finding);
+        coarse.range = coarse_range;
         assert!(
-            markup.value.contains(&format!("**ripr** `{expected}`")),
-            "hover at {line}:{character} should describe {expected}: {}",
-            markup.value
+            precise.range.start != precise.range.end
+                && precise.range != crate::lsp::position::line_span_range(line),
+            "fixture needs a precise range"
         );
+        let inside = precise.range.start.character;
+        let past_end = precise.range.end.character + 2;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        // The coarse diagnostic comes first, so first-match scanning would pick it.
+        let diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![coarse, precise.clone()],
+            vec![coarse_finding, precise_finding.clone()],
+        );
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+
+        for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+            let Some(hover) =
+                backend.hover_for_position(&hover_params(uri.clone(), line, character))
+            else {
+                return Err(format!("expected finding hover at {line}:{character}"));
+            };
+            let HoverContents::Markup(markup) = hover.contents else {
+                return Err("expected markup hover".to_string());
+            };
+            assert!(
+                markup.value.contains(&format!("**ripr** `{expected}`")),
+                "hover at {line}:{character} with coarse {coarse_range:?} should describe {expected}: {}",
+                markup.value
+            );
+        }
     }
     Ok(())
 }
@@ -14084,12 +14099,6 @@ fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
     let finding = sample_finding();
     let precise = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let line = precise.range.start.line;
-    let mut coarse = precise.clone();
-    coarse.message = "coarse".to_string();
-    coarse.range = Range {
-        start: Position { line, character: 0 },
-        end: Position { line, character: 0 },
-    };
     let inside = Position {
         line,
         character: precise.range.start.character,
@@ -14098,31 +14107,43 @@ fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
         line,
         character: precise.range.end.character + 2,
     };
+    for coarse_range in [
+        Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        crate::lsp::position::line_span_range(line),
+    ] {
+        let mut coarse = precise.clone();
+        coarse.message = "coarse".to_string();
+        coarse.range = coarse_range;
 
-    let both = vec![coarse.clone(), precise.clone()];
-    assert_eq!(
-        diagnostic_at_position(&both, &inside).map(|d| d.range),
-        Some(precise.range)
-    );
-    assert_eq!(
-        diagnostic_at_position(&both, &past_end).map(|d| d.message.as_str()),
-        Some("coarse")
-    );
-    let coarse_only = vec![coarse];
-    assert_eq!(
-        diagnostic_at_position(&coarse_only, &inside).map(|d| d.message.as_str()),
-        Some("coarse")
-    );
-    assert!(
-        diagnostic_at_position(
-            &coarse_only,
-            &Position {
-                line: line + 1,
-                character: 0
-            }
-        )
-        .is_none()
-    );
+        let both = vec![coarse.clone(), precise.clone()];
+        assert_eq!(
+            diagnostic_at_position(&both, &inside).map(|d| d.range),
+            Some(precise.range),
+            "coarse {coarse_range:?}"
+        );
+        assert_eq!(
+            diagnostic_at_position(&both, &past_end).map(|d| d.message.as_str()),
+            Some("coarse")
+        );
+        let coarse_only = vec![coarse];
+        assert_eq!(
+            diagnostic_at_position(&coarse_only, &inside).map(|d| d.message.as_str()),
+            Some("coarse")
+        );
+        assert!(
+            diagnostic_at_position(
+                &coarse_only,
+                &Position {
+                    line: line + 1,
+                    character: 0
+                }
+            )
+            .is_none()
+        );
+    }
 }
 
 #[test]

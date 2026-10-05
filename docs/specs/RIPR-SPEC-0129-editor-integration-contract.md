@@ -312,6 +312,14 @@ qualified as static analysis results; diagnostic codes and data remain stable.
   `hover_for_position_adds_snapshot_status_to_seam_hover`) verify hover
   falls back to snapshot status and never fabricates content without a
   snapshot.
+- Hover reaches line-level diagnostics: a zero-width range is hoverable
+  across its own line (and highlights that line), and a line-level range
+  (zero-width or the projected full-line span) never shadows a
+  column-precise diagnostic at the precise diagnostic's columns.
+  `tests.rs::hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic`,
+  `tests.rs::hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line`
+  and `tests.rs::diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one`
+  verify it.
 - `tests.rs::initialize_result_exposes_existing_lsp_capabilities` pins
   the base advertisement: full text-document sync, position encoding, and
   workspace-folder support. Their deeper semantics are owned by the

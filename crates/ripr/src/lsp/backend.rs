@@ -3228,9 +3228,9 @@ impl Backend {
                 .iter()
                 .filter(|d| diagnostic_covers_position(d, position))
                 .collect();
-            // A zero-width (line-level) diagnostic covers its whole line, so
-            // it must not shadow a column-precise one the cursor is on.
-            overlapping.sort_by_key(|d| d.range.start == d.range.end);
+            // A line-level diagnostic covers its whole line, so it must not
+            // shadow a column-precise one the cursor is on.
+            overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
