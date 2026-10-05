@@ -933,4 +933,31 @@ mod tests {
         }
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
     }
+
+    /// #5510: the MCP gap evidence carries the packet-backed Perl rows with
+    /// the shared sentence on the direct row only.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn perl_packet_backed_rows_agree_in_gap_evidence() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+        let [direct, advisory] = finding.related_tests.as_slice() else {
+            return Err(format!("expected two rows: {:?}", finding.related_tests));
+        };
+        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+            .ok_or("the direct row should have a reason")?;
+        let item = GapItem::from_finding(&finding)?;
+        let rows = item.evidence_core["related_tests"]
+            .as_array()
+            .ok_or("expected related_tests in gap evidence")?;
+        let names = rows
+            .iter()
+            .map(|row| row["name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(names, [direct.name.as_str(), advisory.name.as_str()]);
+        assert_eq!(rows[0]["miss"], "observation_unconfirmed");
+        assert_eq!(rows[0]["why"], why.as_str());
+        assert!(rows[1]["miss"].is_null() && rows[1]["why"].is_null());
+        Ok(())
+    }
 }

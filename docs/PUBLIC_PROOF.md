@@ -10,7 +10,9 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 | Receipt | Measures | Revision | Detail |
 | --- | --- | --- | --- |
-| `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (c6ccf9d) | runner `local-linux-x86_64-4cpu` |
+| `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
+| `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
+| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | 4f81060 | runner `local-linux-x86_64-4cpu` |
 | `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.8 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
@@ -21,38 +23,58 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-22 bars. ripr meets 6, is below the bar on 13, and has not measured 3. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements.
+40 bars. ripr meets 14, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
-| Speed and memory | Cold `ripr pilot` to first useful result | **237.7 s** | <= 30.0 s | below the bar | +12.2 s since a7a089e (was 225.5 s) |
-| Speed and memory | Cold `ripr pilot` peak memory | **3467 MB** | <= 1024 MB | below the bar | -3 MB since a7a089e (was 3470 MB) |
-| Speed and memory | Warm `ripr check` on the last commit | **11.5 s** | <= 2.0 s | below the bar | +0.8 s since a7a089e (was 10.7 s) |
-| Speed and memory | Warm `ripr check` peak memory | **1187 MB** | <= 512 MB | below the bar | +13 MB since a7a089e (was 1174 MB) |
-| CI adoption | Lines in the workflow `ripr init --ci github` writes | **1154 lines** | <= 150 lines | below the bar | -1220 lines since a7a089e (was 2374 lines) |
-| CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | changed since a7a089e (was yes) |
+| Speed and memory | Cold `ripr pilot` to first useful result | **77.6 s** | <= 30.0 s | below the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 237.7 s) |
+| Speed and memory | Cold `ripr pilot` peak memory | **1595 MB** | <= 1024 MB | below the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 3467 MB) |
+| Speed and memory | Warm `ripr check` on the last commit | **5.1 s** | <= 2.0 s | below the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 11.5 s) |
+| Speed and memory | Warm `ripr check` peak memory | **590 MB** | <= 512 MB | below the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 1187 MB) |
+| CI adoption | Lines in the workflow `ripr init --ci github` writes | **387 lines** | <= 150 lines | below the bar | -767 lines since c6ccf9d (was 1154 lines) |
+| CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | unchanged since c6ccf9d (no) |
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
-| Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
-| Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
+| Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
+| Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
+| Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
 | Trust | Wrong verdicts on hand-checked changes from real repositories | **29.4%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 35.5%) |
+| Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
+| Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **6.2%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
+| Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
 | Trust | False actionable rate on the Rust judged behavior panel | not measured | <= 0.0% | not measured | no earlier measurement |
-| Pasted commands | Printed commands that break or run injected code under a hostile repo path | 0 commands | <= 0 commands | meets the bar | unchanged since a7a089e (0 commands) |
-| Pasted commands | Printed commands that drop the selected repository root | 0 commands | <= 0 commands | meets the bar | unchanged since a7a089e (0 commands) |
+| Pasted commands | Printed commands that break or run injected code under a hostile repo path | 0 commands | <= 0 commands | meets the bar | unchanged since c6ccf9d (0 commands) |
+| Pasted commands | Printed commands that drop the selected repository root | 0 commands | <= 0 commands | meets the bar | unchanged since c6ccf9d (0 commands) |
 | First run | New developer, fresh machine: install to first useful result | not measured | <= 300 s | not measured | no earlier measurement |
+| First run | Fresh machine: seconds to install ripr by the route the walk times (`cargo install ripr --locked`, a source build) | not measured | <= 120 s | not measured | no earlier measurement |
 | First run | Simple boundary edits on unfamiliar crates that get an `*_unknown` verdict | **3 cases** | <= 0 cases | below the bar | was 1 in ripr 0.10.0 |
 | First run | Friction events logged during the scripted first run | **4 events** | <= 0 events | below the bar | was 6 in ripr 0.10.0 |
 | First run | First-run steps that exit nonzero | 0 steps | <= 0 steps | meets the bar | unchanged from ripr 0.10.0 (0) |
 | First run | First-run steps over their own time, output-length or workflow-size budget | **3 steps** | <= 0 steps | below the bar | unchanged from ripr 0.10.0 (3) |
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
+| corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
+| corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |
+| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **36.8%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **37.1%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **70.0%** | >= 80.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks that land in a function no higher pick named | 100.0% | >= 90.0% | meets the bar | no earlier measurement |
+| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | 50 picks | >= 50 picks | meets the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **7 picks** | >= 12 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **12 picks** | <= 8 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **13 picks** | >= 24 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | **22 picks** | <= 16 picks | below the bar | no earlier measurement |
 
 Not measured, and why:
 
-- `ci.install_seconds`: needs a hosted run of the generated workflow; the prebuilt-install path landed with #5236 but no instrument times it yet
+- `ci.install_seconds`: no --ingest file supplied for `ingest:install`
+- `trust.pilot_top_recommendation_precision`: no --ingest file supplied for `ingest:mutation-spot-check`
 - `trust.judged_panel_false_actionable`: metrics/rust-judged-behavior-panel/calibration-scorecard.json candidates.false_actionable: denominator is 0, no eligible cases yet
 - `first_run.time_to_first_useful_result_s`: no --ingest file supplied for `ingest:first-run`
+- `first_run.install_seconds`: no --ingest file supplied for `ingest:first-run`
 
 ## Where ripr falls short
 
@@ -62,10 +84,10 @@ Each line below is computed from the receipts above. Detail sections follow.
 - **Mostly unsure.** On real-repository changes it abstained on 19 of 34 cases (55.9%); on the authored cases, 39 of 169 (23.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
-- **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
-- **Cold `ripr pilot` peak memory.** Worst repository: ripr-swarm at 3467 MB; the bar is at most 1024 MB.
-- **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 11.5 s; the bar is at most 2.0 s.
-- **Warm `ripr check` peak memory.** Worst repository: ripr-swarm at 1187 MB; the bar is at most 512 MB.
+- **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
+- **Cold `ripr pilot` peak memory.** Worst repository: ripr-swarm at 1595 MB; the bar is at most 1024 MB.
+- **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 5.1 s; the bar is at most 2.0 s.
+- **Warm `ripr check` peak memory.** Worst repository: ripr-swarm at 590 MB; the bar is at most 512 MB.
 - **First-run verdicts are unresolved.** 3 of 3 first-run crates ended in an `*_unknown` verdict on ripr 0.11.0 (a7a089e); 1 of 3 did on ripr 0.10.0.
 - **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates. The corpus manifest pins 34 repositories; 0 of the scoreboard's repositories appear in it at the same revision; the others were measured at a different revision or are not in the manifest.
 
@@ -348,15 +370,15 @@ What the corpus does not claim:
 
 ## Speed and memory
 
-Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `local-linux-x86_64-4cpu`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
+Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
 
 | Repository | Cold `ripr pilot` to first useful result | Cold `ripr pilot` peak memory | Warm `ripr check` on the last commit | Warm `ripr check` peak memory |
 | --- | --- | --- | --- | --- |
 | **Bar** | 30.0 s | 1024 MB | 2.0 s | 512 MB |
-| serde (small library workspace, macro-heavy tests) | **70.3 s** | 122 MB | 0.5 s | 57 MB |
-| ripgrep (multi-crate CLI workspace) | **80.4 s** | 583 MB | 0.6 s | 47 MB |
-| regex (large library workspace with generated test suites) | **100.1 s** | 990 MB | 0.8 s | 108 MB |
-| ripr-swarm (large workspace (~900 files); pinned, not the checkout under test) | **237.7 s** | **3467 MB** | **11.5 s** | **1187 MB** |
+| serde (small library workspace, macro-heavy tests) | 1.4 s | 74 MB | 0.1 s | 31 MB |
+| ripgrep (multi-crate CLI workspace) | 10.8 s | 248 MB | 0.2 s | 36 MB |
+| regex (large library workspace with generated test suites) | 17.2 s | 352 MB | 0.3 s | 50 MB |
+| ripr-swarm (large workspace (~900 files); pinned, not the checkout under test) | **77.6 s** | **1595 MB** | **5.1 s** | **590 MB** |
 
 ## First run
 
@@ -410,6 +432,10 @@ Across the runs: fix success 100.0%, stale re-check cycles 3, white-box tests wr
 
 34 real repositories are pinned to exact upstream commits (corpus 2026-10-04.5): 15 well-maintained, 9 legacy, 10 ordinary. The class is a judgment recorded per repository, not a measurement. The scoreboards were run on the repositories named in their own sections, which are not all in this manifest at these revisions, so a number above describes only the repositories its section names.
 
+Known gaps in the corpus:
+
+- no crate whose tests live exclusively in a separate test crate of another repository (html5ever covers only test data from submodules, not test code elsewhere)
+
 Repositories the speed scoreboard ran on:
 
 | Repository | Pinned commit | Source | Status |
@@ -440,4 +466,4 @@ cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then r
 cargo xtask public-proof --check             # fail if this page is stale
 ```
 
-Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.
+Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.

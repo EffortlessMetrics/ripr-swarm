@@ -7,7 +7,9 @@ use crate::cli::parse::{expect_value, parse_mode};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::core_error::CoreError;
 use crate::output;
+use crate::output::human::terminal_safe;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,6 +107,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
     analysis::pilot_seam_budget()?;
+    // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
+    // check's (#2613): seconds, `0` disables the deadline, and an invalid
+    // value fails closed here rather than running with the default.
+    let git_timeout = super::check::git_timeout_from_env(false, std::env::var("RIPR_GIT_TIMEOUT"))?
+        .unwrap_or(Some(app::default_cli_git_timeout()));
     let mut input = CheckInput {
         root: options.root.clone(),
         mode: options.mode.clone(),
@@ -181,6 +188,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             artifacts: &artifacts,
             python_first_use: None,
             language_routes: None,
+            current_change: None,
             seam_limit: None,
         };
         write_pilot_file(
@@ -213,7 +221,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         report.skipped_generated,
         report.naming_only_skips,
     );
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified)?;
+    // The current change is loaded before the budget cut so an actionable
+    // changed seam past the cut is kept and can still rank change-first. A
+    // changed seam pilot cannot recommend is not kept: it would displace an
+    // actionable seam and leave nothing to recommend.
+    let current_change = load_pilot_current_change(&input, git_timeout);
+    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+        current_change.keeps_past_budget(entry)
+    })?;
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when
     // both caps fired, the pilot budget's total is the already-capped
@@ -230,7 +245,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
-        eprintln!("ripr pilot: {warning}");
+        eprintln!("{}", terminal_safe(format!("ripr pilot: {warning}")));
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
@@ -256,6 +271,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
+        current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
     };
 
@@ -283,10 +299,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
-        output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
+        output::agent_seam_packets::render_agent_seam_packets_json_for_root(
             &classified,
             limit_info.as_ref(),
             causal_projection.as_ref(),
+            &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
         ),
     )?;
 
@@ -347,6 +364,76 @@ fn run_pilot_inventory(
     )
 }
 
+/// The current change: the base (resolved as `ripr check` resolves it,
+/// RIPR-SPEC-0084) against the live working tree when it has uncommitted
+/// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
+/// history only, so a working-tree change is recorded as such and pilot's
+/// printed `ripr check` command carries `--worktree` to analyze the same
+/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
+/// the changed lines first and says whether its top recommendation is part
+/// of the change. A load failure (not a Git work tree, no resolvable default
+/// base, a git error) never fails pilot: it is recorded as `unavailable` and
+/// the ranking stays repo-wide.
+fn load_pilot_current_change(
+    input: &CheckInput,
+    git_timeout: Option<std::time::Duration>,
+) -> output::pilot::PilotCurrentChange {
+    let mut from_working_tree = false;
+    // Resolve the base first: a root with no resolvable base (outside a Git
+    // work tree, say) is `unavailable` without running the working-tree
+    // probe at all.
+    let loaded = analysis::resolve_effective_base(&input.root, input.base.as_deref(), git_timeout)
+        .map_err(|err| {
+            current_change_unavailable_reason(&CoreError::from(err), "no default base resolved")
+        })
+        .and_then(|base| {
+            // A failed probe is not a clean tree: loading `<base>...HEAD`
+            // then would silently drop uncommitted edits from the change.
+            from_working_tree =
+                analysis::probe_working_tree_tracked_changes_within(&input.root, git_timeout)
+                    .map_err(|err| {
+                        current_change_unavailable_reason(
+                            &CoreError::from(err),
+                            "git status failed",
+                        )
+                    })?;
+            if from_working_tree {
+                analysis::load_worktree_diff_with_effective_base_core(
+                    &input.root,
+                    Some(&base),
+                    git_timeout,
+                )
+            } else {
+                analysis::load_diff_with_effective_base_core(
+                    &input.root,
+                    Some(&base),
+                    None,
+                    git_timeout,
+                )
+            }
+            .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
+        })
+        .map(|loaded| (loaded.text, loaded.effective_base));
+    output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
+        .with_working_tree(from_working_tree)
+}
+
+/// A few fixed words for why the current change could not be loaded, shown
+/// in pilot's scope line. Fixed phrases keep pilot artifacts deterministic;
+/// the loader's full message (paths, git stderr) belongs to `ripr check`.
+fn current_change_unavailable_reason(error: &CoreError, fallback: &'static str) -> &'static str {
+    let message = error.to_string();
+    if crate::git::is_git_not_found_on_path(&message) {
+        "git is not on PATH"
+    } else if error.is_git_invocation_timeout() {
+        "git timed out"
+    } else if message.contains("is not inside a Git work tree") {
+        "not a Git work tree"
+    } else {
+        fallback
+    }
+}
+
 fn collect_pilot_python_first_use(
     input: &CheckInput,
     config: &RiprConfig,
@@ -372,7 +459,7 @@ fn collect_pilot_python_first_use(
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
     let mut options = PilotOptions {
         root: PathBuf::from("."),
-        out_dir: PathBuf::from("target/ripr/pilot"),
+        out_dir: PathBuf::from(DEFAULT_PILOT_OUT_DIR),
         mode: Mode::Draft,
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
@@ -380,6 +467,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         timeout_explicit: false,
         quiet: false,
     };
+    let mut out_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -390,6 +478,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--out" => {
                 i += 1;
                 options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                out_explicit = true;
             }
             "--mode" => {
                 i += 1;
@@ -414,7 +503,29 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         }
         i += 1;
     }
+    if !out_explicit {
+        options.out_dir = default_pilot_out_dir(&options.root);
+    }
     Ok(options)
+}
+
+/// Where pilot writes its packet when `--out` is not given, relative to the
+/// working directory.
+const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
+
+/// The default packet directory sits under `--root`, where the cache already
+/// goes and where `ripr agent status --root` reads `pilot-summary.json`
+/// (#5324). Anchoring it at the working directory wrote the packet beside
+/// whatever repository the shell was in, overwriting that repository's own
+/// packet. A `.` root keeps the bare relative path so printed commands are
+/// unchanged; an explicit `--out` still resolves against the working
+/// directory.
+fn default_pilot_out_dir(root: &Path) -> PathBuf {
+    if root == Path::new(".") {
+        PathBuf::from(DEFAULT_PILOT_OUT_DIR)
+    } else {
+        root.join(DEFAULT_PILOT_OUT_DIR)
+    }
 }
 
 /// The deadline extension applies only to the default budget. A typed
@@ -580,6 +691,23 @@ mod tests {
                 quiet: true,
             })
         );
+    }
+
+    #[test]
+    fn default_out_dir_sits_under_the_root() -> Result<(), String> {
+        // #5324: without --out the packet goes under --root, where the cache
+        // and `ripr agent status --root` already look, not under the shell's
+        // directory. A `.` root keeps the bare relative path.
+        let other = parse_pilot_options(&args(&["--root", "../other"]))?;
+        assert_eq!(other.out_dir, Path::new("../other/target/ripr/pilot"));
+        let here = parse_pilot_options(&args(&["--root", "."]))?;
+        assert_eq!(here.out_dir, Path::new("target/ripr/pilot"));
+        let omitted = parse_pilot_options(&args(&[]))?;
+        assert_eq!(omitted.out_dir, Path::new("target/ripr/pilot"));
+        // An explicit --out stays as typed, before or after --root.
+        let out_first = parse_pilot_options(&args(&["--out", "packet", "--root", "../other"]))?;
+        assert_eq!(out_first.out_dir, Path::new("packet"));
+        Ok(())
     }
 
     #[test]
