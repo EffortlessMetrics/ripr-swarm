@@ -913,7 +913,7 @@ fn wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls
         }
         Ok(())
     }
-    fn nondiverging_custom_bail(value: i32) -> Result<(), &'static str> {
+    fn nondiverging_custom_bail(value: i32) {
         macro_rules! bail {
             ($message:expr) => {{
                 let _ = $message;
@@ -922,13 +922,12 @@ fn wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls
         if !matches!(value, 2) {
             bail!("diagnostic only");
         }
-        Ok(())
     }
     for value in [2, 3] {
         if std::panic::catch_unwind(|| discard(value)).is_err() {
             return Err("discarded boolean unexpectedly failed".to_string());
         }
-        if nondiverging_custom_bail(value).is_err() {
+        if std::panic::catch_unwind(|| nondiverging_custom_bail(value)).is_err() {
             return Err("custom bail name incorrectly implied divergence".to_string());
         }
         let wildcard_guard = || -> Result<(), &'static str> {
