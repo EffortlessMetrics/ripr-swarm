@@ -436,13 +436,15 @@ macro_rules! load_captured_body {
 pub(crate) fn load_work_captured_dir(root: &Path) -> Result<WorkCapturedDirV1, String> {
     let manifest_body = read_captured_file(root, "manifest.json")?;
     let manifest = load_work_captured_manifest(&manifest_body)?;
-    let source_state = |kind: WorkCapturedSourceKindV1| {
-        manifest
-            .sources
-            .iter()
-            .find(|source| source.source == kind)
-            .map(|source| source.state)
-            .ok_or_else(|| format!("manifest is missing source `{}`", kind.wire_name()))
+    let mut source_states = BTreeMap::new();
+    for source in &manifest.sources {
+        source_states.insert(source.source, source.state);
+    }
+    let source_label = |state: WorkCapturedSourceStateV1| match state {
+        WorkCapturedSourceStateV1::Observed => "observed",
+        WorkCapturedSourceStateV1::Missing => "missing",
+        WorkCapturedSourceStateV1::Stale => "stale",
+        WorkCapturedSourceStateV1::Unavailable => "unavailable",
     };
     let mut loaded = WorkCapturedDirV1 {
         manifest,
@@ -459,17 +461,19 @@ pub(crate) fn load_work_captured_dir(root: &Path) -> Result<WorkCapturedDirV1, S
             .file_name()
             .ok_or_else(|| format!("source `{}` has no file", kind.wire_name()))?;
         let present = root.join(file_name).is_file();
-        match source_state(kind)? {
+        let Some(state) = source_states.get(&kind).copied() else {
+            return Err(format!(
+                "manifest is missing source `{}`",
+                kind.wire_name()
+            ));
+        };
+        match state {
             WorkCapturedSourceStateV1::Observed | WorkCapturedSourceStateV1::Stale => {
                 if !present {
                     return Err(format!(
                         "manifest marks `{}` {} but {} is absent",
                         kind.wire_name(),
-                        if source_state(kind)? == WorkCapturedSourceStateV1::Observed {
-                            "observed"
-                        } else {
-                            "stale"
-                        },
+                        source_label(state),
                         file_name
                     ));
                 }
@@ -572,11 +576,7 @@ pub(crate) fn load_work_captured_dir(root: &Path) -> Result<WorkCapturedDirV1, S
                     return Err(format!(
                         "manifest marks `{}` {} but {} is present",
                         kind.wire_name(),
-                        if source_state(kind)? == WorkCapturedSourceStateV1::Missing {
-                            "missing"
-                        } else {
-                            "unavailable"
-                        },
+                        source_label(state),
                         file_name
                     ));
                 }
@@ -943,7 +943,7 @@ fn strip_volatile(value: &mut Value) {
                 map.remove(key);
             }
             for child in map.values_mut() {
-                strip_vololatile(child);
+                strip_volatile(child);
             }
         }
         Value::Array(items) => {
@@ -1177,6 +1177,16 @@ fn classify_candidate(
             WorkCandidateKindV1::ResearchIssue,
             "scope the issue and draft an accepted contract before any build is considered".to_string(),
         ),
+    }
+}
+
+/// The captured blocker shape is identical to the rendered dependency shape;
+/// convert explicitly so the two DTOs stay distinct types.
+fn dependency_from_blocker(blocker: &WorkCapturedBlockerV1) -> WorkDependencyV1 {
+    WorkDependencyV1 {
+        kind: blocker.kind.clone(),
+        reference: blocker.reference.clone(),
+        description: blocker.description.clone(),
     }
 }
 
@@ -1556,7 +1566,11 @@ pub(crate) fn compile_work_portfolio(
             campaigns: memberships,
             pull_requests: issue_prs,
             claims: issue_claims,
-            blocked_by: issue.blocked_by.clone(),
+            blocked_by: issue
+                .blocked_by
+                .iter()
+                .map(dependency_from_blocker)
+                .collect(),
         });
     }
     issue_rows.sort_by_key(|issue| issue.number);
@@ -2050,14 +2064,18 @@ pub(crate) fn compile_work_portfolio(
                 .or_else(|| issue_claims.first().map(|claim| claim.id.clone())),
             worktree: primary_pr
                 .and_then(|pr| pr.worktree_path.as_deref())
-                .map(|path| portable_path(path, local_root))
+                .map(|path| portable_path(path, &local_root))
                 .or_else(|| {
                     issue_claims
                         .first()
                         .and_then(|claim| claim.worktree.as_deref())
-                        .map(|path| portable_path(path, local_root))
+                        .map(|path| portable_path(path, &local_root))
                 }),
-            dependencies: issue.blocked_by.clone(),
+            dependencies: issue
+                .blocked_by
+                .iter()
+                .map(dependency_from_blocker)
+                .collect(),
             conflict_edges: candidate_edge_membership
                 .get(&candidate_id)
                 .cloned()
@@ -2160,7 +2178,7 @@ pub(crate) fn compile_work_portfolio(
             worktree: claim
                 .worktree
                 .as_deref()
-                .map(|path| portable_path(path, local_root)),
+                .map(|path| portable_path(path, &local_root)),
             exclusive: claim.exclusive,
             state: claim.state.clone(),
             colliding: colliding_claims.contains(&claim.id),
