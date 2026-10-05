@@ -70,6 +70,32 @@ struct RepoEntry {
     revision: String,
     license: String,
     labels: String,
+    /// How many labels the label file must hold, recorded apart from it so a
+    /// truncated or partly regenerated file cannot pass as the full run.
+    labeled: LabeledCount,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct LabeledCount {
+    caught: usize,
+    missed: usize,
+}
+
+impl LabeledCount {
+    fn of(labels: &LabelFile) -> Self {
+        let count = |outcome: &str| {
+            labels
+                .mutants
+                .iter()
+                .filter(|mutant| mutant.outcome == outcome)
+                .count()
+        };
+        LabeledCount {
+            caught: count("caught"),
+            missed: count("missed"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -330,7 +356,20 @@ fn load_labels(repo: &RepoEntry, labels_dir: &Path) -> Result<LabelFile, String>
     let labels: LabelFile = serde_json::from_str(&text)
         .map_err(|err| format!("parse labels {}: {err}", path.display()))?;
     validate_labels(repo, &labels).map_err(|err| format!("{}: {err}", path.display()))?;
+    check_label_count(repo, &labels).map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(labels)
+}
+
+/// The label file must hold exactly the manifest's caught and missed counts.
+fn check_label_count(repo: &RepoEntry, labels: &LabelFile) -> Result<(), String> {
+    let found = LabeledCount::of(labels);
+    if found == repo.labeled {
+        return Ok(());
+    }
+    Err(format!(
+        "holds {} caught and {} missed labels, but the manifest records {} and {} for `{}`; relabel, or update `labeled` after an intended relabel",
+        found.caught, found.missed, repo.labeled.caught, repo.labeled.missed, repo.id
+    ))
 }
 
 fn validate_labels(repo: &RepoEntry, labels: &LabelFile) -> Result<(), String> {
@@ -570,11 +609,19 @@ fn label(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
     let path = labels_dir.join(&repo.labels);
     fs::write(&path, render_labels(&labels)?)
         .map_err(|err| format!("write {}: {err}", path.display()))?;
+    let found = LabeledCount::of(&labels);
     println!(
-        "pilot-ranking: wrote {} ({} labeled mutants)",
+        "pilot-ranking: wrote {} ({} caught, {} missed)",
         path.display(),
-        labels.mutants.len()
+        found.caught,
+        found.missed
     );
+    if found != repo.labeled {
+        println!(
+            "pilot-ranking: set `{id}`'s manifest `labeled` to {{\"caught\": {}, \"missed\": {}}} once this relabel is intended",
+            found.caught, found.missed
+        );
+    }
     Ok(())
 }
 
@@ -855,7 +902,13 @@ struct Cut {
     refuted: usize,
     unscored: usize,
     distinct_functions: usize,
+    /// Confirmed and refuted picks per judge tier, in `TIERS` order, so the
+    /// cut's precision shows how much rests on the coarse tiers.
+    tiers: [[usize; 2]; 3],
 }
+
+/// The shared judge's tiers, finest first.
+const TIERS: [&str; 3] = ["seam", "line", "owner"];
 
 impl Cut {
     fn of(judged: &[Value], k: usize) -> Self {
@@ -863,10 +916,25 @@ impl Cut {
         let mut owners = BTreeSet::new();
         for row in judged.iter().take(k) {
             cut.picks += 1;
-            match row.get("verdict").and_then(Value::as_str) {
-                Some("confirmed") => cut.confirmed += 1,
-                Some("refuted") => cut.refuted += 1,
-                _ => cut.unscored += 1,
+            let verdict = match row.get("verdict").and_then(Value::as_str) {
+                Some("confirmed") => {
+                    cut.confirmed += 1;
+                    Some(0)
+                }
+                Some("refuted") => {
+                    cut.refuted += 1;
+                    Some(1)
+                }
+                _ => {
+                    cut.unscored += 1;
+                    None
+                }
+            };
+            let tier = row.get("tier").and_then(Value::as_str);
+            if let (Some(verdict), Some(tier)) =
+                (verdict, TIERS.iter().position(|name| Some(*name) == tier))
+            {
+                cut.tiers[tier][verdict] += 1;
             }
             // A pick without an owner counts as its own function, so a
             // missing field can only understate repetition, never hide it.
@@ -896,6 +964,11 @@ impl Cut {
             refuted: self.refuted + other.refuted,
             unscored: self.unscored + other.unscored,
             distinct_functions: self.distinct_functions + other.distinct_functions,
+            tiers: std::array::from_fn(|tier| {
+                std::array::from_fn(|verdict| {
+                    self.tiers[tier][verdict] + other.tiers[tier][verdict]
+                })
+            }),
         }
     }
 
@@ -916,13 +989,19 @@ impl Cut {
             "scored_share": ratio(self.confirmed + self.refuted, self.picks),
             "distinct_functions": self.distinct_functions,
             "distinct_function_share": ratio(self.distinct_functions, self.picks),
+            "by_tier": TIERS
+                .iter()
+                .zip(self.tiers)
+                .map(|(tier, [confirmed, refuted])| {
+                    (tier.to_string(), json!({"confirmed": confirmed, "refuted": refuted}))
+                })
+                .collect::<serde_json::Map<_, _>>(),
         })
     }
 }
 
 fn build_report(manifest: &Manifest, binary: &Path, repos: &[RepoScore]) -> Value {
     let mut pooled: BTreeMap<usize, Cut> = BTreeMap::new();
-    let mut by_tier: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     let mut repo_rows = Vec::new();
     for repo in repos {
         match &repo.judged {
@@ -933,14 +1012,6 @@ fn build_report(manifest: &Manifest, binary: &Path, repos: &[RepoScore]) -> Valu
                     let total = pooled.entry(k).or_default();
                     *total = total.add(cut);
                     cuts.insert(format!("top{k}"), cut.to_json());
-                }
-                for row in judged {
-                    let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
-                    *by_tier
-                        .entry(field("tier").to_string())
-                        .or_default()
-                        .entry(field("verdict").to_string())
-                        .or_default() += 1;
                 }
                 repo_rows.push(json!({
                     "id": repo.id,
@@ -973,7 +1044,6 @@ fn build_report(manifest: &Manifest, binary: &Path, repos: &[RepoScore]) -> Valu
             .into_iter()
             .map(|(k, cut)| (format!("top{k}"), cut.to_json()))
             .collect::<serde_json::Map<_, _>>(),
-        "by_tier": by_tier,
         "repos": repo_rows,
     })
 }

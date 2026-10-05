@@ -7,6 +7,10 @@ fn repo() -> RepoEntry {
         revision: "a".repeat(40),
         license: "MIT".to_string(),
         labels: "labels/demo.json".to_string(),
+        labeled: LabeledCount {
+            caught: 1,
+            missed: 1,
+        },
     }
 }
 
@@ -172,6 +176,13 @@ fn label_validation_refuses_another_revision_unsorted_or_unknown_outcomes() {
     assert!(validate_labels(&repo(), &unsorted).is_err());
     let timeout = file("a".repeat(40), vec![label("m1", 1, "timeout")]);
     assert!(validate_labels(&repo(), &timeout).is_err());
+
+    // A file that lost a label still validates on its own; the manifest's
+    // count is what refuses it.
+    assert_eq!(check_label_count(&repo(), &good), Ok(()));
+    let truncated = file("a".repeat(40), vec![label("m1", 1, "caught")]);
+    assert_eq!(validate_labels(&repo(), &truncated), Ok(()));
+    assert!(check_label_count(&repo(), &truncated).is_err_and(|err| err.contains("0 missed")));
 }
 
 #[test]
@@ -336,6 +347,7 @@ fn cuts_count_precision_and_distinct_functions_within_k() {
             refuted: 1,
             unscored: 1,
             distinct_functions: 2,
+            tiers: [[0, 0], [1, 1], [0, 0]],
         }
     );
     let json = Cut::of(&judged, 10).to_json();

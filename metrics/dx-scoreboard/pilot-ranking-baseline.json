@@ -48,7 +48,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 12 refuted of 25 picks (every judged pick by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 12 refuted of 25 picks (by tier: seam 0/2, line 5/7, owner 2/10) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.3684
@@ -74,7 +74,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (every judged pick by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.3714
@@ -100,7 +100,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (every judged pick by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.7
@@ -152,7 +152,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (every judged pick by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 13 confirmed, 22 refuted of 50 picks (by tier: seam 0/4, line 10/12, owner 3/19) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "meets_target",
           "value": 50.0
@@ -225,7 +225,7 @@
       "status": "not_measured"
     }
   ],
-  "revision": "df136cd5797f268047747f049d9d695d33cfc90f",
+  "revision": "8c1c2eac5c66e9aee22ae136465425afd20ed435",
   "rollup": {
     "below_target": 3,
     "failed": 0,

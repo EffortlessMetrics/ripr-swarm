@@ -17,35 +17,40 @@
       "url": "https://github.com/dtolnay/semver",
       "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
       "license": "MIT OR Apache-2.0",
-      "labels": "labels/semver.json"
+      "labels": "labels/semver.json",
+      "labeled": {"caught": 268, "missed": 60}
     },
     {
       "id": "bytesize",
       "url": "https://github.com/bytesize-rs/bytesize",
       "revision": "66a3715e33369e99cb428bcd5aee32291f8e0a94",
       "license": "Apache-2.0",
-      "labels": "labels/bytesize.json"
+      "labels": "labels/bytesize.json",
+      "labeled": {"caught": 186, "missed": 144}
     },
     {
       "id": "humantime",
       "url": "https://github.com/tailhook/humantime",
       "revision": "76c8929b4cc286f675322475a8e1841f35bafc57",
       "license": "MIT OR Apache-2.0",
-      "labels": "labels/humantime.json"
+      "labels": "labels/humantime.json",
+      "labeled": {"caught": 539, "missed": 18}
     },
     {
       "id": "strsim-rs",
       "url": "https://github.com/rapidfuzz/strsim-rs",
       "revision": "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26",
       "license": "MIT",
-      "labels": "labels/strsim-rs.json"
+      "labels": "labels/strsim-rs.json",
+      "labeled": {"caught": 272, "missed": 79}
     },
     {
       "id": "rust-hex",
       "url": "https://github.com/KokaKiwi/rust-hex",
       "revision": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb",
       "license": "MIT OR Apache-2.0",
-      "labels": "labels/rust-hex.json"
+      "labels": "labels/rust-hex.json",
+      "labeled": {"caught": 61, "missed": 20}
     }
   ]
 }

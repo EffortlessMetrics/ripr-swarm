@@ -1808,6 +1808,24 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
         == "ranking.pilot_distinct_function_share_top10"
         && sample.detail.contains("40 distinct functions in 50 picks")));
 
+    // Each precision row shows its own cut's tier split, and a split that
+    // does not account for exactly the cut's judged picks is refused.
+    let mut tiered = receipt.clone();
+    tiered["pooled"]["top5"]["by_tier"] = json!({
+        "seam": {"confirmed": 1, "refuted": 1},
+        "line": {"confirmed": 5, "refuted": 4},
+        "owner": {"confirmed": 2, "refuted": 7},
+    });
+    let samples = parse_ingest(&tiered, &config)?;
+    assert!(samples.iter().any(|sample| {
+        sample.metric == "ranking.pilot_precision_top5"
+            && sample
+                .detail
+                .contains("(by tier: seam 1/2, line 5/9, owner 2/9)")
+    }));
+    tiered["pooled"]["top5"]["by_tier"]["owner"]["refuted"] = json!(8);
+    assert!(parse_ingest(&tiered, &config).is_err_and(|err| err.contains("judges 21 picks")));
+
     // A crate that could not be fetched or scored changes the population, so
     // every row is incomplete instead of a rate the gate compares as like for
     // like.

@@ -1007,24 +1007,6 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
             "pilot-ranking receipt needs a positive repos_total no smaller than unavailable_repos",
         )?;
     let complete = unavailable == 0 && value["status"].as_str() == Some("complete");
-    // How much of the precision rests on the coarse line and owner tiers.
-    let tiers = ["seam", "line", "owner"]
-        .iter()
-        .map(|tier| {
-            let count = |verdict: &str| {
-                value
-                    .pointer(&format!("/by_tier/{tier}/{verdict}"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-            };
-            format!(
-                "{tier} {}/{}",
-                count("confirmed"),
-                count("confirmed") + count("refuted")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
     let mut rows = Vec::new();
     for (metric, cut, field) in [
         ("ranking.pilot_precision_top5", "top5", "precision"),
@@ -1045,6 +1027,29 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
         };
         let (picks, confirmed, refuted) = (count("picks")?, count("confirmed")?, count("refuted")?);
         let distinct = count("distinct_functions")?;
+        // How much of this cut's precision rests on the coarse line and owner
+        // tiers. The split must account for exactly the cut's judged picks.
+        let tiers = match entry.get("by_tier") {
+            None => String::new(),
+            Some(by_tier) => {
+                let mut judged = 0;
+                let mut parts = Vec::new();
+                for tier in ["seam", "line", "owner"] {
+                    let tally = |verdict: &str| by_tier[tier][verdict].as_u64().unwrap_or(0);
+                    let (tier_confirmed, tier_judged) =
+                        (tally("confirmed"), tally("confirmed") + tally("refuted"));
+                    judged += tier_judged;
+                    parts.push(format!("{tier} {tier_confirmed}/{tier_judged}"));
+                }
+                if judged != confirmed + refuted {
+                    return Err(format!(
+                        "pilot-ranking pooled.{cut}.by_tier judges {judged} picks, not the cut's {}",
+                        confirmed + refuted
+                    ));
+                }
+                format!(" (by tier: {})", parts.join(", "))
+            }
+        };
         if confirmed + refuted > picks || distinct > picks {
             return Err(format!(
                 "pilot-ranking pooled.{cut} counts more confirmed, refuted or distinct picks than its {picks} picks"
@@ -1067,9 +1072,7 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
         let mut evidence = if field == "distinct_function_share" {
             format!("{distinct} distinct functions in {picks} picks")
         } else {
-            format!(
-                "{confirmed} confirmed, {refuted} refuted of {picks} picks (every judged pick by tier: {tiers})"
-            )
+            format!("{confirmed} confirmed, {refuted} refuted of {picks} picks{tiers}")
         };
         evidence.push_str(&format!(
             " over {} of {total} repositories, corpus {corpus}",

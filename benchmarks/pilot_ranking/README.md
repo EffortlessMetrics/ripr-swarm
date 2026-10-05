@@ -90,8 +90,11 @@ cargo xtask pilot-ranking label --repo semver=../pilot-ranking/semver \
 Pass any argument that changed which mutants the run tried (`--re`, `--file`,
 `--package`) to `label` as `--mutants-arg <arg>`, so the label file records
 it; options that only change scheduling, such as `--jobs`, need not be
-recorded. `label` refuses a `mutants.out` whose mutant diffs do not match the pinned
-checkout, a mutant without an outcome, and an outcome without a mutant. After
+recorded. `label` refuses a `mutants.out` whose mutant diffs do not match the
+pinned checkout, a mutant without an outcome, and an outcome without a mutant.
+It prints the caught and missed counts; record them as the repository's
+`labeled` entry in `manifest.json`, which `check` holds each label file to, so
+a truncated label file cannot pass as the full run. After
 an intended ranking improvement, refresh the baseline from the new receipt:
 
 ```bash
