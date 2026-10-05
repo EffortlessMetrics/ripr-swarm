@@ -30,7 +30,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: subtotal * 8 / 100 (line 6)
   - related test src/lib.rs:14 tax_is_owed uses weak relational check oracle: assert!(owed > 0); misses: assertion too weak to tell the old behavior from the new
-  - related test src/lib.rs:20 subtotal_multiplies uses strong exact value oracle: assert_eq!(subtotal(3, 100), 300); misses: assertion does not mention the changed expression
+  - related test src/lib.rs:20 subtotal_multiplies uses strong exact value oracle: assert_eq!(subtotal(3, 100), 300); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value subtotal = 300 at line 15
   - source assertion argument value 0 at line 16
   - source assertion argument value 100 at line 21
