@@ -818,9 +818,16 @@ impl PackageWalk {
                 batch.push(queued.clone());
             }
         }
+        // Workers do not inherit this thread's committed-source overlay, and
+        // a committed-history diff must walk `HEAD` content.
+        let overlay = crate::analysis::committed_source::current_overlay();
         let reads = batch
             .par_iter()
-            .map(|path| read_module(workspace_root, path))
+            .map(|path| {
+                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                    read_module(workspace_root, path)
+                })
+            })
             .collect::<Vec<_>>();
         self.read_ahead.extend(batch.into_iter().zip(reads));
     }
@@ -1096,6 +1103,38 @@ mod tests {
     }
 
     const MANIFEST: &str = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n";
+
+    #[test]
+    fn zz_review_overlay_survives_read_ahead() -> Result<(), String> {
+        let root = fixture(
+            "rv-overlay",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers=['a','b']\n"),
+                ("a/Cargo.toml", MANIFEST),
+                ("a/src/lib.rs", "mod gen;\nmod s1;\nmod s2;\nmod s3;\n"),
+                ("a/src/s1.rs", ""),
+                ("a/src/s2.rs", ""),
+                ("a/src/s3.rs", ""),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/reached.rs", ""),
+            ],
+        )?;
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [(
+                "a/src/gen.rs",
+                Some(b"#[path = \"../../b/src/reached.rs\"]\nmod reached;\n".as_slice()),
+            )],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &["b/src/reached.rs"]),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(committed.module_graph_orphans.is_empty(), "{:?}", committed.module_graph_orphans);
+        Ok(())
+    }
 
     #[test]
     fn read_ahead_leaves_completeness_to_the_files_the_walk_expands() -> Result<(), String> {
@@ -1605,6 +1644,42 @@ mod tests {
         assert!(
             committed.module_graph_orphans.is_empty(),
             "the `HEAD` manifest compiles `src/old.rs`: {:?}",
+            committed.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn read_ahead_scans_module_files_under_the_overlay() -> Result<(), String> {
+        // Module files are read ahead on the rayon workers, which must see
+        // the committed-source overlay the calling thread installed. On disk
+        // the lib root declares nothing; at `HEAD` it declares `mod old;`.
+        let root = fixture(
+            "dirty-module",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", ""),
+                ("src/old.rs", ""),
+            ],
+        )?;
+        let worktree = evidence_for(&root, &["src/old.rs"]);
+        assert!(
+            worktree
+                .module_graph_orphans
+                .contains(Path::new("src/old.rs")),
+            "fixture control: the working-tree root leaves `src/old.rs` unreached"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [("src/lib.rs", Some(b"mod old;\n".as_slice()))],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &["src/old.rs"]),
+        );
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "the `HEAD` root declares `src/old.rs`: {:?}",
             committed.module_graph_orphans
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
