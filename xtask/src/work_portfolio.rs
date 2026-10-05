@@ -4475,10 +4475,13 @@ mod tests {
         }
         let view = build_explain_view(&snapshot, "candidate:issue:9107")?;
         let explain = work_explain_markdown(&view);
-        if !explain.contains("partial") || !explain.contains("claim-collision") {
-            return Err(
-                "the degraded candidate must stay degraded in the human rendering".to_string(),
-            );
+        // The rendered prose carries the snake_case wire identity of the
+        // conflict edge (`edge:claim_collision:issue-9107`), not a kebab-case
+        // label; the needle must match what the contract actually renders.
+        if !explain.contains("partial") || !explain.contains("edge:claim_collision:issue-9107") {
+            return Err(format!(
+                "the degraded candidate must stay degraded in the human rendering: {explain}"
+            ));
         }
         let candidates_md =
             work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
