@@ -188,6 +188,7 @@ struct SchedulerState {
 pub(super) struct RefreshScheduler {
     state: Mutex<SchedulerState>,
     execution_gate: Arc<Mutex<()>>,
+    analysis_thread: Arc<super::analysis_thread::AnalysisThread>,
 }
 
 impl Default for RefreshScheduler {
@@ -195,6 +196,7 @@ impl Default for RefreshScheduler {
         Self {
             state: Mutex::new(SchedulerState::default()),
             execution_gate: Arc::new(Mutex::new(())),
+            analysis_thread: Arc::default(),
         }
     }
 }
@@ -452,8 +454,24 @@ impl RefreshScheduler {
         state.active.is_none() && state.pending_latest.is_none()
     }
 
+    /// Whether `stop()` shut the scheduler down. A stopped refresh must not
+    /// roll back (republish previous diagnostics): shutdown owns the terminal
+    /// empty publish and a rollback after it would resurrect stale client
+    /// state (#5202). An unreadable lock reads as stopping so the failed-lock
+    /// path stays silent instead of inventing a republish.
+    pub(super) fn is_stopping(&self) -> bool {
+        let Ok(state) = self.state.lock() else {
+            return true;
+        };
+        state.stopping
+    }
+
     pub(super) fn execution_gate(&self) -> Arc<Mutex<()>> {
         Arc::clone(&self.execution_gate)
+    }
+
+    pub(super) fn analysis_thread(&self) -> Arc<super::analysis_thread::AnalysisThread> {
+        Arc::clone(&self.analysis_thread)
     }
 
     pub(super) fn pending_request(&self, generation: u64) -> Option<RefreshRequest> {

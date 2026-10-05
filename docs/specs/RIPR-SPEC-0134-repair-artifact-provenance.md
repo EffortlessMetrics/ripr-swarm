@@ -17,6 +17,7 @@ Linked issues:
   content identities.
 - [#1941](https://github.com/EffortlessMetrics/ripr-swarm/issues/1941) - agent
   verify and receipt trust boundary.
+- #5744 - preserve native Unix roots in producer identity and verify inputs.
 
 Support-tier impact:
 
@@ -51,7 +52,17 @@ from `ripr.toml`), and analyzer version — never the
 concrete checkout root or a host-specific path spelling. Equivalent checkouts
 of the same commit under different roots share one input identity; the
 concrete root remains separate envelope evidence (`repository.root`) that the
-verifier compares with exact canonical-path equality. Version 4 (#3906)
+verifier compares with exact canonical-path equality. The producer preserves
+literal Unix filename characters in that concrete root and in
+verify's before/after artifact paths; Windows retains separator normalization.
+Generic report display text is separate from these admitted filesystem inputs.
+Receipt issuance also preserves the native UTF-8 Unix root and artifact paths
+in its provenance and absolute verify locator, so first-action can reopen the
+authentic evidence. This changes identity serialization, not root-independent
+digests, canonical equality, containment or receipt-currentness admission.
+Root containment and canonical equality remain mandatory, including when an
+authentic artifact is presented through a different checkout with the same HEAD.
+Version 4 (#3906)
 narrows the lockfile input to Git-tracked lockfiles: an untracked or ignored
 `Cargo.lock` is build state that Cargo writes when it resolves dependencies
 (the first `cargo test` of a library that does not commit one), and the static
@@ -153,6 +164,17 @@ after movement succeeds but discloses `historical_noncurrent`.
 ## Required Evidence
 
 - Producer output tests cover identity and streaming output.
+- `repo_exposure_literal_unix_root_is_admitted_only_at_its_producer` covers
+  actual producer metadata/content commitment and same-HEAD clone refusal.
+  `cli_snapshot_verify_absolute_inputs_retain_literal_unix_root` exercises
+  the real snapshot writer, verify renderer and receipt admission with
+  absolute and relative inputs; it does not invoke the standalone CLI process.
+- `cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy` uses
+  a real committed source diff, complete analysis outcome and same-HEAD
+  `dirty_both` snapshots through actual CLI receipt issuance and first-action
+  admission. A mandatory authentic positive precedes different-root,
+  locator/digest tamper and immutable receipt/verify byte controls. This is
+  private dispatch/consumer evidence, not standalone CLI process execution.
 - CLI smoke tests cover a valid bound pair, a historical comparable pair,
   mixed pair-currentness disclosure (historical-before/current-after,
   current-before/historical-after descendant acceptance, dirty-before,
@@ -333,6 +355,17 @@ ordinary files are permitted. The retained source budget is checked again.
 These are unlocked observations with the same stated race limits as manifest
 custody. The batch buffer and retained blob map can coexist transiently; the
 128 MiB limit names retained blob bytes, not total process resident memory.
+
+Archive, extracted install input and installed executable revalidation reuse
+that same regular-file snapshot reader. Each reread is capped at its already
+retained byte length plus one, including zero-length extracted files. Growth,
+truncation, same-length byte changes, missing files, directories and symlink
+replacements refuse; unchanged ordinary bytes remain accepted. Parent paths
+are resolved for each observation. This does not lock the parent hierarchy or
+authenticate the invoked executable, and the existing unlocked race limits
+remain. Initial archive/executable capture and archive decompression are not
+bounded by this reread contract; full package/install qualification remains
+separate from these controls.
 
 The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,
 1,949,776 bytes in the largest blob, and 647,658 metadata bytes. That observation

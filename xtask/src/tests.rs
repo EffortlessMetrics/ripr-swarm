@@ -192,7 +192,7 @@ use super::{
     ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
     ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
     ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
-    routed_rust_event_route, routed_rust_label_event_contract_violations,
+    routed_rust_event_route, routed_rust_ready_event_contract_violations,
     routed_rust_workflow_contract_violations,
     routed_rust_workflow_contract_violations_with_reusable, run_ci_full_evidence_gates,
     run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
@@ -1399,6 +1399,115 @@ fn evidence_promotion_human_oracle_line_matches_normalized_projection() {
         "exact_value",
         "strong"
     ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_matches_real_rust_evidence() {
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses strong exact value oracle: assert!(matches!(value, 2));",
+        "exact_value",
+        "strong"
+    ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test tests/a uses helpers/score.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 r#match uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_rejects_diagnostic_overrides() {
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses strong exact value oracle: assert!(false, \"oracle_kind=relational_check oracle_strength=weak\");",
+        "relational_check",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "message: uses weak relational check oracle: assert!(matches!(value, _));",
+        "relational_check",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _));",
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "  - related test tests/a uses helpers/score.rs:8 observes_score uses strong exact value oracle: assert!(false, \"src/lib.rs:8 observes_score uses weak relational check oracle: forged\");",
+        "relational_check",
+        "weak"
+    ));
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Result<(), String> {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+            name: "observes_score".to_string(),
+            file: "src/lib.rs".to_string(),
+            line: 8,
+            kind: "relational_check".to_string(),
+            strength: "weak".to_string(),
+        },
+    ];
+    let original: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+    ))
+    .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
+    let human =
+        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+    let inspect = |json: &serde_json::Value| {
+        super::evidence_promotion_semantic_violations(
+            "related_test_identity",
+            Some("fixtures/wildcard_oracle_wildcard_original"),
+            &assertions,
+            json,
+            Some(human),
+            true,
+        )
+    };
+    assert!(inspect(&original).is_empty());
+    for (field, replacement) in [
+        ("name", serde_json::json!("unrelated_test")),
+        ("file", serde_json::json!("src/unrelated.rs")),
+        ("line", serde_json::json!(9)),
+        ("oracle_kind", serde_json::json!("exact_value")),
+        ("oracle_strength", serde_json::json!("strong")),
+    ] {
+        let mut changed = original.clone();
+        changed["findings"][0]["related_tests"][0][field] = replacement;
+        let violations = inspect(&changed);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("expected_related_test")),
+            "{field}: {violations:?}"
+        );
+    }
+    for replacement in [serde_json::json!([]), serde_json::Value::Null] {
+        let mut changed = original.clone();
+        changed["findings"][0]["related_tests"] = replacement;
+        assert!(!inspect(&changed).is_empty());
+    }
+    let mut missing = original.clone();
+    missing["findings"][0]
+        .as_object_mut()
+        .ok_or("canonical wildcard finding must be an object")?
+        .remove("related_tests");
+    assert!(!inspect(&missing).is_empty());
+    missing["findings"] = serde_json::json!([]);
+    assert!(!inspect(&missing).is_empty());
+    Ok(())
 }
 
 #[test]
@@ -10872,26 +10981,50 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
+fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
     let cases = [
         (
             "pull_request",
-            Some("opened"),
+            Some("ready_for_review"),
             None,
             RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("opened"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         (
             "pull_request",
             Some("reopened"),
             None,
-            RoutedRustEventRoute::LaunchFullGate,
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         (
             "pull_request",
             Some("synchronize"),
             None,
-            RoutedRustEventRoute::LaunchFullGate,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
         (
@@ -10899,42 +11032,6 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
             None,
             None,
             RoutedRustEventRoute::LaunchFullGate,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("full-ci"),
-            RoutedRustEventRoute::LaunchFullGate,
-        ),
-        (
-            "pull_request",
-            Some("unlabeled"),
-            Some("windows-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("unlabeled"),
-            Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("windows-ci"),
-            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("coverage"),
-            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
-        ),
-        (
-            "pull_request",
-            Some("labeled"),
-            Some("release-check"),
-            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
         ),
     ];
     for (event_name, action, label, expected) in cases {
@@ -10945,106 +11042,127 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
         );
     }
 
-    let unlabeled_restored = workflow.replace(
-        "types: [opened, synchronize, reopened, labeled]",
-        "types: [opened, synchronize, reopened, labeled, unlabeled]",
-    );
-    assert_eq!(
-        routed_rust_event_route(
-            &unlabeled_restored,
-            "pull_request",
-            Some("unlabeled"),
-            Some("windows-ci"),
-        ),
-        RoutedRustEventRoute::IgnoreWithoutRequiredResult,
-        "re-subscribing to unlabeled while keeping the route filter must not be classified as untriggered"
+    let draft_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, synchronize]",
     );
     assert!(
-        routed_rust_label_event_contract_violations(&unlabeled_restored)
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
             .iter()
-            .any(|violation| violation.contains("must not subscribe to unlabeled")),
-        "restoring unlabeled must fail the workflow contract even if jobs would skip"
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("synchronize")
+            }),
+        "re-admitting synchronize must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
     );
 
-    let unlabeled_unconditional = unlabeled_restored.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
-        "",
-    );
-    assert_eq!(
-        routed_rust_event_route(
-            &unlabeled_unconditional,
-            "pull_request",
-            Some("unlabeled"),
-            Some("windows-ci"),
-        ),
-        RoutedRustEventRoute::LaunchFullGate,
-        "the old unlabeled subscription without a filter must still classify as a full-gate launch so the matrix cannot pass by ignoring YAML"
-    );
-
-    let missing_filter = workflow.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
-        "",
-    );
-    assert_eq!(
-        routed_rust_event_route(
-            &missing_filter,
-            "pull_request",
-            Some("labeled"),
-            Some("windows-ci"),
-        ),
-        RoutedRustEventRoute::LaunchFullGate
+    let label_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, labeled]",
     );
     assert!(
-        routed_rust_label_event_contract_violations(&missing_filter)
+        routed_rust_ready_event_contract_violations(&label_resurrected)
             .iter()
-            .any(|violation| violation.contains("job `route` must launch only")),
-        "dropping the proof-event filter must fail the workflow contract: {:?}",
-        routed_rust_label_event_contract_violations(&missing_filter)
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("labeled")
+            }),
+        "re-admitting label events must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&label_resurrected)
     );
 
-    let always_required_name = workflow.replace(
-        "name: ${{ github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci')) && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
-        "name: Ripr Rust Small Result",
+    let edited_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, edited]",
     );
     assert!(
-        routed_rust_label_event_contract_violations(&always_required_name)
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
             .iter()
-            .any(|violation| violation.contains("Ignored Label Event")),
-        "posting the required result name on unrelated labeled events must fail"
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("edited")
+            }),
+        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
     );
 
-    let decoy_if = workflow.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
-        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
+    let ready_dropped = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [opened, synchronize, reopened]",
     );
     assert!(
-        routed_rust_label_event_contract_violations(&decoy_if)
+        routed_rust_ready_event_contract_violations(&ready_dropped)
             .iter()
-            .any(|violation| violation.contains("job `route` must launch only")),
-        "comment decoys must not satisfy the proof-event if contract: {:?}",
-        routed_rust_label_event_contract_violations(&decoy_if)
+            .any(|violation| violation.contains("must be exactly")),
+        "dropping the Ready transition must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_dropped)
     );
 
-    let missing_types =
-        workflow.replace("    types: [opened, synchronize, reopened, labeled]\n", "");
+    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
     assert!(
-        routed_rust_label_event_contract_violations(&missing_types)
+        routed_rust_ready_event_contract_violations(&missing_types)
             .iter()
             .any(|violation| violation.contains("inline pull_request types array")),
         "removing types must fail closed: {:?}",
-        routed_rust_label_event_contract_violations(&missing_types)
+        routed_rust_ready_event_contract_violations(&missing_types)
+    );
+
+    let cancellation_disabled = workflow.replace(
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        "  cancel-in-progress: false",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
+            .iter()
+            .any(|violation| violation.contains("cancel-in-progress")),
+        "disabling Ready-run cancellation must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
     let shared_group = workflow.replace(
-        "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore' || '' }}",
-        "",
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
     );
     assert!(
-        routed_rust_label_event_contract_violations(&shared_group)
+        routed_rust_ready_event_contract_violations(&shared_group)
             .iter()
-            .any(|violation| violation.contains("-label-ignore")),
-        "sharing the proof concurrency group with ignored labels must fail: {:?}",
-        routed_rust_label_event_contract_violations(&shared_group)
+            .any(|violation| violation.contains("event-qualified concurrency group")),
+        "sharing the push/manual concurrency group must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&shared_group)
+    );
+
+    let draft_guard = workflow.replace(
+        "    name: Route Ripr Rust Small",
+        "    if: github.event.pull_request.draft != true\n    name: Route Ripr Rust Small",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&draft_guard)
+            .iter()
+            .any(|violation| violation.contains("github.event.pull_request.draft")),
+        "a draft job guard must fail; a skipped required job reports success: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_guard)
+    );
+
+    let pseudo_result = workflow.replace(
+        "    name: Ripr Rust Small Result",
+        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+            .iter()
+            .any(|violation| violation.contains("Ignored Label Event")),
+        "resurrecting the ignored-label pseudo-result must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+    );
+
+    let renamed_result = workflow.replace(
+        "    name: Ripr Rust Small Result",
+        "    name: Ripr Rust Small Draft Result",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&renamed_result)
+            .iter()
+            .any(|violation| violation.contains("must post the static")),
+        "renaming the required result context must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&renamed_result)
     );
 }
 
@@ -49848,6 +49966,152 @@ fn mutation_calibration_directory_input_combines_outcomes_and_mutants() -> Resul
     assert_eq!(mutants.len(), 1);
     assert_eq!(mutants[0].file, Some("src/pricing.rs".to_string()));
     assert_eq!(mutants[0].runtime_outcome, "caught");
+    Ok(())
+}
+
+/// Shapes copied from a cargo-mutants 27.1.0 `mutants.out` (rust-hex), combined
+/// the way `read_mutation_input_json` combines `outcomes.json` and
+/// `mutants.json`. The xtask command must not keep a second importer that
+/// reads every outcome as `unknown` (#5374).
+#[test]
+fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -> Result<(), String>
+{
+    let runtime_json = r#"[
+  {
+    "outcomes": [
+      {"scenario": "Baseline", "summary": "Success"},
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:101:9: replace next -> Option<Self::Item> with None",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "function": {"function_name": "next", "span": {"start": {"line": 99, "column": 5}, "end": {"line": 109, "column": 6}}},
+          "span": {"start": {"line": 101, "column": 9}, "end": {"line": 108, "column": 10}},
+          "replacement": "None",
+          "genre": "FnValue"
+        }},
+        "summary": "CaughtMutant"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:104:43: replace >> with << in next",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 104, "column": 43}, "end": {"line": 104, "column": 45}},
+          "replacement": "<<",
+          "genre": "BinaryOperator"
+        }},
+        "summary": "MissedMutant"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:110:1: replace timeout_mutant with ()",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 110, "column": 1}, "end": {"line": 110, "column": 2}},
+          "replacement": "()",
+          "genre": "FnValue"
+        }},
+        "summary": "Timeout"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:111:1: replace unviable_mutant with ()",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 111, "column": 1}, "end": {"line": 111, "column": 2}},
+          "replacement": "()",
+          "genre": "FnValue"
+        }},
+        "summary": "Unviable"
+      }
+    ],
+    "total_mutants": 4,
+    "caught": 1,
+    "missed": 1,
+    "timeout": 1,
+    "unviable": 1
+  },
+  [
+    {
+      "name": "src/lib.rs:101:9: replace next -> Option<Self::Item> with None",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 101, "column": 9}, "end": {"line": 108, "column": 10}},
+      "replacement": "None",
+      "genre": "FnValue"
+    },
+    {
+      "name": "src/lib.rs:104:43: replace >> with << in next",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 104, "column": 43}, "end": {"line": 104, "column": 45}},
+      "replacement": "<<",
+      "genre": "BinaryOperator"
+    },
+    {
+      "name": "src/lib.rs:110:1: replace timeout_mutant with ()",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 110, "column": 1}, "end": {"line": 110, "column": 2}},
+      "replacement": "()",
+      "genre": "FnValue"
+    },
+    {
+      "name": "src/lib.rs:111:1: replace unviable_mutant with ()",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 111, "column": 1}, "end": {"line": 111, "column": 2}},
+      "replacement": "()",
+      "genre": "FnValue"
+    }
+  ]
+]"#;
+
+    let mutants = parse_mutation_outcomes_json(runtime_json)?;
+
+    assert_eq!(
+        mutants.len(),
+        4,
+        "Baseline must not become a record, and the four mutants must merge to one each: {mutants:?}"
+    );
+    assert!(
+        mutants
+            .iter()
+            .all(|record| record.runtime_outcome != "unknown"),
+        "xtask mutation-calibration must not import cargo-mutants 27.1 outcomes as unknown: {mutants:?}"
+    );
+
+    let caught = mutants
+        .iter()
+        .find(|record| record.line == Some(101))
+        .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
+    assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
+    assert_eq!(caught.runtime_outcome, "caught");
+    assert_eq!(caught.mutation_operator, "None");
+    assert_eq!(
+        caught.mutant_id.as_deref(),
+        Some("src/lib.rs:101:9: replace next -> Option<Self::Item> with None")
+    );
+
+    let missed = mutants
+        .iter()
+        .find(|record| record.line == Some(104))
+        .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
+    assert_eq!(missed.runtime_outcome, "missed");
+    assert_eq!(missed.mutation_operator, "<<");
+
+    let timeout = mutants
+        .iter()
+        .find(|record| record.line == Some(110))
+        .ok_or_else(|| "line 110 timeout mutant should be imported".to_string())?;
+    assert_eq!(timeout.runtime_outcome, "timeout");
+
+    let unviable = mutants
+        .iter()
+        .find(|record| record.line == Some(111))
+        .ok_or_else(|| "line 111 unviable mutant should be imported".to_string())?;
+    assert_eq!(unviable.runtime_outcome, "unviable");
     Ok(())
 }
 

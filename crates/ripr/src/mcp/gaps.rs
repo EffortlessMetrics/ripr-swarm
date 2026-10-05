@@ -5,7 +5,7 @@
 //! snapshot is committed; MCP never re-runs classification, ranking, or
 //! evidence production. List responses carry only the small summary document;
 //! the complete bounded evidence document is served lazily by
-//! `ripr_get_gap` / `ripr://gap/{canonical_item_id}`.
+//! `ripr_get_gap` / `ripr://gap/{canonical_id}`.
 
 use crate::domain::Finding;
 use serde_json::{Value, json};
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
-/// `ripr_get_gap` / `ripr://gap/{canonical_item_id}` never authorizes an
+/// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
 /// edit by itself: the readiness block reports the producer repair-readiness
 /// facts projected at snapshot commit time, and `ripr_prepare_repair` (#3090)
 /// is the only route that binds a repair transaction — and only when every
@@ -36,8 +36,14 @@ pub(crate) struct RepairFixSite {
 /// 1. candidate actionability — the shared `#3281` predicate
 ///    [`Finding::is_candidate_actionable`];
 /// 2. an established discriminator — the canonical gap names a non-empty
-///    normalized discriminator, activation names no missing discriminator,
-///    and `missing` names no `Missing discriminator value:` entry;
+///    normalized discriminator and no producer-named missing discriminator
+///    exists. A producer that names its missing discriminators refuses as
+///    `missing_discriminator`; a finding whose canonical gap was withheld
+///    behind the finding's own typed static limitation refuses as
+///    `static_limitation`; only a producer that names no missing
+///    discriminator and populates no canonical gap at all for the language
+///    refuses as `discriminator_not_populated_for_language`, so one document
+///    cannot contradict its own `discriminator_availability` block (#5268);
 /// 3. an established fix site — a strong, high-confidence directly-related
 ///    test, on a path the shared edit-cage test-surface predicate accepts.
 ///
@@ -47,6 +53,7 @@ pub(crate) struct RepairReadiness {
     pub(crate) ready: bool,
     pub(crate) fix_site: Option<RepairFixSite>,
     /// First failing gate (`not_candidate_actionable`, `missing_discriminator`,
+    /// `discriminator_not_populated_for_language`, `static_limitation`,
     /// `fix_site_not_established`, `fix_site_not_test_surface`); `None` only
     /// when every gate is established.
     pub(crate) ineligibility: Option<&'static str>,
@@ -61,20 +68,38 @@ impl RepairReadiness {
                 ineligibility: Some("not_candidate_actionable"),
             };
         }
-        let discriminator_missing = finding
-            .canonical_gap
-            .as_ref()
-            .is_none_or(|gap| gap.normalized_discriminator.trim().is_empty())
-            || !finding.activation.missing_discriminators.is_empty()
-            || finding
-                .missing
-                .iter()
-                .any(|entry| entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX));
-        if discriminator_missing {
+        let producer_named_missing_discriminator =
+            !finding.activation.missing_discriminators.is_empty()
+                || finding.missing.iter().any(|entry| {
+                    entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX)
+                });
+        if producer_named_missing_discriminator {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
+            };
+        }
+        let discriminator_unpopulated = finding
+            .canonical_gap
+            .as_ref()
+            .is_none_or(|gap| gap.normalized_discriminator.trim().is_empty());
+        if discriminator_unpopulated {
+            // The refusal must name the actual producer condition: a finding
+            // the producer withheld behind its own typed static limitation
+            // (Python omits the canonical gap exactly then) refuses as
+            // `static_limitation`; only a language producer that does not
+            // populate canonical gaps at all refuses as
+            // `discriminator_not_populated_for_language` (#5268).
+            let ineligibility = if finding.static_limit_kind.is_some() {
+                "static_limitation"
+            } else {
+                "discriminator_not_populated_for_language"
+            };
+            return Self {
+                ready: false,
+                fix_site: None,
+                ineligibility: Some(ineligibility),
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
@@ -128,11 +153,17 @@ impl RepairReadiness {
             Some("missing_discriminator") => {
                 "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator)"
             }
+            Some("discriminator_not_populated_for_language") => {
+                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
+            }
+            Some("static_limitation") => {
+                "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
+            }
             Some("fix_site_not_established") => {
                 "no strong, high-confidence directly-related test establishes an exact fix site"
             }
             Some("fix_site_not_test_surface") => {
-                "the strongest established fix site is not a test surface; a production file is never the authored edit target"
+                "the strongest established fix site is not a test-surface path; only test-surface paths can be the authored edit target (inline `#[cfg(test)]` modules don't qualify their file)"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
             None => {
@@ -193,8 +224,7 @@ impl GapItem {
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
         let evidence_core = gap_evidence_core(finding, &canonical_id)?;
-        let evidence_bytes = serialized_bytes(&evidence_core)?;
-        let evidence_sha256 = evidence_sha256(&evidence_core)?;
+        let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         let repair_readiness = RepairReadiness::from_finding(finding);
         Ok(Self {
             canonical_id,
@@ -267,6 +297,11 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
                 "oracle_strength": test.oracle_strength.as_str(),
                 "relation_reason": test.relation_reason.map(|reason| reason.as_str()),
                 "relation_confidence": test.relation_confidence.map(|confidence| confidence.as_str()),
+                "miss": test.miss.map(|miss| miss.as_str()),
+                "why": crate::output::related_test_miss::related_test_miss_reason(
+                    test,
+                    &finding.activation.missing_discriminators,
+                ),
             })
         })
         .collect::<Vec<_>>();
@@ -401,13 +436,36 @@ fn serialized_bytes(value: &Value) -> Result<usize, String> {
     Ok(writer.0)
 }
 
-/// Deterministic digest of the complete evidence document. Snapshot identity
-/// binds this so a same-outcome refresh that changes evidence text produces a
-/// new snapshot id instead of serving altered bytes under the old identity.
-fn evidence_sha256(value: &Value) -> Result<String, String> {
-    let bytes = serde_json::to_vec(value)
-        .map_err(|error| format!("serialize evidence digest input: {error}"))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+/// Count and hash the same encoded evidence bytes without retaining them or
+/// serializing twice. Snapshot identity binds the digest, so an evidence change
+/// still produces a new identity even when its encoded length is unchanged.
+fn serialized_evidence_identity(value: &impl serde::Serialize) -> Result<(usize, String), String> {
+    struct IdentityWriter {
+        bytes: usize,
+        digest: Sha256,
+    }
+
+    impl std::io::Write for IdentityWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.bytes += buffer.len();
+            self.digest.update(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = IdentityWriter {
+        bytes: 0,
+        digest: Sha256::new(),
+    };
+    // Preserve the first serialization failure's context from the previous
+    // length pass. The same Value and infallible writer supplied both passes.
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|error| format!("serialize gap item: {error}"))?;
+    Ok((writer.bytes, format!("{:x}", writer.digest.finalize())))
 }
 
 /// One fully-established candidate finding shared by the `gaps` and `repair`
@@ -469,6 +527,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             oracle_strength: crate::domain::OracleStrength::Strong,
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
+            miss: None,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
@@ -489,6 +548,76 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[test]
+    fn evidence_identity_serializes_once_and_matches_encoded_bytes() -> Result<(), String> {
+        struct Observed<'a> {
+            value: &'a Value,
+            calls: std::cell::Cell<usize>,
+        }
+
+        impl serde::Serialize for Observed<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.calls.set(self.calls.get() + 1);
+                serde::Serialize::serialize(self.value, serializer)
+            }
+        }
+
+        let item = GapItem::from_finding(&finding()?)?;
+        let values = [
+            Value::Null,
+            json!({}),
+            json!([]),
+            json!({
+                "escaped": "quote: \" backslash: \\ newline: \n",
+                "unicode": "é e\u{301} 😀",
+                "nested": [true, false, 42, -17, 0.125, null, {"empty": ""}],
+                "large": "x".repeat(65_536),
+            }),
+            item.evidence_core,
+        ];
+        for value in values {
+            let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+            let observed = Observed {
+                value: &value,
+                calls: std::cell::Cell::new(0),
+            };
+            let (length, digest) = serialized_evidence_identity(&observed)?;
+            assert_eq!(observed.calls.get(), 1, "evidence must serialize only once");
+            assert_eq!(length, bytes.len());
+            assert_eq!(digest, format!("{:x}", Sha256::digest(&bytes)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_identity_preserves_the_first_serialization_error_context() {
+        struct Refused;
+
+        impl serde::Serialize for Refused {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom(
+                    "injected evidence encoding failure",
+                ))
+            }
+        }
+
+        assert_eq!(
+            serialized_evidence_identity(&Refused),
+            Err("serialize gap item: injected evidence encoding failure".to_string())
+        );
+    }
+
+    #[test]
+    fn gap_projection_preserves_evidence_length_and_digest() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.recommended_next_step = Some("assert \"é😀\"\nwith a \\ escape".to_string());
+        let item = GapItem::from_finding(&finding)?;
+        let bytes = serde_json::to_vec(&item.evidence_core).map_err(|error| error.to_string())?;
+        assert_eq!(item.evidence_bytes, bytes.len());
+        assert_eq!(item.evidence_sha256, format!("{:x}", Sha256::digest(bytes)));
+        Ok(())
     }
 
     #[test]
@@ -606,10 +735,29 @@ mod tests {
         no_discriminator.canonical_gap = None;
         let item = GapItem::from_finding(&no_discriminator)?;
         if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility
+                != Some("discriminator_not_populated_for_language")
+        {
+            return Err(format!(
+                "a finding without a canonical gap must refuse repair as an unpopulated language producer fact: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+
+        let mut named_missing = finding()?;
+        named_missing.activation.missing_discriminators.push(
+            crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            },
+        );
+        let item = GapItem::from_finding(&named_missing)?;
+        if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
             return Err(format!(
-                "a finding without a canonical gap must not be repair-ready: {:?}",
+                "a producer-named missing discriminator must stay the typed refusal: {:?}",
                 item.repair_readiness.ineligibility
             ));
         }
@@ -637,6 +785,116 @@ mod tests {
             return Err(format!(
                 "a finding without a strong directly-related test must not be repair-ready: {:?}",
                 item.repair_readiness.ineligibility
+            ));
+        }
+        Ok(())
+    }
+
+    /// #5210: the non-surface refusal names the inline-test boundary, so
+    /// an MCP caller learns the permanent scope from the refusal itself.
+    #[test]
+    fn non_surface_reason_names_the_inline_test_boundary() -> Result<(), String> {
+        let readiness = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("fix_site_not_test_surface"),
+        };
+        let reason = readiness.reason();
+        for needle in [
+            "only test-surface paths can be the authored edit target",
+            "inline",
+            "#[cfg(test)]",
+            "don't qualify their file",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!(
+                    "non-surface reason must name the inline boundary ({needle}): {reason}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unpopulated_language_discriminator_reason_agrees_with_its_own_availability_block()
+    -> Result<(), String> {
+        // #5268: when the producer named no missing discriminator but never
+        // populated a normalized discriminator either (every Rust finding
+        // today), one served document must not contradict itself: the
+        // readiness refusal names the unpopulated producer condition instead
+        // of claiming the producer failed to establish a discriminator.
+        let mut unpopulated = finding()?;
+        unpopulated.canonical_gap = None;
+        unpopulated.missing = Vec::new();
+        unpopulated.class = crate::domain::ExposureClass::Exposed;
+        let item = GapItem::from_finding(&unpopulated)?;
+        let document = item.document("snapshot:sha256:abc");
+        let reason = document
+            .pointer("/item/readiness/reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "readiness lost its reason".to_string())?;
+        if document
+            .pointer("/item/readiness/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Err(format!(
+                "an unpopulated discriminator must stay fail-closed: {document}"
+            ));
+        }
+        let availability = document
+            .pointer("/item/discriminator_availability/missing_discriminators")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "availability block lost its missing discriminators".to_string())?;
+        if !availability.is_empty() {
+            return Err(format!(
+                "the mismatch control needs an availability block with nothing missing: {availability:?}"
+            ));
+        }
+        if !reason.contains("normalized discriminator") || !reason.contains("not populated") {
+            return Err(format!(
+                "the readiness reason must name the unpopulated producer condition, not a contradiction: {reason}"
+            ));
+        }
+        if reason.contains("did not establish a discriminator") {
+            return Err(format!(
+                "the readiness reason must not claim the producer failed to establish a discriminator while the same document shows nothing missing: {reason}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn static_limited_python_finding_refuses_as_static_limitation_not_language_gap()
+    -> Result<(), String> {
+        // A Python producer withholds the canonical gap exactly when the
+        // finding carries its own typed static limitation
+        // (`analysis/language/python/classify.rs` gates the gap on
+        // `static_limit.is_none()`), so such a finding must refuse as
+        // `static_limitation` — the limitation, not language-wide
+        // non-population, explains the missing fact.
+        let mut limited = finding()?;
+        limited.canonical_gap = None;
+        limited.missing = Vec::new();
+        limited.language = Some(crate::domain::LanguageId::Python);
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&limited)?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("static_limitation")
+        {
+            return Err(format!(
+                "a static-limited finding must refuse as static_limitation, not as a language-wide gap: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        let document = item.document("snapshot:sha256:abc");
+        let reason = document
+            .pointer("/item/readiness/reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "readiness lost its reason".to_string())?;
+        if !reason.contains("static limitation") || reason.contains("not populated") {
+            return Err(format!(
+                "the static-limited refusal must name the finding's limitation, not the language: {reason}"
             ));
         }
         Ok(())

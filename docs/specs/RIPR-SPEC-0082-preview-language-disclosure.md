@@ -127,6 +127,21 @@ adapter is not enabled, no skip limitation is emitted: the not-enabled
 advisory already discloses every routed file with its raw count. No new JSON
 field is introduced.
 
+### Limitations of a language the diff does not touch
+
+A preview adapter indexes its whole language across the workspace. Its
+limitations (parse budget, read caps, walk cap, scope refusals) are recorded
+on the analysis outcome only when the diff touches that language
+(TypeScript and JavaScript share one adapter) or the adapter produced a
+finding. A Rust-only diff therefore stays complete when an unrelated Python
+fixture is refused, and the same refusal still surfaces when the diff touches
+Python.
+
+The Perl adapter is the exception because it never scans the workspace: it
+reads only the fact packet the caller supplied. A limitation it reports, such
+as a packet declared partial, concerns that explicit evidence and is always
+recorded, whatever languages the diff touches (#5421).
+
 ### Unavailable changed Python source
 
 A new-side changed Python path absent from the selected source root is not an
@@ -333,6 +348,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
 - `crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_emits_not_enabled_advisory_for_ts_diff_with_rust_only_config`
 - `crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_emits_not_enabled_advisory_for_perl_without_adapter`
 - `crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_no_preview_advisory_for_rust_only_diff`
+- `crates/ripr/src/app/tests/preview_analyzed_outcome.rs::unrelated_python_refusal_does_not_degrade_a_rust_only_diff`
+- `crates/ripr/src/app/tests/preview_analyzed_outcome.rs::javascript_diff_keeps_the_typescript_adapter_refusal`
+- `crates/ripr/src/analysis/language/perl/tests.rs::supplied_partial_packet_is_disclosed_on_a_rust_only_diff`
 - `crates/ripr/src/app/tests/preview_analyzed_outcome.rs` — production malformed
   Perl failure plus enabled-success and disabled renderer agreement controls.
 - `crates/ripr/src/output/diff_report.rs::tests::diff_report_includes_preview_languages_when_ts_files_in_scope`

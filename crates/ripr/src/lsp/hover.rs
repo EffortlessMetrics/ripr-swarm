@@ -476,14 +476,38 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push(String::new());
         lines.push("## Related Tests".to_string());
         for test in &finding.related_tests {
-            let oracle_text = match &test.oracle {
-                Some(oracle) => format!(
-                    " \u{2014} {} {} oracle: {}",
-                    test.oracle_strength.as_str(),
-                    test.oracle_kind.as_str(),
-                    oracle
+            // #5344: a test that misses the change says why instead of
+            // listing a `none` oracle grade.
+            let why = crate::output::related_test_miss::related_test_miss_reason(
+                test,
+                &finding.activation.missing_discriminators,
+            );
+            // #5927: only an unmatched row uses the `misses/checked` form, as
+            // in human output; a matched row keeps its oracle kind and
+            // strength and adds the reason it still misses. A row with no
+            // recorded oracle (for example `has no assertion`) shows only the
+            // reason, so hover never grades an oracle that does not exist.
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
+            let oracle_text = match (&why, &test.oracle) {
+                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
+                    " {label}: {why}; checked `{}`",
+                    crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
-                None => String::new(),
+                (Some(why), None) => format!(" {label}: {why}"),
+                (why, Some(oracle)) => {
+                    let mut text = format!(
+                        " \u{2014} {} {} oracle: {}",
+                        test.oracle_strength.as_str(),
+                        test.oracle_kind.as_str(),
+                        oracle
+                    );
+                    if let Some(why) = why {
+                        text.truncate(text.trim_end_matches(';').len());
+                        text.push_str(&format!("; {label}: {why}"));
+                    }
+                    text
+                }
+                (None, None) => String::new(),
             };
             lines.push(format!(
                 "- `{}:{}` `{}`{}",

@@ -34,10 +34,11 @@
 //!   parent is out of scope.
 //! - LSP §exit says a server that receives `exit` without a prior `shutdown`
 //!   "should exit with an error code". tower-lsp-server treats `exit` as an
-//!   unconditional stop and `ripr lsp` returns success either way, so the
-//!   pinned exit code is 0 in both orders. This diverges from the letter of
-//!   the spec; `exit_without_shutdown_still_exits_zero` pins the actual
-//!   behavior so the divergence is explicit, not accidental.
+//!   unconditional stop, so `ripr lsp` records the wire order itself and
+//!   exits 2 when `exit` arrives without a prior `shutdown` request
+//!   (`exit_without_shutdown_exits_nonzero`, #5249). `shutdown` then `exit`
+//!   still exits 0, as do stdin EOF and malformed-frame termination, which
+//!   never set the exit flag.
 //!
 //! Every spawned server is terminated and reaped by `LspSession::drop`, so a
 //! failing test cannot orphan a process that would hold a file lock on the
@@ -452,15 +453,21 @@ fn collect_responses(
     Ok(collected)
 }
 
-/// Ask the server to stop and require exit code 0 within the budget.
-fn exit_and_wait(session: &mut LspSession) -> Result<(), String> {
+/// Orderly termination: `shutdown` request, then `exit`, requiring exit code
+/// 0 within the budget. Bare `exit` exits 2 per LSP §exit (#5249), so every
+/// test that wants a clean stop goes through this helper; the shutdown
+/// response itself is ignored because callers that already shut down (or
+/// never initialized) get a benign `-32600`/`-32002` there, which does not
+/// affect the exit order the server records.
+fn shutdown_exit_and_wait(session: &mut LspSession) -> Result<(), String> {
+    let _ = session.request("shutdown", serde_json::Value::Null)?;
     session.notify("exit", None)?;
     let status = session.wait_exit(EXIT_TIMEOUT)?;
     if status.success() {
         return Ok(());
     }
     Err(format!(
-        "expected exit code 0 after `exit` notification, got: {status}"
+        "expected exit code 0 after `shutdown` then `exit`, got: {status}"
     ))
 }
 
@@ -473,7 +480,7 @@ fn request_before_initialize_fails_server_not_initialized() -> Result<(), String
     expect_error(&response, "textDocument/hover", SERVER_NOT_INITIALIZED)?;
     // The rejection must not poison the server: a proper handshake still works.
     handshake(&mut session)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -482,7 +489,257 @@ fn shutdown_before_initialize_fails_server_not_initialized() -> Result<(), Strin
     let response = session.request("shutdown", serde_json::Value::Null)?;
     expect_error(&response, "shutdown", SERVER_NOT_INITIALIZED)?;
     handshake(&mut session)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
+}
+
+// ── Shutdown clears pushed diagnostics (#5202) ──
+
+/// Grace window after a `shutdown` response for trailing
+/// `textDocument/publishDiagnostics` notifications. The server queues the
+/// clear-all publishes before answering `shutdown`, but the response frame
+/// may win the race to the test's reader thread.
+const SHUTDOWN_DRAIN_GRACE: Duration = Duration::from_secs(3);
+
+/// Drain `textDocument/publishDiagnostics` notifications until the response
+/// with `id` arrives, then keep draining through a grace window so
+/// publishes queued just before the response are still observed. Returns
+/// the collected `(uri, diagnostic count)` pairs plus the response.
+fn collect_publishes_until_response(
+    session: &mut LspSession,
+    id: u64,
+    what: &str,
+) -> Result<(Vec<(String, usize)>, serde_json::Value), String> {
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let mut published: Vec<(String, usize)> = Vec::new();
+    let mut record = |message: &serde_json::Value| {
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+        {
+            let uri = message
+                .pointer("/params/uri")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let count = message
+                .pointer("/params/diagnostics")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            published.push((uri, count));
+        }
+    };
+    let response = loop {
+        let message = session.await_message(deadline, what)?;
+        record(&message);
+        // Match responses only: a server-to-client request (its own id
+        // space) with a colliding id must not end the loop early, or the
+        // caller fails on a non-response and skips earlier notifications.
+        let is_response = message.get("result").is_some() || message.get("error").is_some();
+        if is_response && message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            break message;
+        }
+    };
+    let grace_deadline = Instant::now() + SHUTDOWN_DRAIN_GRACE;
+    loop {
+        match session.events.try_recv() {
+            Ok(WireEvent::Message(message)) => record(&message),
+            Ok(WireEvent::Failed(err)) => {
+                return Err(format!(
+                    "stdout framing failed while awaiting {what}: {err}"
+                ));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                if Instant::now() >= grace_deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+    Ok((published, response))
+}
+
+/// `shutdown` clears every tracked URI on a push client: after a refresh
+/// that publishes diagnostics, the shutdown drain must carry an empty
+/// diagnostic set for each URI that received a nonempty one (#5202,
+/// RIPR-SPEC-0124).
+/// Without the shutdown clear path this test observes no empty publishes
+/// and fails; it is the red half of the guarded-publish pair.
+#[test]
+fn shutdown_publishes_empty_diagnostics_for_tracked_uris() -> Result<(), String> {
+    let base = unique_compat_fixture_root("shutdown-clear")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let root_uri = editor_file_uri(&root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    let refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    let (published, refresh) =
+        collect_publishes_until_response(&mut session, refresh_id, "ripr.refresh response")?;
+    expect_result(&refresh, "ripr.refresh")?;
+    let mut tracked: Vec<String> = published
+        .iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(uri, _)| uri.clone())
+        .collect();
+    tracked.sort();
+    tracked.dedup();
+    if tracked.is_empty() {
+        return Err(format!(
+            "fixture setup: refresh must publish diagnostics before shutdown can clear them: {published:?}"
+        ));
+    }
+
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let (cleared, shutdown) =
+        collect_publishes_until_response(&mut session, shutdown_id, "shutdown response")?;
+    let result = expect_result(&shutdown, "shutdown")?;
+    if !result.is_null() {
+        return Err(format!("shutdown must answer null, got: {shutdown}"));
+    }
+    let mut missing = Vec::new();
+    for uri in &tracked {
+        let cleared_uri = cleared
+            .iter()
+            .any(|(cleared_uri, count)| cleared_uri == uri && *count == 0);
+        if !cleared_uri {
+            missing.push(uri.clone());
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "shutdown must publish an empty diagnostic set for every tracked URI; missing {missing:?} (tracked: {tracked:?}, shutdown drain: {cleared:?})"
+        ));
+    }
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// A pull client (`textDocument.diagnostic` negotiated) receives no pushed
+/// diagnostics at all: neither the refresh nor `shutdown` may publish
+/// (#5202, RIPR-SPEC-0124). This is the guard half of the pair — an
+/// implementation that published unconditionally on shutdown would fail
+/// here.
+#[test]
+fn shutdown_publishes_nothing_for_pull_diagnostics_client() -> Result<(), String> {
+    let base = unique_compat_fixture_root("shutdown-pull")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let root_uri = editor_file_uri(&root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {
+                "textDocument": { "diagnostic": {} }
+            },
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    let refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    let (published, refresh) =
+        collect_publishes_until_response(&mut session, refresh_id, "ripr.refresh response")?;
+    expect_result(&refresh, "ripr.refresh")?;
+    if !published.is_empty() {
+        return Err(format!(
+            "pull client must receive no pushed diagnostics during refresh: {published:?}"
+        ));
+    }
+    // The refresh still commits a full snapshot server-side: tracked URIs
+    // exist even though nothing is pushed, so the shutdown drain below is
+    // a real guard check, not a vacuous no-op.
+    let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+    check_workspace_status_envelope(&status, "pull shutdown")?;
+    if status.get("run_status").and_then(serde_json::Value::as_str) != Some("full") {
+        return Err(format!(
+            "pull-client refresh must commit a full snapshot: {status}"
+        ));
+    }
+
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let (cleared, shutdown) =
+        collect_publishes_until_response(&mut session, shutdown_id, "shutdown response")?;
+    let result = expect_result(&shutdown, "shutdown")?;
+    if !result.is_null() {
+        return Err(format!("shutdown must answer null, got: {shutdown}"));
+    }
+    if !cleared.is_empty() {
+        return Err(format!(
+            "pull client must receive no pushed diagnostics on shutdown: {cleared:?}"
+        ));
+    }
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// `shutdown` with zero tracked URIs stays silent: no refresh ran, so no
+/// empty publishes are emitted and the handshake is unchanged (#5202,
+/// RIPR-SPEC-0124). Guards against a clear path that publishes for
+/// invented URIs instead of only previously published ones.
+#[test]
+fn shutdown_with_zero_tracked_uris_sends_no_publishes() -> Result<(), String> {
+    let base = unique_compat_fixture_root("shutdown-zero")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let root_uri = editor_file_uri(&root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    // No refresh: nothing was ever published, so nothing is tracked.
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let (cleared, shutdown) =
+        collect_publishes_until_response(&mut session, shutdown_id, "shutdown response")?;
+    let result = expect_result(&shutdown, "shutdown")?;
+    if !result.is_null() {
+        return Err(format!("shutdown must answer null, got: {shutdown}"));
+    }
+    if !cleared.is_empty() {
+        return Err(format!(
+            "shutdown with zero tracked URIs must publish nothing: {cleared:?}"
+        ));
+    }
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 2. `initialize` is accepted exactly once ──
@@ -502,7 +759,7 @@ fn initialize_is_accepted_exactly_once() -> Result<(), String> {
     // The server stays in the initialized state after rejecting the duplicate.
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -525,7 +782,7 @@ fn initialize_advertises_incremental_sync_with_save_notifications() -> Result<()
             "textDocumentSync must request open/close, incremental changes and didSave without text: {sync}"
         ));
     }
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 3. `initialized` notification transition ──
@@ -540,7 +797,7 @@ fn initialized_notification_completes_handshake_without_a_response() -> Result<(
     // next request's id; `await_response` fails on any stray response.
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -550,7 +807,7 @@ fn initialized_notification_before_initialize_does_not_initialize() -> Result<()
     let response = session.request("textDocument/hover", hover_params())?;
     expect_error(&response, "textDocument/hover", SERVER_NOT_INITIALIZED)?;
     handshake(&mut session)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 4. Normal request handling after initialize ──
@@ -568,7 +825,7 @@ fn normal_request_after_initialize_returns_result() -> Result<(), String> {
     if !text.contains("ripr") {
         return Err(format!("hover contents should describe ripr, got: {text}"));
     }
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 /// LSP 3.17 "$ Notifications and Requests": a `$/` notification may be
@@ -589,7 +846,7 @@ fn dollar_request_is_answered_method_not_found() -> Result<(), String> {
     }
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 5/6. `shutdown` transition and request-after-shutdown rejection ──
@@ -605,7 +862,7 @@ fn shutdown_returns_null_result_and_transitions() -> Result<(), String> {
             "LSP requires a null result for `shutdown`, got: {shutdown}"
         ));
     }
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -620,7 +877,7 @@ fn requests_after_shutdown_are_rejected_invalid_request() -> Result<(), String> 
     expect_error(&hover, "textDocument/hover", INVALID_REQUEST)?;
     let second_shutdown = session.request("shutdown", serde_json::Value::Null)?;
     expect_error(&second_shutdown, "duplicate shutdown", INVALID_REQUEST)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 7. `exit` notification terminates the process ──
@@ -631,24 +888,41 @@ fn exit_after_shutdown_exits_zero() -> Result<(), String> {
     handshake(&mut session)?;
     let shutdown = session.request("shutdown", serde_json::Value::Null)?;
     expect_result(&shutdown, "shutdown")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
-fn exit_without_shutdown_still_exits_zero() -> Result<(), String> {
-    // Divergence from LSP §exit (spec wants a non-zero code when no
-    // `shutdown` was received): tower-lsp-server stops unconditionally and
-    // `ripr lsp` reports success. Pinned here so the divergence is explicit;
-    // see the module header for the full rationale.
+fn exit_without_shutdown_exits_nonzero() -> Result<(), String> {
+    // LSP §exit: a server that receives `exit` without a prior `shutdown`
+    // "should exit with an error code". tower-lsp-server stops
+    // unconditionally; `ripr lsp` records the wire order and reports the
+    // violation as a CLI failure (exit 2, #5249).
     let mut session = LspSession::spawn()?;
     handshake(&mut session)?;
     session.notify("exit", None)?;
     let status = session.wait_exit(EXIT_TIMEOUT)?;
-    if status.success() {
+    if status.code() == Some(2) {
         return Ok(());
     }
     Err(format!(
-        "pinned behavior: exit without shutdown currently exits 0, got: {status}"
+        "expected exit code 2 for exit without a prior shutdown, got: {status}"
+    ))
+}
+
+#[test]
+fn shutdown_notification_then_exit_still_exits_nonzero() -> Result<(), String> {
+    // `shutdown` is an LSP request, not a notification: an ID-less
+    // `shutdown` frame must not authorize a clean exit (#6253 review).
+    let mut session = LspSession::spawn()?;
+    handshake(&mut session)?;
+    session.notify("shutdown", None)?;
+    session.notify("exit", None)?;
+    let status = session.wait_exit(EXIT_TIMEOUT)?;
+    if status.code() == Some(2) {
+        return Ok(());
+    }
+    Err(format!(
+        "expected exit code 2 for exit after a shutdown notification (no request), got: {status}"
     ))
 }
 
@@ -735,7 +1009,7 @@ fn initialize_accepts_client_process_id_without_monitoring() -> Result<(), Strin
     let response = session.request("initialize", params)?;
     expect_result(&response, "initialize with processId")?;
     session.notify("initialized", Some(serde_json::json!({})))?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── 9. Transport and typed-payload bounds (issue #2034) ──
@@ -928,7 +1202,7 @@ fn giant_previous_result_ids_are_rejected_and_server_stays_healthy() -> Result<(
     expect_result(&legit, "legit previousResultIds")?;
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -945,7 +1219,7 @@ fn previous_result_ids_oversized_value_is_rejected() -> Result<(), String> {
         }),
     )?;
     expect_bounded_invalid_params(&mut session, id, "oversized result-id value", "")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -984,7 +1258,7 @@ fn oversized_execute_command_arguments_are_rejected() -> Result<(), String> {
         serde_json::json!({"command": "ripr.collectWorkspaceStatus", "arguments": []}),
     )?;
     expect_result(&status, "ripr.collectWorkspaceStatus")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -1056,7 +1330,7 @@ fn collect_context_commands_reject_missing_or_malformed_first_argument_on_the_wi
         serde_json::json!({"command": "ripr.collectWorkspaceStatus", "arguments": []}),
     )?;
     expect_result(&status, "ripr.collectWorkspaceStatus")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -1075,7 +1349,7 @@ fn oversized_initialization_options_are_rejected_without_poisoning() -> Result<(
     handshake(&mut session)?;
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -1106,18 +1380,37 @@ fn concurrent_requests_and_cancel_stay_bounded_and_serviceable() -> Result<(), S
     // The server is still healthy after the burst.
     let hover = session.request("textDocument/hover", hover_params())?;
     expect_result(&hover, "textDocument/hover after burst")?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
 fn shutdown_and_eof_during_request_load_exits_zero() -> Result<(), String> {
     let mut session = LspSession::spawn()?;
     handshake(&mut session)?;
+    let mut hover_ids = Vec::new();
     for _ in 0..32 {
-        fire(&mut session, "textDocument/hover", hover_params())?;
+        hover_ids.push(fire(&mut session, "textDocument/hover", hover_params())?);
     }
     // Shutdown + exit while requests are still queued: lifecycle messages
-    // must stay serviceable and the process must terminate cleanly.
+    // must stay serviceable and the process must terminate cleanly. The
+    // shutdown request is required: bare `exit` exits 2 per LSP §exit
+    // (#5249), so omitting it would confuse the load assertion with the
+    // shutdown-order contract. The shutdown request fires while the hovers
+    // are still queued and its response is collected with theirs, so the
+    // test keeps its load condition (#6253 review).
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let mut all_ids = hover_ids.clone();
+    all_ids.push(shutdown_id);
+    let responses = collect_responses(&mut session, &all_ids, RESPONSE_TIMEOUT)?;
+    let shutdown = responses
+        .iter()
+        .find(|response| {
+            response.get("id").and_then(serde_json::Value::as_u64) == Some(shutdown_id)
+        })
+        .ok_or_else(|| {
+            format!("shutdown response id {shutdown_id} missing under load: {responses:?}")
+        })?;
+    expect_result(shutdown, "shutdown under load")?;
     session.notify("exit", None)?;
     let status = session.wait_exit(EXIT_TIMEOUT)?;
     if status.success() {
@@ -1726,7 +2019,7 @@ fn assert_lsp_refresh_publishes_under_root(root: &Path) -> Result<(), String> {
             expected.display()
         ));
     }
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 /// Build the compatibility fixture at `base/relative` with a committed base
@@ -1879,7 +2172,7 @@ fn assert_lsp_refresh_names_the_windows_path_limit(root: &Path) -> Result<(), St
             "refresh failure must name the remedy and the MAX_PATH limit: {message}"
         ));
     }
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 // ── Startup disclosure of a blocked workspace root ──
@@ -1953,6 +2246,68 @@ fn initialize_with(
     collect_notifications(session, done, STARTUP_SETTLE)
 }
 
+/// Native `Path::display()` uses `\` on Windows. The LSP warning lists folders
+/// with `/` even when the stored path came from a Windows URI decode. Match
+/// the warning against the slash-normalized display form so both platforms
+/// can pin that each named folder appears (#5241).
+fn slash_normalized_display(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+fn warning_names_both_workspace_folders(warning: &str, first: &Path, second: &Path) -> bool {
+    let first_name = slash_normalized_display(first);
+    let second_name = slash_normalized_display(second);
+    first_name != second_name && warning.contains(&first_name) && warning.contains(&second_name)
+}
+
+/// Models the native-Windows `display()` / forward-slash warning mismatch on
+/// any host: a `PathBuf` built from backslash text still `display()`s those
+/// backslashes, so a naive `contains(display())` misses the `/` warning.
+/// Drive-letter shapes are assembled from parts: `check-local-context`
+/// forbids drive-letter path literals in tracked files.
+#[test]
+fn workspace_folder_warning_match_is_separator_safe_and_requires_both_names() {
+    let drive = "H:";
+    let first = PathBuf::from(format!("{drive}{}tmp{}ripr-lsp-ambiguous-a-1", '\\', '\\'));
+    let second = PathBuf::from(format!("{drive}{}tmp{}ripr-lsp-ambiguous-b-2", '\\', '\\'));
+    let first_listed = format!("{drive}/tmp/ripr-lsp-ambiguous-a-1");
+    let second_listed = format!("{drive}/tmp/ripr-lsp-ambiguous-b-2");
+    let warning = format!("Folders: {first_listed}, {second_listed}");
+    assert!(
+        first.display().to_string().contains('\\'),
+        "this control models Windows Path::display() backslashes"
+    );
+    assert!(
+        !warning.contains(&first.display().to_string()),
+        "raw display() must not match the forward-slash warning"
+    );
+    assert!(
+        !warning.contains(&second.display().to_string()),
+        "raw display() must not match the forward-slash warning"
+    );
+    assert!(warning_names_both_workspace_folders(
+        &warning, &first, &second
+    ));
+    assert!(!warning_names_both_workspace_folders(
+        &format!("Folders: {first_listed}"),
+        &first,
+        &second
+    ));
+    assert!(!warning_names_both_workspace_folders(
+        &format!("Folders: {second_listed}"),
+        &first,
+        &second
+    ));
+    assert!(!warning_names_both_workspace_folders(
+        &format!("Folders: {drive}/tmp"),
+        &first,
+        &second
+    ));
+    assert!(!warning_names_both_workspace_folders(
+        &warning, &first, &first
+    ));
+}
+
 #[test]
 fn two_workspace_folders_warn_a_generic_client_at_startup() -> Result<(), String> {
     let first = unique_compat_fixture_root("ambiguous-a")?;
@@ -1977,8 +2332,7 @@ fn two_workspace_folders_warn_a_generic_client_at_startup() -> Result<(), String
             "expected one workspace_ambiguous window/showMessage, got: {notifications:?}"
         ));
     }
-    let second_name = second.path.display().to_string();
-    if !shown[0].contains(&second_name) {
+    if !warning_names_both_workspace_folders(shown[0], &first.path, &second.path) {
         return Err(format!("warning must name the folders, got: {}", shown[0]));
     }
     if !messages_of(&notifications, "window/logMessage")
@@ -1995,7 +2349,7 @@ fn two_workspace_folders_warn_a_generic_client_at_startup() -> Result<(), String
         ));
     }
     session.request("shutdown", serde_json::Value::Null)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -2018,7 +2372,7 @@ fn missing_workspace_root_warns_a_generic_client_at_startup() -> Result<(), Stri
         ));
     }
     session.request("shutdown", serde_json::Value::Null)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -2049,7 +2403,7 @@ fn ripr_editor_client_gets_the_blocked_root_in_the_log_only() -> Result<(), Stri
         return Err(format!("expected the log warning, got: {notifications:?}"));
     }
     session.request("shutdown", serde_json::Value::Null)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }
 
 #[test]
@@ -2077,5 +2431,5 @@ fn single_workspace_root_starts_without_a_root_warning() -> Result<(), String> {
         ));
     }
     session.request("shutdown", serde_json::Value::Null)?;
-    exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)
 }

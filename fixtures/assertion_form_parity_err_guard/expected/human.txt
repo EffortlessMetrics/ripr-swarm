@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: amount >= discount_threshold
   Missing discriminator: No strong discriminator was detected
-  Related test: tests/pricing.rs:4 boundary_matches_expected
+  Related test: tests/pricing.rs:4 boundary_matches_expected (assertion too weak to tell the old behavior from the new)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach discounted_total: boundary_matches_expected
@@ -25,6 +25,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/assertion_form_parity_err_guard/input --diff fixtures/assertion_form_parity_err_guard/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root fixtures/assertion_form_parity_err_guard/input --diff fixtures/assertion_form_parity_err_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+Write a test for it:
+  ripr agent stub --root fixtures/assertion_form_parity_err_guard/input --at src/lib.rs:2
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

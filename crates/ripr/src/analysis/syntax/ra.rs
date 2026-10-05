@@ -8,7 +8,6 @@ mod property_macros;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
@@ -26,10 +25,8 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
-    PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
-    PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, TestFact,
-    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
+    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, TestFact, classify_assertion,
+    err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
     unwrap_err_bound_variables,
@@ -498,7 +495,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         a.start_line
             .cmp(&b.start_line)
             .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.cmp(&b.kind))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
             .then(a.text.cmp(&b.text))
     });
     file_probe_shapes.dedup_by(|a, b| {
@@ -944,6 +941,10 @@ pub(crate) struct GovernedCfgTestModule {
     pub(crate) body_start: Option<usize>,
     pub(crate) close_brace_start: Option<usize>,
     pub(crate) is_inline: bool,
+    /// Every outer and inner attribute on the module is known to be enabled
+    /// in a plain `cargo test` build. `false` covers feature, target and
+    /// other gates whose state ripr does not assume.
+    pub(crate) enabled_in_test_build: bool,
 }
 
 /// Parser-owned inventory of governed `cfg(test)` modules in one source file.
@@ -999,6 +1000,18 @@ fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestMo
         };
         let parent_modules = ancestor_module_names(&module);
         let item_start = usize::from(module.syntax().text_range().start());
+        let enabled_in_test_build = module
+            .attrs()
+            .chain(
+                module
+                    .item_list()
+                    .into_iter()
+                    .flat_map(|items| items.attrs()),
+            )
+            .all(|attr| {
+                cfg_predicates::attribute_test_build_availability(&attr.syntax().text().to_string())
+                    == Some(true)
+            });
         match module.item_list() {
             Some(items) => {
                 let Some(open) = items.l_curly_token() else {
@@ -1014,6 +1027,7 @@ fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestMo
                     body_start: Some(usize::from(open.text_range().end())),
                     close_brace_start: Some(usize::from(close.text_range().start())),
                     is_inline: true,
+                    enabled_in_test_build,
                 });
             }
             None => modules.push(GovernedCfgTestModule {
@@ -1023,6 +1037,7 @@ fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestMo
                 body_start: None,
                 close_brace_start: None,
                 is_inline: false,
+                enabled_in_test_build,
             }),
         }
     }
@@ -1079,7 +1094,7 @@ fn production_owner_module_paths_in(
     paths
 }
 
-fn module_attributes_require_test(module: &ast::Module) -> bool {
+pub(super) fn module_attributes_require_test(module: &ast::Module) -> bool {
     cfg_predicates::attributes_require_test(
         module.attrs().map(|attr| attr.syntax().text().to_string()),
     )
@@ -1147,7 +1162,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                ProbeShapeKind::Predicate,
                 condition.syntax().text_range().start(),
                 condition.syntax().text_range().end(),
             );
@@ -1164,7 +1179,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                ProbeShapeKind::Predicate,
                 condition.syntax().text_range().start(),
                 condition.syntax().text_range().end(),
             );
@@ -1184,7 +1199,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                ProbeShapeKind::Predicate,
                 bin_expr.syntax().text_range().start(),
                 bin_expr.syntax().text_range().end(),
             );
@@ -1201,7 +1216,7 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_RETURN_VALUE,
+            ProbeShapeKind::ReturnValue,
             range.start(),
             range.end(),
         );
@@ -1211,7 +1226,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_ERROR_PATH,
+                ProbeShapeKind::ErrorPath,
                 range.start(),
                 range.end(),
             );
@@ -1226,7 +1241,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_RETURN_VALUE,
+                ProbeShapeKind::ReturnValue,
                 range.start(),
                 range.end(),
             );
@@ -1235,7 +1250,7 @@ fn extract_parser_probe_shapes(
                     &mut shapes,
                     line_index,
                     text,
-                    PROBE_SHAPE_ERROR_PATH,
+                    ProbeShapeKind::ErrorPath,
                     range.start(),
                     range.end(),
                 );
@@ -1254,7 +1269,7 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_CALL_DELETION,
+            ProbeShapeKind::CallDeletion,
             range.start(),
             range.end(),
         );
@@ -1263,7 +1278,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_RETURN_VALUE,
+                ProbeShapeKind::ReturnValue,
                 range.start(),
                 range.end(),
             );
@@ -1273,7 +1288,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_ERROR_PATH,
+                ProbeShapeKind::ErrorPath,
                 range.start(),
                 range.end(),
             );
@@ -1291,7 +1306,7 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_CALL_DELETION,
+            ProbeShapeKind::CallDeletion,
             range.start(),
             range.end(),
         );
@@ -1304,7 +1319,7 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_SIDE_EFFECT,
+                ProbeShapeKind::SideEffect,
                 range.start(),
                 range.end(),
             );
@@ -1321,7 +1336,7 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_FIELD_CONSTRUCTION,
+            ProbeShapeKind::FieldConstruction,
             range.start(),
             range.end(),
         );
@@ -1336,7 +1351,7 @@ fn extract_parser_probe_shapes(
             push_probe_shape_with_text(
                 &mut shapes,
                 line_index,
-                PROBE_SHAPE_MATCH_ARM,
+                ProbeShapeKind::MatchArm,
                 token.text_range().start(),
                 token.text_range().end(),
                 match_expr_probe_text(
@@ -1357,7 +1372,7 @@ fn extract_parser_probe_shapes(
             push_probe_shape_with_text(
                 &mut shapes,
                 line_index,
-                PROBE_SHAPE_MATCH_ARM,
+                ProbeShapeKind::MatchArm,
                 token.text_range().start(),
                 token.text_range().end(),
                 match_arm_probe_text(
@@ -1373,7 +1388,7 @@ fn extract_parser_probe_shapes(
         a.start_line
             .cmp(&b.start_line)
             .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.cmp(&b.kind))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
             .then(a.text.cmp(&b.text))
     });
     shapes.dedup_by(|a, b| {
@@ -1398,7 +1413,7 @@ fn push_unsafe_boundary_probe_shapes(
         push_probe_shape_with_text(
             shapes,
             line_index,
-            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             function.syntax().text_range().end(),
             format!("unsafe fn {name}"),
@@ -1416,7 +1431,7 @@ fn push_unsafe_boundary_probe_shapes(
         push_probe_shape_with_text(
             shapes,
             line_index,
-            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             block.syntax().text_range().end(),
             "unsafe block".to_string(),
@@ -1428,7 +1443,7 @@ fn push_probe_shape(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
     text: &str,
-    kind: &str,
+    kind: ProbeShapeKind,
     start: TextSize,
     end: TextSize,
 ) {
@@ -1445,7 +1460,7 @@ fn push_probe_shape(
 fn push_probe_shape_with_text(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
-    kind: &str,
+    kind: ProbeShapeKind,
     start: TextSize,
     end: TextSize,
     snippet: String,
@@ -1457,7 +1472,7 @@ fn push_probe_shape_with_text(
         start_line: line_index.line(start),
         end_line: line_index.line_for_range_end(end),
         start_byte: u32::from(start) as usize,
-        kind: kind.to_string(),
+        kind,
         text: snippet,
     });
 }
@@ -2135,14 +2150,14 @@ pub fn validate(value: i32) -> Result<i32, String> {
             facts
                 .probe_shapes
                 .iter()
-                .any(|p| p.kind == PROBE_SHAPE_PREDICATE),
+                .any(|p| p.kind == ProbeShapeKind::Predicate),
             "Should extract predicate probe shapes"
         );
         assert!(
             facts
                 .probe_shapes
                 .iter()
-                .any(|p| p.kind == PROBE_SHAPE_ERROR_PATH),
+                .any(|p| p.kind == ProbeShapeKind::ErrorPath),
             "Should extract error_path probe shapes"
         );
         Ok(())
@@ -2159,7 +2174,7 @@ pub fn validate(value: i32) -> Result<i32, String> {
         let predicates: Vec<_> = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
             .collect();
         assert!(
             !predicates.is_empty(),
@@ -2202,7 +2217,7 @@ pub fn validate(value: i32) -> Result<i32, String> {
         let predicates: Vec<_> = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
             .collect();
         let producer = source
             .find("montant_é > discount_threshold")
@@ -2242,7 +2257,7 @@ pub fn read_raw(ptr: *const u8) -> u8 {
         let boundaries = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY)
+            .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
             .map(|shape| (shape.text.clone(), shape.start_line, shape.end_line))
             .collect::<Vec<_>>();
 
@@ -2280,7 +2295,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         let return_shapes = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_RETURN_VALUE)
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
             .map(|shape| shape.text.as_str())
             .collect::<Vec<_>>();
 

@@ -82,6 +82,7 @@ use tower_lsp_server::ls_types::{
 use tower_lsp_server::{LspService, Server};
 
 mod consumed_source_tests;
+mod shutdown_clear_tests;
 
 /// Render a fixture path the way the LSP surface renders paths.
 ///
@@ -953,6 +954,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
             oracle_strength: OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }],
         recommended_next_step: None,
         language: None,
@@ -1168,7 +1170,7 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         "serve_stdio should serve the stdio transport with the reviewed default transport bounds (#2034)"
     );
     assert!(
-        serve_streams.contains("build_service(root.clone())"),
+        serve_streams.contains("build_service(root.clone(), bounds.client_request_timeout)"),
         "serve_streams should construct the LSP service with the resolved workspace root through the shared constructor"
     );
     assert!(
@@ -1184,8 +1186,13 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
     );
     assert!(
-        serve_streams.contains(".serve(dollar_requests::AnswerDollarRequests(service))"),
-        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456) to the tower LSP server"
+        serve_streams.contains("dollar_requests::AnswerDollarRequests(")
+            && serve_streams.contains("RecordShutdownExit::new(service, order.clone())"),
+        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456, with the shutdown/exit order recorder inside it, #5249) to the tower LSP server"
+    );
+    assert!(
+        serve_streams.contains("order.exit_without_shutdown()"),
+        "serve_streams should exit nonzero when `exit` arrives without a prior `shutdown` (LSP section exit, #5249)"
     );
 
     Ok(())
@@ -2377,6 +2384,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let canonical_gap_id = diagnostic
@@ -2511,6 +2519,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         oracle_strength: OracleStrength::Weak,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
 
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -2773,6 +2782,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
@@ -3081,6 +3091,7 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
 
     let mut suppressed = sample_finding();
@@ -3177,6 +3188,41 @@ fn refresh_completion_log_message_includes_duration_and_counts() -> Result<(), S
     assert!(message.contains("enabled_language_names=rust"));
     assert!(message.contains("published_files=1"));
     assert!(message.contains("cleared_files=2"));
+    Ok(())
+}
+
+/// #5276: the completion log already carried `findings` and `diagnostics`
+/// side by side with no suppression reason. It must now also name how many
+/// live `*_unknown` findings the profile withheld, so the push channel
+/// reconciles with the status and listing disclosures.
+#[test]
+fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> Result<(), String> {
+    let mut unknown = sample_finding();
+    unknown.class = ExposureClass::StaticUnknown;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![unknown.clone()],
+    );
+    snapshot.refresh.record_duration(Duration::from_millis(5));
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let message = refresh_completed_log_message(&summary, 0, 0);
+    assert!(
+        message.contains("withheld_unknown=1"),
+        "the completion log must name the withheld count: {message}"
+    );
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let message = refresh_completed_log_message(&summary, 0, 0);
+    assert!(
+        message.contains("withheld_unknown=0"),
+        "the full profile withholds nothing: {message}"
+    );
     Ok(())
 }
 
@@ -4698,6 +4744,7 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         oracle_strength: OracleStrength::Strong,
         relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
         relation_confidence: Some(crate::domain::RelationConfidence::High),
+        miss: None,
     }];
     let mut snapshot = sample_analysis_snapshot(
         root.path().to_path_buf(),
@@ -7799,6 +7846,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
 
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -8988,7 +9036,10 @@ fn poisoned_initialize_failure_commit_survives_a_wedged_client_channel() -> Resu
         use tower::Service as _;
         let root_first = unique_lsp_test_root("poisoned-initialize-wedged-first")?;
         let root_second = unique_lsp_test_root("poisoned-initialize-wedged-second")?;
-        let (mut service, _socket) = build_service(PathBuf::from("."));
+        let (mut service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
         // Flip the service state to Initialized by driving one healthy
         // initialize through the service layers; the direct backend call
         // below then reaches the real capacity-1 client channel instead of
@@ -13566,6 +13617,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
@@ -19953,7 +20005,10 @@ fn lsp_trace_set_trace_updates_state_and_rejects_unknown_values() -> Result<(), 
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
-        let (service, _socket) = build_service(PathBuf::from("."));
+        let (service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
         let backend = service.inner();
         assert_eq!(backend.trace_level(), TraceValue::Off, "default is off");
 
@@ -19997,7 +20052,10 @@ fn lsp_trace_initialize_honors_client_trace_value() -> Result<(), String> {
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
-        let (service, _socket) = build_service(PathBuf::from("."));
+        let (service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
         let backend = service.inner();
         backend
             .initialize(InitializeParams {
@@ -20012,7 +20070,10 @@ fn lsp_trace_initialize_honors_client_trace_value() -> Result<(), String> {
             "initialize must honor the client-selected trace value"
         );
 
-        let (service, _socket) = build_service(PathBuf::from("."));
+        let (service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
         let backend = service.inner();
         backend
             .initialize(InitializeParams::default())
@@ -20034,7 +20095,10 @@ fn lsp_trace_toggle_leaves_status_identity_and_revision_untouched() -> Result<()
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
-        let (service, _socket) = build_service(PathBuf::from("."));
+        let (service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
         let backend = service.inner();
         backend.initialize_test_workspace_root();
         let status_params = || ExecuteCommandParams {
@@ -20091,7 +20155,7 @@ fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = build_service(PathBuf::from("."));
+        let (service, socket) = build_service(PathBuf::from("."), super::transport_bounds::CLIENT_REQUEST_TIMEOUT);
         let mut server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
                 .serve(service)
@@ -20358,7 +20422,7 @@ fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), Strin
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = build_service(PathBuf::from("."));
+        let (service, socket) = build_service(PathBuf::from("."), super::transport_bounds::CLIENT_REQUEST_TIMEOUT);
         let mut server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
                 .serve(service)
@@ -21036,6 +21100,7 @@ fn fix_route_rust_finding() -> Finding {
         oracle_strength: OracleStrength::Strong,
         relation_reason: None,
         relation_confidence: None,
+        miss: None,
     });
     finding
 }
@@ -21790,4 +21855,68 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         }
         Ok(())
     })
+}
+
+/// #5927: hover splits related-test rows the way human output does. A
+/// matched row that still misses keeps its oracle kind and strength and adds
+/// the reason; only an unmatched row uses the `misses ...; checked` form.
+#[test]
+fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), String> {
+    use crate::domain::RelatedTestMiss;
+    let mut finding = sample_finding();
+    let related = |name: &str, line: usize, miss: RelatedTestMiss| RelatedTest {
+        name: name.to_string(),
+        file: PathBuf::from("src/lib.rs"),
+        line,
+        oracle: Some("assert!(matches!(value, _));".to_string()),
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: Some(miss),
+    };
+    let mut no_assertion = related("calls_only", 30, RelatedTestMiss::NoAssertion);
+    no_assertion.oracle = None;
+    no_assertion.oracle_kind = OracleKind::Unknown;
+    no_assertion.oracle_strength = OracleStrength::None;
+    finding.related_tests = vec![
+        related("observes_score", 8, RelatedTestMiss::WeakAssertion),
+        related(
+            "asserts_elsewhere",
+            20,
+            RelatedTestMiss::AssertionNotObserving,
+        ),
+        no_assertion,
+    ];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let HoverContents::Markup(markup) =
+        super::hover::finding_hover_response(&finding, &diagnostic).contents
+    else {
+        return Err("expected hover markdown".to_string());
+    };
+    let row = |name: &str| {
+        markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `src/lib.rs") && line.contains(name))
+            .map(str::to_string)
+            .ok_or_else(|| format!("missing {name} related-test row in:\n{}", markup.value))
+    };
+    assert_eq!(
+        row("observes_score")?,
+        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational_check oracle: \
+         assert!(matches!(value, _)); misses: assertion too weak to tell the old \
+         behavior from the new"
+    );
+    assert_eq!(
+        row("asserts_elsewhere")?,
+        "- `src/lib.rs:20` `asserts_elsewhere` misses: asserts, but not on the \
+         changed value; checked `assert!(matches!(value, _))`"
+    );
+    // A row with no recorded oracle must not be graded as one.
+    assert_eq!(
+        row("calls_only")?,
+        "- `src/lib.rs:30` `calls_only` misses: has no assertion"
+    );
+    Ok(())
 }
