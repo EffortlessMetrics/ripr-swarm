@@ -1,0 +1,57 @@
+{
+  "case_id": "grid-match-guard",
+  "subject_id": "authored-grid-match",
+  "diff": "cases/grid-match-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 46
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm_guard",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The candidate match_arm probe drops the arm value, so the exact pin of -1 reads observation_unverified (#6504).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n if true => -1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::signs_of_three_values",
+        "equivalence_review": "not equivalent: signs_of_three_values fails on it"
+      },
+      {
+        "replacement": "n if false => -1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::signs_of_three_values",
+        "equivalence_review": "not equivalent: signs_of_three_values fails on it"
+      },
+      {
+        "replacement": "n if 0 >= n => -1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::signs_of_three_values",
+        "equivalence_review": "not equivalent: signs_of_three_values fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: match guard (comparison respelled; mutants force the guard true/false or move its boundary) x exact_pin_assert. The test pins the result at concrete inputs with assert_eq; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0229, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

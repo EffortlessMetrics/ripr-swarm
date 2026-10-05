@@ -1,0 +1,56 @@
+{
+  "case_id": "grid-loop-table",
+  "subject_id": "authored-grid-loop",
+  "diff": "cases/grid-loop-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The loop assert_eq! is admitted, but the accumulator probe reads observation_unverified because no assertion text names the changed expression (#5328).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "count -= line.split_whitespace().count();",
+        "outcome": "tests_failed",
+        "failing_test": "tests::word_count_table",
+        "equivalence_review": "not equivalent: word_count_table fails on it"
+      },
+      {
+        "replacement": "count *= line.split_whitespace().count();",
+        "outcome": "tests_failed",
+        "failing_test": "tests::word_count_table",
+        "equivalence_review": "not equivalent: word_count_table fails on it"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::word_count_table",
+        "equivalence_review": "not equivalent: word_count_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: loop accumulator (rewritten as `+=`; mutants change the operator or delete the statement) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

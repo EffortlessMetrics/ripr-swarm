@@ -1,0 +1,50 @@
+{
+  "case_id": "grid-try-exact",
+  "subject_id": "authored-grid-try",
+  "diff": "cases/grid-try-exact.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_propagation_question_mark",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "is_err() is a broad oracle (RIPR-SPEC-0227). Its `?` side-flip rule covers an added or removed `?`, not a mutant that swallows one, so no spec credits this pin.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let port: u16 = text.trim().parse().unwrap_or(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::port_parses_and_rejects_words",
+        "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"
+      },
+      {
+        "replacement": "let port: u16 = text.trim().parse().unwrap_or(8080);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::port_parses_and_rejects_words",
+        "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x exact_pin_assert. The test pins the result at concrete inputs with assert/assert_eq; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

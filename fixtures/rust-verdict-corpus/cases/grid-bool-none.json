@@ -1,0 +1,56 @@
+{
+  "case_id": "grid-bool-none",
+  "subject_id": "authored-grid-bool",
+  "diff": "cases/grid-bool-none.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boolean",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": "Operand reorder in a boolean predicate reads infection_unknown in four of five styles, whatever the tests pin (#6488).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "attempts_left || timed_out",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
+      },
+      {
+        "replacement": "true",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
+      },
+      {
+        "replacement": "false",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: should_retry(true, true) becomes false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: boolean logic (operands swapped; mutants swap `&&`/`||`, drop `!` or replace the body with a constant) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

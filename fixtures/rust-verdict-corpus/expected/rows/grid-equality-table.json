@@ -1,0 +1,19 @@
+{
+  "case_id": "grid-equality-table",
+  "subject_id": "authored-grid-equality",
+  "origin": "authored",
+  "anchor": "src/lib.rs:8",
+  "behavior_family": "predicate_equality",
+  "test_shape": "table_driven_loop",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

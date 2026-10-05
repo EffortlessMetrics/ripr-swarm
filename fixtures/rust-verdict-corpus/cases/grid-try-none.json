@@ -1,0 +1,49 @@
+{
+  "case_id": "grid-try-none",
+  "subject_id": "authored-grid-try",
+  "diff": "cases/grid-try-none.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_propagation_question_mark",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let retries: u8 = text.parse().unwrap_or(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_retries(\"many\") is Ok(0) instead of Err"
+      },
+      {
+        "replacement": "let retries: u8 = text.parse().unwrap_or(3);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_retries(\"many\") is Ok(3) instead of Err"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0001, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

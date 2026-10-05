@@ -1,0 +1,49 @@
+{
+  "case_id": "grid-returns-property",
+  "subject_id": "authored-grid-returns",
+  "diff": "cases/grid-returns-property.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "String::new()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: slug(\"Hello World\") is empty instead of hello-world; an empty string has no spaces or capitals"
+      },
+      {
+        "replacement": "\"xyzzy\".into()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: every slug is xyzzy, which has no spaces or capitals"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: return value (body rewritten; mutants replace it with cargo-mutants' default values) x property_invariant_loop. The test checks an invariant over a loop of inputs, not exact outputs; 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "case_id": "grid-loop-property",
+  "subject_id": "authored-grid-loop",
+  "diff": "cases/grid-loop-property.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 22
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "property_invariant_loop",
+  "hard_case": "A changed compound assignment maps to no probe family and reads static_unknown (#6485).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "balance -= d;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::deposits_never_lower_the_balance",
+        "equivalence_review": "not equivalent: 0 - 1 overflows and panics before the assertion runs"
+      },
+      {
+        "replacement": "balance *= d;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: loop accumulator (rewritten as `+=`; mutants change the operator or delete the statement) x property_invariant_loop. The test checks an invariant over a loop of inputs, not exact outputs; 1 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "case_id": "grid-early-table",
+  "subject_id": "authored-grid-early",
+  "diff": "cases/grid-early-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "early_return_guard",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if name.len() != 0 {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::initial_table",
+        "equivalence_review": "not equivalent: initial_table fails on it"
+      },
+      {
+        "replacement": "if true {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::initial_table",
+        "equivalence_review": "not equivalent: initial_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: early-return guard (condition respelled; mutants negate it or force it true/false) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "case_id": "grid-delete-table",
+  "subject_id": "authored-grid-delete",
+  "diff": "cases/grid-delete-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "table_driven_loop",
+  "hard_case": "A changed compound assignment maps to no probe family and reads static_unknown (#6485).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::miss_table",
+        "equivalence_review": "not equivalent: miss_table fails on it"
+      },
+      {
+        "replacement": "self.misses -= 1;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::miss_table",
+        "equivalence_review": "not equivalent: miss_table fails on it"
+      },
+      {
+        "replacement": "self.misses *= 1;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::miss_table",
+        "equivalence_review": "not equivalent: miss_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: statement (assignment rewritten as `+=`; mutants delete it or change the operator) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
