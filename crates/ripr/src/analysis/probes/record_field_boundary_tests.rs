@@ -206,15 +206,17 @@ fn one_line_struct_literal_probes_the_edited_field_not_its_neighbour() -> Result
 }
 
 #[test]
-fn one_line_struct_literal_still_probes_an_edited_first_field() -> Result<(), String> {
+fn a_field_text_inside_a_longer_removed_value_is_not_unchanged() -> Result<(), String> {
+    // `version: 0x1` occurs inside the removed `version: 0x10`, but that
+    // field still changed; only a whole-token match counts as unchanged.
     let probes = probes_for_replaced_line(
         ONE_LINE_ID,
         6,
-        "    Id { counter: 0x00ab_cdee, version: 0x1 }",
+        "    Id { counter: 0x00ab_cdef, version: 0x10 }",
     )?;
     assert_eq!(
         field_construction_expressions(&probes),
-        vec!["counter: 0x00ab_cdef"],
+        vec!["version: 0x1"],
         "{probes:?}"
     );
     Ok(())

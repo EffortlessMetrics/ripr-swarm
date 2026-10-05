@@ -10,17 +10,17 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:predicate:9b6a6cdb",
+      "id": "probe:src_lib.rs:predicate:cbead9b7",
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
       "probe": {
-        "id": "probe:src_lib.rs:predicate:9b6a6cdb",
+        "id": "probe:src_lib.rs:predicate:cbead9b7",
         "family": "predicate",
         "delta": "control",
         "file": "fixtures/rust_long_expression_display_bound/input/src/lib.rs",
         "line": 10,
-        "expression": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0"
+        "expression": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason"},
@@ -29,11 +29,11 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0`; related oracle: Strong oracle found: exact value or pattern assertion", "related test src/lib.rs:25 single_blocking_decision_reports_its_reason uses strong exact value oracle: assert_eq!(blocking_reason(&decisions, \"unknown\"), \"stale_baseline\");", "source assertion argument value \"stale_baseline\" at line 27", "source function argument value fallback = \"unknown\" at line 27", "missing discriminator decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0: No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 0; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 0 value: \"blocking\""],
+      "evidence_path": ["reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1`; related oracle: Strong oracle found: exact value or pattern assertion", "related test src/lib.rs:25 single_blocking_decision_reports_its_reason uses strong exact value oracle: assert_eq!(blocking_reason(&decisions, \"unknown\"), \"stale_baseline\");", "source assertion argument value \"stale_baseline\" at line 27", "source function argument value fallback = \"unknown\" at line 27", "missing discriminator decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1: No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 1; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 1 value: \"blocking\""],
       "flow_sinks": [
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0", "No clear propagation path from changed behavior to an observable sink"],
+      "missing": ["Missing discriminator value: decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1", "No clear propagation path from changed behavior to an observable sink"],
       "assertion_texts": {
         "27": "assert_eq!(blocking_reason(&decisions, \"unknown\"), \"stale_baseline\");"
       },
@@ -52,8 +52,8 @@
         ],
         "missing_discriminators": [
           {
-            "value": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0",
-            "reason": "No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 0; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 0 value: \"blocking\"",
+            "value": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1",
+            "reason": "No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 1; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 1 value: \"blocking\"",
             "flow_sink": null
           }
         ]
@@ -72,8 +72,8 @@
       ],
       "missing_discriminators": [
         {
-          "value": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0",
-          "reason": "No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 0; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 0 value: \"blocking\"",
+          "value": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 1",
+          "reason": "No related test call uses decisions.iter().filter(|d| d.decision equal to \"blocking\").count() == 1; observed decisions.iter().filter(|d| d.decision values: unknown; target \"blocking\").count() == 1 value: \"blocking\"",
           "flow_sink": null
         }
       ],

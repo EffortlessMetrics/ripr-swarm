@@ -29,11 +29,13 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
 }
 
 /// Like [`parser_probe_shapes_for_changed_line`], with the removed text the
-/// diff pairs with this line. When several same-family shapes share the line
-/// (`Id { counter: 0x00ab_cdef, version: 0x1 }`), a shape whose text the
-/// removed line already holds is unchanged and loses to one it does not
-/// hold, so the probe names the edited field rather than its neighbour
-/// (#6731).
+/// diff pairs with this line. When several same-family shapes match the line
+/// equally well (`Id { counter: 0x00ab_cdef, version: 0x1 }`), a shape whose
+/// text the removed line already holds as a whole token run is unchanged and
+/// loses to one it does not hold, so the probe names the edited field rather
+/// than its neighbour (#6731). The match category (exact, containing,
+/// contained) still decides first, so an exact shape is never traded for an
+/// enclosing one.
 pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     index: &'a RustIndex,
     file: &Path,
@@ -41,9 +43,12 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     changed_text: &str,
     removed_text: Option<&str>,
 ) -> Vec<ParserProbeShape<'a>> {
-    let unchanged = |shape_text: &str| {
-        let shape_text = shape_text.trim();
-        removed_text.is_some_and(|removed| !shape_text.is_empty() && removed.contains(shape_text))
+    let selection_key = |shape_text: &str| {
+        shape_match_rank(shape_text, changed_text).map(|(category, distance)| {
+            let unchanged = removed_text
+                .is_some_and(|removed| contains_as_token_run(removed, shape_text.trim()));
+            (category, unchanged, distance)
+        })
     };
     let Some(facts) = file_facts(index, file) else {
         return Vec::new();
@@ -88,14 +93,8 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
                 continue;
             }
             let current = &selected[position];
-            let candidate_key = (
-                unchanged(candidate.text),
-                shape_match_rank(candidate.text, changed_text),
-            );
-            let current_key = (
-                unchanged(current.text),
-                shape_match_rank(current.text, changed_text),
-            );
+            let candidate_key = selection_key(candidate.text);
+            let current_key = selection_key(current.text);
             if candidate_key < current_key
                 || (candidate_key == current_key && candidate.text < current.text)
             {
@@ -256,6 +255,24 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
                 .map(|(_, facts)| facts)
         })
         .map(|facts| facts.data())
+}
+
+/// True when `needle` occurs in `haystack` without an identifier or digit
+/// character on either side, so `b: 2` is not found inside `b: 20`.
+fn contains_as_token_run(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    haystack.match_indices(needle).any(|(start, _)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + needle.len()..].chars().next();
+        let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))
+            || before.is_none_or(|ch| !is_word(ch));
+        let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
+            || after.is_none_or(|ch| !is_word(ch));
+        open_start && open_end
+    })
 }
 
 fn shape_match_rank(shape_text: &str, changed_text: &str) -> Option<(u8, usize)> {
