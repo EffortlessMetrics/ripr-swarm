@@ -61,11 +61,6 @@ are scoped or reviewed.
 
 ### Fixed
 
-- TypeScript preview: a Node test registered with an active `expectFailure`
-  option no longer counts as ordinary test evidence, and a locally shadowed
-  `undefined` no longer passes for the global value in a test's
-  skip/todo/fails/expectFailure option. Such a test could otherwise lend its
-  assertions to a seam it is expected to fail on.
 - Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
   JSON through the same product importer as `ripr calibrate cargo-mutants`.
   A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
