@@ -563,7 +563,12 @@ fn write_workspace_report(root: &std::path::Path, relative: &str, text: &str) ->
         );
         return false;
     }
-    if let Err(err) = std::fs::write(&path, text) {
+    // The house atomic writer (review on #6788): a failed or interrupted
+    // write leaves the previous report untouched, and a destination that is
+    // not a regular file (for example a symlinked report leaf) is refused
+    // rather than written through — the degraded projection then discloses
+    // `unknown` instead of claiming the unrefreshed file.
+    if let Err(err) = crate::output::file_write::write(&path, text.as_bytes()) {
         eprintln!("ripr: could not persist report {}: {err}", path.display());
         return false;
     }
