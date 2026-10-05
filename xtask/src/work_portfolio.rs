@@ -366,9 +366,7 @@ fn read_captured_file(root: &Path, file_name: &str) -> Result<String, String> {
 
 /// Load and shape-check the manifest; every known source must appear exactly
 /// once.
-pub(crate) fn load_work_captured_manifest(
-    body: &str,
-) -> Result<WorkCapturedManifestV1, String> {
+pub(crate) fn load_work_captured_manifest(body: &str) -> Result<WorkCapturedManifestV1, String> {
     let manifest: WorkCapturedManifestV1 = serde_json::from_str(body)
         .map_err(|error| format!("parse work captured manifest: {error}"))?;
     if manifest.schema_version != WORK_CAPTURED_MANIFEST_SCHEMA_VERSION {
@@ -410,8 +408,8 @@ pub(crate) fn load_work_captured_manifest(
 
 macro_rules! load_captured_body {
     ($body:expr, $ty:ty, $schema:expr, $label:expr) => {{
-        let parsed: $ty = serde_json::from_str($body)
-            .map_err(|error| format!("parse {}: {error}", $label))?;
+        let parsed: $ty =
+            serde_json::from_str($body).map_err(|error| format!("parse {}: {error}", $label))?;
         if parsed.schema_version != $schema {
             return Err(format!(
                 "unsupported {} schema `{}`",
@@ -455,10 +453,7 @@ pub(crate) fn load_work_captured_dir(root: &Path) -> Result<WorkCapturedDirV1, S
             .ok_or_else(|| format!("source `{}` has no file", kind.wire_name()))?;
         let present = root.join(file_name).is_file();
         let Some(state) = source_states.get(&kind).copied() else {
-            return Err(format!(
-                "manifest is missing source `{}`",
-                kind.wire_name()
-            ));
+            return Err(format!("manifest is missing source `{}`", kind.wire_name()));
         };
         match state {
             WorkCapturedSourceStateV1::Observed | WorkCapturedSourceStateV1::Stale => {
@@ -955,8 +950,8 @@ fn portable_identity<T: Serialize>(label: &str, dto: &T) -> Result<String, Strin
     let mut value =
         serde_json::to_value(dto).map_err(|error| format!("serialize {label}: {error}"))?;
     strip_volatile(&mut value);
-    let canonical = serde_json::to_string(&value)
-        .map_err(|error| format!("canonicalize {label}: {error}"))?;
+    let canonical =
+        serde_json::to_string(&value).map_err(|error| format!("canonicalize {label}: {error}"))?;
     Ok(format!(
         "work-portfolio:sha256:{}",
         crate::blind_journey::sha256_hex(canonical.as_bytes())
@@ -1007,22 +1002,16 @@ fn build_observations(
     let mut observations = Vec::new();
     let mut freshness = BTreeMap::new();
     for kind in WorkCapturedSourceKindV1::all() {
-        let Some(source) = manifest.sources.iter().find(|entry| entry.source == kind)
-        else {
-            return Err(format!(
-                "manifest is missing source `{}`",
-                kind.wire_name()
-            ));
+        let Some(source) = manifest.sources.iter().find(|entry| entry.source == kind) else {
+            return Err(format!("manifest is missing source `{}`", kind.wire_name()));
         };
         let value = match source.state {
-            WorkCapturedSourceStateV1::Observed => {
-                match source.observed_at.as_deref() {
-                    Some(observed_at) if observed_at >= manifest.captured_at.as_str() => {
-                        WorkSourceFreshnessV1::Current
-                    }
-                    _ => WorkSourceFreshnessV1::Stale,
+            WorkCapturedSourceStateV1::Observed => match source.observed_at.as_deref() {
+                Some(observed_at) if observed_at >= manifest.captured_at.as_str() => {
+                    WorkSourceFreshnessV1::Current
                 }
-            }
+                _ => WorkSourceFreshnessV1::Stale,
+            },
             WorkCapturedSourceStateV1::Stale => WorkSourceFreshnessV1::Stale,
             WorkCapturedSourceStateV1::Missing | WorkCapturedSourceStateV1::Unavailable => {
                 WorkSourceFreshnessV1::Unknown
@@ -1046,7 +1035,8 @@ fn next_transition_for_open_pr(pr: &WorkCapturedPullRequestV1) -> String {
         return "wait for the required checks to report, then rerun the proof commands on the published head".to_string();
     }
     if pr.checks_state == "failure" {
-        return "inspect the failing checks, push a bounded fix, and rerun the proof commands".to_string();
+        return "inspect the failing checks, push a bounded fix, and rerun the proof commands"
+            .to_string();
     }
     if pr.draft {
         return "finish the draft, mark the PR ready for review, and request review".to_string();
@@ -1312,24 +1302,30 @@ fn build_ranking_factors(
         });
     };
     if resumable {
-        let (basis, sources): (String, Vec<String>) = match (&candidate.pull_request, &candidate.claim) {
-            (Some(pr), Some(claim)) => (
-                format!("candidate resumes already-owned work: PR #{pr} under claim `{claim}`"),
-                vec![format!("pr:{pr}"), format!("claim:{claim}")],
-            ),
-            (Some(pr), None) => (
-                format!("candidate resumes already-owned work: open PR #{pr}"),
-                vec![format!("pr:{pr}")],
-            ),
-            (None, Some(claim)) => (
-                format!("candidate resumes already-owned work under durable claim `{claim}`"),
-                vec![format!("claim:{claim}")],
-            ),
-            (None, None) => ("candidate resumes already-owned work".to_string(), Vec::new()),
-        };
+        let (basis, sources): (String, Vec<String>) =
+            match (&candidate.pull_request, &candidate.claim) {
+                (Some(pr), Some(claim)) => (
+                    format!("candidate resumes already-owned work: PR #{pr} under claim `{claim}`"),
+                    vec![format!("pr:{pr}"), format!("claim:{claim}")],
+                ),
+                (Some(pr), None) => (
+                    format!("candidate resumes already-owned work: open PR #{pr}"),
+                    vec![format!("pr:{pr}")],
+                ),
+                (None, Some(claim)) => (
+                    format!("candidate resumes already-owned work under durable claim `{claim}`"),
+                    vec![format!("claim:{claim}")],
+                ),
+                (None, None) => (
+                    "candidate resumes already-owned work".to_string(),
+                    Vec::new(),
+                ),
+            };
         push(
             WorkRankingFactorKindV1::UserRootDirectionAndOwnedResumableWork,
-            format!("{basis}; factor 1 prioritizes user/root direction and already-owned resumable work"),
+            format!(
+                "{basis}; factor 1 prioritizes user/root direction and already-owned resumable work"
+            ),
             sources,
         );
     } else {
@@ -1438,7 +1434,10 @@ fn build_ranking_factors(
         WorkRankingFactorKindV1::LaneCapacityAndCollisionCost,
         lane_contribution,
         if candidate.claim.is_some() {
-            vec![format!("claim:{}", candidate.claim.clone().unwrap_or_default())]
+            vec![format!(
+                "claim:{}",
+                candidate.claim.clone().unwrap_or_default()
+            )]
         } else {
             Vec::new()
         },
@@ -1448,8 +1447,14 @@ fn build_ranking_factors(
         match candidate.review_ci_cost_class {
             WorkCostClassV1::Low => "review/CI/merge cost sourced as low".to_string(),
             WorkCostClassV1::Moderate => "review/CI/merge cost sourced as moderate".to_string(),
-            WorkCostClassV1::High => "review/CI/merge cost sourced as high; factor 7 deprioritizes saturated lanes".to_string(),
-            WorkCostClassV1::NotProven => "no review/CI/merge cost sourced; factor 7 reads not_proven, never assumed low".to_string(),
+            WorkCostClassV1::High => {
+                "review/CI/merge cost sourced as high; factor 7 deprioritizes saturated lanes"
+                    .to_string()
+            }
+            WorkCostClassV1::NotProven => {
+                "no review/CI/merge cost sourced; factor 7 reads not_proven, never assumed low"
+                    .to_string()
+            }
         },
         Vec::new(),
     );
@@ -1479,9 +1484,7 @@ fn issues_by_campaign(captured: &WorkCapturedDirV1) -> BTreeMap<String, Vec<u64>
     if let Some(campaigns) = &captured.campaigns {
         for campaign in &campaigns.campaigns {
             for issue in &campaign.issues {
-                map.entry(campaign.id.clone())
-                    .or_default()
-                    .push(*issue);
+                map.entry(campaign.id.clone()).or_default().push(*issue);
             }
         }
     }
@@ -1542,8 +1545,7 @@ pub(crate) fn compile_work_portfolio(
         if !seen_issues.insert(*issue_number) {
             continue;
         }
-        let Some(issue) = issues.iter().find(|entry| entry.number == *issue_number)
-        else {
+        let Some(issue) = issues.iter().find(|entry| entry.number == *issue_number) else {
             boundaries.insert(format!(
                 "campaign references issue #{issue_number} that is absent from the captured issue source"
             ));
@@ -1719,7 +1721,18 @@ pub(crate) fn compile_work_portfolio(
             .collect();
         let evidence: Vec<String> = colliding
             .iter()
-            .map(|claim| format!("active {} claim `{}` on branch `{}`", if claim.exclusive { "exclusive" } else { "shared" }, claim.id, claim.branch))
+            .map(|claim| {
+                format!(
+                    "active {} claim `{}` on branch `{}`",
+                    if claim.exclusive {
+                        "exclusive"
+                    } else {
+                        "shared"
+                    },
+                    claim.id,
+                    claim.branch
+                )
+            })
             .collect();
         candidate_edge_membership
             .entry(format!("candidate:issue:{issue}"))
@@ -1731,7 +1744,8 @@ pub(crate) fn compile_work_portfolio(
             kind: WorkConflictEdgeKindV1::ClaimCollision,
             subjects,
             evidence,
-            note: "durable claim collision: root must arbitrate before any build resumes".to_string(),
+            note: "durable claim collision: root must arbitrate before any build resumes"
+                .to_string(),
         });
     }
     for (branch, mut colliding) in claims_by_branch {
@@ -1755,7 +1769,9 @@ pub(crate) fn compile_work_portfolio(
             kind: WorkConflictEdgeKindV1::ClaimCollision,
             subjects: subjects.clone(),
             evidence,
-            note: "two distinct issues hold active claims on one branch; the lane is conflict-visible".to_string(),
+            note:
+                "two distinct issues hold active claims on one branch; the lane is conflict-visible"
+                    .to_string(),
         });
         for claim in &colliding {
             if let Some(issue) = claim.issue {
@@ -1881,9 +1897,7 @@ pub(crate) fn compile_work_portfolio(
         let evidence: Vec<String> = pair_edges
             .iter()
             .map(|(left, right)| {
-                format!(
-                    "issues #{left} and #{right} are path-disjoint yet share `{resource}`"
-                )
+                format!("issues #{left} and #{right} are path-disjoint yet share `{resource}`")
             })
             .collect();
         for (left, right) in &pair_edges {
@@ -1938,8 +1952,7 @@ pub(crate) fn compile_work_portfolio(
             || !context.fresh(WorkCapturedSourceKindV1::GithubClaims)
         {
             WorkLaneStateV1::Unknown
-        } else if claim_collision_lanes.contains(&lane) || branch_collision_lanes.contains(&lane)
-        {
+        } else if claim_collision_lanes.contains(&lane) || branch_collision_lanes.contains(&lane) {
             WorkLaneStateV1::Conflicting
         } else if owner.is_some() {
             WorkLaneStateV1::Occupied
@@ -1951,11 +1964,13 @@ pub(crate) fn compile_work_portfolio(
             .find(|edge| {
                 matches!(
                     edge.kind,
-                    WorkConflictEdgeKindV1::ClaimCollision | WorkConflictEdgeKindV1::BranchCollision
-                ) && edge
-                    .subjects
-                    .iter()
-                    .any(|subject| members.iter().any(|member| subject.contains(&format!("issue:{member}"))))
+                    WorkConflictEdgeKindV1::ClaimCollision
+                        | WorkConflictEdgeKindV1::BranchCollision
+                ) && edge.subjects.iter().any(|subject| {
+                    members
+                        .iter()
+                        .any(|member| subject.contains(&format!("issue:{member}")))
+                })
             })
             .map(|edge| edge.id.clone());
         lanes.push(WorkLaneV1 {
@@ -1994,16 +2009,14 @@ pub(crate) fn compile_work_portfolio(
             .collect();
         let has_claim_collision = claim_collision_by_issue.contains(&issue.number);
         let has_branch_collision = branch_collision_by_issue.contains_key(&issue.number);
-        let has_slice = captured
-            .cargo_allow
-            .as_ref()
-            .is_some_and(|graph| {
-                graph.requirements.iter().any(|requirement| {
-                    requirement.slices.iter().any(|slice| {
-                        slice.issue_refs.contains(&issue.number)
-                    })
-                })
-            });
+        let has_slice = captured.cargo_allow.as_ref().is_some_and(|graph| {
+            graph.requirements.iter().any(|requirement| {
+                requirement
+                    .slices
+                    .iter()
+                    .any(|slice| slice.issue_refs.contains(&issue.number))
+            })
+        });
         let (kind, next_transition) = classify_candidate(
             issue,
             &open_prs,
@@ -2033,9 +2046,10 @@ pub(crate) fn compile_work_portfolio(
                 .unwrap_or_default(),
             &edges,
         );
-        let confidence = if confidence_reasons.iter().any(|reason| {
-            reason.starts_with("not_proven:")
-        }) {
+        let confidence = if confidence_reasons
+            .iter()
+            .any(|reason| reason.starts_with("not_proven:"))
+        {
             WorkConfidenceV1::NotProven
         } else if !confidence_reasons.is_empty() {
             WorkConfidenceV1::Partial
@@ -2125,7 +2139,8 @@ pub(crate) fn compile_work_portfolio(
             duplicate_family: duplicate_family_by_issue.get(&issue.number).cloned(),
             packet_entrypoint: format!("cargo xtask work explain --candidate {candidate_id}"),
         };
-        candidate.ranking_factors = build_ranking_factors(issue, open_prs.first().copied(), &candidate);
+        candidate.ranking_factors =
+            build_ranking_factors(issue, open_prs.first().copied(), &candidate);
         candidates.push(candidate);
     }
     let rank_key = |candidate: &WorkCandidateV1| {
@@ -2133,9 +2148,9 @@ pub(crate) fn compile_work_portfolio(
             .iter()
             .find(|issue| issue.number == candidate.issue)
             .and_then(|issue| issue.honesty_risk.as_deref());
-        let has_open_pr = pull_requests.iter().any(|pr| {
-            pr.state == "open" && pr.linked_issues.contains(&candidate.issue)
-        });
+        let has_open_pr = pull_requests
+            .iter()
+            .any(|pr| pr.state == "open" && pr.linked_issues.contains(&candidate.issue));
         ranking_tuple(candidate, risk, has_open_pr)
     };
     candidates.sort_by(|left, right| {
@@ -2366,18 +2381,23 @@ fn confidence_reasons_for(
         ));
     }
     if primary_pr.is_some() && !context.fresh(WorkCapturedSourceKindV1::GithubPullRequests) {
-        reasons.push("partial: the captured pull-request source is not current for the linked PR".to_string());
+        reasons.push(
+            "partial: the captured pull-request source is not current for the linked PR"
+                .to_string(),
+        );
     }
     if !issue_claims.is_empty() && !context.fresh(WorkCapturedSourceKindV1::GithubClaims) {
-        reasons.push("partial: the captured claim source is not current for the linked claim".to_string());
+        reasons.push(
+            "partial: the captured claim source is not current for the linked claim".to_string(),
+        );
     }
     if (primary_pr.is_some() || !issue_claims.is_empty())
         && !context.fresh(WorkCapturedSourceKindV1::LocalState)
     {
-        reasons.push("partial: local branch/worktree truth is not current for the lane".to_string());
+        reasons
+            .push("partial: local branch/worktree truth is not current for the lane".to_string());
     }
-    if !issue.requirement_refs.is_empty() && !context.fresh(WorkCapturedSourceKindV1::CargoAllow)
-    {
+    if !issue.requirement_refs.is_empty() && !context.fresh(WorkCapturedSourceKindV1::CargoAllow) {
         reasons.push("partial: the cargo-allow graph is not observed; requirement and duplicate-family evidence is weakened".to_string());
     }
     for edge_id in edge_ids {
@@ -2474,15 +2494,12 @@ pub(crate) fn build_candidates_view(
     let filtered: Vec<WorkCandidateV1> = snapshot
         .candidates
         .iter()
-        .filter(|candidate| {
-            campaign.is_none_or(|id| candidate.campaigns.contains(&id.to_string()))
-        })
+        .filter(|candidate| campaign.is_none_or(|id| candidate.campaigns.contains(&id.to_string())))
         .filter(|candidate| {
             surface.is_none_or(|id| {
-                candidate
-                    .campaigns
-                    .iter()
-                    .any(|campaign_id| campaign_surfaces(snapshot, campaign_id).contains(&id.to_string()))
+                candidate.campaigns.iter().any(|campaign_id| {
+                    campaign_surfaces(snapshot, campaign_id).contains(&id.to_string())
+                })
             })
         })
         .cloned()
@@ -2555,7 +2572,6 @@ pub(crate) fn build_explain_view(
     })
 }
 
-
 /// Render one closed-vocabulary value by its serde wire spelling
 /// (`repair_review`, not the Debug `RepairReview`).
 fn wire_label(value: &impl Serialize) -> String {
@@ -2575,10 +2591,22 @@ fn md_table_row(cells: &[String]) -> String {
 pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> String {
     let mut body = String::new();
     body.push_str("# Work portfolio\n\n");
-    body.push_str(&format!("- repository: `{}`\n", snapshot.repository.repository));
-    body.push_str(&format!("- default branch: `{}` @ `{}`\n", snapshot.repository.default_branch, snapshot.repository.default_branch_sha));
-    body.push_str(&format!("- portable identity: `{}`\n", snapshot.portable_identity));
-    body.push_str(&format!("- claim boundary: {}\n\n", snapshot.claim_boundary));
+    body.push_str(&format!(
+        "- repository: `{}`\n",
+        snapshot.repository.repository
+    ));
+    body.push_str(&format!(
+        "- default branch: `{}` @ `{}`\n",
+        snapshot.repository.default_branch, snapshot.repository.default_branch_sha
+    ));
+    body.push_str(&format!(
+        "- portable identity: `{}`\n",
+        snapshot.portable_identity
+    ));
+    body.push_str(&format!(
+        "- claim boundary: {}\n\n",
+        snapshot.claim_boundary
+    ));
 
     body.push_str("## Sources\n\n");
     body.push_str(&md_table_row(&[
@@ -2680,7 +2708,8 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
     ));
     body.push_str(&format!(
         "- lifecycle stage: `{}`; next transition: {}\n",
-        wire_label(&candidate.lifecycle_stage), candidate.next_transition
+        wire_label(&candidate.lifecycle_stage),
+        candidate.next_transition
     ));
     if let Some(pr) = candidate.pull_request {
         body.push_str(&format!("- open PR: #{pr}\n"));
@@ -2719,7 +2748,10 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         }
     }
     if !candidate.conflict_edges.is_empty() {
-        body.push_str(&format!("- conflict edges: {:?}\n", candidate.conflict_edges));
+        body.push_str(&format!(
+            "- conflict edges: {:?}\n",
+            candidate.conflict_edges
+        ));
     }
     if let Some(family) = &candidate.duplicate_family {
         body.push_str(&format!("- duplicate family: `{family}`\n"));
@@ -2731,7 +2763,10 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         ));
     }
     if !candidate.regression_risks.is_empty() {
-        body.push_str(&format!("- regression risks: {:?}\n", candidate.regression_risks));
+        body.push_str(&format!(
+            "- regression risks: {:?}\n",
+            candidate.regression_risks
+        ));
     }
     body.push_str("- ranking factors (ordered, no hidden score):\n");
     for factor in &candidate.ranking_factors {
@@ -2742,14 +2777,20 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
             factor.contribution
         ));
     }
-    body.push_str(&format!("- packet entrypoint: `{}`\n", candidate.packet_entrypoint));
+    body.push_str(&format!(
+        "- packet entrypoint: `{}`\n",
+        candidate.packet_entrypoint
+    ));
     body
 }
 
 pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
     let mut body = String::new();
     body.push_str("# Work candidates\n\n");
-    body.push_str(&format!("- portfolio identity: `{}`\n", view.portfolio_identity));
+    body.push_str(&format!(
+        "- portfolio identity: `{}`\n",
+        view.portfolio_identity
+    ));
     body.push_str(&format!(
         "- filter: campaign={:?} surface={:?} limit={}\n",
         view.filter_campaign, view.filter_surface, view.limit
@@ -2768,7 +2809,9 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
         body.push('\n');
     }
     if view.candidates.is_empty() {
-        body.push_str("No candidates match the filter; the portfolio and other campaigns remain available.\n");
+        body.push_str(
+            "No candidates match the filter; the portfolio and other campaigns remain available.\n",
+        );
     }
     body
 }
@@ -2776,7 +2819,10 @@ pub(crate) fn work_candidates_markdown(view: &WorkCandidatesViewV1) -> String {
 pub(crate) fn work_explain_markdown(view: &WorkExplainViewV1) -> String {
     let heading = format!("# Work candidate `{}`", view.candidate.candidate_id);
     let mut body = candidate_markdown(&view.candidate, &heading);
-    body.push_str(&format!("\n- portfolio identity: `{}`\n", view.portfolio_identity));
+    body.push_str(&format!(
+        "\n- portfolio identity: `{}`\n",
+        view.portfolio_identity
+    ));
     if !view.partial_data_boundaries.is_empty() {
         body.push_str("- partial-data boundaries:\n");
         for boundary in &view.partial_data_boundaries {
@@ -2869,8 +2915,7 @@ pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
 /// filters with a bounded limit. Filters never change candidate identity,
 /// classification, ranking or authority.
 pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
-    const USAGE: &str =
-        "usage: cargo xtask work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]";
+    const USAGE: &str = "usage: cargo xtask work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]";
     let (dir, rest) = split_captured_arg(args, USAGE)?;
     let mut campaign = None;
     let mut surface = None;
@@ -2984,8 +3029,7 @@ pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
 // `check-fixture-contracts` and the test suite.
 // ---------------------------------------------------------------------------
 
-pub(crate) const WORK_PORTFOLIO_PROVENANCE_SCHEMA_VERSION: &str =
-    "work_portfolio_provenance.v1";
+pub(crate) const WORK_PORTFOLIO_PROVENANCE_SCHEMA_VERSION: &str = "work_portfolio_provenance.v1";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3051,7 +3095,9 @@ pub(crate) fn load_work_portfolio_provenance(
 fn reject_unsafe_provenance_path(kind: &str, value: &str) -> Result<(), String> {
     let path = Path::new(value);
     if value.trim().is_empty() || path.is_absolute() {
-        return Err(format!("work portfolio provenance {kind} `{value}` is not a relative path"));
+        return Err(format!(
+            "work portfolio provenance {kind} `{value}` is not a relative path"
+        ));
     }
     for component in path.components() {
         match component {
@@ -3072,9 +3118,7 @@ fn digest_matches(recorded: &str, bytes: &[u8]) -> bool {
 
 /// Load and compile one committed corpus directory by name
 /// (`corpus`, `variants/<name>`).
-pub(crate) fn compile_work_portfolio_corpus(
-    name: &str,
-) -> Result<WorkPortfolioSnapshotV1, String> {
+pub(crate) fn compile_work_portfolio_corpus(name: &str) -> Result<WorkPortfolioSnapshotV1, String> {
     let root = workspace_path(&format!("fixtures/work_portfolio/{name}"));
     let captured = load_work_captured_dir(&root)?;
     compile_work_portfolio(&captured)
@@ -3187,11 +3231,16 @@ pub(crate) fn validate_work_portfolio_fixture_corpus(violations: &mut Vec<String
                 ));
             }
         }
-        Err(error) => violations.push(format!("fixtures/work_portfolio: variants/missing_github: {error}")),
+        Err(error) => violations.push(format!(
+            "fixtures/work_portfolio: variants/missing_github: {error}"
+        )),
     }
     match compile_work_portfolio_corpus("variants/stale_local") {
         Ok(snapshot) => {
-            for (issue, expected) in [(9101, WorkConfidenceV1::Partial), (1693, WorkConfidenceV1::Complete)] {
+            for (issue, expected) in [
+                (9101, WorkConfidenceV1::Partial),
+                (1693, WorkConfidenceV1::Complete),
+            ] {
                 match candidate_by_issue(&snapshot, issue) {
                     Ok(candidate) if candidate.confidence == expected => {}
                     Ok(candidate) => violations.push(format!(
@@ -3202,7 +3251,9 @@ pub(crate) fn validate_work_portfolio_fixture_corpus(violations: &mut Vec<String
                 }
             }
         }
-        Err(error) => violations.push(format!("fixtures/work_portfolio: variants/stale_local: {error}")),
+        Err(error) => violations.push(format!(
+            "fixtures/work_portfolio: variants/stale_local: {error}"
+        )),
     }
     match compile_work_portfolio_corpus("variants/no_cargo_allow") {
         Ok(snapshot) => {
@@ -3225,14 +3276,13 @@ pub(crate) fn validate_work_portfolio_fixture_corpus(violations: &mut Vec<String
                 );
             }
         }
-        Err(error) => violations.push(format!("fixtures/work_portfolio: variants/no_cargo_allow: {error}")),
+        Err(error) => violations.push(format!(
+            "fixtures/work_portfolio: variants/no_cargo_allow: {error}"
+        )),
     }
 }
 
-fn validate_canonical_scenarios(
-    snapshot: &WorkPortfolioSnapshotV1,
-    violations: &mut Vec<String>,
-) {
+fn validate_canonical_scenarios(snapshot: &WorkPortfolioSnapshotV1, violations: &mut Vec<String>) {
     let expect_campaigns = [
         "campaign-doc-polish",
         "campaign-editor-ux",
@@ -3365,11 +3415,14 @@ mod tests {
     /// stays visible, and the #1693 follow-ups visible next to the Rust
     /// repair campaign with no default campaign anywhere.
     #[test]
-    fn work_portfolio_multiple_campaigns_and_independent_lanes_one_snapshot(
-    ) -> Result<(), String> {
+    fn work_portfolio_multiple_campaigns_and_independent_lanes_one_snapshot() -> Result<(), String>
+    {
         let snapshot = committed()?;
         if snapshot.campaigns.len() != 4 {
-            return Err(format!("expected four campaigns, got {}", snapshot.campaigns.len()));
+            return Err(format!(
+                "expected four campaigns, got {}",
+                snapshot.campaigns.len()
+            ));
         }
         let editor = snapshot
             .campaigns
@@ -3393,7 +3446,10 @@ mod tests {
             return Err("the empty campaign must stay visible with zero candidates".to_string());
         }
         let issue1693 = candidate(&snapshot, 1693)?;
-        if !issue1693.campaigns.contains(&"campaign-editor-ux".to_string()) {
+        if !issue1693
+            .campaigns
+            .contains(&"campaign-editor-ux".to_string())
+        {
             return Err("issue 1693 must be visible under the editor campaign".to_string());
         }
         // The editor lane is available; the rust lane is collision-marked.
@@ -3439,7 +3495,8 @@ mod tests {
             }
         }
         for observation in &snapshot.source_observations {
-            if observation.source == "campaigns" && observation.freshness != WorkSourceFreshnessV1::Current
+            if observation.source == "campaigns"
+                && observation.freshness != WorkSourceFreshnessV1::Current
             {
                 return Err("campaign records must be observed and current".to_string());
             }
@@ -3450,11 +3507,14 @@ mod tests {
     /// Box 3: every candidate explains lifecycle stage, blockers, conflicts,
     /// capacity, evidence and ranking factors.
     #[test]
-    fn work_portfolio_every_candidate_explains_stage_blockers_conflicts_capacity_evidence_ranking(
-    ) -> Result<(), String> {
+    fn work_portfolio_every_candidate_explains_stage_blockers_conflicts_capacity_evidence_ranking()
+    -> Result<(), String> {
         let snapshot = committed()?;
         if snapshot.candidates.len() != 12 {
-            return Err(format!("expected 12 candidates, got {}", snapshot.candidates.len()));
+            return Err(format!(
+                "expected 12 candidates, got {}",
+                snapshot.candidates.len()
+            ));
         }
         for candidate in &snapshot.candidates {
             if candidate.next_transition.trim().is_empty() {
@@ -3484,7 +3544,10 @@ mod tests {
                 }
             }
             if candidate.packet_entrypoint
-                != format!("cargo xtask work explain --candidate {}", candidate.candidate_id)
+                != format!(
+                    "cargo xtask work explain --candidate {}",
+                    candidate.candidate_id
+                )
             {
                 return Err(format!(
                     "candidate `{}` packet entrypoint is wrong",
@@ -3514,8 +3577,8 @@ mod tests {
     /// Box 4 + fixture rows 4/5/6: existing PRs and claims become
     /// resume/repair/merge/verify states, never new-build duplicates.
     #[test]
-    fn work_portfolio_existing_prs_and_claims_become_resume_states_not_new_builds(
-    ) -> Result<(), String> {
+    fn work_portfolio_existing_prs_and_claims_become_resume_states_not_new_builds()
+    -> Result<(), String> {
         let snapshot = committed()?;
         for (issue, expected) in [
             (9101, WorkCandidateKindV1::RepairReview),
@@ -3560,8 +3623,8 @@ mod tests {
     /// Fixture rows 3/5/16/17/18: external dependency, collisions, duplicate
     /// family and path-disjoint shared-contract visibility.
     #[test]
-    fn work_portfolio_blockers_collisions_duplicate_family_and_shared_contracts_visible(
-    ) -> Result<(), String> {
+    fn work_portfolio_blockers_collisions_duplicate_family_and_shared_contracts_visible()
+    -> Result<(), String> {
         let snapshot = committed()?;
         let external = candidate(&snapshot, 9104)?;
         if external.kind != WorkCandidateKindV1::Blocked
@@ -3578,7 +3641,10 @@ mod tests {
             .find(|edge| edge.id == "edge:claim_collision:issue-9107")
             .ok_or_else(|| "missing the claim-collision edge".to_string())?;
         if claim_collision.subjects
-            != vec!["claim:claim-9107-a".to_string(), "claim:claim-9107-b".to_string()]
+            != vec![
+                "claim:claim-9107-a".to_string(),
+                "claim:claim-9107-b".to_string(),
+            ]
         {
             return Err(format!(
                 "claim-collision subjects drifted: {:?}",
@@ -3602,16 +3668,26 @@ mod tests {
             .find(|edge| edge.id == "edge:duplicate_family:REQ-dup-family")
             .ok_or_else(|| "missing the duplicate-family edge".to_string())?;
         if family.subjects
-            != vec!["candidate:issue:9105".to_string(), "candidate:issue:9106".to_string()]
+            != vec![
+                "candidate:issue:9105".to_string(),
+                "candidate:issue:9106".to_string(),
+            ]
         {
-            return Err(format!("duplicate-family subjects drifted: {:?}", family.subjects));
+            return Err(format!(
+                "duplicate-family subjects drifted: {:?}",
+                family.subjects
+            ));
         }
         let shared = snapshot
             .conflict_edges
             .iter()
             .find(|edge| edge.id == "edge:shared_contract:output-contract:rust-json")
             .ok_or_else(|| "missing the shared-contract edge".to_string())?;
-        if !shared.evidence.iter().any(|line| line.contains("path-disjoint")) {
+        if !shared
+            .evidence
+            .iter()
+            .any(|line| line.contains("path-disjoint"))
+        {
             return Err("shared-contract evidence must name the path-disjoint pair".to_string());
         }
         let left = candidate(&snapshot, 9105)?;
@@ -3676,7 +3752,8 @@ mod tests {
     /// filtered rows are an order-preserving subsequence of the full array
     /// with identical candidate bytes.
     #[test]
-    fn work_portfolio_filters_do_not_change_authority_or_candidate_identity() -> Result<(), String> {
+    fn work_portfolio_filters_do_not_change_authority_or_candidate_identity() -> Result<(), String>
+    {
         let snapshot = committed()?;
         let full = snapshot.candidates.clone();
         for (campaign, surface, expected_total) in [
@@ -3686,21 +3763,14 @@ mod tests {
             (Some("campaign-rust-repair"), Some("surface-rust-cli"), 9),
             (Some("campaign-infra-hardening"), None, 0),
         ] {
-            let view = build_candidates_view(
-                &snapshot,
-                campaign,
-                surface,
-                full.len(),
-                None,
-            )?;
+            let view = build_candidates_view(&snapshot, campaign, surface, full.len(), None)?;
             if view.counts.total != expected_total as u64 {
                 return Err(format!(
                     "filter campaign={campaign:?} surface={surface:?} total {}, expected {expected_total}",
                     view.counts.total
                 ));
             }
-            let full_ids: Vec<String> =
-                full.iter().map(|row| row.candidate_id.clone()).collect();
+            let full_ids: Vec<String> = full.iter().map(|row| row.candidate_id.clone()).collect();
             let mut cursor = 0;
             for row in &view.candidates {
                 let position = full_ids[cursor..]
@@ -3725,7 +3795,8 @@ mod tests {
                 }
             }
         }
-        let Err(_error) = build_candidates_view(&snapshot, Some("campaign-nope"), None, 10, None) else {
+        let Err(_error) = build_candidates_view(&snapshot, Some("campaign-nope"), None, 10, None)
+        else {
             return Err("unknown campaign must fail closed".to_string());
         };
         Ok(())
@@ -3745,8 +3816,7 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&sandbox);
         fs::create_dir_all(&sandbox).map_err(|error| error.to_string())?;
-        let original_dir =
-            std::env::current_dir().map_err(|error| error.to_string())?;
+        let original_dir = std::env::current_dir().map_err(|error| error.to_string())?;
         let restore = || std::env::set_current_dir(&original_dir);
         std::env::set_current_dir(&sandbox).map_err(|error| error.to_string())?;
 
@@ -3832,11 +3902,7 @@ mod tests {
 
     fn hash_dir(root: &Path) -> Result<BTreeMap<String, String>, String> {
         let mut map = BTreeMap::new();
-        fn walk(
-            root: &Path,
-            dir: &Path,
-            map: &mut BTreeMap<String, String>,
-        ) -> Result<(), String> {
+        fn walk(root: &Path, dir: &Path, map: &mut BTreeMap<String, String>) -> Result<(), String> {
             for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
                 let entry = entry.map_err(|error| error.to_string())?;
                 let path = entry.path();
@@ -3873,7 +3939,9 @@ mod tests {
             let snapshot = compile_work_portfolio_corpus(variant)?;
             let body = work_portfolio_json(&snapshot)?;
             if body != canonical_json {
-                return Err(format!("{variant} must compile to byte-identical normalized JSON"));
+                return Err(format!(
+                    "{variant} must compile to byte-identical normalized JSON"
+                ));
             }
             if snapshot.portable_identity != canonical.portable_identity {
                 return Err(format!("{variant} portable identity drifted"));
@@ -3940,8 +4008,8 @@ mod tests {
     /// campaign cannot hide unrelated eligible work; the single-agent
     /// narrow task stays first-class.
     #[test]
-    fn work_portfolio_blocked_complete_or_low_ranked_campaign_never_hides_eligible_work(
-    ) -> Result<(), String> {
+    fn work_portfolio_blocked_complete_or_low_ranked_campaign_never_hides_eligible_work()
+    -> Result<(), String> {
         let snapshot = committed()?;
         let last = snapshot
             .candidates
@@ -3976,7 +4044,10 @@ mod tests {
             narrow,
             WorkRankingFactorKindV1::LaneCapacityAndCollisionCost,
         )?;
-        if !lane_factor.contribution.contains("orchestration cost dominates") {
+        if !lane_factor
+            .contribution
+            .contains("orchestration cost dominates")
+        {
             return Err(
                 "the single-agent-preferred task must keep its orchestration-cost note visible"
                     .to_string(),
@@ -3988,8 +4059,8 @@ mod tests {
     /// Fixture rows 12 + ranking law: the eight factors are explicit,
     /// ordered and inspectable; no hidden numeric score exists in the DTO.
     #[test]
-    fn work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score(
-    ) -> Result<(), String> {
+    fn work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score()
+    -> Result<(), String> {
         let snapshot = committed()?;
         let body = work_portfolio_json(&snapshot)?;
         for banned in ["\"score\"", "\"rank_score\"", "\"weight\""] {
@@ -4085,13 +4156,8 @@ mod tests {
                 "the degraded candidate must stay degraded in the human rendering".to_string(),
             );
         }
-        let candidates_md = work_candidates_markdown(&build_candidates_view(
-            &snapshot,
-            None,
-            None,
-            3,
-            None,
-        )?);
+        let candidates_md =
+            work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
         }
@@ -4105,7 +4171,9 @@ mod tests {
         let mut violations = Vec::new();
         validate_work_portfolio_fixture_corpus(&mut violations);
         if !violations.is_empty() {
-            return Err(format!("committed corpus failed validation: {violations:?}"));
+            return Err(format!(
+                "committed corpus failed validation: {violations:?}"
+            ));
         }
         Ok(())
     }
@@ -4123,12 +4191,15 @@ mod tests {
             return Err("a non-numeric limit must fail closed".to_string());
         };
         let Err(_error) = run_work_command_for_test(&["portfolio", "--captured=/tmp/x"]) else {
-            return Err("a glued --captured value must fail closed, not read the default corpus"
-                .to_string());
+            return Err(
+                "a glued --captured value must fail closed, not read the default corpus"
+                    .to_string(),
+            );
         };
         let Err(_error) = run_work_command_for_test(&["portfolio", "--captured-old"]) else {
-            return Err("a --captured typo must fail closed, not read the default corpus"
-                .to_string());
+            return Err(
+                "a --captured typo must fail closed, not read the default corpus".to_string(),
+            );
         };
         Ok(())
     }
@@ -4207,8 +4278,7 @@ mod tests {
             false,
             "abc",
         );
-        if kind != WorkCandidateKindV1::VerifyCurrentHead
-            || !transition.contains("published head")
+        if kind != WorkCandidateKindV1::VerifyCurrentHead || !transition.contains("published head")
         {
             return Err(format!(
                 "stale PR evidence must demote merge_ready to current-head verification, got {kind:?}"
@@ -4260,9 +4330,7 @@ mod tests {
             ("corpus", "/abs/campaigns.json"),
             ("corpus", "sub/../../campaigns.json"),
         ] {
-            let body = template
-                .replace("@NAME@", name)
-                .replace("@PATH@", path);
+            let body = template.replace("@NAME@", name).replace("@PATH@", path);
             if load_work_portfolio_provenance(&body).is_ok() {
                 return Err(format!(
                     "provenance with name `{name}` and path `{path}` must fail closed"
