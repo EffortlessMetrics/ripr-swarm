@@ -805,8 +805,10 @@ fn position_in_range(position: &Position, range: &Range) -> bool {
     // column precision (`OriginKind::CoarseZeroWidth`: stale currentness, no
     // parser span, lexical fallback) or the input was missing.
     // Editors render it on that line, so the whole line must reach its hover;
-    // a half-open check would make it unhoverable at every position.
-    if range.start == range.end {
+    // a half-open check would make it unhoverable at every position. The
+    // projected full-line span (`line_span_range`, 0..120) is the same
+    // line-level claim, so columns past its fixed width also reach it.
+    if is_line_level_range(range) {
         return position.line == range.start.line;
     }
     position_is_after_or_equal(position, &range.start) && position_is_before(position, &range.end)
