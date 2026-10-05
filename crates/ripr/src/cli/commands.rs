@@ -7153,17 +7153,21 @@ language = "rust"
                 (Some("actions/cache"), _) => workflow_lines
                     .iter()
                     .any(|line| line.starts_with("- uses: actions/cache@")),
-                (Some(name), _) => workflow_lines
-                    .iter()
-                    .any(|line| *line == format!("- name: {name}")),
+                (Some(name), _) => {
+                    let expected = format!("- name: {name}");
+                    workflow_lines.iter().any(|line| *line == expected)
+                }
                 (None, Some("labeled")) => workflow_lines.iter().any(|line| {
                     line.starts_with("types: [")
                         && line.contains(" labeled,")
                         && line.contains(" unlabeled]")
                 }),
-                (None, Some(setting)) if setting.starts_with("RIPR_") => workflow_lines
-                    .iter()
-                    .any(|line| line.starts_with(&format!("{setting}:"))),
+                (None, Some(setting)) if setting.starts_with("RIPR_") => {
+                    let expected = format!("{setting}:");
+                    workflow_lines
+                        .iter()
+                        .any(|line| line.starts_with(&expected))
+                }
                 (None, Some(permission)) => workflow_lines
                     .iter()
                     .any(|line| line.split(" #").next().map(str::trim_end) == Some(permission)),
