@@ -53,8 +53,13 @@ use crate::analysis::cancellation;
 use crate::analysis::classify;
 use crate::analysis::consumed_source::ConsumedRustSources;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
+use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+
+/// Dependent files read and scanned per parallel admission batch, bounding
+/// how many withheld files' bytes are held at once.
+const ADMISSION_BATCH_FILES: usize = 64;
 
 /// Env override for the dependent scope. `auto` (also empty or unset)
 /// admits by name only when the whole reverse closure would exceed the
@@ -473,16 +478,37 @@ struct WithheldTokens {
     macros: Vec<Vec<String>>,
 }
 
+/// One withheld file's lexical facts, scanned off the main thread.
+struct FileTokens {
+    unicode: bool,
+    unique: HashSet<Box<[u8]>>,
+    macros: Vec<String>,
+}
+
+impl FileTokens {
+    fn scan(bytes: &[u8]) -> Self {
+        Self {
+            unicode: !bytes.is_ascii(),
+            unique: identifier_runs(bytes).map(Box::from).collect(),
+            macros: macro_rules_names(bytes),
+        }
+    }
+}
+
 impl WithheldTokens {
+    #[cfg(test)]
     fn insert(&mut self, id: u32, bytes: &[u8]) {
-        if !bytes.is_ascii() {
+        self.insert_scanned(id, FileTokens::scan(bytes));
+    }
+
+    fn insert_scanned(&mut self, id: u32, file: FileTokens) {
+        if file.unicode {
             self.unicode.push(id);
         }
-        let unique = identifier_runs(bytes).collect::<HashSet<_>>();
-        for token in unique {
-            self.postings.entry(token.into()).or_default().push(id);
+        for token in file.unique {
+            self.postings.entry(token).or_default().push(id);
         }
-        self.macros.push(macro_rules_names(bytes));
+        self.macros.push(file.macros);
     }
 
     /// Ids of the files that may spell one of `names`, ascending.
@@ -583,32 +609,57 @@ pub(super) fn admit_dependents(
             admitted.push(file.clone());
         }
     }
-    for file in dependent {
-        cancellation::checkpoint()?;
-        // The bytes decide admission, so they bind the result exactly as
-        // an indexed file's bytes do.
-        let bytes = read_source(root, file)?;
-        consumed.record(file, bytes.as_deref());
-        let Some(bytes) = bytes else {
+    // The admission test reads only fields the loop below never changes,
+    // so each chunk's lexical scans run on the rayon workers; reads,
+    // recording and every order-dependent fold stay sequential, in input
+    // order.
+    let token = cancellation::current_token();
+    for chunk in dependent.chunks(ADMISSION_BATCH_FILES) {
+        let mut loaded = Vec::with_capacity(chunk.len());
+        for file in chunk {
+            cancellation::checkpoint()?;
+            // The bytes decide admission, so they bind the result exactly as
+            // an indexed file's bytes do.
+            let bytes = read_source(root, file)?;
+            consumed.record(file, bytes.as_deref());
             // No content to index: the full selection skips it too.
-            continue;
-        };
-        let harness_target = test_harnesses
-            .iter()
-            .any(|registration| registration.target == *file);
-        if !core_only && (harness_target || query.admits(&bytes)) {
-            if !query.implemented_traits.is_empty() {
-                query.note_trait_receivers(&String::from_utf8_lossy(&bytes));
+            if let Some(bytes) = bytes {
+                loaded.push((*file, bytes));
             }
-            admitted.push(file.clone());
-        } else {
-            let id = u32::try_from(withheld.len())
-                .map_err(|err| format!("dependent scope: too many withheld files: {err}"))?;
-            tokens.insert(id, &bytes);
-            withheld.push(file.clone());
-            if !bindings_saturated {
-                bindings_saturated = withheld_macro_bindings
-                    .absorb(&String::from_utf8_lossy(&bytes), &query.package_names);
+        }
+        let scanned: Vec<Result<Option<FileTokens>, String>> = loaded
+            .par_iter()
+            .map(|(file, bytes)| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let harness_target = test_harnesses
+                        .iter()
+                        .any(|registration| registration.target == **file);
+                    let admit = !core_only && (harness_target || query.admits(bytes));
+                    Ok((!admit).then(|| FileTokens::scan(bytes)))
+                })
+            })
+            .collect();
+        for ((file, bytes), scan) in loaded.iter().zip(scanned) {
+            cancellation::checkpoint()?;
+            match scan? {
+                None => {
+                    if !query.implemented_traits.is_empty() {
+                        query.note_trait_receivers(&String::from_utf8_lossy(bytes));
+                    }
+                    admitted.push((*file).clone());
+                }
+                Some(file_tokens) => {
+                    let id = u32::try_from(withheld.len()).map_err(|err| {
+                        format!("dependent scope: too many withheld files: {err}")
+                    })?;
+                    tokens.insert_scanned(id, file_tokens);
+                    withheld.push((*file).clone());
+                    if !bindings_saturated {
+                        bindings_saturated = withheld_macro_bindings
+                            .absorb(&String::from_utf8_lossy(bytes), &query.package_names);
+                    }
+                }
             }
         }
     }
