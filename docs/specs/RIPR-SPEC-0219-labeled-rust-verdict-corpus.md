@@ -183,9 +183,12 @@ differs from `expected/report.md`. It refuses an
   `validate` refuses such a command too. `--sample` picks a deterministic
   subset, for the same set of checkouts, ordered by sha256 of the seed and
   case id, so a scheduled run can rotate seeds through the corpus. It writes
-  `relabel.json` and never clones, fetches, or edits the corpus.
+  `relabel.json` and never clones, fetches, or edits the corpus. Subject
+  trees live under a per-process directory, so concurrent runs sharing a
+  `--work-dir` do not clear each other's trees.
   Known limits: failing-test names match by `::` suffix across all test
-  binaries; cargo stops at the first failing binary, so a labeled test in a
+  binaries; a binary that aborts (a stack overflow, `process::exit`) names no
+  failing test, so only its failed outcome is checked; cargo stops at the first failing binary, so a labeled test in a
   later binary reads as not failing (fail-closed); a doctest name contains
   spaces and cannot be a `failing_test`; and the default `--work-dir` sits
   under this repository's `target`, so this repository's `.cargo/config.toml`

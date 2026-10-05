@@ -371,6 +371,9 @@ pub(crate) fn observed_truth(firsts: &[&RunOutcome]) -> Option<TruthState> {
 struct Runner<'a> {
     args: &'a RelabelArgs,
     work_root: PathBuf,
+    /// Per-process, so two runs sharing a work dir never clear each other's
+    /// trees; the cargo target dirs stay shared (cargo locks them).
+    trees_root: PathBuf,
 }
 
 impl Runner<'_> {
@@ -441,9 +444,9 @@ fn prepare_tree(
     case: &Case,
     subject: &Subject,
     checkouts: Option<&Path>,
-    work_root: &Path,
+    trees_root: &Path,
 ) -> Result<PathBuf, String> {
-    let tree = work_root.join("trees").join(&case.subject_id);
+    let tree = trees_root.join(&case.subject_id);
     match fs::remove_dir_all(&tree) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -632,7 +635,7 @@ fn relabel_case(
         case,
         subject,
         runner.args.checkouts.as_deref(),
-        &runner.work_root,
+        &runner.trees_root,
     )?;
     let mut drift = Vec::new();
     let toolchain = labeled_toolchain(&case.truth.toolchain).ok_or_else(|| {
@@ -896,6 +899,10 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let runner = Runner {
         args: &args,
         work_root: args.work_dir.clone(),
+        trees_root: args
+            .work_dir
+            .join("trees")
+            .join(std::process::id().to_string()),
     };
     let mut results = Vec::new();
     for case in &selected {
@@ -907,6 +914,13 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
             eprintln!("  drift: {line}");
         }
         results.push(result);
+    }
+    // Trees are scratch; a failed removal leaves only disk use behind.
+    if let Err(err) = fs::remove_dir_all(&runner.trees_root) {
+        eprintln!(
+            "verdict-corpus relabel: could not remove {}: {err}",
+            normalize_path(&runner.trees_root)
+        );
     }
 
     let drifted_cases = results.iter().filter(|r| !r.drift.is_empty()).count();
