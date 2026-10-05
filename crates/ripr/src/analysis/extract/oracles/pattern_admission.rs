@@ -467,16 +467,32 @@ fn nested_or_reading(alternatives: &[&str]) -> Reading {
         || covers(Side::Some, Side::None)
         || covers(Side::Ok, Side::Err)
     {
-        Reading::Irrefutable
-    } else if readings.contains(&Reading::Pins) {
+        return Reading::Irrefutable;
+    }
+    // The same order as `or_pattern_classification`: alternatives on both
+    // sides observe only a relation, and otherwise the disjunction reads as
+    // its weakest alternative, pinning only when every alternative pins.
+    let sides = alternatives
+        .iter()
+        .filter_map(|alternative| top_side(alternative))
+        .collect::<Vec<_>>();
+    let both = |a: Side, b: Side| sides.contains(&a) && sides.contains(&b);
+    if both(Side::Some, Side::None) || both(Side::Ok, Side::Err) {
+        return Reading::PinsNothing { err: false };
+    }
+    let weaker = readings
+        .iter()
+        .filter(|reading| **reading != Reading::Pins)
+        .collect::<Vec<_>>();
+    if weaker.is_empty() {
         Reading::Pins
-    } else if let [Reading::SideOnly(side), rest @ ..] = readings.as_slice()
+    } else if let [Reading::SideOnly(side), rest @ ..] = weaker.as_slice()
         && rest
             .iter()
-            .all(|reading| *reading == Reading::SideOnly(*side))
+            .all(|reading| **reading == Reading::SideOnly(*side))
     {
         Reading::SideOnly(*side)
-    } else if readings
+    } else if weaker
         .iter()
         .any(|reading| matches!(reading, Reading::Range { .. }))
     {
@@ -702,6 +718,23 @@ mod tests {
                 SmokeOnly,
                 Smoke,
             ),
+            // A nested disjunction reads as its weakest alternative, and
+            // alternatives on both sides observe only a relation.
+            (
+                "assert!(matches!(lookup(1), Some(3 | 4..=9)))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(Ok(_) | Err(E::X))))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(Some(3) | Some(_))))",
+                SmokeOnly,
+                Smoke,
+            ),
             ("assert!(matches!(pair(), (..)))", RelationalCheck, Weak),
             (
                 "assert!(matches!(lookup(1), Some(x /* any */)))",
@@ -796,6 +829,7 @@ mod tests {
             "assert!(matches!(reply(), Reply::Ok(_)))",
             "assert!(matches!(reply(), Reply::Err(_)))",
             "assert!(matches!(lookup(1), Some(Foo::A | Foo::None)))",
+            "assert!(matches!(lookup(1), Some(3 | 4)))",
             "assert!(matches!(lookup(1), Some(3 /* three */)))",
         ] {
             let actual = pattern_assertion_classification(text);
