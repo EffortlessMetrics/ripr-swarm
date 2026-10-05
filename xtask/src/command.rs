@@ -460,7 +460,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "agentic-bench [--bench <id>]",
         "seam-inventory-scaling-benchmark [--sizes <n,n,n>] [--samples <n>] [--timeout-ms <n>] [--keep-workspaces]",
         "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]",
-        "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--mutants-arg <arg>]... [--ripr <binary>]",
+        "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
         "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>]",
         "scale-cliff-benchmark [--sizes <n,n,n>] [--repo <path> --base <rev>] [--mode <draft|deep|instant>] [--commands <check,pilot>] [--index-cap <n|product>] [--timeout-ms <n>] [--keep-workspaces]",
         "rust-corpus check|list|fetch|smoke [--manifest <path>] [--tier fast|full|targets] [--repo <id>] [--root <dir>] [--allow-network] [--ripr <bin>] [--timeout-secs <n>]",
@@ -1154,7 +1154,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Scores static grip verdicts against real cargo-mutants outcomes on supplied checkouts through the ripr calibrate join; agreement counts only seam-precise operator mutants.",
         ),
         command_entry(
-            "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--mutants-arg <arg>]... [--ripr <binary>]",
+            "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
             "argument_dependent",
             "none (check); target/ripr/pilot-ranking/checkouts/ (fetch, network); benchmarks/pilot_ranking/labels/<id>.json (label); target/ripr/pilot-ranking/runs/ scratch, a release build without --ripr, and target/ripr/reports/pilot-ranking.{json,md} (score)",
             false,

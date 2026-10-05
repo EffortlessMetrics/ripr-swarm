@@ -20,6 +20,7 @@ on:
     paths:
       - "crates/ripr/src/output/pilot/**"
       - "crates/ripr/src/output/agent_seam_packets.rs"
+      - "crates/ripr/src/analysis/repair_route.rs"
       - "crates/ripr/src/analysis/seam_classification.rs"
       - "crates/ripr/src/analysis/seams.rs"
       - "crates/ripr/src/analysis/seam_inventory.rs"

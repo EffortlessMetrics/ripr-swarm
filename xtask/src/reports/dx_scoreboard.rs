@@ -1018,6 +1018,10 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
             "distinct_function_share",
         ),
         ("ranking.pilot_picks_top10", "top10", "picks"),
+        ("ranking.pilot_confirmed_top5", "top5", "confirmed"),
+        ("ranking.pilot_refuted_top5", "top5", "refuted"),
+        ("ranking.pilot_confirmed_top10", "top10", "confirmed"),
+        ("ranking.pilot_refuted_top10", "top10", "refuted"),
     ] {
         let entry = &value["pooled"][cut];
         let count = |key: &str| {
@@ -1060,13 +1064,16 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
         let ratio = |numerator: u64, denominator: u64| {
             (denominator > 0).then(|| numerator as f64 / denominator as f64)
         };
+        let counted = matches!(field, "picks" | "confirmed" | "refuted");
         let rate = match field {
             "picks" => Some(picks as f64),
+            "confirmed" => Some(confirmed as f64),
+            "refuted" => Some(refuted as f64),
             "precision" => ratio(confirmed, confirmed + refuted),
             "scored_share" => ratio(confirmed + refuted, picks),
             _ => ratio(distinct, picks),
         };
-        if field != "picks" {
+        if !counted {
             let stated = entry[field].as_f64();
             let agrees = match (stated, rate) {
                 (None, None) => entry[field].is_null(),
@@ -1095,8 +1102,12 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
                 "; {unavailable} repositories unavailable or not selected, so this run is not comparable"
             ));
         }
+        // The corpus identity is the row's repository, so a baseline taken
+        // on another answer key shares no repository with this run and is
+        // reported uncompared instead of compared as the same population.
         rows.push(json!({
             "id": metric,
+            "repo": format!("pilot-ranking corpus {corpus}"),
             "value": rate.unwrap_or(0.0),
             "completed": complete && rate.is_some(),
             "evidence": evidence,

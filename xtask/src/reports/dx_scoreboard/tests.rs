@@ -1799,6 +1799,19 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
         value("ranking.pilot_picks_top10"),
         Some(SampleOutcome::Value(50.0))
     );
+    assert_eq!(
+        value("ranking.pilot_refuted_top10"),
+        Some(SampleOutcome::Value(22.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_confirmed_top5"),
+        Some(SampleOutcome::Value(8.0))
+    );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.repo.as_deref() == Some("pilot-ranking corpus 2026-10-04.1"))
+    );
     assert!(
         samples
             .iter()
@@ -1833,7 +1846,7 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
     lost["status"] = json!("incomplete");
     lost["unavailable_repos"] = json!(1);
     let samples = parse_ingest(&lost, &config)?;
-    assert_eq!(samples.len(), 5);
+    assert_eq!(samples.len(), 9);
     assert!(
         samples
             .iter()
@@ -1876,7 +1889,7 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
 /// precision by exactly 0.02), and any lost pick.
 #[test]
 fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String> {
-    let receipt = |picks: u64, confirmed: u64, scored: u64| {
+    let receipt_on = |corpus: &str, picks: u64, confirmed: u64, scored: u64| {
         let cut = json!({
             "picks": picks,
             "confirmed": confirmed,
@@ -1889,13 +1902,15 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
         });
         json!({
             "schema_version": "ripr-pilot-ranking-v1",
-            "corpus_version": "test",
+            "corpus_version": corpus,
             "status": "complete",
             "repos_total": 5,
             "unavailable_repos": 0,
             "pooled": {"top5": cut.clone(), "top10": cut},
         })
     };
+    let receipt =
+        |picks: u64, confirmed: u64, scored: u64| receipt_on("test", picks, confirmed, scored);
     let config = load_config(&committed_config())?;
     let boards = vec!["ranking".to_string()];
     let report = |value: &Value, baseline: Option<&Value>| -> Result<Value, String> {
@@ -1930,5 +1945,31 @@ fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String>
         lost.contains(&"ranking.pilot_picks_top10".to_string()),
         "{lost:?}"
     );
+
+    // An unscored pick turning refuted moves precision by less than one
+    // pick's step (13/35 to 13/36); the refuted count still fails it.
+    let base = report(&receipt(50, 13, 35), None)?;
+    let worse = regressed(&report(&receipt(50, 13, 36), Some(&base))?);
+    assert!(
+        !worse.contains(&"ranking.pilot_precision_top10".to_string())
+            && worse.contains(&"ranking.pilot_refuted_top10".to_string()),
+        "{worse:?}"
+    );
+
+    // A baseline from another answer key is reported uncompared, never
+    // compared as the same population.
+    let other = report(&receipt_on("other", 50, 3, 50), None)?;
+    let crossed = report(&receipt(50, 3, 50), Some(&other))?;
+    assert!(regressed(&crossed).is_empty());
+    let uncompared = crossed["gate"]["uncompared"].as_array().map_or(0, |rows| {
+        rows.iter()
+            .filter(|row| {
+                row["metric"]
+                    .as_str()
+                    .is_some_and(|metric| metric.starts_with("ranking."))
+            })
+            .count()
+    });
+    assert!(uncompared >= 9, "{}", crossed["gate"]);
     Ok(())
 }

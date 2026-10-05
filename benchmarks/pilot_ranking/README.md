@@ -60,8 +60,13 @@ For the top 5 and top 10 picks of each crate, pooled and per crate:
 
 The `ranking` scoreboard gates the pooled top-5 and top-10 precision, top-10
 scored share, top-10 distinct-function share and the top-10 pick count (so a
-ranking that drops picks cannot raise the rates). The floors sit just under
-one pick, because nothing here varies between runs. A run that cannot fetch or
+ranking that drops picks cannot raise the rates). It also gates the confirmed
+and refuted counts at each cut, because turning an unscored pick into a
+refuted one can leave the rates inside their floors while adding a wrong
+recommendation. The floors sit just under one pick, because nothing here
+varies between runs. Every row is tagged with the corpus version as its
+repository, so a baseline from another corpus version is listed as
+uncompared rather than compared across different crates. A run that cannot fetch or
 score a crate, or that `--repo` narrowed to a subset, reports every row
 incomplete, which the gate treats as lost completion rather than a comparable
 rate.
@@ -87,10 +92,13 @@ cargo xtask pilot-ranking label --repo semver=../pilot-ranking/semver \
   --mutants-out semver=../pilot-ranking/semver-run/mutants.out
 ```
 
-Pass any argument that changed which mutants the run tried (`--re`, `--file`,
-`--package`) to `label` as `--mutants-arg <arg>`, so the label file records
-it; options that only change scheduling, such as `--jobs`, need not be
-recorded. `label` refuses a `mutants.out` whose mutant diffs do not match the
+Label from a full run: options that change which mutants cargo-mutants tries
+(`--re`, `--file`, `--package`, `--shard`) leave real mutants out of the key,
+so a pick there would score as unlabeled instead of refuted. Options that only
+change scheduling, such as `--jobs`, are fine. `check` refuses a label file
+whose `cargo_mutants_args` is not empty, and the manifest's `labeled` counts
+turn a relabel from a narrower run into a visible count change in review.
+`label` refuses a `mutants.out` whose mutant diffs do not match the
 pinned checkout, a mutant without an outcome, and an outcome without a mutant.
 It prints the caught and missed counts; record them as the repository's
 `labeled` entry in `manifest.json`, which `check` holds each label file to, so

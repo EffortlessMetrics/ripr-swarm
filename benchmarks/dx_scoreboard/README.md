@@ -20,7 +20,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 | `first_run` | The new-developer journey from install to first useful result | install seconds (source build), time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 | `agent` | Whether an agent using only ripr's help closes a real test gap quickly and without being misled | fix success, mutants caught, ripr commands and tool steps to fix, false weak findings left after the fix, stale re-checks, white-box tests written only for ripr, and how many of the stub calls `check` suggested produced a stub (ingested from the agent-as-user harness); share of `ripr agent stub` tests that compile and fail at their own todo, share of gap locations that get a stub, and `observer_required` refusals (ingested from the stub evaluation, source `agent-stub`) |
 | `corpus` | Whether ripr keeps working on the shared pinned Rust corpus | per repository: whether the diff-scoped `ripr check` reached `analyzed`, and its wall time (ingested from `cargo xtask rust-corpus smoke`) |
-| `ranking` | Whether `ripr pilot` sends people to the right places first | pooled top-5 and top-10 precision, top-10 scored share, top-10 distinct-function share and top-10 pick count of pilot's picks against the checked-in mutation answer key (ingested from `cargo xtask pilot-ranking score`; see `benchmarks/pilot_ranking/README.md`) |
+| `ranking` | Whether `ripr pilot` sends people to the right places first | pooled top-5 and top-10 precision, confirmed and refuted counts, top-10 scored share, top-10 distinct-function share and top-10 pick count of pilot's picks against the checked-in mutation answer key (ingested from `cargo xtask pilot-ranking score`; see `benchmarks/pilot_ranking/README.md`) |
 
 The rollup counts metrics that meet their target, fall below it, are not
 measured, have a failed instrument, or regressed. A per-repository view groups
@@ -130,7 +130,8 @@ These native receipts are also accepted as-is:
   metric, so against a baseline that analyzed it the gate reports lost
   completion rather than a pass.
 - `ripr-pilot-ranking-v1` from `cargo xtask pilot-ranking score`: the
-  pooled `ranking` rows. A run that could not fetch or score one of the
+  pooled `ranking` rows, tagged with the corpus version as their repository so
+  a baseline from another corpus version is uncompared. A run that could not fetch or score one of the
   pinned crates, or scored only a `--repo` subset, marks every row incomplete, so the gate reports lost
   completion instead of comparing a different population.
 

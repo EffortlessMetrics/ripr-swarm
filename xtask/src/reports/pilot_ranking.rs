@@ -40,7 +40,7 @@ const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 
 const USAGE: &str = "usage: cargo xtask pilot-ranking check [--manifest <path>]
        cargo xtask pilot-ranking fetch --allow-network [--manifest <path>] [--root <dir>] [--repo <id>]...
-       cargo xtask pilot-ranking label --repo <id>=<checkout> --mutants-out <id>=<mutants.out dir> [--mutants-arg <arg>]... [--manifest <path>]
+       cargo xtask pilot-ranking label --repo <id>=<checkout> --mutants-out <id>=<mutants.out dir> [--manifest <path>]
        cargo xtask pilot-ranking score [--manifest <path>] [--root <dir>] [--repo <id>]... [--ripr <binary>]
 
 check validates the pinned manifest and its label files without network.
@@ -137,9 +137,6 @@ struct Options {
     ripr: Option<PathBuf>,
     label_checkout: Option<(String, PathBuf)>,
     label_mutants_out: Option<(String, PathBuf)>,
-    /// Arguments the labeled cargo-mutants run used, recorded in the label
-    /// file (the run's outcomes.json does not record them).
-    label_mutants_args: Vec<String>,
 }
 
 pub(crate) fn pilot_ranking(args: &[String]) -> Result<(), String> {
@@ -203,8 +200,9 @@ fn parse_options(command: &str, args: &[String]) -> Result<Options, String> {
                 options.label_checkout = Some(named_path(&value()?, flag)?);
             }
             "--repo" => options.repos.push(value()?),
-            "--mutants-out" => options.label_mutants_out = Some(named_path(&value()?, flag)?),
-            "--mutants-arg" if command == "label" => options.label_mutants_args.push(value()?),
+            "--mutants-out" if command == "label" => {
+                options.label_mutants_out = Some(named_path(&value()?, flag)?)
+            }
             _ => return Err(format!("unknown pilot-ranking option `{flag}`\n{USAGE}")),
         }
         index += 2;
@@ -387,6 +385,15 @@ fn validate_labels(repo: &RepoEntry, labels: &LabelFile) -> Result<(), String> {
     }
     if labels.cargo_mutants_version.trim().is_empty() {
         return Err("cargo_mutants_version must not be empty".to_string());
+    }
+    // A run narrowed by `--file`, `--re` or `--package` leaves real mutants
+    // out of the key, so picks there would score as unlabeled rather than
+    // refuted. Only a full run is a label set.
+    if !labels.cargo_mutants_args.is_empty() {
+        return Err(format!(
+            "cargo_mutants_args is {:?}; labels must come from a full cargo-mutants run with no selection arguments",
+            labels.cargo_mutants_args
+        ));
     }
     if labels.mutants.is_empty() {
         return Err("mutants must not be empty".to_string());
@@ -615,8 +622,7 @@ fn label(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
     let mutants = read("mutants.json")?;
     let outcomes = read("outcomes.json")?;
     mutation_spot_check::require_mutants_match_checkout(id, checkout, &repo.revision, &mutants)?;
-    let mut labels = labels_from_mutants_out(repo, &mutants, &outcomes)?;
-    labels.cargo_mutants_args = options.label_mutants_args.clone();
+    let labels = labels_from_mutants_out(repo, &mutants, &outcomes)?;
     let path = labels_dir.join(&repo.labels);
     fs::write(&path, render_labels(&labels)?)
         .map_err(|err| format!("write {}: {err}", path.display()))?;
@@ -797,6 +803,20 @@ fn judge_inputs(labels: &LabelFile) -> (Value, Value) {
 
 // ---------------------------------------------------------------- score ----
 
+/// The release `ripr` under the workspace's target directory, read from
+/// `cargo metadata` output.
+fn release_binary(metadata: &str) -> Result<PathBuf, String> {
+    let metadata: Value =
+        serde_json::from_str(metadata).map_err(|err| format!("parse cargo metadata: {err}"))?;
+    let target = metadata
+        .get("target_directory")
+        .and_then(Value::as_str)
+        .ok_or("cargo metadata has no target_directory")?;
+    Ok(Path::new(target)
+        .join("release")
+        .join(format!("ripr{}", std::env::consts::EXE_SUFFIX)))
+}
+
 fn score(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<(), String> {
     let root = options
         .root
@@ -806,11 +826,13 @@ fn score(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
         Some(path) => path.clone(),
         None => {
             crate::run::run("cargo", &["build", "-p", "ripr", "--release", "--quiet"])?;
-            std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("target"))
-                .join("release")
-                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
+            // Cargo metadata resolves the target directory from
+            // CARGO_TARGET_DIR and any config file's `build.target-dir`.
+            let metadata = crate::run::run_output(
+                "cargo",
+                &["metadata", "--format-version", "1", "--no-deps"],
+            )?;
+            release_binary(&metadata)?
         }
     };
     let scratch = PathBuf::from(SCRATCH);

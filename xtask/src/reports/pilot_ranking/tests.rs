@@ -183,6 +183,37 @@ fn label_validation_refuses_another_revision_unsorted_or_unknown_outcomes() {
     let truncated = file("a".repeat(40), vec![label("m1", 1, "caught")]);
     assert_eq!(validate_labels(&repo(), &truncated), Ok(()));
     assert!(check_label_count(&repo(), &truncated).is_err_and(|err| err.contains("0 missed")));
+
+    // A run narrowed to one file leaves the rest of the crate unlabeled.
+    let mut subset = file(
+        "a".repeat(40),
+        vec![label("m1", 1, "caught"), label("m2", 2, "missed")],
+    );
+    subset.cargo_mutants_args = vec!["--file".to_string(), "src/a.rs".to_string()];
+    assert!(
+        validate_labels(&repo(), &subset).is_err_and(|err| err.contains("full cargo-mutants run"))
+    );
+}
+
+#[test]
+fn label_options_stay_on_label_and_selection_args_are_gone() -> Result<(), String> {
+    let parse = |command: &str, args: &[&str]| {
+        parse_options(
+            command,
+            &args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        )
+    };
+    assert!(
+        parse("label", &["--mutants-arg", "--file"])
+            .is_err_and(|err| err.contains("unknown pilot-ranking option `--mutants-arg`"))
+    );
+    assert!(
+        parse("score", &["--mutants-out", "demo=out"])
+            .is_err_and(|err| err.contains("unknown pilot-ranking option `--mutants-out`"))
+    );
+    let label = parse("label", &["--mutants-out", "demo=out"])?;
+    assert!(label.label_mutants_out.is_some());
+    Ok(())
 }
 
 #[test]
@@ -498,5 +529,18 @@ fn committed_baseline_carries_every_ranking_metric_completed() -> Result<(), Str
         assert!(metric["value"].is_number(), "{id}: {metric}");
         assert_eq!(metric["partial"], false, "{id}");
     }
+    Ok(())
+}
+
+#[test]
+fn default_binary_follows_the_target_directory_cargo_reports() -> Result<(), String> {
+    let binary = release_binary(r#"{"target_directory": "/ci/scratch/target"}"#)?;
+    assert_eq!(
+        binary,
+        Path::new("/ci/scratch/target")
+            .join("release")
+            .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
+    );
+    assert!(release_binary("{}").is_err_and(|err| err.contains("target_directory")));
     Ok(())
 }
