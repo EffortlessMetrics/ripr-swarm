@@ -207,6 +207,9 @@ are scoped or reviewed.
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
   `ripr.toml` already failed loudly.
+- Config: workspace status and Python repair config-profile detection treat a
+  dangling `ripr.toml` symlink as present (the same fact `load_for_root`
+  already returns), never as built-in defaults (#5404).
 - The workflow from `ripr init --ci github` now explains a failed install.
   When no prebuilt binary fits the runner and the runner has no `cargo`, the
   Install ripr step fails with the cause and the fix (install Rust or add a
@@ -535,6 +538,16 @@ are scoped or reviewed.
   invented. `ripr check` prints the command under "Write a test for it:"
   for Rust predicate, return-value, error-path and match-arm gaps, and
   unsupported shapes refuse with a typed reason (#5355, #5357).
+- Integration-file stubs from `ripr agent stub --write` keep a crate-root
+  `pub const` comparison as a derived input, rebase `crate::` parameter
+  types to the library crate name, and compile under the printed
+  `cargo test --manifest-path … --test <stem>` command until they stop at
+  the labelled `ripr:` todo. Crate-root `pub const` items are matched from
+  the clean parse, not brace counting, so nested-module constants stay
+  fill-ins even when a string or comment holds `}`. Private, `pub(crate)`,
+  `#[cfg(test)]`, and other cfg-gated constants stay fill-ins because
+  feature and target activation is not established statically; `self::`
+  and `super::` parameter paths still refuse (#5453).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
