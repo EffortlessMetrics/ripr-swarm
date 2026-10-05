@@ -1,4 +1,4 @@
-# RIPR-SPEC-0232: Statically contradicted exact-value oracles
+# RIPR-SPEC-0233: Statically contradicted exact-value oracles
 
 Status: proposed
 
