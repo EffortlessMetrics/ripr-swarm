@@ -5554,6 +5554,7 @@ mod tests {
         };
         let output = |findings: Vec<Finding>| CheckOutput {
             harness_projections: Vec::new(),
+            unlinked_python_tests: None,
             untracked_working_tree_source_paths: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
