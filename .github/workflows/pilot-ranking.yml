@@ -2,8 +2,8 @@ name: Pilot Ranking
 
 # Scores `ripr pilot`'s top 5 and top 10 picks against the checked-in mutation
 # answer key (benchmarks/pilot_ranking/) and gates the pooled precision,
-# scored share and function diversity on the `ranking` scoreboard against
-# metrics/dx-scoreboard/pilot-ranking-baseline.json. Advisory and late: it
+# scored share, function diversity and pick count on the `ranking`
+# scoreboard against metrics/dx-scoreboard/pilot-ranking-baseline.json. Advisory and late: it
 # runs nightly, on demand, and once when a pull request that touches pilot
 # ranking, seam grading or this answer key leaves draft. It never runs
 # cargo-mutants; the labels are committed. Network use (fetching the five

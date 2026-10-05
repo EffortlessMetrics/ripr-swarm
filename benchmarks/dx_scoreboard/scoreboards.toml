@@ -652,10 +652,10 @@ source = "ingest:rust-corpus-smoke"
 # benchmarks/pilot_ranking/ (`cargo xtask pilot-ranking score`). Pooled over
 # the five pinned crates; per-crate detail stays in the receipt. Pins, labels
 # and pilot are deterministic, so there is no run-to-run noise to allow for:
-# each floor sits just under one pick (top-5 precision moves about 0.05 per
-# pick, top-10 precision about 0.025, the top-10 shares 0.02), so any pick
-# that moves the wrong way fails. An intended trade-off refreshes the
-# baseline in the same pull request.
+# each floor sits just under one pick even when every pick is judged (top-5
+# precision moves at least 0.04 per pick, top-10 precision 0.02, the top-10
+# shares 0.02), so any pick that moves the wrong way fails. An intended
+# trade-off refreshes the baseline in the same pull request.
 #
 # A pick is judged by mutants of its own expression, else of its line, else
 # whole-body mutants of its function; the evidence shows the tier mix.
@@ -668,7 +668,7 @@ unit = "ratio"
 direction = "higher_is_better"
 target = 0.6
 regression_pct = 0
-regression_floor = 0.04
+regression_floor = 0.039
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -680,7 +680,7 @@ unit = "ratio"
 direction = "higher_is_better"
 target = 0.6
 regression_pct = 0
-regression_floor = 0.02
+regression_floor = 0.019
 runner_dependent = false
 source = "ingest:pilot-ranking"
 

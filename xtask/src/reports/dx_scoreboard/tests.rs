@@ -1841,3 +1841,65 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
     assert!(parse_ingest(&overcounted, &config).is_err_and(|err| err.contains("more confirmed")));
     Ok(())
 }
+
+/// The committed floors must fail a single pick moving the wrong way, even
+/// in the tightest case where every top-10 pick is judged (one flip moves
+/// precision by exactly 0.02), and any lost pick.
+#[test]
+fn ranking_gate_fails_one_flipped_pick_and_one_lost_pick() -> Result<(), String> {
+    let receipt = |picks: u64, confirmed: u64, scored: u64| {
+        let cut = json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": scored - confirmed,
+            "unscored": picks - scored,
+            "precision": confirmed as f64 / scored as f64,
+            "scored_share": scored as f64 / picks as f64,
+            "distinct_functions": picks,
+            "distinct_function_share": 1.0,
+        });
+        json!({
+            "schema_version": "ripr-pilot-ranking-v1",
+            "corpus_version": "test",
+            "status": "complete",
+            "repos_total": 5,
+            "unavailable_repos": 0,
+            "pooled": {"top5": cut.clone(), "top10": cut},
+        })
+    };
+    let config = load_config(&committed_config())?;
+    let boards = vec!["ranking".to_string()];
+    let report = |value: &Value, baseline: Option<&Value>| -> Result<Value, String> {
+        let samples = parse_ingest(value, &config)?;
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("r"),
+            baseline,
+            true,
+        ))
+    };
+    let regressed = |report: &Value| {
+        report["gate"]["regressions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["metric"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    // 3 -> 2 confirmed of 50 judged: the case a 0.02 floor let through.
+    let baseline = report(&receipt(50, 3, 50), None)?;
+    assert!(regressed(&report(&receipt(50, 3, 50), Some(&baseline))?).is_empty());
+    let flipped = regressed(&report(&receipt(50, 2, 50), Some(&baseline))?);
+    assert!(
+        flipped.contains(&"ranking.pilot_precision_top10".to_string()),
+        "{flipped:?}"
+    );
+    let lost = regressed(&report(&receipt(49, 3, 49), Some(&baseline))?);
+    assert!(
+        lost.contains(&"ranking.pilot_picks_top10".to_string()),
+        "{lost:?}"
+    );
+    Ok(())
+}

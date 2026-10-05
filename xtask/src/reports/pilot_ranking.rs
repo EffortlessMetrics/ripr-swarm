@@ -178,7 +178,7 @@ fn parse_options(command: &str, args: &[String]) -> Result<Options, String> {
             }
             "--repo" => options.repos.push(value()?),
             "--mutants-out" => options.label_mutants_out = Some(named_path(&value()?, flag)?),
-            "--mutants-arg" => options.label_mutants_args.push(value()?),
+            "--mutants-arg" if command == "label" => options.label_mutants_args.push(value()?),
             _ => return Err(format!("unknown pilot-ranking option `{flag}`\n{USAGE}")),
         }
         index += 2;
@@ -431,8 +431,20 @@ fn fetch(manifest: &Manifest, options: &Options) -> Result<(), String> {
 }
 
 fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
-    if checkout_problem(repo, dir).is_none() {
+    let Some(problem) = checkout_problem(repo, dir) else {
         return Ok(true);
+    };
+    // A checkout at the pinned revision whose tree has edits or extra files
+    // (say a `mutants.out/` written inside it) may hold someone's work, so it
+    // is reported, never deleted. Only a missing, empty or interrupted
+    // checkout is replaced.
+    if dir.join(".git").exists()
+        && git(dir, &["rev-parse", "HEAD"]).is_ok_and(|head| head == repo.revision)
+    {
+        return Err(format!(
+            "{} is at the pinned revision but {problem}; clean it or move it, then fetch again",
+            dir.display()
+        ));
     }
     // Only an empty directory or one an earlier fetch created may be replaced;
     // a user's own clone at the same path is never deleted.

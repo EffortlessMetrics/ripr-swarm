@@ -1068,7 +1068,7 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
             format!("{distinct} distinct functions in {picks} picks")
         } else {
             format!(
-                "{confirmed} confirmed, {refuted} refuted of {picks} picks (all top-10 judged picks by tier: {tiers})"
+                "{confirmed} confirmed, {refuted} refuted of {picks} picks (every judged pick by tier: {tiers})"
             )
         };
         evidence.push_str(&format!(
