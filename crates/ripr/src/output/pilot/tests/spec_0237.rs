@@ -501,7 +501,7 @@ fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
         }
         for i in 0..k {
             heap(k - 1, items, out);
-            let swap = if k % 2 == 0 { i } else { 0 };
+            let swap = if k.is_multiple_of(2) { i } else { 0 };
             if i + 1 < k {
                 items.swap(swap, k - 1);
             }
