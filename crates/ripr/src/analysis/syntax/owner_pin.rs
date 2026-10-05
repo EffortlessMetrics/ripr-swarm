@@ -436,7 +436,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
 
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
-fn supported_item_context(item: &SyntaxNode) -> bool {
+pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     let mut source_file = false;
     for (depth, node) in item.ancestors().enumerate() {
         if depth > 0

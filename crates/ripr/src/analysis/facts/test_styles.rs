@@ -153,7 +153,7 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
     }
 }
 
-fn attributes_define_test<'attribute>(
+pub(super) fn attributes_define_test<'attribute>(
     attributes: impl IntoIterator<Item = &'attribute str>,
 ) -> bool {
     attributes.into_iter().any(|attribute| {

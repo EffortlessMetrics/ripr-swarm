@@ -46,8 +46,9 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
-    OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_ambiguities,
+    GeneratedTestPins, OwnerPinAssertions, empty_macro_binding_ambiguities, generated_test_pins,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -72,6 +73,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    /// Per file: the expansion-coordinate admission facts of the tests a
+    /// same-file `macro_rules!` generated (#5334).
+    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
     withheld: WithheldMacroBindings,
 }
 
@@ -205,7 +209,7 @@ impl OwnerPinSyntax {
                 return false;
             }
         }
-        by_file
+        if by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .admits(
@@ -214,6 +218,41 @@ impl OwnerPinSyntax {
                 (assertion.line, &assertion.text),
                 &ambiguous,
             )
+        {
+            return true;
+        }
+        // A generated test is not in the file's text: the same admission
+        // runs over its invocation's expansion, matched by name, body and
+        // assertion text in the expansion's own coordinates.
+        let mut generated = self.generated.borrow_mut();
+        generated
+            .entry(test.file.clone())
+            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .iter()
+            .filter(|invocation| {
+                invocation.start_line == test.start_line && invocation.end_line == test.end_line
+            })
+            .flat_map(|invocation| {
+                invocation
+                    .tests
+                    .iter()
+                    .filter(|local| local.name == test.name && local.body == test.body)
+                    .map(move |local| (invocation, local))
+            })
+            .any(|(invocation, local)| {
+                local
+                    .assertions
+                    .iter()
+                    .filter(|local_assertion| local_assertion.text == assertion.text)
+                    .any(|local_assertion| {
+                        invocation.pins.admits(
+                            (local.start_line, local.end_line, &local.name),
+                            &local.body,
+                            (local_assertion.line, &local_assertion.text),
+                            &ambiguous,
+                        )
+                    })
+            })
     }
 }
 
