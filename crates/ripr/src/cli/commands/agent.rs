@@ -868,9 +868,16 @@ impl SharedWorkflowArtifacts {
                 .unwrap_or_default();
             backup_name.push(WORKFLOW_ARTIFACT_BACKUP_SUFFIX);
             let backup = path.with_extension(backup_name);
-            if !path.exists() && backup.exists() {
-                // Crash recovery: a previous run renamed the original aside
-                // and died before resolving it. Restore, then re-decide.
+            if backup.exists() {
+                // Crash recovery: a previous run renamed its pre-attempt
+                // bytes aside and died before resolving them. When it died
+                // before writing, the original is absent; when it died after
+                // writing its fresh projection, the visible file is that
+                // dead run's unresolved projection (on Windows a rename
+                // cannot replace the existing backup). Either way the backup
+                // holds the true pre-attempt state: drop the unresolved
+                // projection and restore, then re-decide below.
+                let _ = std::fs::remove_file(path);
                 let _ = std::fs::rename(&backup, path);
             }
             if path.exists() && std::fs::rename(path, &backup).is_ok() {

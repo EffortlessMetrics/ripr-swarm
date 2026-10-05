@@ -1691,9 +1691,16 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related
-        .iter()
-        .any(|t| oracles_match_sink(seam, &t.assertions, owner_fn));
+    let any_matching_sink = related.iter().any(|t| {
+        oracles_match_sink(
+            seam,
+            &t.assertions,
+            owner_fn,
+            owner_fn.is_some_and(|owner| {
+                value_contradiction::bare_owner_call_is_shadowed(t, &owner.name)
+            }),
+        )
+    });
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1711,6 +1718,7 @@ fn oracles_match_sink(
     seam: &RepoSeam,
     oracles: &[OracleFact],
     owner_fn: Option<&FunctionSummary>,
+    shadowed: bool,
 ) -> bool {
     oracles
         .iter()
@@ -1718,7 +1726,7 @@ fn oracles_match_sink(
         // the mutant's value, not the owner's (#6026).
         .filter(|oracle| {
             !matches!(
-                exact_value_assertion_verdict(owner_fn, &oracle.text),
+                exact_value_assertion_verdict(owner_fn, &oracle.text, shadowed),
                 ExactValueVerdict::Contradicted { .. }
             )
         })
@@ -1783,11 +1791,14 @@ fn discriminate_evidence(
     let mut best_matching = OracleStrength::None;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
+        let shadowed = owner_fn.is_some_and(|owner| {
+            value_contradiction::bare_owner_call_is_shadowed(test, &owner.name)
+        });
         for oracle in &test.assertions {
             // A statically contradicted exact-value assertion keeps at most
             // Weak credit: it pins the mutant's value and fails at baseline,
             // so it must not grade the seam's discrimination up (#6026).
-            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle);
+            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, shadowed);
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
@@ -1840,8 +1851,9 @@ fn discriminate_evidence(
 fn effective_oracle_strength(
     owner_fn: Option<&FunctionSummary>,
     oracle: &OracleFact,
+    shadowed: bool,
 ) -> (OracleStrength, Option<String>) {
-    match exact_value_assertion_verdict(owner_fn, &oracle.text) {
+    match exact_value_assertion_verdict(owner_fn, &oracle.text, shadowed) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -2600,8 +2612,10 @@ fn best_oracle(
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
+    let shadowed = owner_fn
+        .is_some_and(|owner| value_contradiction::bare_owner_call_is_shadowed(test, &owner.name));
     for oracle in &test.assertions {
-        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle);
+        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, shadowed);
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();

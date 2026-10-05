@@ -51,7 +51,14 @@ pub(super) enum ExactValueVerdict {
 pub(super) fn exact_value_assertion_verdict(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
+    shadowed: bool,
 ) -> ExactValueVerdict {
+    if shadowed {
+        // A `let` binding of the owner's name in the test body shadows the
+        // crate function; the bare call then folds against a body the
+        // assertion never called.
+        return ExactValueVerdict::NotEvaluable;
+    }
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
     };
@@ -100,6 +107,19 @@ pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
     format!(
         "assertion expected value contradicts static evaluation (asserts {expected}, owner folds to {evaluated})"
     )
+}
+
+/// Whether the test's own body binds `owner_name` with a `let` (a local
+/// shadow the bare-name fold cannot see through, #6701 review).
+pub(super) fn bare_owner_call_is_shadowed(
+    test: &crate::analysis::facts::TestFact,
+    owner_name: &str,
+) -> bool {
+    !owner_name.is_empty()
+        && test
+            .let_bindings
+            .iter()
+            .any(|binding| binding.name == owner_name)
 }
 
 /// Which equality macro family the assertion uses and its first operands.
@@ -236,9 +256,11 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
 }
 
 /// The inclusive value range a recognized Rust integer type admits, or
-/// `None` for anything else (including `u128`/`i128`, whose exact range
-/// exceeds the fold's i128 arithmetic). `usize`/`isize` assume the 64-bit
-/// targets the analyzer's evidence is produced for.
+/// `None` for anything else: `u128`/`i128` exceed the fold's i128
+/// arithmetic, and pointer-sized types depend on the analysis target's
+/// width, which no established input names here — a fold at the wrong
+/// width could contradict a passing wrapping assertion, so they stay not
+/// evaluable (#6701 review).
 fn declared_integer_range(ty: &str) -> Option<(i128, i128)> {
     // The parser's return-type node carries its `->` arrow; parameter types
     // are bare.
@@ -248,12 +270,10 @@ fn declared_integer_range(ty: &str) -> Option<(i128, i128)> {
         "u16" => Some((0, i128::from(u16::MAX))),
         "u32" => Some((0, i128::from(u32::MAX))),
         "u64" => Some((0, i128::from(u64::MAX))),
-        "usize" => Some((0, i128::from(u64::MAX))),
         "i8" => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
         "i16" => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
         "i32" => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
         "i64" => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
-        "isize" => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
         _ => None,
     }
 }
@@ -449,8 +469,15 @@ impl<'a> Parser<'a> {
     fn parse_or(&mut self) -> Option<Value> {
         let mut left = self.parse_and()?;
         while self.eat_symbol("||") {
-            let right = self.parse_and()?;
-            left = Value::Bool(bool_value(left)? || bool_value(right)?);
+            // Rust short-circuits: a deciding LHS never evaluates the RHS,
+            // so an undefined RHS (a division by zero the run never reaches)
+            // must not make the fold silent (#6701 review).
+            if bool_value(left)? {
+                self.skip_expression()?;
+                left = Value::Bool(true);
+            } else {
+                left = Value::Bool(bool_value(self.parse_and()?)?);
+            }
         }
         Some(left)
     }
@@ -458,10 +485,124 @@ impl<'a> Parser<'a> {
     fn parse_and(&mut self) -> Option<Value> {
         let mut left = self.parse_comparison()?;
         while self.eat_symbol("&&") {
-            let right = self.parse_comparison()?;
-            left = Value::Bool(bool_value(left)? && bool_value(right)?);
+            if !bool_value(left)? {
+                self.skip_expression()?;
+                left = Value::Bool(false);
+            } else {
+                left = Value::Bool(bool_value(self.parse_comparison()?)?);
+            }
         }
         Some(left)
+    }
+
+    /// Consumes one expression's tokens without evaluating it (the untaken
+    /// branch of an `if` or the short-circuited side of `&&`/`||`): balanced
+    /// delimiters, no semantics. `let`/`return`/calls stay un-parseable so
+    /// a skipped region cannot smuggle new grammar in.
+    fn skip_expression(&mut self) -> Option<()> {
+        self.skip_or()
+    }
+
+    fn skip_or(&mut self) -> Option<()> {
+        self.skip_and()?;
+        while self.eat_symbol("||") {
+            self.skip_and()?;
+        }
+        Some(())
+    }
+
+    fn skip_and(&mut self) -> Option<()> {
+        self.skip_comparison()?;
+        while self.eat_symbol("&&") {
+            self.skip_comparison()?;
+        }
+        Some(())
+    }
+
+    fn skip_comparison(&mut self) -> Option<()> {
+        self.skip_additive()?;
+        if matches!(
+            self.peek_symbol(),
+            Some("==" | "!=" | "<" | "<=" | ">" | ">=")
+        ) {
+            self.position += 1;
+            self.skip_additive()?;
+        }
+        Some(())
+    }
+
+    fn skip_additive(&mut self) -> Option<()> {
+        self.skip_multiplicative()?;
+        while matches!(self.peek_symbol(), Some("+" | "-")) {
+            self.position += 1;
+            self.skip_multiplicative()?;
+        }
+        Some(())
+    }
+
+    fn skip_multiplicative(&mut self) -> Option<()> {
+        self.skip_unary()?;
+        while matches!(self.peek_symbol(), Some("*" | "/" | "%")) {
+            self.position += 1;
+            self.skip_unary()?;
+        }
+        Some(())
+    }
+
+    fn skip_unary(&mut self) -> Option<()> {
+        if matches!(self.peek_symbol(), Some("-" | "!")) {
+            self.position += 1;
+            return self.skip_unary();
+        }
+        self.skip_primary()
+    }
+
+    fn skip_primary(&mut self) -> Option<()> {
+        match self.tokens.get(self.position) {
+            Some(Token::Symbol("(")) => {
+                self.position += 1;
+                self.skip_or()?;
+                self.expect_symbol(")")
+            }
+            Some(Token::Symbol("{")) => self.skip_balanced_braces(),
+            Some(Token::Ident(name)) if name == "if" => {
+                self.position += 1;
+                self.skip_or()?;
+                self.skip_balanced_braces()?;
+                if self.peek_ident() == Some("else") {
+                    self.position += 1;
+                    if self.peek_ident() == Some("if") {
+                        self.position += 1;
+                        self.skip_or()?;
+                        self.skip_balanced_braces()?;
+                    } else {
+                        self.skip_balanced_braces()?;
+                    }
+                }
+                Some(())
+            }
+            Some(Token::Int(_) | Token::Ident(_)) => {
+                self.position += 1;
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    /// Consumes one balanced `{ .. }` region without evaluating it.
+    fn skip_balanced_braces(&mut self) -> Option<()> {
+        self.expect_symbol("{")?;
+        let mut depth = 1i32;
+        while depth > 0 {
+            match self.tokens.get(self.position) {
+                Some(Token::Symbol("{")) => depth += 1,
+                Some(Token::Symbol("}")) => depth -= 1,
+                None => return None,
+                _ => {}
+            }
+            self.position += 1;
+        }
+        Some(())
     }
 
     fn parse_comparison(&mut self) -> Option<Value> {
@@ -603,22 +744,53 @@ impl<'a> Parser<'a> {
     /// evaluable only when the condition folds true.
     fn parse_if_tail(&mut self) -> Option<Value> {
         let condition = bool_value(self.parse_expression()?)?;
-        let taken = self.parse_block_value()?;
-        if self.peek_ident() != Some("else") {
-            return if condition { Some(taken) } else { None };
-        }
-        self.position += 1;
-        let alternative = if self.peek_ident() == Some("if") {
-            self.position += 1;
-            self.parse_if_tail()?
-        } else {
-            self.parse_block_value()?
-        };
         if condition {
+            let taken = self.parse_block_value()?;
+            // The untaken arm is consumed syntactically but never folded: a
+            // division by zero or overflow the run would never reach must
+            // not silence the fold (#6701 review).
+            if self.peek_ident() == Some("else") {
+                self.position += 1;
+                if self.peek_ident() == Some("if") {
+                    self.position += 1;
+                    self.skip_if_tail_syntax()?;
+                } else {
+                    self.skip_balanced_braces()?;
+                }
+            }
             Some(taken)
         } else {
+            // Skip the taken block syntactically, then evaluate the else
+            // arm. An `if` without `else` is not evaluable when false.
+            self.skip_balanced_braces()?;
+            if self.peek_ident() != Some("else") {
+                return None;
+            }
+            self.position += 1;
+            let alternative = if self.peek_ident() == Some("if") {
+                self.position += 1;
+                self.parse_if_tail()?
+            } else {
+                self.parse_block_value()?
+            };
             Some(alternative)
         }
+    }
+
+    /// Skips an `else if` chain syntactically (the `if` already consumed).
+    fn skip_if_tail_syntax(&mut self) -> Option<()> {
+        self.skip_or()?;
+        self.skip_balanced_braces()?;
+        if self.peek_ident() == Some("else") {
+            self.position += 1;
+            if self.peek_ident() == Some("if") {
+                self.position += 1;
+                self.skip_if_tail_syntax()?;
+            } else {
+                self.skip_balanced_braces()?;
+            }
+        }
+        Some(())
     }
 }
 
@@ -687,7 +859,7 @@ mod tests {
             .iter()
             .find(|function| function.name == "discounted_total")
             .ok_or("owner function is indexed")?;
-        Ok(exact_value_assertion_verdict(Some(owner), assertion))
+        Ok(exact_value_assertion_verdict(Some(owner), assertion, false))
     }
 
     const BOUNDARY_OWNER: &str = r#"
@@ -982,17 +1154,113 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
             .iter()
             .find(|function| function.name == "next")
             .ok_or("owner function is indexed")?;
-        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 0);");
+        let verdict =
+            exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 0);", false);
         assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
         // A value outside the declared width cannot be returned at all, so
         // an assertion pinning one stays not evaluable too.
-        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 256);");
+        let verdict =
+            exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(255), 256);", false);
         assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
         // Inside the declared width the same shape folds normally.
-        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 3);");
+        let verdict =
+            exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 3);", false);
         assert_eq!(verdict, ExactValueVerdict::Consistent);
-        let verdict = exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 4);");
+        let verdict =
+            exact_value_assertion_verdict(Some(owner_fn), "assert_eq!(next(2), 4);", false);
         assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
+        Ok(())
+    }
+
+    #[test]
+    fn untaken_branches_do_not_silence_the_fold() -> Result<(), String> {
+        // `if x == 0 { 0 } else { 10 / x }` at 0 never reaches the
+        // division; the fold evaluates only the selected branch, so the
+        // baseline-failing assert is contradicted instead of keeping its
+        // strong credit behind an undefined untaken arm (#6701 review).
+        let owner = r#"
+pub fn discounted_total(amount_cents: i64, discount_threshold_cents: i64) -> i64 {
+    if amount_cents == 0 {
+        0
+    } else {
+        10 / amount_cents
+    }
+}
+"#;
+        let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(0, 5), 1);")?;
+        assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
+        // The guard branch itself is honored: at 5 the division runs (2).
+        let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(5, 5), 3);")?;
+        assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
+        let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(5, 5), 2);")?;
+        assert_eq!(verdict, ExactValueVerdict::Consistent);
+        Ok(())
+    }
+
+    #[test]
+    fn short_circuit_operands_skip_undefined_sides() -> Result<(), String> {
+        // `x != 0 && 10 / x > 1` at 0 short-circuits before the division.
+        let owner = r#"
+pub fn discounted_total(amount_cents: i64, discount_threshold_cents: i64) -> i64 {
+    if amount_cents != 0 && 10 / amount_cents > 1 {
+        10 / amount_cents
+    } else {
+        0
+    }
+}
+"#;
+        let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(0, 5), 1);")?;
+        assert!(matches!(verdict, ExactValueVerdict::Contradicted { .. }));
+        let verdict = verdict_for_owner(owner, "assert_eq!(discounted_total(0, 5), 0);")?;
+        assert_eq!(verdict, ExactValueVerdict::Consistent);
+        Ok(())
+    }
+
+    #[test]
+    fn local_shadow_of_the_owner_name_is_not_evaluable() -> Result<(), String> {
+        // A `let` binding of the owner's name shadows the crate function;
+        // the bare-name fold must stay silent instead of folding against a
+        // body the assertion never called (#6701 review).
+        let source = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        amount_cents * 70 / 100
+    } else {
+        amount_cents
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::discounted_total;
+    #[test]
+    fn boundary_uses_a_shadow() {
+        let discounted_total = |a: u64, b: u64| a;
+        assert_eq!(discounted_total(5_000, 5_000), 5_000);
+    }
+}
+"#;
+        let adapter = RaRustSyntaxAdapter;
+        let facts = adapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "discounted_total")
+            .ok_or("owner function is indexed")?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "boundary_uses_a_shadow")
+            .ok_or("shadowing test is indexed")?;
+        assert!(bare_owner_call_is_shadowed(test, "discounted_total"));
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|oracle| oracle.text.contains("assert_eq!"))
+            .ok_or("the shadow test carries an equality assertion")?;
+        let verdict = exact_value_assertion_verdict(Some(owner), &assertion.text, true);
+        assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
         Ok(())
     }
 
