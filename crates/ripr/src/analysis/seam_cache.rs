@@ -1825,18 +1825,19 @@ impl RepoFileFactCache {
         }
     }
 
-    /// Snapshot paths with valid cached envelopes before a build starts. The
-    /// caller uses this set for O(1) miss attribution and deliberately does not
-    /// observe entries created during the same build. Only entries this build
-    /// could have served count: a miss against another build's entry means
-    /// the build changed, not the file's content.
+    /// Snapshot the cached entries whose header this build could have served,
+    /// before the build starts. The caller uses it for miss attribution and
+    /// deliberately does not observe entries created during the same build. A
+    /// miss against another build's entry means the build changed, not the
+    /// file's content.
     ///
     /// The snapshot reads only each entry's header (schema, analyzer, path).
     /// The full decode and integrity check run later, in
     /// [`KnownFilePaths::contains`], and only for the entries of a file that
-    /// actually missed. Before, one miss decoded and re-hashed every entry in
-    /// the directory: on ripr-swarm (3,600 entries, 1.7 GB) a single committed
-    /// edit added ~8.7 s to `check`.
+    /// actually missed, so an entry repaired or removed mid-build is judged as
+    /// it is then. Before, one miss decoded and re-hashed every entry in the
+    /// directory: on ripr-swarm (~4,500 entries) a single committed edit took
+    /// `index_cached_parse` from 2.1 s to 13.5 s.
     pub(crate) fn known_file_paths(&self) -> KnownFilePaths {
         let identity = crate::build_identity::cache_identity();
         let mut candidates: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
@@ -2004,6 +2005,7 @@ struct FileFactCacheEnvelope {
     file_facts: FileFacts,
 }
 
+/// The envelope fields the inventory needs; serde skips the rest.
 #[derive(serde::Deserialize)]
 struct FileFactCacheHeader {
     file_fact_cache_schema_version: String,
@@ -4224,6 +4226,13 @@ mod tests {
         )
         .map_err(|err| err.to_string())?;
         let known = cache.known_file_paths();
+        // The snapshot keeps the tampered entry as a candidate: it judged
+        // only the header. An inventory that decoded and validated every body
+        // up front would already have dropped it here.
+        assert!(
+            known.candidates.contains_key(file),
+            "the snapshot must not validate bodies"
+        );
         assert!(
             !known.contains(file),
             "a header match alone must not count as a known file"
@@ -4255,21 +4264,29 @@ mod tests {
         );
         // Header fields placed after a padding field longer than the prefix
         // are found by the whole-file fallback.
+        // The bytes are spliced by hand: a `serde_json::Map` may sort its keys
+        // and move the padding behind the header.
         let padded = dir.join("padded.json");
-        let mut entry: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        let mut reordered = serde_json::Map::new();
-        reordered.insert(
-            "padding".to_owned(),
-            serde_json::Value::String("p".repeat(2 * FILE_FACT_HEADER_PREFIX_BYTES as usize)),
-        );
-        reordered.append(&mut entry);
-        std::fs::write(
-            &padded,
-            serde_json::to_vec(&reordered).map_err(|err| err.to_string())?,
+        let body = bytes
+            .iter()
+            .position(|byte| *byte == b'{')
+            .and_then(|open| bytes.get(open + 1..))
+            .ok_or("entry must be a JSON object")?;
+        let mut spliced = format!(
+            "{{\"padding\":\"{}\",",
+            "p".repeat(2 * FILE_FACT_HEADER_PREFIX_BYTES as usize)
         )
-        .map_err(|err| err.to_string())?;
-        assert!(header_from_prefix(&bytes[..0]).is_none());
+        .into_bytes();
+        spliced.extend_from_slice(body);
+        std::fs::write(&padded, &spliced).map_err(|err| err.to_string())?;
+        let prefix = spliced
+            .get(..FILE_FACT_HEADER_PREFIX_BYTES as usize)
+            .ok_or("padded entry must exceed the prefix")?;
+        assert!(
+            header_from_prefix(prefix).is_none(),
+            "the prefix must not hold the header, so the fallback is exercised"
+        );
+        assert!(header_from_prefix(&[]).is_none());
         let fallback = read_file_fact_header(&padded).ok_or("fallback must find the header")?;
         assert_eq!(fallback.file_path, full.file_path);
         ignore_remove_dir_all(&dir);

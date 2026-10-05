@@ -1,7 +1,6 @@
 <!-- section: Changed -->
-- Commands that build file facts, such as `ripr check`, no longer decode
-  every cached file-fact entry to find which files the cache already holds.
-  They read each entry's header and fully decode and integrity-check only
-  the files they ask about. After one committed edit on ripr-swarm (about
-  4,500 cached entries) `check` took 13.0 s instead of 27.4 s; output is
-  unchanged.
+- A cache miss no longer decodes every stored file-fact entry to name which
+  files changed. ripr reads each entry's header and fully decodes and
+  integrity-checks only the files that missed. On ripr-swarm (about 4,500
+  cached entries) one edit took the cached-parse phase of `ripr pilot` from
+  5.7 s to 2.5 s; output is unchanged. The saving grows with the cache.
