@@ -287,12 +287,26 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `weakly_gripped` (#5946). Old entries would keep the weak-grip class.
 /// `1.33`: `assert!(owner(..))` on a bool owner pins its whole result
 /// (RIPR-SPEC-0197); predecessor weak predicate/return readings must miss.
+/// `1.34`: combine those pins with lexical multiline and inline Trial
+/// terminal-guard assertion twins (#5713). Both independent
+/// `1.33` generations lack one transition and must miss this combination.
+/// `1.35`: terminal guards retain balanced condition operands and later body
+/// openers; quoted body bait cannot invent an assertion twin (#5713).
+/// `1.36`: published intermediate matcher projection and failure guard facts.
+/// `1.37`: unresolved failure macros grant no divergence authority; discarded
+/// wrappers, Err block guards and weak wildcard operands retain ownership (#5713).
 /// `1.33` -> `1.34`: a related test whose exact-value assertion statically
 /// contradicts the owner's fold (#6026) keeps at most Weak oracle credit,
 /// keeps the seam's gap open, and names the contradiction in the evidence
 /// summary. Old classified entries would keep serving the wrong-valued
 /// assertion's `strongly_gripped` closure for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.34";
+/// `1.38`: combine #5713 Err/block/wrapper ownership with landed #6701
+/// contradiction handling and debug equality extraction. Either lineage
+/// lacks part of the combined semantics and must miss.
+/// `1.39`: landed #6633 changes match-arm confirmation beside an
+/// owner-reaching test; combined classified entries must not replay
+/// predecessor proximity-only confirmation after that semantic change.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.39";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -362,9 +376,15 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.34";
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
 /// `0.39`: same bool-owner pin transition as full `1.33`.
+/// `0.40`: same combined terminal-guard transition as full `1.34` (#5713).
+/// `0.41`: same balanced terminal-guard transition as full `1.35` (#5713).
+/// `0.42`: published intermediate matcher/failure facts as full `1.36`.
+/// `0.43`: same Err-only divergence authority as full `1.37`.
 /// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
 /// transition as full `1.34` (#6026).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.40";
+/// `0.44`: same combined #5713/#6701 transition as full `1.38`.
+/// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -436,9 +456,15 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.40";
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
 /// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
 /// `0.39`: same bool-owner pin transition as full `1.33`.
+/// `0.40`: same combined terminal-guard transition as full `1.34` (#5713).
+/// `0.41`: same balanced terminal-guard transition as full `1.35` (#5713).
+/// `0.42`: published intermediate matcher/failure facts as full `1.36`.
+/// `0.43`: same Err-only divergence authority as full `1.37`.
 /// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
 /// transition as full `1.34` (#6026).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.40";
+/// `0.44`: same combined #5713/#6701 transition as full `1.38`.
+/// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -572,9 +598,23 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.21`: bodies and shape text are spans into the entry's `source`, not
 /// allocated strings (#5415 step 2). Predecessor payloads carry bare-string
 /// bodies that the span wire rejects, so they must cold-recompute.
+/// The independent #5713 candidate used `1.21` for discarded matcher
+/// refusal and `1.22` for consumed lexical multiline terminal guards.
+/// `1.23`: combine the span wire with both #5713 transitions. Neither
+/// predecessor family may replay favorable or guard-blind file facts.
+/// `1.24`: balanced terminal-guard conditions and first-failure admission
+/// replace truncated or quoted-body twins; guard-blind facts must miss.
+/// `1.25`: published intermediate wrapped matcher and failure guard facts.
+/// `1.26`: only whole Err returns establish failure guard twins (#5713).
+/// `1.27`: landed #6701 recognizes debug equality operands in the shared
+/// extractor. Duplicate debug equality now stores Weak/RelationalCheck
+/// OracleFact values instead of Strong/ExactValue; warm raw facts must miss.
 /// `1.22`: file-level `calls` are no longer stored (#5415 step 3); the
 /// wire derives them from per-function calls, ignoring any legacy copy.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.22";
+/// `1.28`: combine the #5713/#6701 oracle facts with landed #6820
+/// derived file-call storage. Retained per-function calls are authoritative;
+/// either predecessor family must rebuild this combined file-fact shape.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.28";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3844,9 +3884,13 @@ mod tests {
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
         // 1.20 -> 1.21: bodies and shape text are spans into `source`
         // (#5415 step 2); bare-string predecessor bodies must not replay.
+        // 1.23: combine span wire with the independent #5713 1.21/1.22
+        // discarded matcher refusal and consumed terminal guard facts.
+        // 1.24: balanced terminal guards and actual first-failure refusal.
         // 1.21 -> 1.22: file-level `calls` are derived, not stored
         // (#5415 step 3); legacy payloads carry a dead copy.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.22");
+        // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.28");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3896,9 +3940,12 @@ mod tests {
         // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
         // 1.31 -> 1.32: weak grip requires established activation (#5946).
         // 1.32 -> 1.33: bool-owner `assert!` pins (RIPR-SPEC-0197).
+        // 1.34: combine those pins with #5713 consumed terminal guards.
+        // 1.35: balanced terminal guards and actual first-failure refusal.
         // 1.33 -> 1.34: a statically contradicted exact-value assertion
         // keeps at most weak oracle credit and keeps the gap open (#6026).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.34");
+        // 1.38: compose #5713 with landed #6701; refuse both predecessors.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.39");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3925,10 +3972,13 @@ mod tests {
         // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
         // 0.37 -> 0.38: same weak-grip activation transition as the outer cache.
         // 0.38 -> 0.39: same bool-owner pin transition as the outer cache.
+        // 0.40: same combined terminal guard transition as the outer cache.
+        // 0.41: same balanced terminal guard transition as the outer cache.
         // 0.39 -> 0.40: same statically-contradicted-exact-value transition
         // as the outer cache (#6026).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.40");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.40");
+        // 0.44: same combined #5713/#6701 transition as full 1.38.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
     }
 
     #[test]
@@ -4015,7 +4065,7 @@ mod tests {
     fn file_fact_entry_with_legacy_bare_string_body_loads_corrupt_ignored() -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         // #5415 step 2: a 1.20-shaped payload (bare-string bodies) placed at
-        // a 1.21 entry path must quarantine at decode, never silently load.
+        // a current entry path must quarantine at decode, never silently load.
         // This pins the full cache-load path, not just JSON-value rejection.
         let scratch = integrity_scratch("legacy-bare-string-body")?;
         let cache = RepoFileFactCache::at_dir(scratch.0.clone());
@@ -4215,115 +4265,137 @@ mod tests {
 
     #[test]
     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
-        for compact in [false, true] {
-            for sharded in [false, true] {
-                let scratch = integrity_scratch("property-classified-generation")?;
-                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
-                let mut current_key = empty_state().cache_key();
-                if compact {
-                    current_key.schema_version =
-                        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
-                }
-                let previous_key = RepoSeamCacheKey {
-                    schema_version: if compact { "0.33" } else { "1.27" }.to_string(),
-                    ..current_key.clone()
-                };
-                // Representative synthesized favorable classification, not
-                // a claimed capture from the old whole-analyzer execution.
-                let favorable = synthesized_discarded_oracle_classified();
-                let count = if sharded { 2 } else { 1 };
-                let store_limit = if sharded { 1 } else { 10 };
-                let favorable = vec![favorable; count];
-                cache.store_classified_seams_with_limit(
-                    &previous_key,
-                    &favorable,
-                    None,
-                    store_limit,
-                )?;
-                assert_classified_cache_values(&cache, &previous_key, &favorable)?;
-                assert!(matches!(
-                    cache.load_classified_seams_with_fallback(&current_key),
-                    CacheLoad::Miss
-                ));
-                if sharded {
-                    assert!(cache.sharded_manifest_path(&previous_key).exists());
-                    assert!(!cache.entry_path(&previous_key).exists());
-                } else {
-                    let stale = std::fs::read(cache.entry_path(&previous_key))
-                        .map_err(|error| error.to_string())?;
-                    std::fs::write(cache.entry_path(&current_key), stale)
-                        .map_err(|error| error.to_string())?;
+        for (previous_full, previous_compact) in [
+            ("1.27", "0.33"),
+            ("1.32", "0.38"),
+            ("1.33", "0.39"),
+            ("1.34", "0.40"),
+            ("1.35", "0.41"),
+            ("1.36", "0.42"),
+            ("1.37", "0.43"),
+            ("1.38", "0.44"),
+        ] {
+            for compact in [false, true] {
+                for sharded in [false, true] {
+                    let scratch = integrity_scratch("property-classified-generation")?;
+                    let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                    let mut current_key = empty_state().cache_key();
+                    if compact {
+                        current_key.schema_version =
+                            COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                    }
+                    let previous_key = RepoSeamCacheKey {
+                        schema_version: if compact {
+                            previous_compact
+                        } else {
+                            previous_full
+                        }
+                        .to_string(),
+                        ..current_key.clone()
+                    };
+                    // Representative synthesized favorable classification, not
+                    // a claimed capture from the old whole-analyzer execution.
+                    let favorable = synthesized_discarded_oracle_classified();
+                    let count = if sharded { 2 } else { 1 };
+                    let store_limit = if sharded { 1 } else { 10 };
+                    let favorable = vec![favorable; count];
+                    cache.store_classified_seams_with_limit(
+                        &previous_key,
+                        &favorable,
+                        None,
+                        store_limit,
+                    )?;
+                    assert_classified_cache_values(&cache, &previous_key, &favorable)?;
                     assert!(matches!(
                         cache.load_classified_seams_with_fallback(&current_key),
                         CacheLoad::Miss
                     ));
+                    if sharded {
+                        assert!(cache.sharded_manifest_path(&previous_key).exists());
+                        assert!(!cache.entry_path(&previous_key).exists());
+                    } else {
+                        let stale = std::fs::read(cache.entry_path(&previous_key))
+                            .map_err(|error| error.to_string())?;
+                        std::fs::write(cache.entry_path(&current_key), stale)
+                            .map_err(|error| error.to_string())?;
+                        assert!(matches!(
+                            cache.load_classified_seams_with_fallback(&current_key),
+                            CacheLoad::Miss
+                        ));
+                    }
+                    let mut corrected = sample_classified();
+                    corrected.class = SeamGripClass::ReachableUnrevealed;
+                    corrected.evidence.observe.state = StageState::No;
+                    corrected.evidence.discriminate.state = StageState::No;
+                    let corrected = vec![corrected; count];
+                    cache.store_classified_seams_with_limit(
+                        &current_key,
+                        &corrected,
+                        None,
+                        store_limit,
+                    )?;
+                    assert_classified_cache_values(&cache, &current_key, &corrected)?;
                 }
-                let mut corrected = sample_classified();
-                corrected.class = SeamGripClass::ReachableUnrevealed;
-                corrected.evidence.observe.state = StageState::No;
-                corrected.evidence.discriminate.state = StageState::No;
-                let corrected = vec![corrected; count];
-                cache.store_classified_seams_with_limit(
-                    &current_key,
-                    &corrected,
-                    None,
-                    store_limit,
-                )?;
-                assert_classified_cache_values(&cache, &current_key, &corrected)?;
             }
         }
         Ok(())
     }
 
     #[test]
-    fn favorable_033_shard_generation_is_refused_with_current_outer_key() -> Result<(), String> {
-        for compact in [false, true] {
-            let scratch = integrity_scratch("property-shard-generation")?;
-            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
-            let mut key = empty_state().cache_key();
-            if compact {
-                key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
-            }
-            let favorable = synthesized_discarded_oracle_classified();
-            let favorable = vec![favorable; 2];
-            cache.store_classified_seams_with_limit(&key, &favorable, None, 1)?;
-            assert_classified_cache_values(&cache, &key, &favorable)?;
-            // Hold outer identity fixed to challenge the independent shard
-            // generation, rather than only missing a differently keyed path.
-            let path = cache.sharded_manifest_path(&key);
-            let mut manifest = codec::decode_sharded_manifest(
-                &std::fs::read(&path).map_err(|error| error.to_string())?,
-            )?;
-            manifest.sharded_cache_schema_version = "0.33".to_string();
-            for shard in &manifest.shards {
-                let path = cache.sharded_entry_dir(&key).join(&shard.file);
-                let mut envelope =
-                    codec::decode_shard(&std::fs::read(&path).map_err(|error| error.to_string())?)?;
-                assert_eq!(envelope.classified_seams.len(), 1);
-                assert_eq!(
-                    envelope.classified_seams[0].class,
-                    SeamGripClass::StronglyGripped
-                );
-                envelope.sharded_cache_schema_version = "0.33".to_string();
-                std::fs::write(&path, codec::encode_shard(&envelope)?)
+    fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+        for previous in [
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+        ] {
+            for compact in [false, true] {
+                let scratch = integrity_scratch("property-shard-generation")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                }
+                let favorable = synthesized_discarded_oracle_classified();
+                let favorable = vec![favorable; 2];
+                cache.store_classified_seams_with_limit(&key, &favorable, None, 1)?;
+                assert_classified_cache_values(&cache, &key, &favorable)?;
+                // Hold outer identity fixed to challenge the independent shard
+                // generation, rather than only missing a differently keyed path.
+                let path = cache.sharded_manifest_path(&key);
+                let mut manifest = codec::decode_sharded_manifest(
+                    &std::fs::read(&path).map_err(|error| error.to_string())?,
+                )?;
+                manifest.sharded_cache_schema_version = previous.to_string();
+                for shard in &manifest.shards {
+                    let path = cache.sharded_entry_dir(&key).join(&shard.file);
+                    let mut envelope = codec::decode_shard(
+                        &std::fs::read(&path).map_err(|error| error.to_string())?,
+                    )?;
+                    assert_eq!(envelope.classified_seams.len(), 1);
+                    assert_eq!(
+                        envelope.classified_seams[0].class,
+                        SeamGripClass::StronglyGripped
+                    );
+                    envelope.sharded_cache_schema_version = previous.to_string();
+                    std::fs::write(&path, codec::encode_shard(&envelope)?)
+                        .map_err(|error| error.to_string())?;
+                    let seeded = codec::decode_shard(
+                        &std::fs::read(path).map_err(|error| error.to_string())?,
+                    )?;
+                    seeded.validate_integrity()?;
+                }
+                std::fs::write(&path, codec::encode_sharded_manifest(&manifest)?)
                     .map_err(|error| error.to_string())?;
-                let seeded =
-                    codec::decode_shard(&std::fs::read(path).map_err(|error| error.to_string())?)?;
+                let seeded = codec::decode_sharded_manifest(
+                    &std::fs::read(path).map_err(|error| error.to_string())?,
+                )?;
                 seeded.validate_integrity()?;
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&key),
+                    CacheLoad::Miss
+                ));
+                let corrected = vec![sample_classified(); 2];
+                cache.store_classified_seams_with_limit(&key, &corrected, None, 1)?;
+                assert_classified_cache_values(&cache, &key, &corrected)?;
             }
-            std::fs::write(&path, codec::encode_sharded_manifest(&manifest)?)
-                .map_err(|error| error.to_string())?;
-            let seeded = codec::decode_sharded_manifest(
-                &std::fs::read(path).map_err(|error| error.to_string())?,
-            )?;
-            seeded.validate_integrity()?;
-            assert!(matches!(
-                cache.load_classified_seams_with_fallback(&key),
-                CacheLoad::Miss
-            ));
-            let corrected = vec![sample_classified(); 2];
-            cache.store_classified_seams_with_limit(&key, &corrected, None, 1)?;
-            assert_classified_cache_values(&cache, &key, &corrected)?;
         }
         Ok(())
     }
@@ -8110,58 +8182,60 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        let previous_key = RepoFileFactCacheKey {
-            schema_version: "0.2".to_string(),
-            analyzer_version: crate::build_identity::cache_identity().to_string(),
-            file_path: file.to_path_buf(),
-            content_hash: content_hash_for(&content),
-        };
-        let previous_facts = FileFacts::default();
-        cache.store_file_facts(&previous_key, &previous_facts)?;
-        // The stale envelope stays on disk...
-        assert!(cache.entry_path(&previous_key).exists());
+        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27"] {
+            let previous_key = RepoFileFactCacheKey {
+                schema_version: predecessor.to_string(),
+                analyzer_version: crate::build_identity::cache_identity().to_string(),
+                file_path: file.to_path_buf(),
+                content_hash: content_hash_for(&content),
+            };
+            let previous_facts = FileFacts::default();
+            cache.store_file_facts(&previous_key, &previous_facts)?;
+            // The stale envelope stays on disk...
+            assert!(cache.entry_path(&previous_key).exists());
 
-        // ...but the current-generation key with identical package, path,
-        // and content identity must miss.
-        let current_key = RepoFileFactCacheKey::new(file, &content);
-        assert_ne!(previous_key.schema_version, current_key.schema_version);
-        match cache.load_file_facts(&current_key) {
-            CacheLoad::Miss => {}
-            other => {
-                return Err(format!(
-                    "expected Miss across the generation transition, got {other:?}"
-                ));
+            // ...but the current-generation key with identical package, path,
+            // and content identity must miss.
+            let current_key = RepoFileFactCacheKey::new(file, &content);
+            assert_ne!(previous_key.schema_version, current_key.schema_version);
+            match cache.load_file_facts(&current_key) {
+                CacheLoad::Miss => {}
+                other => {
+                    return Err(format!(
+                        "expected Miss across the generation transition, got {other:?}"
+                    ));
+                }
             }
-        }
-        // Copied-file defense: even if the stale envelope were copied to
-        // the current key's entry path, the embedded key identity inside
-        // the envelope mismatches and the load still misses.
-        let current_path = cache.entry_path(&current_key);
-        let stale_bytes = std::fs::read(cache.entry_path(&previous_key))
-            .map_err(|error| format!("read stale envelope: {error}"))?;
-        if let Some(parent) = current_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("create current entry dir: {error}"))?;
-        }
-        std::fs::write(&current_path, stale_bytes)
-            .map_err(|error| format!("copy stale envelope: {error}"))?;
-        match cache.load_file_facts(&current_key) {
-            CacheLoad::Miss => {}
-            other => {
-                return Err(format!(
-                    "expected Miss for a copied previous-generation envelope, got {other:?}"
-                ));
+            // Copied-file defense: even if the stale envelope were copied to
+            // the current key's entry path, the embedded key identity inside
+            // the envelope mismatches and the load still misses.
+            let current_path = cache.entry_path(&current_key);
+            let stale_bytes = std::fs::read(cache.entry_path(&previous_key))
+                .map_err(|error| format!("read stale envelope: {error}"))?;
+            if let Some(parent) = current_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create current entry dir: {error}"))?;
             }
-        }
-        // And the stale entry itself, loaded by its own key, no longer
-        // satisfies current analysis identity: it can only be reached by
-        // the previous key, which current code never constructs.
-        match cache.load_file_facts(&previous_key) {
-            CacheLoad::Hit(_) => {}
-            other => {
-                return Err(format!(
-                    "seed sanity: previous key should still read its own envelope, got {other:?}"
-                ));
+            std::fs::write(&current_path, stale_bytes)
+                .map_err(|error| format!("copy stale envelope: {error}"))?;
+            match cache.load_file_facts(&current_key) {
+                CacheLoad::Miss => {}
+                other => {
+                    return Err(format!(
+                        "expected Miss for a copied previous-generation envelope, got {other:?}"
+                    ));
+                }
+            }
+            // And the stale entry itself, loaded by its own key, no longer
+            // satisfies current analysis identity: it can only be reached by
+            // the previous key, which current code never constructs.
+            match cache.load_file_facts(&previous_key) {
+                CacheLoad::Hit(_) => {}
+                other => {
+                    return Err(format!(
+                        "seed sanity: previous key should still read its own envelope, got {other:?}"
+                    ));
+                }
             }
         }
         super::ignore_remove_dir_all(&dir);

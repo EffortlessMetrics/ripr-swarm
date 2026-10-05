@@ -1745,18 +1745,24 @@ JSON fields:
   `rust_macro_wrapped_test_call_unresolved`, or
   `rust_macro_wrapped_assertion_unresolved`, or
   `rust_value_propagation_unresolved`, or
+  `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
   macro-reach, direct test macro-call, macro-wrapped assertion,
-  value-propagation, and Python same-class transitive-reach limitations
-  populate it from the same evidence lines rendered in human output. Fields are
+  value-propagation, wrapper-error-binding, and Python same-class transitive-reach
+  limitations populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
   four detail fields; consumers should keep using `static_limit_kind` as the
   limitation discriminator and treat `static_limitation` as richer detail when
-  present.
+  present. The Rust wrapper-specific producer attaches
+  `wrapper_error_binding_unresolved` and its structured detail only to
+  `weakly_exposed` findings. A `reachable_unrevealed` finding with a
+  `no_assertion` consumer may retain secondary missing text about the unresolved
+  wrapper binding while omitting both optional fields; its primary guidance
+  remains the missing assertion.
 
 ### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
 
@@ -2177,7 +2183,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
 
-- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
+- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The wrapper-specific producer attaches this discriminator and structured detail to `weakly_exposed` findings. A `reachable_unrevealed` finding with a `no_assertion` consumer may retain secondary wrapper-binding missing text while omitting both optional fields. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
 
 - `python_transitive_reach_unresolved` -- (RIPR-SPEC-0201, additive) A Python test constructs or calls into the owner's class, and a bounded same-class `self.` / `cls.` path may reach the changed method, but the preview adapter does not fully trace that path. Classification stays `no_static_path`; this is a named limitation, not a related-test or coverage claim.
 
@@ -17575,7 +17581,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.22",
+    "schema_version": "1.28",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -17586,7 +17592,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.34",
+      "schema_version": "1.39",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

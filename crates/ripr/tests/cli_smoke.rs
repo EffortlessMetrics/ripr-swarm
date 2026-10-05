@@ -18,6 +18,9 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/discarded_matches.rs"]
+mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
@@ -46,6 +49,21 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn run_ripr(args: &[&str]) -> Output {
     let bin = env!("CARGO_BIN_EXE_ripr");
     Command::new(bin).args(args).output().unwrap()
+}
+
+#[cfg(feature = "lang-rust")]
+fn run_matcher_calibration_with_deadline(
+    args: &[&str],
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(workspace_root())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    run_owned_stdin_probe(command, &[], budget)
 }
 
 fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
