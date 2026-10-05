@@ -1117,10 +1117,20 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
             bar.value
                 .map_or_else(|| "not measured".to_string(), |v| fmt_value(v, &bar.unit))
         });
-        let lead = if bar.status == Status::Failed {
-            "Instrument failed"
+        // A failed metric with no failed sample (the producer recorded only a
+        // reason) must not name a measured repository as the failed one.
+        let (lead, worst) = if bar.status == Status::Failed {
+            let named = worst.contains("(instrument failed)");
+            let detail = if named {
+                worst
+            } else {
+                bar.basis
+                    .trim_start_matches("instrument failed: ")
+                    .to_string()
+            };
+            ("Instrument failed", detail)
         } else {
-            "Worst repository"
+            ("Worst repository", worst)
         };
         page.line(format!(
             "- **{}.** {lead}: {worst}; the bar is {} {}.",
@@ -2311,6 +2321,33 @@ mod tests {
             "{}",
             page.0
         );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_metric_without_failed_sample_uses_its_reason() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.board == "Speed and memory" && bar.id.starts_with("speed."))
+            .map(|bar| bar.id)
+            .ok_or("no speed bar in the receipts")?;
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    metric["status"] = Value::from("failed");
+                    metric["reason"] = Value::from("pilot harness crashed");
+                    metric["samples"] = serde_json::json!([
+                        {"repo": "alpha", "status": "meets_target", "value": 3.0}
+                    ]);
+                }
+            }
+        }
+        let all = bars(&receipts)?;
+        let mut page = Page(String::new());
+        shortfalls(&mut page, &receipts, &all)?;
+        assert!(!page.0.contains("Instrument failed: alpha"), "{}", page.0);
+        assert!(page.0.contains("Instrument failed:"), "{}", page.0);
         Ok(())
     }
 
