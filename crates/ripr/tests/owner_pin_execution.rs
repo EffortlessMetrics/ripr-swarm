@@ -1506,6 +1506,11 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             false,
         ),
         (
+            "boundary_binding_only_in_operand_comment",
+            "let got = gate(10);\n        assert_eq!(gate(50), true /* got */);",
+            false,
+        ),
+        (
             "same_line_unasserted_boundary",
             "let got = gate(10); assert!(gate(50), \"{got}\");",
             false,

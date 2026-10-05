@@ -148,9 +148,9 @@ fn line_owner_call_count(test: &TestSummary, line: usize, name: &str) -> usize {
 }
 
 fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
-    bound_names
-        .iter()
-        .any(|name| contains_ident(operands, name))
+    // A binding named only in a comment or string is not observed.
+    let masked = crate::analysis::extract::mask_comments_and_strings(operands);
+    bound_names.iter().any(|name| contains_ident(&masked, name))
 }
 
 fn boundary_bound_locals(
@@ -285,17 +285,22 @@ fn assertion_subject(text: &str) -> String {
     text.to_string()
 }
 
+/// Owner calls in code only: a spelling inside a comment or string literal
+/// (`/* gate(10) */`, `"gate(10)"`) is not a call. Positions come from the
+/// length-preserving mask; arguments are read from the original text so
+/// string arguments (`classify("word")`) keep their values.
 fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
     let needle = format!("{name}(");
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let mut lists = Vec::new();
     let mut from = 0usize;
-    while from < text.len() {
-        let Some(rel) = text.get(from..).and_then(|rest| rest.find(&needle)) else {
+    while from < masked.len() {
+        let Some(rel) = masked.get(from..).and_then(|rest| rest.find(&needle)) else {
             break;
         };
         let abs = from + rel;
         if abs > 0 {
-            let before = text.as_bytes()[abs - 1];
+            let before = masked.as_bytes()[abs - 1];
             if before.is_ascii_alphanumeric() || before == b'_' {
                 from = abs + 1;
                 continue;
@@ -798,6 +803,77 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "without the activation == fact, classify(\"word\") must not pair against final_label == \"alpha\""
+        );
+    }
+
+    #[test]
+    fn comments_and_strings_in_operands_do_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut commented = test_summary(
+            "commented",
+            "let got = gate(10);\nassert_eq!(gate(50), true /* got */);",
+            vec![
+                call("gate", "let got = gate(10);"),
+                call("gate", "assert_eq!(gate(50), true /* got */);"),
+            ],
+            vec![exact("assert_eq!(gate(50), true /* got */);")],
+            &["10", "50"],
+        );
+        commented.calls[1].line = 2;
+        commented.assertions[0].line = 2;
+        commented.end_line = 3;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&commented],
+                &ActivationEvidence::default(),
+            ),
+            "a boundary binding named only in an operand comment must not pair"
+        );
+        let quoted = test_summary(
+            "quoted",
+            "assert_eq!(gate(50), true, \"{}\", \"gate(10)\"); assert_eq!(gate(50) /* gate(10) */, true);",
+            vec![call("gate", "assert_eq!(gate(50) /* gate(10) */, true);")],
+            vec![exact("assert_eq!(gate(50) /* gate(10) */, true);")],
+            &["10", "50"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&quoted],
+                &ActivationEvidence::default(),
+            ),
+            "an owner call spelled inside a comment is not a boundary call"
+        );
+    }
+
+    #[test]
+    fn quoted_owner_text_on_the_line_keeps_the_activation_fallback() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let line = "let note = \"gate(50)\"; assert!(gate(n));";
+        let quoted = test_summary(
+            "quoted",
+            line,
+            vec![call("gate", line)],
+            vec![exact("assert!(gate(n));")],
+            &[],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&quoted], &activation),
+            "a quoted owner spelling is not a second call on the line"
         );
     }
 

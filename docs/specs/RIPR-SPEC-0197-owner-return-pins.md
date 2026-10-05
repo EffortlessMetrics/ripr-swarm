@@ -231,7 +231,9 @@ one that appears in a message argument (`assert!(gate(50), "{got}")`) is
 formatted, not checked, and never pairs. The line-level activation
 fallback applies only when the assertion's operands hold the line's sole
 owner call, so `let got = gate(10); assert!(gate(50));` on one line does
-not pair either. Both rules hold for `assert_eq!` as well.
+not pair either. An owner call or binding spelled only inside a comment or
+string literal is not a call or a reference. These rules hold for
+`assert_eq!` as well.
 
 ## Required Evidence
 
@@ -537,16 +539,18 @@ assertions. This repair shares the existing callback without that larger migrati
   imported, ambiguous, shadowed and disabled declarations. The property
   quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
-  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs twelve
+  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs thirteen
   bool-owner layouts (both boundary sides, let-bound inputs, far inputs
   only, one side only, a shadowing closure, an uncalled closure, a boundary
-  call or binding only in a message argument, and a boundary call left
+  call or binding only in a message argument or an operand comment, and a boundary call left
   unasserted on the assertion's line) against the rewrite and a `<`
   mutant; only the two `exposed` layouts fail on the mutant.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
-  `line_activation_does_not_pair_through_another_owner_call_on_the_line`.
+  `line_activation_does_not_pair_through_another_owner_call_on_the_line`,
+  `comments_and_strings_in_operands_do_not_pair`,
+  `quoted_owner_text_on_the_line_keeps_the_activation_fallback`.
 - Fixtures: `fixtures/owner_return_pin_trait_method`,
   `fixtures/owner_return_pin_identity_traps`; re-blessed
   `fixtures/infect_value_returned`, `fixtures/infect_wildcard_discard`,
