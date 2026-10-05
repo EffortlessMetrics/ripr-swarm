@@ -6681,6 +6681,8 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::self_computed_expected_value_is_weak_and_unconfirmed",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::expected_computed_through_owner_reads_either_side_and_masks_strings",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_follows_qualified_chains_and_skips_foreign_same_names",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_names_a_free_owner_by_bare_or_module_path_only",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment"
 ]
 fixtures = [
@@ -6689,6 +6691,7 @@ fixtures = [
   "fixtures/owner_parameter_token_coincidence",
   "fixtures/self_computed_expected_value",
   "fixtures/self_computed_expected_helper",
+  "fixtures/owner_name_collision_helper_keeps_credit",
   "fixtures/proximity_name_oracle_not_credited",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
@@ -6718,6 +6721,9 @@ outputs = [
   "fixtures/self_computed_expected_helper/expected/check.json",
   "fixtures/self_computed_expected_helper/expected/human.txt",
   "fixtures/self_computed_expected_helper/expected/human-full.txt",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/check.json",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/human.txt",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/human-full.txt",
   "fixtures/proximity_name_oracle_not_credited/expected/check.json",
   "fixtures/proximity_name_oracle_not_credited/expected/human.txt",
   "fixtures/observation_unverified_return_value/expected/check.json",

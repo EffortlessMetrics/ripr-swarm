@@ -1240,6 +1240,20 @@
       ]
     },
     {
+      "id": "rust_owner_name_collision_helper_keeps_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_name_collision_helper_keeps_credit",
+      "vector": "helper_calling_foreign_same_named_method_is_independent",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_proximity_name_oracle_not_credited",
       "language": "rust",
       "tier": "pure",

@@ -391,29 +391,34 @@ fn owner_parameter_names(owner: &FunctionSummary) -> Vec<String> {
 /// Bound on the caller walk: deeper chains keep the assertion's credit.
 const MAX_CALLER_DEPTH: usize = 6;
 
-/// Names of indexed production functions whose calls reach `owner`'s name
-/// within `MAX_CALLER_DEPTH` hops. Names are matched without type
-/// resolution, so a same-named function elsewhere counts as a caller: the
-/// over-approximation can only withhold credit, never grant it.
+/// Names of indexed functions whose calls reach `owner` within
+/// `MAX_CALLER_DEPTH` hops. A call counts only when its own syntax can name
+/// the callee (see `call_names_function`), so `String::new()` or
+/// `values.len()` never reaches an owner `Rect::new` or `Stack::len`. Names
+/// are recorded without type resolution: a same-named function elsewhere
+/// still matches the lookup, which can only withhold credit.
 fn transitive_caller_names(
     owner: &FunctionSummary,
     index: &crate::analysis::facts::RustIndex,
 ) -> std::collections::BTreeSet<String> {
     let mut callers = std::collections::BTreeSet::new();
-    let mut frontier = vec![owner.name.clone()];
+    let mut visited = std::collections::HashSet::from([&owner.id]);
+    let mut frontier = vec![owner];
     for _ in 0..MAX_CALLER_DEPTH {
         let mut next = Vec::new();
         for function in index.functions().iter() {
-            if function.name == owner.name || callers.contains(&function.name) {
+            if visited.contains(&function.id) {
                 continue;
             }
-            if function
-                .calls
-                .iter()
-                .any(|call| frontier.contains(&call.name))
-            {
+            let reaches = function.calls.iter().any(|call| {
+                frontier
+                    .iter()
+                    .any(|callee| call_names_function(call, callee, function))
+            });
+            if reaches {
+                visited.insert(&function.id);
                 callers.insert(function.name.clone());
-                next.push(function.name.clone());
+                next.push(function);
             }
         }
         if next.is_empty() {
@@ -422,6 +427,89 @@ fn transitive_caller_names(
         frontier = next;
     }
     callers
+}
+
+/// Roots whose paths never name a workspace function.
+const FOREIGN_PATH_ROOTS: [&str; 3] = ["std", "core", "alloc"];
+
+/// Whether `call`, written inside `caller`, can name `callee` by syntax alone.
+///
+/// A free function is named by a bare call or a lowercase module path that
+/// does not start at `std`/`core`/`alloc`. An associated function is named
+/// by `<Type>::name`, by `Self::name` inside an impl of the same type, or by
+/// `self.name(` inside such an impl. Any other method call (`values.len()`)
+/// or type-qualified call (`String::new()`) is unresolved and does not count.
+fn call_names_function(
+    call: &crate::analysis::facts::CallFact,
+    callee: &FunctionSummary,
+    caller: &FunctionSummary,
+) -> bool {
+    if call.name != callee.name {
+        return false;
+    }
+    let callee_type = crate::analysis::classify::impl_self_type_name(&callee.id.0);
+    let same_impl = || {
+        callee_type.is_some()
+            && crate::analysis::classify::impl_self_type_name(&caller.id.0) == callee_type
+    };
+    call_name_prefixes(&call.text, &call.name).any(|prefix| {
+        if let Some(receiver) = prefix.strip_suffix('.') {
+            return receiver_is_self(receiver) && same_impl();
+        }
+        let Some(path) = prefix.strip_suffix("::") else {
+            return callee_type.is_none() && !prefix.ends_with(is_path_char);
+        };
+        let segments = trailing_path_segments(path);
+        match (&callee_type, segments.last()) {
+            (Some(ty), Some(last)) => *last == ty.as_str() || (*last == "Self" && same_impl()),
+            (None, Some(last)) => {
+                last.starts_with(|c: char| c.is_ascii_lowercase())
+                    && segments
+                        .first()
+                        .is_some_and(|root| !FOREIGN_PATH_ROOTS.contains(root))
+            }
+            (_, None) => false,
+        }
+    })
+}
+
+/// The text before each whole-word `name` that is followed by `(` or `::<`.
+fn call_name_prefixes<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = &text[..at];
+        let after = text[at + name.len()..].trim_start();
+        let word_start = !before.ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let called = after.starts_with('(') || after.starts_with("::<");
+        (word_start && called).then(|| before.trim_end())
+    })
+}
+
+fn is_path_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == ':' || c == '.'
+}
+
+fn receiver_is_self(receiver: &str) -> bool {
+    receiver
+        .trim_end()
+        .strip_suffix("self")
+        .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
+}
+
+/// The `::`-separated identifier segments ending at the end of `path`, with
+/// a trailing turbofish or generic list (`Stack::<u32>`) dropped.
+fn trailing_path_segments(path: &str) -> Vec<&str> {
+    let path = path.trim_end();
+    let path = match path.strip_suffix('>') {
+        Some(_) => path.rfind('<').map_or("", |open| path[..open].trim_end_matches("::")),
+        None => path,
+    };
+    let start = path
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .map_or(0, |at| at + 1);
+    path[start..]
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect()
 }
 
 /// Per-file defeat results for one probe, keyed by test file then callee.
@@ -807,5 +895,71 @@ mod tests {
             impl_context: Default::default(),
         };
         assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
+    }
+
+    // --- #5830 review (A1): the caller walk names the owner by syntax ---
+
+    fn caller_names_for(source: &str, owner: &str) -> Result<Vec<String>, String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let functions = facts.functions.clone();
+        let mut index = RustIndex::default();
+        index.insert_file_only(path, facts);
+        index.extend_functions(functions);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with(owner))
+            .cloned()
+            .ok_or_else(|| format!("owner {owner} indexed"))?;
+        Ok(super::transitive_caller_names(&owner, &index)
+            .into_iter()
+            .collect())
+    }
+
+    #[test]
+    fn caller_walk_follows_qualified_chains_and_skips_foreign_same_names() -> Result<(), String> {
+        let source = "pub struct Stack { items: Vec<u32> }\n\
+            impl Stack {\n\
+                pub fn len(&self) -> usize { self.items.len() }\n\
+                pub fn is_empty(&self) -> bool { self.len() == 0 }\n\
+                pub fn fresh() -> usize { Self::len(&Stack { items: vec![] }) }\n\
+            }\n\
+            pub struct Other;\n\
+            impl Other { pub fn peek(&self, s: &Stack) -> bool { self.len(s) } fn len(&self, _s: &Stack) -> bool { true } }\n\
+            pub fn count_items(values: &[u32]) -> usize { values.len() }\n\
+            pub fn std_len(values: &[u32]) -> usize { core::primitive::slice::len(values) }\n\
+            pub fn typed(stack: &Stack) -> usize { Stack::len(stack) }\n\
+            pub fn depth_two(stack: &Stack) -> usize { typed(stack) + 1 }\n\
+            pub fn depth_three(stack: &Stack) -> usize { crate::depth_two(stack) }\n\
+            pub fn cycle_a(stack: &Stack) -> usize { cycle_b(stack) + typed(stack) }\n\
+            pub fn cycle_b(stack: &Stack) -> usize { cycle_a(stack) }\n";
+        assert_eq!(
+            caller_names_for(source, "Stack::len")?,
+            ["cycle_a", "cycle_b", "depth_three", "depth_two", "fresh", "is_empty", "typed"],
+            "Stack::len, Self::len and self.len() in Stack reach the owner, chains \
+             and cycles close transitively; values.len(), core::...::len and \
+             self.len() inside another impl do not"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_names_a_free_owner_by_bare_or_module_path_only() -> Result<(), String> {
+        let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
+            pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n\
+            pub fn pathed(subtotal: i64) -> i64 { crate::tax(subtotal) }\n\
+            pub struct Rate;\n\
+            impl Rate { pub fn tax(&self) -> i64 { 0 } pub fn apply(&self) -> i64 { self.tax() } }\n\
+            pub fn typed() -> i64 { Rate::tax(&Rate) }\n\
+            pub fn std_rooted(v: &mut Vec<i64>) -> i64 { std::mem::take(v).len() as i64 }\n";
+        assert_eq!(
+            caller_names_for(source, "src/lib.rs::tax")?,
+            ["pathed", "reference"],
+            "a free owner is reached by a bare or crate-path call, never by a \
+             method call or a type-qualified call of the same name"
+        );
+        Ok(())
     }
 }
