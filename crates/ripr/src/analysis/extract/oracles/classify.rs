@@ -193,9 +193,9 @@ fn is_decimal_integer(text: &str) -> bool {
 
 fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
     let condition = ensure_assertion_arguments(line)?.into_iter().next()?;
-    // Rule 1 at step 0: `!=` as the only comparison, with no pattern that
-    // could pin a value, is a relation even against an error variant.
-    if is_inequality_only_comparison(&condition) && !is_exact_value_assertion(&condition) {
+    // Rule 1 at step 0: `!=` as the only comparison is a relation, even
+    // against an error variant or a `matches!` operand it excludes.
+    if is_inequality_only_comparison(&condition) {
         return Some(INEQUALITY);
     }
     if is_exact_error_variant_assertion(&condition) {
@@ -342,6 +342,26 @@ mod tests {
             ),
             // The other macro and helper spellings of the same inequality.
             ("debug_assert_ne!(score(2), 0);", RelationalCheck, Weak),
+            (
+                "debug_assert_ne!(build(3), Config { retries: 9 });",
+                WholeObjectEquality,
+                Weak,
+            ),
+            (
+                "assert!((!matches!(check(20), Err(E::Bad))));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "ensure!(matches!(check(20), Err(E::Bad)) != true);",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "ensure!(score(2) != 0 /* == placeholder */);",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "debug_assert!(!matches!(check(20), Err(E::Bad)));",
                 RelationalCheck,

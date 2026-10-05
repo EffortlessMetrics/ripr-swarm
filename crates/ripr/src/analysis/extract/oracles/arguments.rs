@@ -1,9 +1,14 @@
 use crate::analysis::extract::mask_comments_and_strings;
 
 pub(crate) fn equality_assertion_arguments(line: &str) -> Option<Vec<String>> {
-    ["assert_eq!", "assert_ne!"]
-        .iter()
-        .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
+    [
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+    ]
+    .iter()
+    .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
 }
 
 /// The semantic operands of known assertion macros, with their macro shape

@@ -3,6 +3,7 @@ use super::arguments::{
     custom_assertion_arguments, equality_assertion_arguments,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
+use crate::analysis::extract::mask_comments_and_strings;
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -319,7 +320,11 @@ pub(super) fn is_negated_pattern_assertion(line: &str) -> bool {
     let Some(condition) = boolean_assertion_condition(line) else {
         return false;
     };
-    let Some(negated) = condition.trim().strip_prefix('!') else {
+    let mut condition = condition.trim();
+    while let Some(inner) = super::arguments::parenthesized_contents(condition) {
+        condition = inner.trim();
+    }
+    let Some(negated) = condition.strip_prefix('!') else {
         return false;
     };
     let mut inner = negated.trim_start();
@@ -381,31 +386,19 @@ pub(super) fn contains_exact_comparison(condition: &str) -> bool {
     equal || not_equal
 }
 
-/// Which of `==` and `!=` appear outside string literals.
+/// Which of `==` and `!=` appear outside string literals and comments.
 fn comparison_operators(condition: &str) -> (bool, bool) {
+    let masked = mask_comments_and_strings(condition);
     let mut equal = false;
     let mut not_equal = false;
-    let mut chars = condition.chars().peekable();
-    let mut in_string = false;
-    let mut escaped = false;
+    let mut chars = masked.chars().peekable();
     while let Some(ch) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
         match ch {
-            '"' => in_string = true,
-            '=' if matches!(chars.peek(), Some('=')) => {
+            '=' if chars.peek() == Some(&'=') => {
                 equal = true;
                 chars.next();
             }
-            '!' if matches!(chars.peek(), Some('=')) => {
+            '!' if chars.peek() == Some(&'=') => {
                 not_equal = true;
                 chars.next();
             }
