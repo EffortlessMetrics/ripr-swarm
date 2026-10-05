@@ -292,3 +292,22 @@ fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn a_field_matching_another_literal_on_the_same_line_is_still_edited() -> Result<(), String> {
+    // Only the first literal's `version` changed, to the text the second
+    // literal already had. The old line holds one `version: 2`, the new line
+    // two, so the first literal's `version: 2` is new.
+    let source = "pub struct Id {\n    counter: u8,\n    version: u8,\n}\npub fn pair() -> (Id, Id) {\n    (Id { counter: 0, version: 2 }, Id { counter: 1, version: 2 })\n}\n";
+    let probes = probes_for_replaced_line(
+        source,
+        6,
+        "    (Id { counter: 0, version: 1 }, Id { counter: 1, version: 2 })",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 2"],
+        "{probes:?}"
+    );
+    Ok(())
+}

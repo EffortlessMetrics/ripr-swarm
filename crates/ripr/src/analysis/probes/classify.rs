@@ -46,8 +46,14 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
 ) -> Vec<ParserProbeShape<'a>> {
     let selection_key = |shape_text: &str| {
         shape_match_rank(shape_text, changed_text).map(|(category, distance)| {
-            let unchanged = removed_text
-                .is_some_and(|removed| contains_as_token_run(removed, shape_text.trim()));
+            // Unchanged only when the old line holds every occurrence the new
+            // line has: with two literals on one line, an edited field whose
+            // new text matches the *other* literal's old field is new.
+            let needle = shape_text.trim();
+            let unchanged = removed_text.is_some_and(|removed| {
+                let before = token_run_count(removed, needle);
+                before > 0 && before >= token_run_count(changed_text, needle)
+            });
             (category, unchanged, distance)
         })
     };
@@ -258,34 +264,38 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
         .map(|facts| facts.data())
 }
 
-/// True when `needle` occurs in `haystack` as code, without an identifier
+/// How often `needle` occurs in `haystack` as code, without an identifier
 /// or digit character on either side, so `b: 2` is not found inside `b: 20`
 /// and a removed line's trailing `// version: 0x2` comment does not make the
 /// edited `version: 0x2` field read as unchanged.
-fn contains_as_token_run(haystack: &str, needle: &str) -> bool {
+fn token_run_count(haystack: &str, needle: &str) -> usize {
     if needle.is_empty() {
-        return false;
+        return 0;
     }
     // The mask keeps byte length, so a match position indexes both strings;
     // an occurrence counts only when it starts on an unmasked code byte.
     let masked = mask_comments_and_strings(haystack);
     let masked = masked.as_bytes();
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    haystack.match_indices(needle).any(|(start, _)| {
-        let starts_in_code = masked
-            .get(start)
-            .is_some_and(|byte| !byte.is_ascii_whitespace());
-        if !starts_in_code {
-            return false;
-        }
-        let before = haystack[..start].chars().next_back();
-        let after = haystack[start + needle.len()..].chars().next();
-        let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))
-            || before.is_none_or(|ch| !is_word(ch));
-        let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
-            || after.is_none_or(|ch| !is_word(ch));
-        open_start && open_end
-    })
+    haystack
+        .match_indices(needle)
+        .filter(|(start, _)| {
+            let start = *start;
+            let starts_in_code = masked
+                .get(start)
+                .is_some_and(|byte| !byte.is_ascii_whitespace());
+            if !starts_in_code {
+                return false;
+            }
+            let before = haystack[..start].chars().next_back();
+            let after = haystack[start + needle.len()..].chars().next();
+            let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))
+                || before.is_none_or(|ch| !is_word(ch));
+            let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
+                || after.is_none_or(|ch| !is_word(ch));
+            open_start && open_end
+        })
+        .count()
 }
 
 fn shape_match_rank(shape_text: &str, changed_text: &str) -> Option<(u8, usize)> {
