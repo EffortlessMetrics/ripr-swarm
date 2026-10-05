@@ -39,7 +39,7 @@ paths = ["target/ripr/reports/pilot-ranking.json", "target/ripr/reports/pilot-ra
 
 [[artifact_family]]
 id = "first-run-install"
-paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
+paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
 id = "public-badge-endpoints"

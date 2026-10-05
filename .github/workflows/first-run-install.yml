@@ -63,5 +63,6 @@ jobs:
           path: |
             target/ripr/first-run/first-run.*
             target/ripr/first-run/first-run-rows.jsonl
+            target/ripr/first-run/install_published.stderr.log
             target/ripr/reports/dx-scoreboard.*
           if-no-files-found: warn
