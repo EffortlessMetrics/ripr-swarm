@@ -77,6 +77,9 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.copyTopVerifyCommand'));
     assert.ok(commands.includes('ripr.openReport'));
     assert.ok(commands.includes('ripr.showTopLimitation'));
+    // Repair-attempt status (#5366): attempt_status.test.ts drives the
+    // controller method directly, so registration is pinned here.
+    assert.ok(commands.includes('ripr.showAttemptStatus'));
   });
 
   test('trusted-host gate is limited to explicit untrusted harness mode', () => {
