@@ -1728,6 +1728,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 );
             }
             let (corpus, coverage) = validated_corpus(dir)?;
+            // The floor gate needs no ripr runs, so the cheap CI step that
+            // calls `validate` enforces it too.
+            let floor_note = coverage::floor_gate(&coverage)?;
             println!(
                 "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
                 corpus.cases.len(),
@@ -1736,6 +1739,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 coverage.coverage.denominator,
                 coverage.floor
             );
+            if let Some(note) = floor_note {
+                println!("{note}");
+            }
             Ok(())
         }
         "report" | "check" => {

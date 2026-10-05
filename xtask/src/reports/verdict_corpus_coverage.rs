@@ -77,14 +77,25 @@ pub(crate) type SpecExamples = BTreeMap<String, BTreeSet<usize>>;
 pub(crate) fn numbered_examples(markdown: &str) -> BTreeSet<usize> {
     let mut found = BTreeSet::new();
     let mut inside = false;
-    let mut fenced = false;
+    // The open fence's character and length: Markdown fences use backticks or
+    // tildes, and only a run of the same character at least as long closes one.
+    let mut fence: Option<(char, usize)> = None;
     for line in markdown.lines() {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
-            continue;
+        let trimmed = line.trim_start();
+        let run = |c: char| trimmed.chars().take_while(|&x| x == c).count();
+        match fence {
+            Some((c, len)) => {
+                if run(c) >= len && trimmed[run(c) * c.len_utf8()..].trim().is_empty() {
+                    fence = None;
+                }
+                continue;
+            }
+            None => {
+                if let Some(c) = ['`', '~'].into_iter().find(|&c| run(c) >= 3) {
+                    fence = Some((c, run(c)));
+                    continue;
+                }
+            }
         }
         if line.starts_with("## ") {
             inside = line.trim_end() == EXAMPLES_HEADING;

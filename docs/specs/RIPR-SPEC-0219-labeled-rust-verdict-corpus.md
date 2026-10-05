@@ -221,8 +221,11 @@ into covered.
 `check` fails before running ripr when covered is below `floor`, naming the
 fall and the fix (restore the lost citation, or lower the floor with a
 reason when a case was deliberately retired). When covered is above `floor`
-it passes and prints that the floor can be raised. `report` and `validate`
-print the coverage without gating it.
+it passes and prints that the floor can be raised. `validate` applies the
+same floor gate without running ripr; `report` prints the coverage without
+gating it. In CI the floor is enforced by the xtask unit test
+`committed_ledger_is_valid_and_meets_its_floor`, which the Rust gates
+workflow's workspace nextest run executes.
 
 Decisions:
 
@@ -351,6 +354,7 @@ Spec-example coverage tests live in
 `xtask/src/reports/verdict_corpus_coverage_tests.rs`:
 
 - `numbered_examples_read_only_top_level_items_under_acceptance_examples`
+- `numbered_examples_skip_tilde_and_long_fences_until_a_matching_close`
 - `spec_ids_come_from_the_spec_file_name`
 - `example_ids_accept_only_the_canonical_spelling`
 - `citations_of_malformed_unknown_or_unnumbered_examples_are_rejected`

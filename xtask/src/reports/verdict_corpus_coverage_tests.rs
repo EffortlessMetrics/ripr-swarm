@@ -74,6 +74,17 @@ fn numbered_examples_read_only_top_level_items_under_acceptance_examples() {
 }
 
 #[test]
+fn numbered_examples_skip_tilde_and_long_fences_until_a_matching_close() {
+    // A tilde fence hides its numbered lines; a backtick run inside it does
+    // not close it, and a four-backtick fence survives a three-backtick line.
+    let spec = "## Acceptance Examples\n\n1. First.\n\n~~~text\n2. tilde sample\n```\n3. still inside the tilde fence\n~~~\n\n````md\n```\n4. inside the long fence\n````\n\n5. Fifth.\n";
+    assert_eq!(
+        numbered_examples(spec),
+        [1, 5].into_iter().collect::<BTreeSet<_>>()
+    );
+}
+
+#[test]
 fn spec_ids_come_from_the_spec_file_name() {
     assert_eq!(
         spec_id_of("RIPR-SPEC-0228-rust-field-write-observation.md").as_deref(),

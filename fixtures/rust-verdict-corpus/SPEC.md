@@ -38,8 +38,9 @@ with numbered acceptance examples in or out, waives in-scope examples no
 case can label (each with a reason), lists in-scope specs with prose
 examples as unmeasured, and records `floor`. The report's
 `spec_example_coverage` section gives covered over in-scope minus waived
-examples and the uncovered example numbers per spec; `check` fails when
-covered falls below `floor`.
+examples and the uncovered example numbers per spec; `validate` and `check`
+fail when covered falls below `floor`; in CI the xtask test
+`committed_ledger_is_valid_and_meets_its_floor` enforces it.
 
 ## Must Not
 
