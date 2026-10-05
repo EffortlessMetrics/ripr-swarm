@@ -66,6 +66,12 @@ const DIRECTED_QUEUE_LIMIT: usize = 512;
 /// that the walk never expands are the only waste.
 const READ_AHEAD_FILES: usize = 16;
 
+/// Reads ahead the walk may hold without having expanded them. Every
+/// other parse is an expansion, so a walk parses at most
+/// `MAX_WALK_FILES + MAX_PENDING_READ_AHEAD` files however many siblings it
+/// queues and never reaches.
+const MAX_PENDING_READ_AHEAD: usize = 512;
+
 /// How a reached file anchors its own default `mod name;` children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ChildAnchor {
@@ -123,6 +129,8 @@ struct PackageWalk {
     /// read would have happened, so the walk limit and completeness see
     /// the same sequence either way.
     read_ahead: BTreeMap<PathBuf, ModuleRead>,
+    /// `MAX_PENDING_READ_AHEAD`, lowered by tests.
+    pending_read_ahead_limit: usize,
     /// False once any edge could not be resolved.
     complete: bool,
     /// Out-of-line `mod` declarations with an unresolved `#[path]` that the
@@ -706,6 +714,7 @@ impl PackageWalk {
             production_root_read: false,
             scans: BTreeMap::new(),
             read_ahead: BTreeMap::new(),
+            pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -728,6 +737,7 @@ impl PackageWalk {
             production_root_read: false,
             scans: BTreeMap::new(),
             read_ahead: BTreeMap::new(),
+            pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -824,11 +834,12 @@ impl PackageWalk {
             }
             stack_top
         };
-        // Reads ahead share `MAX_WALK_FILES` with expanded scans, so a walk
-        // that queues many siblings it never expands still parses at most
-        // that many files.
-        let room = MAX_WALK_FILES.saturating_sub(self.scans.len() + self.read_ahead.len());
-        let limit = READ_AHEAD_FILES.min(room.max(1));
+        // `file` is expanded next; the others wait in `read_ahead`, which
+        // stays within its pending limit.
+        let room = self
+            .pending_read_ahead_limit
+            .saturating_sub(self.read_ahead.len());
+        let limit = READ_AHEAD_FILES.min(room + 1);
         let mut batch = vec![file.to_path_buf()];
         for queued in pending {
             if batch.len() >= limit {
@@ -1123,6 +1134,47 @@ mod tests {
     }
 
     const MANIFEST: &str = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n";
+
+    #[test]
+    fn read_ahead_holds_at_most_its_pending_limit() -> Result<(), String> {
+        let mut files = vec![("Cargo.toml".to_owned(), MANIFEST.to_owned())];
+        let mut lib = String::new();
+        for index in 0..12 {
+            lib.push_str(&format!("mod m{index:02};\n"));
+            files.push((format!("src/m{index:02}.rs"), String::new()));
+        }
+        files.push(("src/lib.rs".to_owned(), lib));
+        let files = files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect::<Vec<_>>();
+        let root = fixture("read-ahead-limit", &files)?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut unbounded = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert!(unbounded.find(&root, &[path("src/m00.rs")]).is_some());
+        assert!(
+            unbounded.read_ahead.len() > 2,
+            "fixture control: the default limit reads more than two siblings ahead"
+        );
+        let mut bounded = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        bounded.pending_read_ahead_limit = 2;
+        assert!(bounded.find(&root, &[path("src/m00.rs")]).is_some());
+        assert!(
+            bounded.read_ahead.len() <= 2,
+            "{}",
+            bounded.read_ahead.len()
+        );
+        assert_eq!(bounded.find(&root, &[path("src/missing.rs")]), None);
+        assert!(bounded.read_ahead.is_empty());
+        // The bound changes what is read early, not what the walk expands.
+        assert_eq!(unbounded.find(&root, &[path("src/missing.rs")]), None);
+        assert_eq!(
+            bounded.scans.keys().collect::<Vec<_>>(),
+            unbounded.scans.keys().collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
 
     #[test]
     fn read_ahead_leaves_completeness_to_the_files_the_walk_expands() -> Result<(), String> {
