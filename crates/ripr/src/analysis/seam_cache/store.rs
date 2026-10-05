@@ -17,7 +17,7 @@ use crate::analysis::seam_classification::reset_classified_seam_clone_count;
 use serde::Serialize;
 use std::io::{self, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
 std::thread_local! {
@@ -576,6 +576,13 @@ fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
     let mut current = root.to_path_buf();
     let mut components = relative.components().peekable();
     while let Some(component) = components.next() {
+        // Defense in depth: the caller resolves the path, but a `..` or root
+        // component must never reach a delete, including as the last component.
+        if !matches!(component, Component::Normal(_)) {
+            return false;
+        }
+        // The last component is the file itself; `remove_file` unlinks a symlink
+        // there without following it.
         if components.peek().is_none() {
             return true;
         }
@@ -1906,6 +1913,17 @@ mod tests {
         ignore_remove_dir_all(&dir);
         ignore_remove_dir_all(&outside);
         Ok(())
+    }
+
+    #[test]
+    fn symlink_guard_rejects_parent_and_root_components() {
+        let root = Path::new("/cache/sharded");
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/../x.json")));
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/..")));
+        assert!(!has_no_symlinked_ancestor(
+            root,
+            Path::new("/elsewhere/x.json")
+        ));
     }
 
     #[test]
