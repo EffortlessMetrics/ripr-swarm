@@ -29,14 +29,14 @@
 //! artifact cannot be read or composed, and that would replace a receipt whose
 //! status is not `indeterminate`, first copies it to
 //! `target/ripr/reports/ripr-plus.last-good.{json,md}`. Last-good Markdown is
-//! kept only when it is the projection of that JSON; a leftover `.md` from
-//! another run is dropped. The copy describes an earlier run and is never
-//! current evidence.
+//! kept only when it is the projection of that JSON and the JSON copy
+//! succeeded; leftover `.md` from another run is then dropped. The copy
+//! describes an earlier run and is never current evidence.
 
 use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
 use crate::output;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,9 +105,13 @@ fn compose_and_write_receipt(
 /// Before an `indeterminate` receipt replaces the receipt on disk, sets aside
 /// the previous one when it was a real result, so a mistyped path does not
 /// cost the last good receipt. Last-good Markdown is copied only when it is
-/// the projection of that JSON; otherwise it is dropped so the saved pair
-/// cannot mix two runs. The canonical path still carries the `indeterminate`
-/// record, so no reader mistakes a failed run for a pass.
+/// the projection of that JSON and this call actually saved the JSON.
+/// Leftover Markdown is dropped only after that JSON save, so a failed JSON
+/// copy cannot destroy a previous matching pair, and a newer JSON cannot sit
+/// beside another run's Markdown. Unreadable canonical Markdown is a
+/// Markdown-only failure: JSON is still saved. The canonical path still
+/// carries the `indeterminate` record, so no reader mistakes a failed run for
+/// a pass.
 /// Returns a sentence for the error message, empty when nothing was kept.
 fn keep_last_good_receipt(repo: &Path) -> String {
     let json_path = repo.join(RIPR_PLUS_JSON);
@@ -126,38 +130,32 @@ fn keep_last_good_receipt(repo: &Path) -> String {
     // The shared guarded writer: regular-file destinations only, replaced
     // atomically, so a planted link cannot redirect the copy.
     let expected = ripr_plus_receipt_markdown(&value);
-    let canonical_md = match fs::read(repo.join(RIPR_PLUS_MD)) {
-        Ok(markdown) => Some(markdown),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => {
-            return format!(
-                " The previous receipt (status `{status}`) could not be kept (failed to read {RIPR_PLUS_MD}: {err}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
-            );
-        }
+    let (matching_markdown, markdown_read_error) = match fs::read(repo.join(RIPR_PLUS_MD)) {
+        Ok(markdown) if markdown == expected.as_bytes() => (Some(markdown), None),
+        Ok(_) => (None, None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (None, None),
+        Err(err) => (None, Some(format!("failed to read {RIPR_PLUS_MD}: {err}"))),
     };
-    let matching = canonical_md
-        .as_deref()
-        .is_some_and(|markdown| markdown == expected.as_bytes());
-    // Drop leftover last-good Markdown before replacing JSON so a newer JSON
-    // cannot sit beside another run's Markdown if a later copy fails (#6698).
-    if let Err(err) = clear_last_good_markdown_file(repo) {
-        return format!(
-            " The previous receipt (status `{status}`) could not be kept ({err}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
-        );
-    }
     let json_result = write_parented_file(
         &repo.join(RIPR_PLUS_LAST_GOOD_JSON),
         RIPR_PLUS_LAST_GOOD_JSON,
         previous,
     );
-    let markdown_result = match (json_result.is_ok(), matching, canonical_md) {
-        (true, true, Some(markdown)) => write_parented_file(
-            &repo.join(RIPR_PLUS_LAST_GOOD_MD),
-            RIPR_PLUS_LAST_GOOD_MD,
-            markdown,
-        )
-        .map(|()| true),
-        _ => Ok(false),
+    let markdown_result = if json_result.is_ok() {
+        if let Some(markdown) = matching_markdown {
+            keep_matching_last_good_markdown(repo, &markdown)
+        } else {
+            match (clear_last_good_markdown_file(repo), markdown_read_error) {
+                (Ok(()), Some(err)) => Err(err),
+                (Ok(()), None) => Ok(false),
+                (Err(drop_err), Some(err)) => Err(format!("{err}; {drop_err}")),
+                (Err(drop_err), None) => Err(drop_err),
+            }
+        }
+    } else if let Some(err) = markdown_read_error {
+        Err(err)
+    } else {
+        Ok(false)
     };
     match (json_result, markdown_result) {
         (Ok(()), Ok(markdown_kept)) => {
@@ -198,6 +196,22 @@ fn keep_last_good_receipt(repo: &Path) -> String {
             }
         }
     }
+}
+
+/// After last-good JSON was saved, keep matching Markdown without rewriting it
+/// when the saved file already has those bytes (including a read-only file the
+/// guarded writer would refuse). Otherwise drop leftover Markdown and copy.
+fn keep_matching_last_good_markdown(repo: &Path, markdown: &[u8]) -> Result<bool, String> {
+    if fs::read(repo.join(RIPR_PLUS_LAST_GOOD_MD)).is_ok_and(|existing| existing == markdown) {
+        return Ok(true);
+    }
+    clear_last_good_markdown_file(repo)?;
+    write_parented_file(
+        &repo.join(RIPR_PLUS_LAST_GOOD_MD),
+        RIPR_PLUS_LAST_GOOD_MD,
+        markdown,
+    )
+    .map(|()| true)
 }
 
 /// Removes a leftover last-good Markdown *file* so a newer JSON cannot sit
@@ -1074,12 +1088,10 @@ mod tests {
         assert_eq!(receipt["raw_inventory"]["raw_seams"], 4);
         assert_eq!(receipt["basis"], "gap_decision_ledger");
         assert_eq!(receipt["top_files"].as_array().map(Vec::len), Some(0));
-        assert!(
-            receipt["source_command"]
-                .as_str()
-                .map(|s| s.contains("--gap-ledger"))
-                .unwrap_or(false)
-        );
+        assert!(receipt["source_command"]
+            .as_str()
+            .map(|s| s.contains("--gap-ledger"))
+            .unwrap_or(false));
         Ok(())
     }
 
@@ -1178,8 +1190,8 @@ mod tests {
     /// A failed run must not cost the last real receipt: it is set aside, and
     /// the canonical path still says the run was indeterminate.
     #[test]
-    fn failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one()
-    -> Result<(), String> {
+    fn failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one(
+    ) -> Result<(), String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("clock failed: {err}"))?
@@ -1436,27 +1448,125 @@ mod tests {
         let reports = repo.join("target/ripr/reports");
         fs::create_dir_all(&reports)
             .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
-        let json = r#"{"status":"pass"}"#;
-        let matching_md = matching_markdown(json)?;
-        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
-        fs::write(repo.join(RIPR_PLUS_MD), &matching_md)
-            .map_err(|err| format!("seed md: {err}"))?;
-        fs::write(repo.join(RIPR_PLUS_LAST_GOOD_MD), "leftover run-a markdown")
-            .map_err(|err| format!("seed leftover md: {err}"))?;
-        // A directory where the saved JSON belongs makes that copy fail.
-        fs::create_dir_all(repo.join(RIPR_PLUS_LAST_GOOD_JSON))
-            .map_err(|err| format!("block saved json: {err}"))?;
+        let previous = r#"{"status":"pass","head":"run-a"}"#;
+        let later = r#"{"status":"warn","head":"run-b","unresolved":1}"#;
+        let previous_md = matching_markdown(previous)?;
+        let later_md = matching_markdown(later)?;
+        fs::write(repo.join(RIPR_PLUS_JSON), later).map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), &later_md).map_err(|err| format!("seed md: {err}"))?;
+        let last_good_json = repo.join(RIPR_PLUS_LAST_GOOD_JSON);
+        fs::write(&last_good_json, previous)
+            .map_err(|err| format!("seed last-good json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_LAST_GOOD_MD), &previous_md)
+            .map_err(|err| format!("seed last-good md: {err}"))?;
+        let writable = fs::metadata(&last_good_json)
+            .map_err(|err| format!("metadata: {err}"))?
+            .permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        fs::set_permissions(&last_good_json, read_only)
+            .map_err(|err| format!("chmod last-good json: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
-        let leftover_exists = repo.join(RIPR_PLUS_LAST_GOOD_MD).exists();
+        let kept_json = fs::read_to_string(&last_good_json);
+        let kept_md = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let _ = fs::set_permissions(&last_good_json, writable);
         let _ = fs::remove_dir_all(&repo);
         assert!(kept.contains("could not be kept"), "{kept}");
         assert!(
             !kept.contains("ripr-plus.last-good.md"),
             "Markdown must not be named as kept when JSON was not saved: {kept}"
         );
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, previous);
+        assert_eq!(
+            kept_md.map_err(|err| err.to_string())?,
+            previous_md,
+            "a failed JSON copy must leave the previous matching last-good pair intact"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn json_is_kept_when_canonical_markdown_cannot_be_read() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-unreadable-md-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        let json = r#"{"status":"warn","head":"run-b"}"#;
+        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
+        fs::create_dir_all(repo.join(RIPR_PLUS_MD))
+            .map_err(|err| format!("block canonical md: {err}"))?;
+        fs::write(
+            repo.join(RIPR_PLUS_LAST_GOOD_MD),
+            "leftover from another run",
+        )
+        .map_err(|err| format!("seed leftover md: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let leftover_md = repo.join(RIPR_PLUS_LAST_GOOD_MD).exists();
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("only partly kept"), "{kept}");
+        assert!(kept.contains("failed to read"), "{kept}");
         assert!(
-            !leftover_exists,
-            "leftover last-good Markdown must be cleared before a JSON copy is attempted"
+            !kept.contains("ripr-plus.last-good.md"),
+            "unreadable canonical Markdown must not be named as kept: {kept}"
+        );
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, json);
+        assert!(
+            !leftover_md,
+            "leftover last-good Markdown must be dropped after JSON is saved"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn matching_read_only_last_good_markdown_is_left_in_place() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-readonly-matching-md-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        let json = r#"{"status":"pass","head":"run-a"}"#;
+        let markdown = matching_markdown(json)?;
+        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), &markdown).map_err(|err| format!("seed md: {err}"))?;
+        let last_good_md = repo.join(RIPR_PLUS_LAST_GOOD_MD);
+        fs::write(&last_good_md, &markdown).map_err(|err| format!("seed last-good md: {err}"))?;
+        let writable = fs::metadata(&last_good_md)
+            .map_err(|err| format!("metadata: {err}"))?
+            .permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        fs::set_permissions(&last_good_md, read_only)
+            .map_err(|err| format!("chmod last-good md: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let kept_md = fs::read_to_string(&last_good_md);
+        let still_read_only = fs::metadata(&last_good_md)
+            .map(|metadata| metadata.permissions().readonly())
+            .map_err(|err| format!("stat last-good md: {err}"));
+        let _ = fs::set_permissions(&last_good_md, writable);
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("is kept at"), "{kept}");
+        assert!(kept.contains("ripr-plus.last-good.json"), "{kept}");
+        assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, json);
+        assert_eq!(kept_md.map_err(|err| err.to_string())?, markdown);
+        assert!(
+            still_read_only?,
+            "matching last-good Markdown must not be unlinked and rewritten"
         );
         Ok(())
     }
@@ -1487,12 +1597,10 @@ mod tests {
         assert_eq!(receipt["machine_readable_cause"], "evaluation_timeout");
         assert_eq!(receipt["unresolved"], serde_json::Value::Null);
         assert_eq!(receipt["basis"], serde_json::Value::Null);
-        assert!(
-            receipt["warnings"][0]
-                .as_str()
-                .unwrap_or_default()
-                .contains("timed out")
-        );
+        assert!(receipt["warnings"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("timed out"));
         Ok(())
     }
 
