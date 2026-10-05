@@ -199,9 +199,11 @@ commit a newer report after reviewing why the numbers changed. A baseline
 recorded on one runner class leaves speed metrics uncompared on another; the
 report says so instead of passing them.
 
-The committed baselines are reports from hosted runs on
+The scoreboard and fast-corpus baselines are reports from hosted runs on
 `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, the model
-most hosted runs drew. Two runs of identical code on that model stayed within
+most hosted runs drew. The full-corpus job drew a different model on each of
+three runs (EPYC 9V74, Xeon 6973P, Xeon Platinum 8370C), so its baseline is
+the latest of those and its check times compare only when that model recurs. Two runs of identical code on that model stayed within
 5% on every speed and memory sample (margins are 15% for memory and 25% for
 time), and corpus check times moved at most 11 ms. A nightly that
 lands on another model still gates counts and completion; its wall-time and
