@@ -542,10 +542,33 @@ fn canonical_path(path: &str, root_segments: Option<&[String]>) -> CanonicalPath
         };
     }
     let segments = lexical_segments(&unix, false);
-    let under_root = segments.first().is_none_or(|first| first != "..");
+    if segments.first().is_some_and(|first| first == "..") {
+        // Root-relative climb (`../sibling/src/pricing.py`): entries are
+        // root-relative by packet convention, so resolve the climb against
+        // the root before anchoring — a climb that lands back inside the
+        // root names the same file as its root-relative spelling (PR review
+        // on #5984). A climb that stays above the root stays outside it.
+        if let Some(root) = root_segments {
+            let mut combined = root.to_vec();
+            for segment in &segments {
+                match segment.as_str() {
+                    ".." => {
+                        combined.pop();
+                    }
+                    "." => {}
+                    other => combined.push(other.to_string()),
+                }
+            }
+            return anchor_under_root(combined, Some(root));
+        }
+        return CanonicalPath {
+            key: segments.join("/").to_ascii_lowercase(),
+            under_root: false,
+        };
+    }
     CanonicalPath {
         key: segments.join("/").to_ascii_lowercase(),
-        under_root,
+        under_root: true,
     }
 }
 
@@ -945,6 +968,37 @@ mod tests {
         assert_eq!(
             value["evidence"]["edited_files_outside_root"],
             serde_json::json!([])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_climbing_out_of_and_back_into_the_root() -> Result<(), String> {
+        // CodeRabbit review on #6289: `../app/src/pricing.py` under root
+        // `/x/app` resolves back inside the root, so it must match the
+        // root-relative forbidden entry instead of passing as outside-root.
+        let value = render_value_with_root(
+            Path::new("/x/app"),
+            &forbidden_edit_repro_json(r#"["tests/test_pricing.py", "../app/src/pricing.py"]"#),
+        )?;
+        assert_forbidden_edit_witness(&value, &["../app/src/pricing.py"]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+
+        // A climb that stays above the root stays outside-root evidence.
+        let outside = render_value_with_root(
+            Path::new("/x/app"),
+            &forbidden_edit_repro_json(
+                r#"["tests/test_pricing.py", "../elsewhere/src/pricing.py"]"#,
+            ),
+        )?;
+        assert_eq!(outside["classification"]["state"], "closed");
+        assert_eq!(outside["safety"]["forbidden_edit_flagged"], false);
+        assert_eq!(
+            outside["evidence"]["edited_files_outside_root"],
+            serde_json::json!(["../elsewhere/src/pricing.py"])
         );
         Ok(())
     }
