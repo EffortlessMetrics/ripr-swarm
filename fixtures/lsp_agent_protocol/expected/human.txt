@@ -23,8 +23,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/lsp_agent_protocol/input --diff fixtures/lsp_agent_protocol/diff.patch --mode fast probe:src_lib.rs:static_unknown:401a7bb9
-  ripr context --root <cwd>/fixtures/lsp_agent_protocol/input --diff fixtures/lsp_agent_protocol/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:401a7bb9
+  ripr explain --root <cwd>/fixtures/lsp_agent_protocol/input --diff <cwd>/fixtures/lsp_agent_protocol/diff.patch --mode fast probe:src_lib.rs:static_unknown:401a7bb9
+  ripr context --root <cwd>/fixtures/lsp_agent_protocol/input --diff <cwd>/fixtures/lsp_agent_protocol/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:401a7bb9
 
 More:
   Full evidence: rerun with --format human-full

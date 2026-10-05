@@ -28,8 +28,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast probe:src_badge.tsx:typescript_preview:6ebbadf9
-  ripr context --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast --at probe:src_badge.tsx:typescript_preview:6ebbadf9
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast probe:src_badge.tsx:typescript_preview:6ebbadf9
+  ripr context --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast --at probe:src_badge.tsx:typescript_preview:6ebbadf9
 
 More:
   Full evidence: rerun with --format human-full

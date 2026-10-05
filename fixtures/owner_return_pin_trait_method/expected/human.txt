@@ -20,8 +20,8 @@ Start here:
     - 13 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/owner_return_pin_trait_method/input --diff fixtures/owner_return_pin_trait_method/diff.patch --mode fast probe:src_lib.rs:return_value:5e6d4294
-  ripr context --root <cwd>/fixtures/owner_return_pin_trait_method/input --diff fixtures/owner_return_pin_trait_method/diff.patch --mode fast --at probe:src_lib.rs:return_value:5e6d4294
+  ripr explain --root <cwd>/fixtures/owner_return_pin_trait_method/input --diff <cwd>/fixtures/owner_return_pin_trait_method/diff.patch --mode fast probe:src_lib.rs:return_value:5e6d4294
+  ripr context --root <cwd>/fixtures/owner_return_pin_trait_method/input --diff <cwd>/fixtures/owner_return_pin_trait_method/diff.patch --mode fast --at probe:src_lib.rs:return_value:5e6d4294
 
 More:
   Full evidence: rerun with --format human-full

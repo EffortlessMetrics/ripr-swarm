@@ -77,8 +77,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.
 Drill in:
-  ripr explain --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast probe:src_badge.tsx:typescript_preview:6ebbadf9
-  ripr context --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast --at probe:src_badge.tsx:typescript_preview:6ebbadf9
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast probe:src_badge.tsx:typescript_preview:6ebbadf9
+  ripr context --root <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input --diff <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/diff.patch --mode fast --at probe:src_badge.tsx:typescript_preview:6ebbadf9
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope

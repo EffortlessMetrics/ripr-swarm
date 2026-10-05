@@ -41,8 +41,8 @@ Weakness
 Next step
   Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
 NOTE fixtures/error_path_oracle_execution_false_branch/input/src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
@@ -80,5 +80,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
-  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

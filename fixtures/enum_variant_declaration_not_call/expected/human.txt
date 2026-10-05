@@ -25,8 +25,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff fixtures/enum_variant_declaration_not_call/diff.patch --mode fast probe:src_lib.rs:call_deletion:5804086e
-  ripr context --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff fixtures/enum_variant_declaration_not_call/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5804086e
+  ripr explain --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff <cwd>/fixtures/enum_variant_declaration_not_call/diff.patch --mode fast probe:src_lib.rs:call_deletion:5804086e
+  ripr context --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff <cwd>/fixtures/enum_variant_declaration_not_call/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5804086e
 
 Hidden:
   4 lower-priority finding(s) omitted from default human output.

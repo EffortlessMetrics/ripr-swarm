@@ -48,8 +48,8 @@ Stop reasons:
 Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
-  ripr context --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
+  ripr explain --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
+  ripr context --root <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_changed_sink_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope

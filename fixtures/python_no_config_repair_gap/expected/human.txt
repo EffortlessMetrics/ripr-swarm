@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_no_config_repair_gap/input --diff fixtures/python_no_config_repair_gap/diff.patch --mode fast probe:src_promotions.py:python_preview:32b0094f
-  ripr context --root <cwd>/fixtures/python_no_config_repair_gap/input --diff fixtures/python_no_config_repair_gap/diff.patch --mode fast --at probe:src_promotions.py:python_preview:32b0094f
+  ripr explain --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast probe:src_promotions.py:python_preview:32b0094f
+  ripr context --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast --at probe:src_promotions.py:python_preview:32b0094f
 
 More:
   Full evidence: rerun with --format human-full

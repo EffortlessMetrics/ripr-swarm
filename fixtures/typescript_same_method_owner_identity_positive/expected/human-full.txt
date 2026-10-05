@@ -75,8 +75,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast probe:src_auth.ts:typescript_preview:1091eef0
-  ripr context --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:1091eef0
+  ripr explain --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff <cwd>/fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast probe:src_auth.ts:typescript_preview:1091eef0
+  ripr context --root <cwd>/fixtures/typescript_same_method_owner_identity_positive/input --diff <cwd>/fixtures/typescript_same_method_owner_identity_positive/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:1091eef0
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

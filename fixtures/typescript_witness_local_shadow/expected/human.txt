@@ -28,8 +28,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_witness_local_shadow/input --diff fixtures/typescript_witness_local_shadow/diff.patch --mode fast probe:src_discount.ts:typescript_preview:a9f257a1
-  ripr context --root <cwd>/fixtures/typescript_witness_local_shadow/input --diff fixtures/typescript_witness_local_shadow/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:a9f257a1
+  ripr explain --root <cwd>/fixtures/typescript_witness_local_shadow/input --diff <cwd>/fixtures/typescript_witness_local_shadow/diff.patch --mode fast probe:src_discount.ts:typescript_preview:a9f257a1
+  ripr context --root <cwd>/fixtures/typescript_witness_local_shadow/input --diff <cwd>/fixtures/typescript_witness_local_shadow/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:a9f257a1
 
 More:
   Full evidence: rerun with --format human-full

@@ -25,8 +25,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff fixtures/currentness_matrix_whole_delete/diff.patch --mode fast probe:src_lib.rs:predicate:b2a56519
-  ripr context --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff fixtures/currentness_matrix_whole_delete/diff.patch --mode fast --at probe:src_lib.rs:predicate:b2a56519
+  ripr explain --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff <cwd>/fixtures/currentness_matrix_whole_delete/diff.patch --mode fast probe:src_lib.rs:predicate:b2a56519
+  ripr context --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff <cwd>/fixtures/currentness_matrix_whole_delete/diff.patch --mode fast --at probe:src_lib.rs:predicate:b2a56519
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/currentness_matrix_whole_delete/input --at src/lib.rs:2
 

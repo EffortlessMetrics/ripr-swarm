@@ -45,8 +45,8 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior.
 Drill in:
-  ripr explain --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:802442a0
-  ripr context --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:802442a0
+  ripr explain --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:802442a0
+  ripr context --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:802442a0
 
 WARNING fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs:27
   id: probe:src_lib.rs:match_arm:210aa0af
@@ -87,5 +87,5 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior.
 Drill in:
-  ripr explain --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:210aa0af
-  ripr context --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:210aa0af
+  ripr explain --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:210aa0af
+  ripr context --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:210aa0af

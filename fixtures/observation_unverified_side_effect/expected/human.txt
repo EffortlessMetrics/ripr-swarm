@@ -23,8 +23,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/observation_unverified_side_effect/input --diff fixtures/observation_unverified_side_effect/diff.patch --mode fast probe:src_lib.rs:return_value:880ed6e6
-  ripr context --root <cwd>/fixtures/observation_unverified_side_effect/input --diff fixtures/observation_unverified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:return_value:880ed6e6
+  ripr explain --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast probe:src_lib.rs:return_value:880ed6e6
+  ripr context --root <cwd>/fixtures/observation_unverified_side_effect/input --diff <cwd>/fixtures/observation_unverified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:return_value:880ed6e6
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/observation_unverified_side_effect/input --at src/lib.rs:11
 

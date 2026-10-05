@@ -23,8 +23,8 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
-  ripr context --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
+  ripr explain --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
+  ripr context --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --diff <cwd>/fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/guarded_result_match_sibling_variant/input --at src/lib.rs:9
 

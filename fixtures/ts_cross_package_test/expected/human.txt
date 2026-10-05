@@ -28,8 +28,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/ts_cross_package_test/input --diff fixtures/ts_cross_package_test/diff.patch --mode fast probe:src_inventory.ts:typescript_preview:72e603c8
-  ripr context --root <cwd>/fixtures/ts_cross_package_test/input --diff fixtures/ts_cross_package_test/diff.patch --mode fast --at probe:src_inventory.ts:typescript_preview:72e603c8
+  ripr explain --root <cwd>/fixtures/ts_cross_package_test/input --diff <cwd>/fixtures/ts_cross_package_test/diff.patch --mode fast probe:src_inventory.ts:typescript_preview:72e603c8
+  ripr context --root <cwd>/fixtures/ts_cross_package_test/input --diff <cwd>/fixtures/ts_cross_package_test/diff.patch --mode fast --at probe:src_inventory.ts:typescript_preview:72e603c8
 
 More:
   Full evidence: rerun with --format human-full

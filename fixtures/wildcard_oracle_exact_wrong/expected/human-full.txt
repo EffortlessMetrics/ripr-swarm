@@ -33,5 +33,5 @@ Evidence
   - source function argument value value = 1 at line 9
   - source assertion argument value 2 at line 10
 Drill in:
-  ripr explain --root <cwd>/fixtures/wildcard_oracle_exact_wrong/input --diff fixtures/wildcard_oracle_exact_wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
-  ripr context --root <cwd>/fixtures/wildcard_oracle_exact_wrong/input --diff fixtures/wildcard_oracle_exact_wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1
+  ripr explain --root <cwd>/fixtures/wildcard_oracle_exact_wrong/input --diff <cwd>/fixtures/wildcard_oracle_exact_wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
+  ripr context --root <cwd>/fixtures/wildcard_oracle_exact_wrong/input --diff <cwd>/fixtures/wildcard_oracle_exact_wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1

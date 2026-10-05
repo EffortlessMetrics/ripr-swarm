@@ -23,8 +23,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/match_arm_blind/input --diff fixtures/match_arm_blind/diff.patch --mode fast probe:src_lib.rs:match_arm:bb59fbfe
-  ripr context --root <cwd>/fixtures/match_arm_blind/input --diff fixtures/match_arm_blind/diff.patch --mode fast --at probe:src_lib.rs:match_arm:bb59fbfe
+  ripr explain --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast probe:src_lib.rs:match_arm:bb59fbfe
+  ripr context --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast --at probe:src_lib.rs:match_arm:bb59fbfe
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_blind/input --at src/lib.rs:4
 

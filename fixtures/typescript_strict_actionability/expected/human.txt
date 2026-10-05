@@ -29,8 +29,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_strict_actionability/input --diff fixtures/typescript_strict_actionability/diff.patch --mode fast probe:src_observed.ts:typescript_preview:d09a8abb
-  ripr context --root <cwd>/fixtures/typescript_strict_actionability/input --diff fixtures/typescript_strict_actionability/diff.patch --mode fast --at probe:src_observed.ts:typescript_preview:d09a8abb
+  ripr explain --root <cwd>/fixtures/typescript_strict_actionability/input --diff <cwd>/fixtures/typescript_strict_actionability/diff.patch --mode fast probe:src_observed.ts:typescript_preview:d09a8abb
+  ripr context --root <cwd>/fixtures/typescript_strict_actionability/input --diff <cwd>/fixtures/typescript_strict_actionability/diff.patch --mode fast --at probe:src_observed.ts:typescript_preview:d09a8abb
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

@@ -20,8 +20,8 @@ Start here:
     - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/recursive_positive/input --diff fixtures/recursive_positive/diff.patch --mode fast probe:src_lib.rs:predicate:c2e7eb02
-  ripr context --root <cwd>/fixtures/recursive_positive/input --diff fixtures/recursive_positive/diff.patch --mode fast --at probe:src_lib.rs:predicate:c2e7eb02
+  ripr explain --root <cwd>/fixtures/recursive_positive/input --diff <cwd>/fixtures/recursive_positive/diff.patch --mode fast probe:src_lib.rs:predicate:c2e7eb02
+  ripr context --root <cwd>/fixtures/recursive_positive/input --diff <cwd>/fixtures/recursive_positive/diff.patch --mode fast --at probe:src_lib.rs:predicate:c2e7eb02
 
 More:
   Full evidence: rerun with --format human-full

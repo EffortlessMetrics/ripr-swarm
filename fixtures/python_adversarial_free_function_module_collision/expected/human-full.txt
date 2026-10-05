@@ -71,8 +71,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast probe:src_handler.py:python_preview:c48883f0
-  ripr context --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast --at probe:src_handler.py:python_preview:c48883f0
+  ripr explain --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast probe:src_handler.py:python_preview:c48883f0
+  ripr context --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast --at probe:src_handler.py:python_preview:c48883f0
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

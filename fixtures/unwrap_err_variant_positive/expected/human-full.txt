@@ -33,8 +33,8 @@ Evidence
   - source function argument value x = -1 at line 5
   - source enum variant value CalcError::Negative at line 6
 Drill in:
-  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
-  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
 
 INFO fixtures/unwrap_err_variant_positive/input/src/lib.rs:8
   id: probe:src_lib.rs:return_value:832c68b7
@@ -62,5 +62,5 @@ Evidence
   - source function argument value x = -1 at line 5
   - source enum variant value CalcError::Negative at line 6
 Drill in:
-  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:return_value:832c68b7
-  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:832c68b7
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:return_value:832c68b7
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:832c68b7

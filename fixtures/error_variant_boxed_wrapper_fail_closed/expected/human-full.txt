@@ -58,8 +58,8 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:51fc5156
-  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:51fc5156
+  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:51fc5156
+  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:51fc5156
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:29
   id: probe:src_lib.rs:return_value:588b0f56
@@ -112,8 +112,8 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:588b0f56
-  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:588b0f56
+  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:588b0f56
+  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:588b0f56
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
   id: probe:src_lib.rs:error_path:ad27ed37
@@ -166,8 +166,8 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:ad27ed37
-  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:ad27ed37
+  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:ad27ed37
+  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:ad27ed37
 
 WARNING fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs:43
   id: probe:src_lib.rs:return_value:1224f837
@@ -220,5 +220,5 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:1224f837
-  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:1224f837
+  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:1224f837
+  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:1224f837

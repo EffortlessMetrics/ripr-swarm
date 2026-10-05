@@ -20,8 +20,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
-  ripr context --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
+  ripr explain --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff <cwd>/fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
+  ripr context --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff <cwd>/fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

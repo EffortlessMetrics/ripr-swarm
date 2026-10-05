@@ -77,8 +77,10 @@ When `--worktree` is present:
   `--worktree` and reject it combined with `--diff` or `--from`;
 - the printed drill-in commands (`ripr explain`, `ripr context`, `ripr check`
   listing, `ripr agent stub`) name the repository `check` resolved as an
-  absolute `--root`, never a relative root repeated as typed, so pasting one
-  from another directory analyzes the same repository (#3948).
+  absolute `--root`, and a relative `--diff` or `--from` as an absolute
+  path (the stdin sentinel `-` stays), never the relative spelling repeated
+  as typed, so pasting one from another directory analyzes the same
+  repository (#3948).
 
 When `--worktree` is absent:
 

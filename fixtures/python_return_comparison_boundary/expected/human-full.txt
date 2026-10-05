@@ -73,8 +73,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `total == 100`.
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b
-  ripr context --root <cwd>/fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.py:python_preview:69ed856b
+  ripr explain --root <cwd>/fixtures/python_return_comparison_boundary/input --diff <cwd>/fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b
+  ripr context --root <cwd>/fixtures/python_return_comparison_boundary/input --diff <cwd>/fixtures/python_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.py:python_preview:69ed856b
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

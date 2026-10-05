@@ -23,8 +23,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/binding_value_family_matrix/input --diff fixtures/binding_value_family_matrix/diff.patch --mode fast probe:src_lib.rs:predicate:a54b7c0f
-  ripr context --root <cwd>/fixtures/binding_value_family_matrix/input --diff fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
+  ripr explain --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast probe:src_lib.rs:predicate:a54b7c0f
+  ripr context --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_value_family_matrix/input --at src/lib.rs:12
 

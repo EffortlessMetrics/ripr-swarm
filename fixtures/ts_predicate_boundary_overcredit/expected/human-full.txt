@@ -77,8 +77,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `total == 100`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 Drill in:
-  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_overcredit/input --diff fixtures/ts_predicate_boundary_overcredit/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:e23661f5
-  ripr context --root <cwd>/fixtures/ts_predicate_boundary_overcredit/input --diff fixtures/ts_predicate_boundary_overcredit/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:e23661f5
+  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_overcredit/input --diff <cwd>/fixtures/ts_predicate_boundary_overcredit/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:e23661f5
+  ripr context --root <cwd>/fixtures/ts_predicate_boundary_overcredit/input --diff <cwd>/fixtures/ts_predicate_boundary_overcredit/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:e23661f5
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

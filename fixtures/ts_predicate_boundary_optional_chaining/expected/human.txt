@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
-  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
+  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
+  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

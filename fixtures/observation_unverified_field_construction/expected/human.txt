@@ -23,8 +23,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/observation_unverified_field_construction/input --diff fixtures/observation_unverified_field_construction/diff.patch --mode fast probe:src_lib.rs:return_value:8ed284d1
-  ripr context --root <cwd>/fixtures/observation_unverified_field_construction/input --diff fixtures/observation_unverified_field_construction/diff.patch --mode fast --at probe:src_lib.rs:return_value:8ed284d1
+  ripr explain --root <cwd>/fixtures/observation_unverified_field_construction/input --diff <cwd>/fixtures/observation_unverified_field_construction/diff.patch --mode fast probe:src_lib.rs:return_value:8ed284d1
+  ripr context --root <cwd>/fixtures/observation_unverified_field_construction/input --diff <cwd>/fixtures/observation_unverified_field_construction/diff.patch --mode fast --at probe:src_lib.rs:return_value:8ed284d1
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/observation_unverified_field_construction/input --at src/lib.rs:9
 

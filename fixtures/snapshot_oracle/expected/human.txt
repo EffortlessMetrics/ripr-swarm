@@ -23,8 +23,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/snapshot_oracle/input --diff fixtures/snapshot_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:7f019e84
-  ripr context --root <cwd>/fixtures/snapshot_oracle/input --diff fixtures/snapshot_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:7f019e84
+  ripr explain --root <cwd>/fixtures/snapshot_oracle/input --diff <cwd>/fixtures/snapshot_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:7f019e84
+  ripr context --root <cwd>/fixtures/snapshot_oracle/input --diff <cwd>/fixtures/snapshot_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:7f019e84
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/snapshot_oracle/input --at src/lib.rs:2
 

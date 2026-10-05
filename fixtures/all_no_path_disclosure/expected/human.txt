@@ -25,8 +25,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/all_no_path_disclosure/input --diff fixtures/all_no_path_disclosure/diff.patch --mode fast probe:src_lib.rs:predicate:908b0e30
-  ripr context --root <cwd>/fixtures/all_no_path_disclosure/input --diff fixtures/all_no_path_disclosure/diff.patch --mode fast --at probe:src_lib.rs:predicate:908b0e30
+  ripr explain --root <cwd>/fixtures/all_no_path_disclosure/input --diff <cwd>/fixtures/all_no_path_disclosure/diff.patch --mode fast probe:src_lib.rs:predicate:908b0e30
+  ripr context --root <cwd>/fixtures/all_no_path_disclosure/input --diff <cwd>/fixtures/all_no_path_disclosure/diff.patch --mode fast --at probe:src_lib.rs:predicate:908b0e30
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/all_no_path_disclosure/input --at src/lib.rs:2
 

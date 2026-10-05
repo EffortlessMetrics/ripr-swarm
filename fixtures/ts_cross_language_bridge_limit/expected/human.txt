@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast probe:src_bridge.ts:typescript_preview:d73aaece
-  ripr context --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast --at probe:src_bridge.ts:typescript_preview:d73aaece
+  ripr explain --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff <cwd>/fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast probe:src_bridge.ts:typescript_preview:d73aaece
+  ripr context --root <cwd>/fixtures/ts_cross_language_bridge_limit/input --diff <cwd>/fixtures/ts_cross_language_bridge_limit/diff.patch --mode fast --at probe:src_bridge.ts:typescript_preview:d73aaece
 
 More:
   Full evidence: rerun with --format human-full

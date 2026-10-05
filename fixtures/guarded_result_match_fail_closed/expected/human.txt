@@ -25,8 +25,8 @@ Start here:
     - 18 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
-  ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
+  ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
+  ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/guarded_result_match_fail_closed/input --at src/lib.rs:62
 

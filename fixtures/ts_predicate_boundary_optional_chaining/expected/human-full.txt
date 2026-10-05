@@ -74,8 +74,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
-  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
+  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
+  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
 
 INFO src/guards.ts:9
   id: probe:src_guards.ts:typescript_preview:0d3ee5b2
@@ -142,8 +142,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:0d3ee5b2
-  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:0d3ee5b2
+  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:0d3ee5b2
+  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:0d3ee5b2
 
 INFO src/guards.ts:15
   id: probe:src_guards.ts:typescript_preview:31d04e16
@@ -210,8 +210,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:31d04e16
-  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:31d04e16
+  ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:31d04e16
+  ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:31d04e16
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

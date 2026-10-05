@@ -21,8 +21,8 @@ Start here:
     - 13 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/guarded_result_match_positive/input --diff fixtures/guarded_result_match_positive/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
-  ripr context --root <cwd>/fixtures/guarded_result_match_positive/input --diff fixtures/guarded_result_match_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
+  ripr explain --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
+  ripr context --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

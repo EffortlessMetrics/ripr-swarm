@@ -26,8 +26,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/error_variant_wrapper_callee_only_pin/input --diff fixtures/error_variant_wrapper_callee_only_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
-  ripr context --root <cwd>/fixtures/error_variant_wrapper_callee_only_pin/input --diff fixtures/error_variant_wrapper_callee_only_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
+  ripr explain --root <cwd>/fixtures/error_variant_wrapper_callee_only_pin/input --diff <cwd>/fixtures/error_variant_wrapper_callee_only_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
+  ripr context --root <cwd>/fixtures/error_variant_wrapper_callee_only_pin/input --diff <cwd>/fixtures/error_variant_wrapper_callee_only_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/error_variant_wrapper_callee_only_pin/input --at src/lib.rs:26
 

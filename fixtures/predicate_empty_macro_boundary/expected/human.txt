@@ -23,8 +23,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/predicate_empty_macro_boundary/input --diff fixtures/predicate_empty_macro_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root <cwd>/fixtures/predicate_empty_macro_boundary/input --diff fixtures/predicate_empty_macro_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_empty_macro_boundary/input --diff <cwd>/fixtures/predicate_empty_macro_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_empty_macro_boundary/input --diff <cwd>/fixtures/predicate_empty_macro_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/predicate_empty_macro_boundary/input --at src/lib.rs:2
 

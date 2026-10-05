@@ -28,8 +28,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_related_test_name_proximity/input --diff fixtures/typescript_related_test_name_proximity/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
-  ripr context --root <cwd>/fixtures/typescript_related_test_name_proximity/input --diff fixtures/typescript_related_test_name_proximity/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr explain --root <cwd>/fixtures/typescript_related_test_name_proximity/input --diff <cwd>/fixtures/typescript_related_test_name_proximity/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr context --root <cwd>/fixtures/typescript_related_test_name_proximity/input --diff <cwd>/fixtures/typescript_related_test_name_proximity/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
 
 More:
   Full evidence: rerun with --format human-full

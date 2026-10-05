@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_broad_tothrow/input --diff fixtures/typescript_broad_tothrow/diff.patch --mode fast probe:src_parser.ts:typescript_preview:c440ffa1
-  ripr context --root <cwd>/fixtures/typescript_broad_tothrow/input --diff fixtures/typescript_broad_tothrow/diff.patch --mode fast --at probe:src_parser.ts:typescript_preview:c440ffa1
+  ripr explain --root <cwd>/fixtures/typescript_broad_tothrow/input --diff <cwd>/fixtures/typescript_broad_tothrow/diff.patch --mode fast probe:src_parser.ts:typescript_preview:c440ffa1
+  ripr context --root <cwd>/fixtures/typescript_broad_tothrow/input --diff <cwd>/fixtures/typescript_broad_tothrow/diff.patch --mode fast --at probe:src_parser.ts:typescript_preview:c440ffa1
 
 More:
   Full evidence: rerun with --format human-full

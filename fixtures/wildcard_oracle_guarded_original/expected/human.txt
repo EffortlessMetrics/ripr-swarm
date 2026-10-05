@@ -20,8 +20,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
-  ripr context --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
+  ripr explain --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff <cwd>/fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
+  ripr context --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff <cwd>/fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
 
 More:
   Full evidence: rerun with --format human-full

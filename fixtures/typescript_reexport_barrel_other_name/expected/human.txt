@@ -28,8 +28,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_reexport_barrel_other_name/input --diff fixtures/typescript_reexport_barrel_other_name/diff.patch --mode fast probe:src_a.ts:typescript_preview:fc197019
-  ripr context --root <cwd>/fixtures/typescript_reexport_barrel_other_name/input --diff fixtures/typescript_reexport_barrel_other_name/diff.patch --mode fast --at probe:src_a.ts:typescript_preview:fc197019
+  ripr explain --root <cwd>/fixtures/typescript_reexport_barrel_other_name/input --diff <cwd>/fixtures/typescript_reexport_barrel_other_name/diff.patch --mode fast probe:src_a.ts:typescript_preview:fc197019
+  ripr context --root <cwd>/fixtures/typescript_reexport_barrel_other_name/input --diff <cwd>/fixtures/typescript_reexport_barrel_other_name/diff.patch --mode fast --at probe:src_a.ts:typescript_preview:fc197019
 
 More:
   Full evidence: rerun with --format human-full

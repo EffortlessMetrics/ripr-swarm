@@ -31,8 +31,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast probe:src_calc.py:python_preview:3ddbe784
-  ripr context --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast --at probe:src_calc.py:python_preview:3ddbe784
+  ripr explain --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast probe:src_calc.py:python_preview:3ddbe784
+  ripr context --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast --at probe:src_calc.py:python_preview:3ddbe784
 
 More:
   Full evidence: rerun with --format human-full

@@ -23,8 +23,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff fixtures/oracle_confirmation_mixed/diff.patch --mode fast probe:src_lib.rs:call_deletion:ed1574df
-  ripr context --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff fixtures/oracle_confirmation_mixed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:ed1574df
+  ripr explain --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff <cwd>/fixtures/oracle_confirmation_mixed/diff.patch --mode fast probe:src_lib.rs:call_deletion:ed1574df
+  ripr context --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff <cwd>/fixtures/oracle_confirmation_mixed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:ed1574df
 
 More:
   Full evidence: rerun with --format human-full

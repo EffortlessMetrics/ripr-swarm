@@ -26,8 +26,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/ts_pkg_discovery_single_package/input --diff fixtures/ts_pkg_discovery_single_package/diff.patch --mode fast probe:src_math.ts:typescript_preview:025f98d6
-  ripr context --root <cwd>/fixtures/ts_pkg_discovery_single_package/input --diff fixtures/ts_pkg_discovery_single_package/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:025f98d6
+  ripr explain --root <cwd>/fixtures/ts_pkg_discovery_single_package/input --diff <cwd>/fixtures/ts_pkg_discovery_single_package/diff.patch --mode fast probe:src_math.ts:typescript_preview:025f98d6
+  ripr context --root <cwd>/fixtures/ts_pkg_discovery_single_package/input --diff <cwd>/fixtures/ts_pkg_discovery_single_package/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:025f98d6
 
 More:
   Full evidence: rerun with --format human-full

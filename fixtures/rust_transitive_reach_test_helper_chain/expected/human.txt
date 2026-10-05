@@ -25,8 +25,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
-  ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
+  ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
+  ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --at src/eval.rs:3
 

@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/typescript_limitation_custom_matcher/input --diff fixtures/typescript_limitation_custom_matcher/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b
-  ripr context --root <cwd>/fixtures/typescript_limitation_custom_matcher/input --diff fixtures/typescript_limitation_custom_matcher/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0335115b
+  ripr explain --root <cwd>/fixtures/typescript_limitation_custom_matcher/input --diff <cwd>/fixtures/typescript_limitation_custom_matcher/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b
+  ripr context --root <cwd>/fixtures/typescript_limitation_custom_matcher/input --diff <cwd>/fixtures/typescript_limitation_custom_matcher/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0335115b
 
 More:
   Full evidence: rerun with --format human-full
