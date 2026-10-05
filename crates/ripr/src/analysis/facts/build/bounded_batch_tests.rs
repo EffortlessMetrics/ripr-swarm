@@ -171,13 +171,15 @@ impl<'a> ObservingAdapter<'a> {
 
 impl RustSyntaxAdapter for ObservingAdapter<'_> {
     fn summarize_file(&self, path: &Path, text: &str) -> Result<FileFacts, String> {
-        if self.fail.contains(path) {
-            return Err(format!("forced parse failure for {}", path.display()));
-        }
+        // Cancel before failing, so one file can both abort the attempt and
+        // fail ordinarily (#6721).
         if let Some((target, token)) = &self.cancel_at
             && target == path
         {
             token.cancel(AnalysisAbortKind::Cancelled);
+        }
+        if self.fail.contains(path) {
+            return Err(format!("forced parse failure for {}", path.display()));
         }
         let stored = self.cache.known_file_paths().len();
         self.stored_at_parse
@@ -337,6 +339,39 @@ fn cancellation_in_a_later_batch_returns_no_index_and_commits_no_part_of_it() ->
     assert_eq!(
         result.err().as_deref(),
         Some("analysis cancelled: Cancelled")
+    );
+    let expected = fixture.files[..PARSE_BATCH_FILES]
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(fixture.stored_paths(), expected);
+    Ok(())
+}
+
+#[test]
+fn an_ordinary_worker_failure_is_not_hidden_by_a_sibling_abort() -> TestResult<()> {
+    // #6721: the failing file also cancels the attempt, so its siblings in the
+    // same batch observe the abort at their checkpoints, earlier and later in
+    // input order alike, in whatever order Rayon runs them. The batch must
+    // propagate the ordinary failure, and the token must name the attempt as
+    // that failure rather than the abort a sibling observed.
+    let fixture = BatchFixture::new("failure_over_abort")?;
+    let token = AnalysisCancellationToken::new();
+    let target = fixture.files[PARSE_BATCH_FILES + 10].clone();
+    let fail = BTreeSet::from([target.clone()]);
+    let mut adapter = ObservingAdapter::new(&fixture.cache);
+    adapter.fail = fail.clone();
+    adapter.cancel_at = Some((target.clone(), token.clone()));
+    let (result, _, _) = with_token(&token, || fixture.build(&adapter, &RefusingFallback(&fail)))?;
+    assert_eq!(
+        result.err(),
+        Some(format!("forced fallback failure for {}", target.display()))
+    );
+    assert_eq!(token.abort_kind(), Some(AnalysisAbortKind::Cancelled));
+    assert_eq!(
+        token.observed_abort(),
+        None,
+        "the propagated error is the ordinary failure, not a sibling's abort"
     );
     let expected = fixture.files[..PARSE_BATCH_FILES]
         .iter()

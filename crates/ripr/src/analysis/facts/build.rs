@@ -5,7 +5,7 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use crate::analysis::cancellation;
+use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
 };
@@ -187,27 +187,33 @@ fn insert_cached_file_batches(
         parsed.resize_with(batch.len(), || None);
         if !parse_positions.is_empty() {
             cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+            let results: Vec<(usize, Result<super::FileFacts, WorkerError>)> = parse_positions
                 .par_iter()
                 .map(|&position| {
                     let result = cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
+                        cancellation::checkpoint_typed()?;
                         let (file, bytes) = &batch[position];
-                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                        cancellation::checkpoint()?;
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)
+                            .map_err(WorkerError::Failed)?;
+                        cancellation::checkpoint_typed()?;
                         Ok(facts)
                     });
                     (position, result)
                 })
                 .collect();
             // Do not replace an observed failure with a deadline noticed
-            // only after joining.
-            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-                return Err(error.clone());
+            // only after joining, nor with a sibling's abort (#6721).
+            if let Some(error) = cancellation::select_batch_error(
+                token.as_ref(),
+                results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err()),
+            ) {
+                return Err(error);
             }
             cancellation::checkpoint()?;
             for (position, result) in results {
-                parsed[position] = Some(result?);
+                parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
         }
         #[cfg(test)]
@@ -308,23 +314,30 @@ fn build_index_with_adapters(
         // Read + parse run on rayon workers; every file is independent.
         // `collect` on an indexed parallel iterator preserves input order,
         // so `results[i]` corresponds to `batch[i]`.
-        let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
+        let results: Vec<Result<(PathBuf, super::FileFacts, bool), WorkerError>> = batch
             .par_iter()
             .map(|file| {
                 cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
+                    cancellation::checkpoint_typed()?;
                     let full = root.join(file);
-                    let bytes = std::fs::read(&full)
-                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                    cancellation::checkpoint()?;
-                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
+                    let bytes = std::fs::read(&full).map_err(|err| {
+                        WorkerError::Failed(format!("failed to read {}: {err}", full.display()))
+                    })?;
+                    cancellation::checkpoint_typed()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)
+                        .map_err(WorkerError::Failed)?;
+                    cancellation::checkpoint_typed()?;
                     Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
                 })
             })
             .collect();
-        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
-            return Err(error.clone());
+        // The first ordinary failure in input order wins over a sibling's
+        // abort (#6721); with none, the first abort in input order.
+        if let Some(error) = cancellation::select_batch_error(
+            token.as_ref(),
+            results.iter().filter_map(|result| result.as_ref().err()),
+        ) {
+            return Err(error);
         }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
@@ -333,7 +346,7 @@ fn build_index_with_adapters(
         // in input order wins and the per-iteration checkpoint ordering
         // (error first, then checkpoint) is unchanged.
         for result in results {
-            let (file, summary, not_utf8) = result?;
+            let (file, summary, not_utf8) = result.map_err(WorkerError::into_message)?;
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
