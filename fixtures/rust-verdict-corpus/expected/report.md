@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 210.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 217.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 75/210 | 0.3571 |
-| False actionable (of discriminated) | 69/110 | 0.6273 |
-| False exposed (of not fully discriminated) | 6/100 | 0.0600 |
-| False silent (of not fully discriminated) | 0/100 | 0.0000 |
-| Ideal verdict | 74/210 | 0.3524 |
-| Abstained (limited or silent where acceptable) | 61/210 | 0.2905 |
-| Findings with a contradiction | 2/285 | 0.0070 |
+| False verdicts (all cases) | 78/217 | 0.3594 |
+| False actionable (of discriminated) | 72/115 | 0.6261 |
+| False exposed (of not fully discriminated) | 6/102 | 0.0588 |
+| False silent (of not fully discriminated) | 0/102 | 0.0000 |
+| Ideal verdict | 76/217 | 0.3502 |
+| Abstained (limited or silent where acceptable) | 63/217 | 0.2903 |
+| Findings with a contradiction | 2/296 | 0.0068 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 176 | 65/176 | 59/90 | 6/86 | 0/86 | 69/176 | 42/176 |
+| authored | 183 | 68/183 | 62/95 | 6/88 | 0/88 | 71/183 | 44/183 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -231,6 +231,13 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `mined-roundtrip-symmetric-mask` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `mined-hex-table-tested-row` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `mined-hex-table-unasserted-row` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `mined-debug-assert-only-oracle` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `mined-debug-assert-after-index` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | no | none |
+| `mined-one-line-struct-literal-field` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
+| `mined-multi-line-struct-literal-field` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `mined-blanket-trait-negative-zero` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `mined-allowlisted-row-gopher` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `mined-allowlist-listed-row-ftp` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 
 Non-claims:
 

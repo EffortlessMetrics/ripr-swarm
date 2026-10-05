@@ -1598,6 +1598,23 @@
           "sha256": "36261f2ee6b79b76c694078c2140259f32c97ff8f4865763a3289b4c46e227cd"
         }
       ]
+    },
+    {
+      "subject_id": "authored-mined-codec",
+      "origin": "authored",
+      "version_label": "authored 2026-10-05 from test shapes mined in real crates (rust-base64, uuid, toml_writer, rust-url)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "e597b266e6fa73b02a876acef701536717784ceedb911d825ea786cc8eed1ecb"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "e1b8d464b73ba9b71134068286e6908cf9f5dd3d8d29cf60767eecf8f91baba7"
+        }
+      ]
     }
   ],
   "cases": [
@@ -12053,6 +12070,355 @@
         "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
           "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-debug-assert-only-oracle",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-debug-assert-only-oracle.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "production_debug_assert_as_only_oracle",
+      "hard_case": "The test asserts only the output length. The production debug_assert! on the index is the sole oracle: under the debug test profile a wider mask trips it. rust-base64, url and bytes carry dozens of such debug_asserts on decode paths.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "        let index = (b & 0x0f) as usize;",
+            "outcome": "tests_failed",
+            "failing_test": "tests::encode_runs_over_every_byte",
+            "equivalence_review": "not equivalent: bytes 8 and 255 index past the alphabet and trip the debug_assert"
+          },
+          {
+            "replacement": "        let index = (b % 9) as usize;",
+            "outcome": "tests_failed",
+            "failing_test": "tests::encode_runs_over_every_byte",
+            "equivalence_review": "not equivalent: byte 8 yields index 8 and trips the debug_assert"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "encode_runs_over_every_byte feeds 8 and 255, so either mutant makes the production debug_assert! panic in the debug test profile; the length assert alone would not notice.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-debug-assert-after-index",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-debug-assert-after-index.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "production_debug_assert_not_on_edited_value",
+      "hard_case": "Twin of mined-debug-assert-only-oracle: the same function and test, but the edit sits after the debug_assert! and changes only which letter is pushed, which the length-only assert cannot see.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "        out.push(ALPHABET[(index + 1) % 8]);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: every letter shifts by one"
+          },
+          {
+            "replacement": "        out.push(ALPHABET[0]);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: every byte encodes as 'a'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "encode_runs_over_every_byte asserts only the output length, and the debug_assert! checks the index before this line, so both mutants pass.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "propagation_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-one-line-struct-literal-field",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-one-line-struct-literal-field.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 25
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "one_line_struct_literal_accessor_assert",
+      "hard_case": "The test binds a no-arg constructor's result and pins one field through an accessor (uuid's `let uuid = Uuid::new_v4(); assert_eq!(uuid.get_version(), ..)` shape). The literal is on one line, so the changed line also holds `counter`, and ripr's field-construction finding asks for an assertion pinning `counter: 0x00ab_cdef`, a field the edit did not touch, and stays weak beside an exposed return-value finding.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "        Id { counter: 0x00ab_cdef, version: 2 }",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fresh_ids_carry_version_one",
+            "equivalence_review": "not equivalent: version reads 2"
+          },
+          {
+            "replacement": "        Id { counter: 0x00ab_cdef, version: 0 }",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fresh_ids_carry_version_one",
+            "equivalence_review": "not equivalent: version reads 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "fresh_ids_carry_version_one pins version() == 1, which returns the edited field; both mutants change it.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "exposed",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-multi-line-struct-literal-field",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-multi-line-struct-literal-field.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 32
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "multi_line_struct_literal_accessor_assert",
+      "hard_case": "Twin of mined-one-line-struct-literal-field with the literal spread over lines, so the changed line holds only `version`. Same constructor shape and same accessor assert; only the formatting differs.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "            version: 3,",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fresh_ids_carry_version_two",
+            "equivalence_review": "not equivalent: version reads 3"
+          },
+          {
+            "replacement": "            version: 0,",
+            "outcome": "tests_failed",
+            "failing_test": "tests::fresh_ids_carry_version_two",
+            "equivalence_review": "not equivalent: version reads 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "fresh_ids_carry_version_two pins version() == 2, which returns the edited field; both mutants change it.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-blanket-trait-negative-zero",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-blanket-trait-negative-zero.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 62
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "trait_impl_reached_through_blanket_impl",
+      "hard_case": "The owner is impl Render for f64, and the test calls to_text() from a blanket impl<T: Render> ToText for T. toml_writer formats floats this way; on the real crate ripr reported no_static_path for the f64 impl. Here ripr sees no test calling render.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "            return String::from(\"0.0\");",
+            "outcome": "tests_failed",
+            "failing_test": "tests::negative_zero_keeps_its_sign",
+            "equivalence_review": "not equivalent: the sign is lost"
+          },
+          {
+            "replacement": "            return String::new();",
+            "outcome": "tests_failed",
+            "failing_test": "tests::negative_zero_keeps_its_sign",
+            "equivalence_review": "not equivalent: empty output"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "negative_zero_keeps_its_sign pins (-0.0f64).to_text() == \"-0.0\" through the blanket impl, so both mutants fail it.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-allowlisted-row-gopher",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-allowlisted-row-gopher.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 74
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "match_arm",
+      "test_shape": "table_harness_expected_failures_allowlist",
+      "hard_case": "The table test has a gopher row, but the row is on the EXPECTED_FAILURES allowlist and the loop skips it, so the row looks like a pin and is not one. rust-url's WPT harness keeps such a list (expected_failures.txt). A fix that credits table-loop rows must not credit this one.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "        \"gopher\" => Some(71),",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: gopher's default port changes"
+          },
+          {
+            "replacement": "        \"gopher\" => Some(0),",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: gopher's default port changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "default_ports_match_the_reference_table skips every scheme in EXPECTED_FAILURES, and gopher is listed, so neither mutant is checked.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-allowlist-listed-row-ftp",
+      "subject_id": "authored-mined-codec",
+      "diff": "cases/mined-allowlist-listed-row-ftp.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 73
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "match_arm",
+      "test_shape": "table_harness_row_not_allowlisted",
+      "hard_case": "Twin of mined-allowlisted-row-gopher: the same table loop, but ftp is not on the allowlist, so its row is asserted. rust-url's ftp default-port edit fails both the unit test and the WPT harness.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "        \"ftp\" => Some(22),",
+            "outcome": "tests_failed",
+            "failing_test": "tests::default_ports_match_the_reference_table",
+            "equivalence_review": "not equivalent: ftp's default port changes"
+          },
+          {
+            "replacement": "        \"ftp\" => Some(0),",
+            "outcome": "tests_failed",
+            "failing_test": "tests::default_ports_match_the_reference_table",
+            "equivalence_review": "not equivalent: ftp's default port changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "default_ports_match_the_reference_table asserts the ftp row, so both mutants fail it.",
+      "labeling_observation": {
+        "ripr_commit": "f46c5e5",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
         ],
         "excerpt_parity": "matched"
       }
