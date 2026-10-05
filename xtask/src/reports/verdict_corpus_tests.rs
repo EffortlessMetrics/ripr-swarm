@@ -878,6 +878,18 @@ fn validator_rejects_an_undeclared_language() -> Result<(), String> {
 }
 
 #[test]
+fn validator_rejects_a_case_named_after_a_corpus_language() -> Result<(), String> {
+    let violations = tampered(|raw| raw["cases"][0]["case_id"] = json!("typescript"))?;
+    assert!(
+        violations
+            .iter()
+            .any(|v: &String| v.contains("case id `typescript` names a corpus language")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn each_language_owns_its_corpus_directory_and_run_paths() {
     assert_eq!(
         corpus_dir("rust").ok(),
@@ -960,6 +972,12 @@ fn committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels() 
     let report: Value = serde_json::from_str(&read(&dir.join("expected/report.json"))?)
         .map_err(|err| err.to_string())?;
     assert_eq!(report["language"], json!("typescript"));
+    for truth in ["discriminated", "not_discriminated"] {
+        assert!(
+            report["by_truth"][truth].as_u64().unwrap_or_default() > 0,
+            "typescript corpus has no {truth} case"
+        );
+    }
     let rows = report["rows"].as_array().cloned().unwrap_or_default();
     assert_eq!(rows.len(), corpus.cases.len());
     for (row, case) in rows.iter().zip(&corpus.cases) {

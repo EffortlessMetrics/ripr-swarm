@@ -3992,7 +3992,7 @@
           "limited"
         ]
       },
-      "reasoning": "The test calls `add(1, 2)` without using the result and asserts only `expect(address).toBe(\"x\")` on an unrelated local; the edit `a + b` -> `a - b` cannot be noticed and the test passes. ripr reports `exposed` (observed `address`, exact_value), a wrong credit: it treats `address` as an observation of `add`. (spec says today exposed; target weakly_exposed with propagation_unknown - still exposed). Spec cells: RIPR-SPEC-0234 example 22",
+      "reasoning": "The test calls `add(1, 2)` without using the result and asserts only `expect(address).toBe(\"x\")` on an unrelated local; the edit `a + b` -> `a - b` cannot be noticed and the test passes. ripr reports `exposed` (observed `address`, exact_value), a wrong credit: it treats `address` as an observation of `add`. (spec target weakly_exposed with propagation_unknown; spec today exposed; ripr today exposed). Spec cells: RIPR-SPEC-0234 example 22",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",
@@ -4079,7 +4079,7 @@
           "limited"
         ]
       },
-      "reasoning": "The test `jest.mock(\"../src/priceSelfMocked\")` automocks the owner's module, so `priceSelfMocked(150)` returns undefined and the edit is never executed; the test passes. Adapted from the spec: the stored assertion is `toBe(undefined)` instead of `toBe(130)` because the automocked call can never return a number (a green suite is required); a probe with `toBe(140)` gives ripr the same verdict. ripr reports `weakly_exposed`, `mocked_module`, oracle `unknown`, related only by test name. (matches spec: weakly_exposed, mocked_module). Spec cells: RIPR-SPEC-0234 example 25",
+      "reasoning": "The test `jest.mock(\"../src/priceSelfMocked\")` automocks the owner's module, so `priceSelfMocked(150)` returns undefined and the edit is never executed; the test passes. Adapted from the spec: the stored assertion is `toBe(undefined)` instead of `toBe(130)` because the automocked call can never return a number (a green suite is required); a probe with `toBe(140)` gives ripr the same verdict. ripr reports `weakly_exposed`, `mocked_module`, oracle `unknown`, related only by test name; the named mocked_module limit projects to limited, an abstention. (matches spec: weakly_exposed, mocked_module). Spec cells: RIPR-SPEC-0234 example 25",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "limited",
@@ -4699,7 +4699,7 @@
           "limited"
         ]
       },
-      "reasoning": "The stored test runs `expect(quotePrice(150)).toBe(140)` under chai's expect inside try/catch. The `.toBe` access throws and the catch swallows it, so nothing is asserted and the `- 10` -> `- 20` edit passes. ripr reports `exposed`, crediting `expect(...).toBe(...)` as exact_value/strong (spec says weakly_exposed; spec says today exposed, matching). Spec cells: RIPR-SPEC-0234 example 8",
+      "reasoning": "The stored test runs `expect(quotePrice(150)).toBe(140)` under chai's expect inside try/catch. The `.toBe` access throws and the catch swallows it, so nothing is asserted and the `- 10` -> `- 20` edit passes. ripr reports `exposed`, crediting `expect(...).toBe(...)` as exact_value/strong (spec target weakly_exposed; spec today exposed; ripr matches today). Spec cells: RIPR-SPEC-0234 example 8",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",

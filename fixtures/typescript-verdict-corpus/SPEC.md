@@ -41,9 +41,11 @@ mutants of the edited line (jest, vitest and mocha runners; node:test through
 the command runner) and the outcome of each; a behavior change is its own
 single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
 vitest 5.0.3 (3.2.7 for `authored-ts-vitest-cart`), mocha 12.0.3, chai 6.3
-and tsx 4.23. All 115 single-line Stryker outcomes outside the two handed-over
-subjects were replayed by applying the mutant by hand and running the test
-command; every one agreed.
+and tsx 4.23. The two subjects handed over from the Python corpus thread
+(`authored-ts-nodetest-pricing`, `authored-ts-vitest-cart`) list hand-applied
+mutants instead of Stryker's. All 178 mutant outcomes were then replayed by
+applying each mutant by hand and running the case's test command; every one
+agreed.
 
 ## When
 

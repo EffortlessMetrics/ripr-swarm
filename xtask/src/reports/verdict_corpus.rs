@@ -1050,6 +1050,15 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id
             ));
         }
+        // Rust runs sit directly under the run root, beside each other
+        // language's directory, so a Rust case named after a language would
+        // clear that language's runs when it is materialized.
+        if CORPUS_LANGUAGES.contains(&case.case_id.as_str()) {
+            violations.push(format!(
+                "case id `{}` names a corpus language, whose run directory it would replace; rename the case",
+                case.case_id
+            ));
+        }
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -1883,10 +1892,12 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 && expected != json
             {
                 return Err(format!(
-                    "verdict-corpus: report drifted from {} ({}). A verdict changed; read {} and, if the change is intended, copy it over the expected report with the reason in the PR.",
+                    "verdict-corpus: report drifted from {} ({}). A verdict changed; read {} and, if the change is intended, re-bless with `report{} --out {}` and give the reason in the PR.",
                     normalize_path(&expected_path),
                     first_differing_line(&expected, &json),
-                    normalize_path(&out.join("report.md"))
+                    normalize_path(&out.join("report.md")),
+                    language_flag(&language),
+                    normalize_path(&dir.join("expected"))
                 ));
             }
             Ok(())

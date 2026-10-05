@@ -72,6 +72,8 @@ scored under another's name. Rust keeps its run path
 (`target/ripr/verdict-corpus/`) and report path
 (`target/ripr/reports/verdict-corpus/`); every other language nests under
 `<language>/` in both, so two corpora never share a run copy or a report.
+Because Rust case runs sit beside those language directories, a case id
+that names a corpus language is refused.
 The re-bless hint a drifted check prints names the `--language` it needs.
 
 The report for a non-Rust corpus names its `language` in `report.json` and in
@@ -82,7 +84,8 @@ Each language's expected report is that language's regression gate: any
 verdict change fails `check` until the expected report is re-blessed with the
 reason in the PR. Developer-experience scoreboard metrics read each
 language's false-actionable, false-exposed and false-silent rates from its
-expected report.
+committed expected report (`file:` sources), so the scoreboard gate compares
+the committed rates against its baseline; it does not re-run the corpus.
 
 ### TypeScript corpus
 
@@ -95,8 +98,9 @@ the oracle shapes ripr's TypeScript adapter distinguishes: exact-value and
 structural matchers, truthiness and broad matchers, thrown and rejected
 errors, async tests, snapshot tests, custom matchers (#5506), mocks, and
 boundary inputs. Truth is a real mutation run of the anchored line with
-StrykerJS (or, for a test library Stryker cannot drive, the same mutants
-applied by hand), recorded per mutant with the failing test, under the
+StrykerJS (or, for the two subjects handed over from the Python corpus
+thread, `authored-ts-nodetest-pricing` and `authored-ts-vitest-cart`,
+mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
 ## Required Evidence
@@ -105,6 +109,7 @@ labeling toolchain and test command each case names.
   `language` field and the Rust title.
 - A non-Rust corpus names its language in both report files.
 - The validator refuses an undeclared language.
+- The validator refuses a case id that names a corpus language.
 - `--language` maps each language to its own directory and run paths and
   refuses anything else; a directory declaring another language is refused.
 - Each committed non-Rust corpus validates, contains both truth directions,
@@ -137,6 +142,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes`
 - `a_non_rust_corpus_names_its_language_in_both_reports`
 - `validator_rejects_an_undeclared_language`
+- `validator_rejects_a_case_named_after_a_corpus_language`
 - `each_language_owns_its_corpus_directory_and_run_paths`
 - `a_language_directory_must_declare_that_language`
 - `committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels`

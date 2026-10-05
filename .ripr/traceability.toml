@@ -12127,6 +12127,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes",
   "xtask/src/reports/verdict_corpus_tests.rs::a_non_rust_corpus_names_its_language_in_both_reports",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_undeclared_language",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_case_named_after_a_corpus_language",
   "xtask/src/reports/verdict_corpus_tests.rs::each_language_owns_its_corpus_directory_and_run_paths",
   "xtask/src/reports/verdict_corpus_tests.rs::a_language_directory_must_declare_that_language",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels",
