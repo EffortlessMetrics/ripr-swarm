@@ -1,5 +1,5 @@
-<!-- section: Performance -->
-- `ripr pilot` and `ripr check`: the macro-reach fallback for
+<!-- section: Changed -->
+- Performance: in `ripr pilot` and `ripr check`, the macro-reach fallback for
   `no_static_path` seams builds its `macro_rules!` definition table in one
   pass over the index, and reads each test's and function's macro
   invocations from a table built once, instead of rescanning every indexed
