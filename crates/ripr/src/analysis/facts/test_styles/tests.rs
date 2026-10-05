@@ -90,6 +90,38 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
 }
 
 #[test]
+fn test_under_a_cfg_that_is_false_in_a_test_build_is_not_a_test() -> Result<(), String> {
+    // #6293: `#[cfg(any())]` and `#[cfg(not(test))]` remove the item from a
+    // test build, so the test never runs and cannot be credited. A cfg ripr
+    // cannot evaluate (a feature atom) keeps the test, as before.
+    let source = r#"
+#[cfg(any())]
+#[test]
+fn never_compiled() { assert!(true); }
+
+#[cfg(not(test))]
+#[test]
+fn prod_only() { assert!(true); }
+
+#[cfg(feature = "slow")]
+#[test]
+fn feature_gated() { assert!(true); }
+
+#[test]
+fn ordinary() { assert!(true); }
+"#;
+    for adapter in [
+        &RaRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+    ] {
+        let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        normalize_file_test_styles(&mut facts)?;
+        assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+    }
+    Ok(())
+}
+
+#[test]
 fn parser_facts_recognize_explicit_nonstandard_test_styles() -> Result<(), String> {
     let adapter = RaRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(

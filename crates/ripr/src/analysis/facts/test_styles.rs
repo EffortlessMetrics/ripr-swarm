@@ -105,9 +105,16 @@ fn normalize_indexed_file_test_styles(
         let existing = existing_tests.remove(&(function.start_line, function.name.clone()));
         let has_test_attribute = match lexical_lines.as_deref() {
             Some(lines) => {
-                attributes_define_test(lexical_attributes_before(lines, function.start_line))
+                let attributes = lexical_attributes_before(lines, function.start_line);
+                attributes_define_test(attributes.iter().copied())
+                    && !attributes_compile_out_in_test_build(attributes.iter().copied())
             }
-            None => attributes_define_test(function.attrs.iter().map(String::as_str)),
+            None => {
+                attributes_define_test(function.attrs.iter().map(String::as_str))
+                    && !attributes_compile_out_in_test_build(
+                        function.attrs.iter().map(String::as_str),
+                    )
+            }
         };
         let preserve_cfg_test_role = !has_test_attribute
             && function.source_role.is_evidence_role()
@@ -160,6 +167,18 @@ fn attributes_define_test<'attribute>(
         normalized_test_attribute_path(attribute)
             .as_deref()
             .is_some_and(is_test_attribute_path)
+    })
+}
+
+/// A `#[test]` under a `cfg` that is false in a test build (`cfg(any())`,
+/// `cfg(not(test))`) never runs, so it cannot discriminate anything (#6293).
+/// Only a provably false gate counts; feature, target and custom atoms stay
+/// unknown and keep the test, as before.
+fn attributes_compile_out_in_test_build<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        cfg_predicates::attribute_test_build_availability(attribute) == Some(false)
     })
 }
 
