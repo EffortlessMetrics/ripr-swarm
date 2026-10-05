@@ -223,8 +223,8 @@ impl RunOutcome {
 
 /// Read one `cargo test` run. libtest prints `test <name> ... FAILED` for
 /// each failing test and `test result:` once per test binary that ran; a
-/// failure with neither means the build failed, and cargo's first `error`
-/// line on stderr says why.
+/// failure that no test explains means the build failed, and cargo's first
+/// `error` line on stderr says why.
 pub(crate) fn classify_run(
     success: bool,
     timed_out: bool,
@@ -251,12 +251,22 @@ pub(crate) fn classify_run(
             Some(name.trim().to_string())
         })
         .collect();
-    // `running N tests` means a test binary started; a binary that aborts
-    // (a stack overflow, say) prints it but no per-test result.
-    let any_ran = stdout
+    // With no named failure, the run still failed in a test when a binary
+    // reported a failed count, or started (`running N tests`) and never
+    // printed its result, as one that aborts on a stack overflow does.
+    // Otherwise every binary that ran passed, and the failure came after
+    // them: rustdoc failing before any doctest ran, say. That is a build
+    // failure, even though earlier binaries printed passing results.
+    let started = stdout
         .lines()
-        .any(|line| line.starts_with("test result:") || line.starts_with("running "));
-    if failing_tests.is_empty() && !any_ran {
+        .filter(|line| line.starts_with("running "))
+        .count();
+    let finished = stdout
+        .lines()
+        .filter(|line| line.starts_with("test result:"))
+        .count();
+    let failed_in_a_test = started > finished || failed_tests(stdout) > 0;
+    if failing_tests.is_empty() && !failed_in_a_test {
         let error = stderr
             .lines()
             .find(|line| line.starts_with("error"))
@@ -272,6 +282,15 @@ pub(crate) fn classify_run(
 /// Tests executed across every `test result:` line (passed plus failed;
 /// ignored and filtered-out tests did not run).
 pub(crate) fn executed_tests(stdout: &str) -> u64 {
+    result_counts(stdout, &["passed", "failed"])
+}
+
+/// Failed tests across every `test result:` line.
+fn failed_tests(stdout: &str) -> u64 {
+    result_counts(stdout, &["failed"])
+}
+
+fn result_counts(stdout: &str, kinds: &[&str]) -> u64 {
     stdout
         .lines()
         .filter_map(|line| line.strip_prefix("test result: "))
@@ -280,7 +299,7 @@ pub(crate) fn executed_tests(stdout: &str) -> u64 {
             let mut words = part.split_whitespace().rev();
             let kind = words.next()?;
             let count = words.next()?;
-            matches!(kind, "passed" | "failed").then(|| count.parse::<u64>().ok())?
+            kinds.contains(&kind).then(|| count.parse::<u64>().ok())?
         })
         .sum()
 }
@@ -631,6 +650,9 @@ fn tracked_files(checkout: &Path) -> Result<Vec<PathBuf>, String> {
 pub(crate) fn copy_checkout(from: &Path, to: &Path, files: &[PathBuf]) -> Result<(), String> {
     let root =
         fs::canonicalize(from).map_err(|err| format!("resolve {}: {err}", normalize_path(from)))?;
+    // Every listed path and each of its directories exists in the copy; a
+    // link may only resolve to one of them.
+    let copied: BTreeSet<&Path> = files.iter().flat_map(|rel| rel.ancestors()).collect();
     for rel in files {
         let source = from.join(rel);
         let target = to.join(rel);
@@ -648,13 +670,19 @@ pub(crate) fn copy_checkout(from: &Path, to: &Path, files: &[PathBuf]) -> Result
             // through the copy into files the run does not own. Resolve it
             // for real, since a chain of links can each look contained. A
             // link that does not resolve (dangling, a loop, unreadable)
-            // cannot be shown to stay inside, so it is refused.
-            let resolved_inside =
-                fs::canonicalize(&source).is_ok_and(|resolved| resolved.starts_with(&root));
+            // cannot be shown to stay inside, so it is refused. So is one
+            // whose target is not copied (an ignored or untracked path): in
+            // the copy it would dangle, and whatever later appeared there
+            // would decide where writes through it land.
+            let resolved_inside = fs::canonicalize(&source).is_ok_and(|resolved| {
+                resolved
+                    .strip_prefix(&root)
+                    .is_ok_and(|inside| copied.contains(inside))
+            });
             let dir = rel.parent().unwrap_or(Path::new(""));
             if !resolved_inside || !link_stays_inside(dir, &link) {
                 return Err(format!(
-                    "{} links outside the checkout or does not resolve ({}); refusing to replay it",
+                    "{} links outside the checkout's tracked files or does not resolve ({}); refusing to replay it",
                     normalize_path(&source),
                     normalize_path(&link)
                 ));

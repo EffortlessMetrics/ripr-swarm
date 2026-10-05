@@ -171,14 +171,17 @@ differs from `expected/report.md`. It refuses an
   when the replayed outcomes derive a different truth, when a mutant does not
   compile, times out, or equals the edited line, when repeated runs disagree,
   when `rustc --version` differs from the labeled toolchain, and when a
-  run that exits zero executed no test. Upstream excerpts replay only from a
+  run that exits zero executed no test. A failed run counts as a test
+  failure only when a test failed or a test binary stopped without its
+  result; a failure after every binary passed (rustdoc failing before any
+  doctest ran) is a build failure. Upstream excerpts replay only from a
   full checkout at the pinned commit, with no local changes or untracked
   files, under `--checkouts <dir>/<subject_id>`; without one they are listed
   as not replayed, never counted as passing. Only the checkout's tracked
   files (`git ls-files`) are copied, so ignored local files cannot change a
-  replay; a tracked symlink that resolves outside the checkout, through any
-  chain of links, or that does not resolve, is refused, and so is a
-  submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
+  replay; a tracked symlink that resolves outside the checkout's tracked
+  paths, through any chain of links, or that does not resolve, is refused,
+  and so is a submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
   so a checkout's dependencies must already be in the cargo cache (`cargo
   fetch`); the command adds no network access of its own, but a subject's
   build scripts and tests run unsandboxed. The caller's `RUSTC`, wrappers,

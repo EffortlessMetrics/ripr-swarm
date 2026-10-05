@@ -166,6 +166,28 @@ fn classify_run_separates_test_failures_from_build_failures() {
         classify_run(false, false, aborted, "error: test failed"),
         failing(&[])
     );
+    // Unit tests passed, then rustdoc failed before any doctest ran: the
+    // earlier passing result does not make the failure a test failure.
+    let passed_then_rustdoc =
+        "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed\n";
+    assert_eq!(
+        classify_run(
+            false,
+            false,
+            passed_then_rustdoc,
+            "   Doc-tests x\nerror: unresolved import `x::gone`\n"
+        ),
+        RunOutcome::BuildFailed {
+            error: "error: unresolved import `x::gone`".to_string()
+        }
+    );
+    // A doctest that fails to compile is a named failing test, as libtest
+    // reports it.
+    let doctest = "running 1 test\ntest src/lib.rs - f (line 3) ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed\n";
+    assert_eq!(
+        classify_run(false, false, doctest, ""),
+        failing(&["src/lib.rs - f (line 3)"])
+    );
 }
 
 #[test]
@@ -430,6 +452,14 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
         &listed(&["lib.rs", "sub/up"]),
     );
     let ignored_copied = base.join("copy-ok/ignored.toml").exists();
+    // A link into an untracked directory would dangle in the copy.
+    fs::create_dir_all(checkout.join("untracked")).map_err(io)?;
+    symlink("untracked", checkout.join("into-untracked")).map_err(io)?;
+    let into_untracked = copy_checkout(
+        &checkout,
+        &base.join("copy-untracked"),
+        &listed(&["lib.rs", "into-untracked"]),
+    );
     fs::remove_dir_all(&base).map_err(io)?;
     assert!(
         escaped
@@ -446,5 +476,12 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
         "{dangling:?}"
     );
     assert!(!ignored_copied, "an unlisted file reached the copy");
+    assert!(
+        into_untracked
+            .as_ref()
+            .err()
+            .is_some_and(|err| err.contains("tracked files")),
+        "{into_untracked:?}"
+    );
     contained
 }
