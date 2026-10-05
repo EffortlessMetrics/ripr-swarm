@@ -2097,13 +2097,18 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
 
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
 /// `Site(..)`, a constructor-named associated call (`Site::new(..)`,
-/// `Site::default()`, `Site::from_x(..)`, `Site::with_x(..)`) or an
-/// associated item (`Shape::Circle`). Any other associated call
-/// (`Site::make_cache()`) may return another type and fails closed.
+/// `Site::default()`, `Site::from_x(..)`, `Site::with_x(..)`), an enum tuple
+/// variant (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
+/// Any other associated call (`Site::make_cache()`) may return another type
+/// and fails closed. The `new_*`/`from_*`/`with_*` prefixes are a naming
+/// convention, not a return type: `Site::with_cache()` still reads as `Site`
+/// even if it returns a `Cache`; there is no return-type lookup here.
 fn initializer_type_head(expr: &str) -> Option<&str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
-        ([.., ty, call], Some(b'(')) => is_constructor_name(call).then_some(*ty),
+        ([.., ty, call], Some(b'(')) => (is_constructor_name(call)
+            || call.starts_with(|c: char| c.is_ascii_uppercase()))
+        .then_some(*ty),
         ([last], Some(b'(')) | ([.., last], Some(b'{')) => Some(last),
         ([.., ty, _assoc], _) => Some(ty),
         _ => None,
@@ -2223,8 +2228,21 @@ fn receiver_expr_resolves_to_type(
     impl_type: &str,
     body_for_lets: &str,
 ) -> bool {
+    bracketed_expr_has_type(text, dot, impl_type, body_for_lets, false)
+}
+
+/// `whole`: the bracketed expression must be all of `text[..end]`, so a
+/// parenthesised inner expression such as `(Site::new().cache())` or
+/// `(Site::new(), 1)` is not read by its head alone.
+fn bracketed_expr_has_type(
+    text: &str,
+    end: usize,
+    impl_type: &str,
+    body_for_lets: &str,
+    whole: bool,
+) -> bool {
     let bytes = text.as_bytes();
-    let mut close = dot;
+    let mut close = end;
     while close > 0 && bytes[close - 1].is_ascii_whitespace() {
         close -= 1;
     }
@@ -2245,12 +2263,23 @@ fn receiver_expr_resolves_to_type(
             path_end -= 1;
         }
     }
-    let mut start = path_end;
-    while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
-        start -= 1;
+    let start = path_start(bytes, path_end);
+    let mut before = start;
+    while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+        before -= 1;
+    }
+    if whole && before > 0 {
+        return false;
     }
     if start == path_end {
-        if open_byte != b'(' {
+        // A bare `( .. )` is a parenthesised expression only when nothing
+        // callable precedes it: `f(..)`, `m::<T>(..)`, `mac!(..)`, `x[0](..)`
+        // and `(f)(..)` are calls whose result type is unknown.
+        let callable_before = before > 0
+            && (is_ident_byte(bytes[before - 1])
+                || matches!(bytes[before - 1], b'>' | b'!' | b')' | b']' | b'?')
+                || !bytes[before - 1].is_ascii());
+        if open_byte != b'(' || callable_before {
             return false;
         }
         let inner = text[open + 1..close].trim();
@@ -2260,16 +2289,34 @@ fn receiver_expr_resolves_to_type(
             return inner == impl_type
                 || let_binding_mentions_type(body_for_lets, inner, impl_type);
         }
-        return initializer_type_head(inner).is_some_and(|head| head == impl_type);
-    }
-    let mut before = start;
-    while before > 0 && bytes[before - 1].is_ascii_whitespace() {
-        before -= 1;
+        return bracketed_expr_has_type(inner, inner.len(), impl_type, body_for_lets, true);
     }
     if before > 0 && bytes[before - 1] == b'.' {
         return false;
     }
     initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type)
+}
+
+/// Start of the `a::B::<T>::c` path ending at `end`, walking back over
+/// identifiers, `::` and turbofish argument lists.
+fn path_start(bytes: &[u8], end: usize) -> usize {
+    let mut start = end;
+    loop {
+        while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
+            start -= 1;
+        }
+        if start == 0 || bytes[start - 1] != b'>' {
+            return start;
+        }
+        let Some(lt) = matching_open(bytes, start - 1, b'<', b'>') else {
+            return start;
+        };
+        if lt >= 2 && bytes[lt - 2] == b':' && bytes[lt - 1] == b':' {
+            start = lt - 2;
+        } else {
+            return start;
+        }
+    }
 }
 
 /// Index of the bracket opening the one closed at `close`, or `None`.
@@ -5306,6 +5353,18 @@ let r = try_parse_summary(\"x\");",
             ("Site::builder().langs(1).build();", false),
             ("make(Site::new()).build();", false),
             ("Site::new().unused(); helper().build();", false),
+            ("Site::<u8>::new().build();", true),
+            ("make::<u8>(Site::new()).build();", false),
+            ("a.foo::<u8>(Site::new()).build();", false),
+            ("wrap!(Site::new()).build();", false),
+            ("(f)(Site::new()).build();", false),
+            ("v[0](Site::new()).build();", false),
+            ("(Site::new().cache()).build();", false),
+            ("(Site::new(), 1).build();", false),
+            ("((Site::new())).build();", true),
+            ("x = (Site::new()); (Site::default()).build();", true),
+            ("if cond { Site::new() } else { other() }.build();", false),
+            ("match v { _ => Site::new() }.build();", false),
         ];
         for (body, expected) in cases {
             let summary = test("tests/site.rs", "t", body);
@@ -5340,6 +5399,9 @@ let r = try_parse_summary(\"x\");",
             ("let x = Site::new_empty()", Some("Site")),
             ("let x = Vec::with_capacity(4)", Some("Vec")),
             ("let x = Shape::Circle", Some("Shape")),
+            ("let x = Shape::Circle(1.0)", Some("Shape")),
+            // Known limit: prefixes are a convention, not a return type.
+            ("let x = Site::with_cache()", Some("Site")),
             ("let x = |s: Site| s", None),
         ];
         for (stmt, expected) in cases {
