@@ -1741,7 +1741,7 @@ pub(crate) fn compile_work_portfolio(
             .map(|claim| format!("claim `{}` holds branch `{branch}`", claim.id))
             .collect();
         edges.push(WorkConflictEdgeV1 {
-            id: edge_id,
+            id: edge_id.clone(),
             kind: WorkConflictEdgeKindV1::ClaimCollision,
             subjects: subjects.clone(),
             evidence,
