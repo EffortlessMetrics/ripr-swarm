@@ -836,8 +836,7 @@ fn nearby_removed_line(
 mod tests {
     use super::super::super::diff::ChangedLine;
     use super::super::super::rust_index::{
-        FileFacts, FunctionFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_PREDICATE, ProbeShapeFact,
-        RustIndex,
+        FileFacts, FunctionFact, ProbeShapeFact, ProbeShapeKind, RustIndex,
     };
     use super::*;
     use crate::analysis::facts::{
@@ -890,7 +889,7 @@ mod tests {
                         start_line: 3,
                         end_line: 3,
                         start_byte: 20,
-                        kind: PROBE_SHAPE_PREDICATE.to_string(),
+                        kind: ProbeShapeKind::Predicate,
                         text: "if amount >= threshold {".to_string(),
                     }],
                     ..FileFacts::default()
@@ -1010,7 +1009,7 @@ mod tests {
                         start_line: 2,
                         end_line: 2,
                         start_byte: producer,
-                        kind: PROBE_SHAPE_PREDICATE.to_string(),
+                        kind: ProbeShapeKind::Predicate,
                         text: PREDICATE.to_string(),
                     }],
                     ..FileFacts::default()
@@ -1114,7 +1113,7 @@ mod tests {
                         start_line: 10,
                         end_line: 13,
                         start_byte: 0,
-                        kind: PROBE_SHAPE_CALL_DELETION.to_string(),
+                        kind: ProbeShapeKind::CallDeletion,
                         text: expression.to_string(),
                     }],
                     ..FileFacts::default()
@@ -1159,7 +1158,7 @@ mod tests {
                         start_line: 10,
                         end_line: 13,
                         start_byte: 100,
-                        kind: crate::analysis::rust_index::PROBE_SHAPE_RETURN_VALUE.to_string(),
+                        kind: ProbeShapeKind::ReturnValue,
                         text: "HirLet {\n    name,\n    storage,\n}".to_string(),
                     }],
                     ..FileFacts::default()
@@ -1263,7 +1262,7 @@ mod tests {
                         start_line: 4,
                         end_line: 4,
                         start_byte: 40,
-                        kind: PROBE_SHAPE_CALL_DELETION.to_string(),
+                        kind: ProbeShapeKind::CallDeletion,
                         text: "compute_fee(amount * 9)".to_string(),
                     }],
                     ..FileFacts::default()
