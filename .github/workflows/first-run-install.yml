@@ -14,6 +14,8 @@ name: First-run install
 # ungated and only uploads the report; to start gating, dispatch this workflow,
 # review the dx-scoreboard.json artifact, and commit it as that baseline file.
 # Wall-time metrics compare only against a baseline from the same runner class.
+# While ungated, a failed install still leaves the job green (the receipt records
+# the failed row); only the gated run fails the job on it.
 
 on:
   workflow_dispatch:
