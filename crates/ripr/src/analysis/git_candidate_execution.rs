@@ -92,11 +92,14 @@ impl Drop for TempRootGuard {
 
 /// The operator-facing text for a cleanup that could not be performed.
 fn cleanup_failure_report(path: &Path, error: &std::io::Error) -> String {
-    format!(
+    // The temp root normally comes from the OS temp dir, but `TMPDIR` is
+    // environment text and this writes to the handle directly, past the
+    // library's stderr guard.
+    crate::terminal_text::terminal_safe(format!(
         "ripr: candidate materialization root could not be removed: {} ({error}); \
          remove it manually to reclaim the space",
         path.display()
-    )
+    ))
 }
 
 /// Remove one materialization root, retrying once.

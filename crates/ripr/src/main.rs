@@ -41,9 +41,14 @@ fn install_panic_hook() {
         if is_closed_stdout_panic(message) {
             std::process::exit(2);
         }
+        // A panic message can quote repository text (a path, a parsed value),
+        // so it gets the same terminal escape as every other stderr line.
         eprintln!(
             "{}",
-            format_panic_report(message, info.location().map(|loc| (loc.file(), loc.line())),)
+            terminal_safe_report(format_panic_report(
+                message,
+                info.location().map(|loc| (loc.file(), loc.line())),
+            ))
         );
         let backtrace = std::backtrace::Backtrace::capture();
         if matches!(
@@ -67,6 +72,12 @@ fn is_closed_stdout_panic(message: &str) -> bool {
         && CLOSED_PIPE_MARKERS
             .iter()
             .any(|marker| message.contains(marker))
+}
+
+/// `CommandError`'s `Display` is the library's terminal escape; routing the
+/// report through it avoids a second public export for the same policy.
+fn terminal_safe_report(report: String) -> String {
+    CommandError::from(report).to_string()
 }
 
 fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
@@ -152,6 +163,12 @@ mod tests {
                     "panic-hook child omitted the formatted report; stderr: {stderr}"
                 ));
             }
+        }
+
+        let hostile = super::format_panic_report("a\u{1b}[2Jb\u{202e}c", None);
+        let safe = super::terminal_safe_report(hostile);
+        if safe.contains('\u{1b}') || safe.contains('\u{202e}') || !safe.contains("a\\u{1b}[2Jb") {
+            return Err(format!("panic report kept raw control text: {safe:?}"));
         }
 
         let report = super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));

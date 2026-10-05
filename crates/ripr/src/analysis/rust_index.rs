@@ -73,7 +73,9 @@ fn escaped_path_display(path: &Path) -> String {
             character => displayed.push(character),
         }
     }
-    displayed
+    // Bidi and other invisible formatting characters pass the control check
+    // above but still reorder what the reader sees.
+    crate::terminal_text::terminal_safe(displayed)
 }
 
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
@@ -1142,6 +1144,18 @@ fn feature_gated_test() {}
                 "ripr: lexical fallback was used for 2 Rust file(s): src/line\\nreturn\\r\\t\\x1b[31m.rs, src/unit\\u{0007}.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
             )
         );
+    }
+
+    #[test]
+    fn lexical_fallback_disclosure_escapes_bidi_characters() {
+        let files = vec![PathBuf::from("src/gnis\u{202e}rs.rs")];
+
+        let disclosure = lexical_fallback_disclosure_for_files(&files).unwrap_or_default();
+        assert!(
+            disclosure.contains("src/gnis\\u{202e}rs.rs"),
+            "{disclosure}"
+        );
+        assert!(!disclosure.contains('\u{202e}'), "{disclosure}");
     }
 
     #[test]
