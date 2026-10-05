@@ -227,6 +227,14 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
     no_path["classification"] = json!("no_static_path");
     no_path["ripr"]["reach"]["state"] = json!("no");
     no_path["related_tests_total"] = json!(81);
+    // Since #5424, examined proximity-linked tests are listed with why they
+    // miss; that agrees with "no path". A calling test does not.
+    no_path["related_tests"] = json!([
+        {"name": "same_file", "relation_reason": "same_test_file", "miss": "no_call_path"},
+        {"name": "named", "relation_reason": "owner_named_test", "miss": "no_call_path"},
+    ]);
+    assert!(finding_contradictions(&no_path).is_empty());
+    no_path["related_tests"][1]["relation_reason"] = json!("helper_owner_call");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]

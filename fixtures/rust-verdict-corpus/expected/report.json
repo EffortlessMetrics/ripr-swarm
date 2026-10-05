@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.5",
+  "corpus_version": "2026-10-04.6",
   "cases_total": 104,
   "by_truth": {
     "discriminated": 56,
@@ -51,13 +51,11 @@
     "rate": "0.3269"
   },
   "contradiction_rate": {
-    "numerator": 2,
+    "numerator": 0,
     "denominator": 138,
-    "rate": "0.0145"
+    "rate": "0.0000"
   },
-  "contradictions_by_code": {
-    "no_static_path_with_related_tests": 2
-  },
+  "contradictions_by_code": {},
   "by_origin": {
     "authored": {
       "cases_total": 70,
@@ -709,9 +707,7 @@
         "no_static_path"
       ],
       "outcome": "abstained",
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ]
+      "contradictions": []
     },
     {
       "case_id": "bytesize-as-mib-div",
@@ -730,9 +726,7 @@
         "no_static_path"
       ],
       "outcome": "abstained",
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ]
+      "contradictions": []
     },
     {
       "case_id": "strsim-jaro-winkler-threshold-shift",

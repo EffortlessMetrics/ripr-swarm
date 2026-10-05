@@ -480,7 +480,10 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
     if stage("reach") == "yes" && total == 0 {
         codes.push("reach_yes_without_related_tests");
     }
-    if class == "no_static_path" && total > 0 {
+    // Since #5424 a `no_static_path` finding lists every test it examined,
+    // each with why it misses, so proximity-linked rows are consistent with
+    // "no path". Only a listed test that calls the owner contradicts it.
+    if class == "no_static_path" && lists_a_calling_test(finding) {
         codes.push("no_static_path_with_related_tests");
     }
     if class == "exposed" && stage("discriminate") != "yes" {
@@ -490,6 +493,28 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
         codes.push("related_tests_listed_exceed_total");
     }
     codes
+}
+
+/// Relations ripr establishes through a call from the test (RelationReason
+/// in `crates/ripr/src/domain/evidence.rs`).
+const CALL_RELATIONS: [&str; 4] = [
+    "direct_owner_call",
+    "helper_owner_call",
+    "seam_callee_call",
+    "re_export_chain_followed",
+];
+
+fn lists_a_calling_test(finding: &Value) -> bool {
+    finding
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests.iter().any(|test| {
+                test.get("relation_reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| CALL_RELATIONS.contains(&reason))
+            })
+        })
 }
 
 const SUMMARY_CLASSES: [&str; 7] = [

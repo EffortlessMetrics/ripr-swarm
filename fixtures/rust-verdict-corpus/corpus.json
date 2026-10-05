@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.5",
+  "corpus_version": "2026-10-04.6",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -2068,7 +2068,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "unit_test_assert_eq",
-      "hard_case": "ripr reports no_static_path while listing related tests, one of the corpus's internal contradictions.",
+      "hard_case": "ripr reports no_static_path while listing the proximity-linked tests it examined.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -2090,7 +2090,7 @@
           "limited"
         ]
       },
-      "reasoning": "No test calls as_kb, so the % mutant leaves the tests passing. ripr reports no_static_path (limited), an acceptable abstention, but lists 26 same-file related tests, which the corpus counts as a no_static_path_with_related_tests contradiction.",
+      "reasoning": "No test calls as_kb, so the % mutant leaves the tests passing. ripr reports no_static_path (limited), an acceptable abstention, and lists the same-file tests it examined, each missing for want of a call path. That agrees with no_static_path, so the row records no contradiction (#6580).",
       "labeling_observation": {
         "ripr_commit": "7a6d4b7a5",
         "full_checkout_verdict": "limited",
@@ -2111,7 +2111,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "unit_test_assert_eq",
-      "hard_case": "ripr reports no_static_path while listing related tests, one of the corpus's internal contradictions.",
+      "hard_case": "ripr reports no_static_path while listing the proximity-linked tests it examined.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -2133,7 +2133,7 @@
           "limited"
         ]
       },
-      "reasoning": "No test calls as_mib, so the % mutant leaves the tests passing. ripr reports no_static_path (limited), an acceptable abstention, with the same no_static_path_with_related_tests contradiction as the as_kb case.",
+      "reasoning": "No test calls as_mib, so the % mutant leaves the tests passing. ripr reports no_static_path (limited), an acceptable abstention, listing its examined same-file tests as the as_kb case does; no contradiction (#6580).",
       "labeling_observation": {
         "ripr_commit": "7a6d4b7a5",
         "full_checkout_verdict": "limited",

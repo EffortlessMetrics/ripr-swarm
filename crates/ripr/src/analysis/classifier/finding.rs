@@ -182,6 +182,18 @@ fn annotate_related_test_misses(
         .filter(|test| test.miss.is_none() && test.oracle.is_some())
         .map(|test| strength_rank(&test.oracle_strength))
         .min();
+    if matches!(class, ExposureClass::NoStaticPath) {
+        // #6580: a test linked only by file, module, or name never calls the
+        // owner, so that is why it misses. An assertion-level reason `reveal`
+        // recorded first (`assertion_not_credited`) would point the reader at
+        // assertion admission instead of the missing call.
+        for test in related_tests
+            .iter_mut()
+            .filter(|test| !test.relation_reason.is_some_and(is_call_relation))
+        {
+            test.miss = Some(RelatedTestMiss::NoCallPath);
+        }
+    }
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
             Unconfirmed::Confirmed => false,
@@ -213,6 +225,19 @@ fn annotate_related_test_misses(
             _ => None,
         };
     }
+}
+
+/// Relations established by a call from the test to the owner, its helper,
+/// its seam callee, or a followed re-export. Every other relation is
+/// proximity or naming only.
+fn is_call_relation(reason: RelationReason) -> bool {
+    matches!(
+        reason,
+        RelationReason::DirectOwnerCall
+            | RelationReason::HelperOwnerCall
+            | RelationReason::SeamCalleeCall
+            | RelationReason::ReExportChainFollowed
+    )
 }
 
 /// Strongest first.
@@ -502,6 +527,65 @@ mod tests {
                 Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed),
                 None
             ]
+        );
+    }
+
+    #[test]
+    fn no_static_path_reports_the_missing_call_before_an_assertion_reason() {
+        let row = |name: &str, reason: RelationReason, miss| RelatedTest {
+            relation_reason: Some(reason),
+            miss,
+            ..matched_row(name, OracleStrength::None)
+        };
+        let mut rows = vec![
+            row(
+                "same_file_refused",
+                RelationReason::SameTestFile,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "same_module_no_assertion",
+                RelationReason::SameModule,
+                Some(crate::domain::RelatedTestMiss::NoAssertion),
+            ),
+            row(
+                "direct_call_refused",
+                RelationReason::DirectOwnerCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::NoStaticPath,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ]
+        );
+
+        let mut gap = vec![row(
+            "same_file_refused",
+            RelationReason::SameTestFile,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+        )];
+        annotate_related_test_misses(
+            &mut gap,
+            &crate::domain::ExposureClass::WeaklyExposed,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            gap[0].miss,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            "only no_static_path rewrites a recorded miss"
         );
     }
 
