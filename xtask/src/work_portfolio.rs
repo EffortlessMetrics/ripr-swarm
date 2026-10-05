@@ -62,7 +62,12 @@ pub(crate) const WORK_PORTFOLIO_CLAIM_BOUNDARY: &str = "Read-only work-portfolio
  worktree, claim, spec, campaign or source, and it never fabricates readiness from missing \
  evidence.";
 
-const VOLATILE_IDENTITY_KEYS: [&str; 3] = ["observed_at", "request_id", "captured_at"];
+const VOLATILE_IDENTITY_KEYS: [&str; 4] = [
+    "observed_at",
+    "request_id",
+    "captured_at",
+    "packet_entrypoint",
+];
 
 // ---------------------------------------------------------------------------
 // Captured input DTOs (immutable committed bytes).
@@ -597,6 +602,7 @@ pub(crate) struct WorkSourceObservationV1 {
     pub state: String,
     pub freshness: WorkSourceFreshnessV1,
     pub observed_at: Option<String>,
+    pub request_id: Option<String>,
     pub partial: bool,
     pub note: Option<String>,
 }
@@ -1109,6 +1115,7 @@ fn build_observations(
             state: format!("{:?}", source.state).to_ascii_lowercase(),
             freshness: value,
             observed_at: source.observed_at.clone(),
+            request_id: source.request_id.clone(),
             partial: value != WorkSourceFreshnessV1::Current,
             note: source.note.clone(),
         });
@@ -1151,6 +1158,12 @@ fn classify_candidate(
     pull_requests_fresh: bool,
     current_main: &str,
 ) -> (WorkCandidateKindV1, String) {
+    if open_prs.len() > 1 {
+        return (
+            WorkCandidateKindV1::VerifyCurrentHead,
+            "multiple open PRs are linked to this issue; root resolves which PR is current before any merge, repair or closeout proceeds on it".to_string(),
+        );
+    }
     if let Some(pr) = open_prs.first() {
         if pr.review_state == "changes_requested" || pr.unresolved_review_findings > 0 {
             return (
@@ -1651,6 +1664,29 @@ fn canonical_blockers(values: &[WorkCapturedBlockerV1]) -> Vec<WorkCapturedBlock
     canonical
 }
 
+/// A readiness contribution is only emitted when the captured issue carries
+/// acceptance evidence for the named artifact; an unchecked string never
+/// manufactures accepted readiness.
+fn readiness_for(issue: &WorkCapturedIssueV1) -> Option<WorkReadinessV1> {
+    issue
+        .readiness_source
+        .as_ref()
+        .filter(|source| {
+            issue.contract_state == "accepted"
+                && issue
+                    .accepted_contracts
+                    .iter()
+                    .any(|contract| contract == *source)
+        })
+        .map(|source| WorkReadinessV1 {
+            source: source.clone(),
+            advisory: true,
+            contribution: format!(
+                "readiness contribution sourced from the explicit accepted artifact `{source}`; advisory only and never gate-shaped"
+            ),
+        })
+}
+
 /// The collision edge advertised by a lane must match a member's exact
 /// candidate identity; prefix substrings (issues 91 vs 910) must not leak a
 /// collision across lanes.
@@ -1674,6 +1710,7 @@ fn lane_collision_edge(edges: &[WorkConflictEdgeV1], members: &[u64]) -> Option<
 /// function is pure: it reads the already-loaded DTOs and mutates nothing.
 pub(crate) fn compile_work_portfolio(
     captured: &WorkCapturedDirV1,
+    captured_dir: Option<&str>,
 ) -> Result<WorkPortfolioSnapshotV1, String> {
     let (observations, freshness) = build_observations(&captured.manifest)?;
     let context = WorkCompileContext { freshness };
@@ -2333,13 +2370,7 @@ pub(crate) fn compile_work_portfolio(
             review_ci_cost_class: cost_class(issue.review_ci_cost),
             lane: lane.clone(),
             lane_state,
-            readiness: issue.readiness_source.as_ref().map(|source| WorkReadinessV1 {
-                source: source.clone(),
-                advisory: true,
-                contribution: format!(
-                    "readiness contribution sourced from the explicit accepted artifact `{source}`; advisory only and never gate-shaped"
-                ),
-            }),
+            readiness: readiness_for(issue),
             regression_risks,
             ranking_factors: Vec::new(),
             confidence,
@@ -2349,7 +2380,13 @@ pub(crate) fn compile_work_portfolio(
                 .collect(),
             single_agent_preferred: issue.single_agent_preferred,
             duplicate_family: duplicate_family_by_issue.get(&issue.number).cloned(),
-            packet_entrypoint: format!("cargo xtask work explain --candidate {candidate_id}"),
+            packet_entrypoint: {
+                let mut command = format!("cargo xtask work explain --candidate {candidate_id}");
+                if let Some(dir) = captured_dir {
+                    command.push_str(&format!(" --captured {}", shell_escape_arg(dir)));
+                }
+                command
+            },
         };
         candidate.ranking_factors =
             build_ranking_factors(issue, open_prs.first().copied(), &candidate);
@@ -2622,6 +2659,12 @@ fn confidence_reasons_for(
     if !issue.requirement_refs.is_empty() && !context.fresh(WorkCapturedSourceKindV1::CargoAllow) {
         reasons.push("partial: the cargo-allow graph is not observed; requirement and duplicate-family evidence is weakened".to_string());
     }
+    if !context.fresh(WorkCapturedSourceKindV1::Campaigns) {
+        reasons.push(
+            "partial: the campaign source is not current; portfolio membership may have drifted"
+                .to_string(),
+        );
+    }
     for edge_id in edge_ids {
         if let Some(edge) = edges.iter().find(|edge| edge.id == edge_id)
             && matches!(
@@ -2855,14 +2898,16 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
         "state".to_string(),
         "freshness".to_string(),
         "partial".to_string(),
+        "request id".to_string(),
     ]));
-    body.push_str("\n| --- | --- | --- | --- |\n");
+    body.push_str("\n| --- | --- | --- | --- | --- |\n");
     for observation in &snapshot.source_observations {
         body.push_str(&md_table_row(&[
             observation.source.clone(),
             observation.state.clone(),
             wire_label(&observation.freshness),
             observation.partial.to_string(),
+            observation.request_id.clone().unwrap_or_default(),
         ]));
         body.push('\n');
     }
@@ -3090,8 +3135,15 @@ fn parse_captured_dir(args: &[String], usage: &str) -> Result<(String, usize), S
     Ok((DEFAULT_WORK_CAPTURED_DIR.to_string(), usize::MAX))
 }
 
-fn split_captured_arg(args: &[String], usage: &str) -> Result<(String, Vec<String>), String> {
+fn split_captured_arg(
+    args: &[String],
+    usage: &str,
+) -> Result<(String, Option<String>, Vec<String>), String> {
     let (dir, captured_index) = parse_captured_dir(args, usage)?;
+    // Keep the caller's explicit spelling (when provided) so generated
+    // packet entrypoints and retrieval commands replay against the same
+    // corpus the snapshot was compiled from.
+    let explicit = (captured_index != usize::MAX).then(|| dir.clone());
     let mut rest: Vec<String> = Vec::new();
     for (index, arg) in args.iter().enumerate() {
         if index == captured_index || (captured_index != usize::MAX && index == captured_index + 1)
@@ -3100,7 +3152,7 @@ fn split_captured_arg(args: &[String], usage: &str) -> Result<(String, Vec<Strin
         }
         rest.push(arg.clone());
     }
-    Ok((dir, rest))
+    Ok((dir, explicit, rest))
 }
 
 fn has_json_flag(args: &[String], usage: &str) -> Result<bool, String> {
@@ -3115,7 +3167,10 @@ fn has_json_flag(args: &[String], usage: &str) -> Result<bool, String> {
     Ok(json)
 }
 
-fn load_and_compile(dir: &str) -> Result<WorkPortfolioSnapshotV1, String> {
+fn load_and_compile(
+    dir: &str,
+    captured_dir: Option<&str>,
+) -> Result<WorkPortfolioSnapshotV1, String> {
     // A user-supplied `--captured` directory is cwd-relative (absolute paths
     // honored as-is); only when it does not exist relative to the cwd does
     // it fall back to the workspace root, which keeps the documented default
@@ -3127,7 +3182,7 @@ fn load_and_compile(dir: &str) -> Result<WorkPortfolioSnapshotV1, String> {
         workspace_path(dir)
     };
     let captured = load_work_captured_dir(&root)?;
-    compile_work_portfolio(&captured)
+    compile_work_portfolio(&captured, captured_dir)
 }
 
 /// `cargo xtask work portfolio [--captured <dir>] [--json]` (#1704,
@@ -3137,9 +3192,9 @@ fn load_and_compile(dir: &str) -> Result<WorkPortfolioSnapshotV1, String> {
 /// campaign or source state is touched.
 pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: cargo xtask work portfolio [--captured <dir>] [--json]";
-    let (dir, rest) = split_captured_arg(args, USAGE)?;
+    let (dir, explicit_captured, rest) = split_captured_arg(args, USAGE)?;
     let json = has_json_flag(&rest, USAGE)?;
-    let snapshot = load_and_compile(&dir)?;
+    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
     let json_body = work_portfolio_json(&snapshot)?;
     crate::write_report("work-portfolio.json", &json_body)?;
     crate::write_report("work-portfolio.md", &work_portfolio_markdown(&snapshot))?;
@@ -3157,7 +3212,7 @@ pub(crate) fn work_portfolio_command(args: &[String]) -> Result<(), String> {
 /// classification, ranking or authority.
 pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: cargo xtask work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]";
-    let (dir, rest) = split_captured_arg(args, USAGE)?;
+    let (dir, explicit_captured, rest) = split_captured_arg(args, USAGE)?;
     let mut campaign = None;
     let mut surface = None;
     let mut limit = DEFAULT_CANDIDATE_LIMIT;
@@ -3201,14 +3256,13 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let snapshot = load_and_compile(&dir)?;
-    let captured_explicit = args.iter().any(|arg| arg == "--captured");
+    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_candidates_view(
         &snapshot,
         campaign.as_deref(),
         surface.as_deref(),
         limit,
-        captured_explicit.then_some(dir.as_str()),
+        explicit_captured.as_deref(),
     )?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-candidates.json", &json_body)?;
@@ -3226,7 +3280,7 @@ pub(crate) fn work_candidates_command(args: &[String]) -> Result<(), String> {
 pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str =
         "usage: cargo xtask work explain --candidate <id> [--captured <dir>] [--json]";
-    let (dir, rest) = split_captured_arg(args, USAGE)?;
+    let (dir, explicit_captured, rest) = split_captured_arg(args, USAGE)?;
     let mut candidate = None;
     let mut json = false;
     let mut index = 0;
@@ -3252,7 +3306,7 @@ pub(crate) fn work_explain_command(args: &[String]) -> Result<(), String> {
     let Some(candidate) = candidate else {
         return Err(format!("missing required --candidate <id>\n{USAGE}"));
     };
-    let snapshot = load_and_compile(&dir)?;
+    let snapshot = load_and_compile(&dir, explicit_captured.as_deref())?;
     let view = build_explain_view(&snapshot, &candidate)?;
     let json_body = work_portfolio_json(&view)?;
     crate::write_report("work-explain.json", &json_body)?;
@@ -3362,7 +3416,9 @@ fn digest_matches(recorded: &str, bytes: &[u8]) -> bool {
 pub(crate) fn compile_work_portfolio_corpus(name: &str) -> Result<WorkPortfolioSnapshotV1, String> {
     let root = workspace_path(&format!("fixtures/work_portfolio/{name}"));
     let captured = load_work_captured_dir(&root)?;
-    compile_work_portfolio(&captured)
+    // The committed corpus is the documented default: entrypoints stay bare
+    // so portable identities and cross-variant byte equality hold.
+    compile_work_portfolio(&captured, None)
 }
 
 fn candidate_by_issue(
@@ -4784,6 +4840,196 @@ mod tests {
         }
         if shell_escape_arg("it's") != "'it'\\''s'" {
             return Err("embedded quotes must use the single-quote escape".to_string());
+        }
+        Ok(())
+    }
+
+    /// Multiple open PRs on one issue can never emit an actionable
+    /// merge-ready state from the lowest-numbered PR alone; the root must
+    /// resolve which PR is current first.
+    #[test]
+    fn work_portfolio_multiple_open_prs_never_merge_ready() -> Result<(), String> {
+        let issue = WorkCapturedIssueV1 {
+            number: 7009,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: None,
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: Vec::new(),
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: Vec::new(),
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: None,
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        let make_pr = |number: u64| WorkCapturedPullRequestV1 {
+            number,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            head_branch: format!("feat/synthetic-{number}"),
+            base_branch: "main".to_string(),
+            linked_issues: vec![7009],
+            review_state: "approved".to_string(),
+            unresolved_review_findings: 0,
+            checks_state: "success".to_string(),
+            registered_claim: None,
+            worktree_path: None,
+        };
+        let first = make_pr(7901);
+        let second = make_pr(7902);
+        let (kind, _transition) = classify_candidate(
+            &issue,
+            &[&first, &second],
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+            "abcdef0123456789abcdef0123456789abcdef01",
+        );
+        if kind == WorkCandidateKindV1::MergeReady || kind == WorkCandidateKindV1::RepairReview {
+            return Err(
+                "multiple open PRs must demote to a non-actionable state, never merge-ready"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// A stale campaign source lowers every candidate's confidence because
+    /// portfolio membership itself derives from the campaign records.
+    #[test]
+    fn work_portfolio_stale_campaign_source_lowers_confidence() -> Result<(), String> {
+        let mut freshness = BTreeMap::new();
+        for kind in WorkCapturedSourceKindV1::all() {
+            freshness.insert(kind, WorkSourceFreshnessV1::Current);
+        }
+        freshness.insert(WorkCapturedSourceKindV1::Campaigns, WorkSourceFreshnessV1::Stale);
+        let context = WorkCompileContext { freshness };
+        let issue = WorkCapturedIssueV1 {
+            number: 7010,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: None,
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: Vec::new(),
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: Vec::new(),
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: None,
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        let no_claims: Vec<&WorkCapturedClaimV1> = Vec::new();
+        let reasons = confidence_reasons_for(&context, &issue, None, &no_claims, Vec::new(), &[]);
+        if !reasons
+            .iter()
+            .any(|reason| reason.contains("campaign source is not current"))
+        {
+            return Err(format!(
+                "a stale campaign source must lower confidence: {reasons:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A readiness contribution requires captured acceptance evidence: the
+    /// contract must be accepted and the named artifact must appear in the
+    /// issue's accepted contracts, so an unchecked string never manufactures
+    /// accepted readiness.
+    #[test]
+    fn work_portfolio_readiness_requires_captured_acceptance() -> Result<(), String> {
+        let mut issue = WorkCapturedIssueV1 {
+            number: 7011,
+            title: "synthetic".to_string(),
+            state: "open".to_string(),
+            lifecycle_disposition: None,
+            campaigns: vec!["campaign-synthetic".to_string()],
+            blocked_by: Vec::new(),
+            requirement_refs: Vec::new(),
+            semantic_paths: Vec::new(),
+            conflict_resources: Vec::new(),
+            accepted_contracts: vec!["RIPR-SPEC-0999".to_string()],
+            contract_state: "accepted".to_string(),
+            single_agent_preferred: false,
+            honesty_risk: None,
+            proof_cost: None,
+            review_ci_cost: None,
+            readiness_source: Some("RIPR-SPEC-0999".to_string()),
+            regression_risks: Vec::new(),
+            lane: None,
+        };
+        if readiness_for(&issue).is_none() {
+            return Err("accepted evidence must emit the readiness contribution".to_string());
+        }
+        issue.contract_state = "draft".to_string();
+        if readiness_for(&issue).is_some() {
+            return Err("a draft contract must not emit readiness".to_string());
+        }
+        issue.contract_state = "accepted".to_string();
+        issue.readiness_source = Some("RIPR-SPEC-5000".to_string());
+        if readiness_for(&issue).is_some() {
+            return Err("readiness for an unaccepted artifact must fail closed".to_string());
+        }
+        Ok(())
+    }
+
+    /// Rendered source observations retain the captured request id; the
+    /// portable identity digest strips it as volatile.
+    #[test]
+    fn work_portfolio_observations_retain_request_ids() -> Result<(), String> {
+        let snapshot = committed()?;
+        if snapshot
+            .source_observations
+            .iter()
+            .any(|observation| observation.request_id.is_none())
+        {
+            return Err("every captured observation must retain its request id".to_string());
+        }
+        Ok(())
+    }
+
+    /// Packet entrypoints produced from an explicit corpus carry that corpus
+    /// forward so the advertised command explains the candidate just
+    /// rendered; default-corpus entrypoints stay bare and the volatile path
+    /// never enters the portable identity.
+    #[test]
+    fn work_portfolio_packet_entrypoint_preserves_captured_corpus() -> Result<(), String> {
+        let root = workspace_path("fixtures/work_portfolio/corpus");
+        let captured = load_work_captured_dir(&root)?;
+        let default_snapshot = compile_work_portfolio(&captured, None)?;
+        let explicit_snapshot =
+            compile_work_portfolio(&captured, Some("fixtures/work_portfolio/corpus"))?;
+        let Some(candidate) = explicit_snapshot.candidates.first() else {
+            return Err("the corpus must produce candidates".to_string());
+        };
+        let expected = format!(
+            "cargo xtask work explain --candidate {} --captured fixtures/work_portfolio/corpus",
+            candidate.candidate_id
+        );
+        if candidate.packet_entrypoint != expected {
+            return Err(format!(
+                "entrypoint must preserve the explicit corpus: {}",
+                candidate.packet_entrypoint
+            ));
+        }
+        if default_snapshot.portable_identity != explicit_snapshot.portable_identity {
+            return Err("the volatile captured path must stay out of portable identity".to_string());
         }
         Ok(())
     }

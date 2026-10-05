@@ -12494,6 +12494,11 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_memberships_derive_from_campaign_records",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_collision_subjects_match_exact_issue_identity",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_retrieval_commands_escape_arguments",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_multiple_open_prs_never_merge_ready",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_stale_campaign_source_lowers_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_readiness_requires_captured_acceptance",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_observations_retain_request_ids",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_packet_entrypoint_preserves_captured_corpus",
 ]
 fixtures = [
   "fixtures/work_portfolio",
