@@ -1120,7 +1120,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 10,
-            body,
+            body: body.into(),
             calls: calls
                 .into_iter()
                 .map(|c| CallFact {
@@ -1151,7 +1151,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line,
             end_line: start_line + 4,
-            body: String::new(),
+            body: String::new().into(),
             calls: calls
                 .into_iter()
                 .map(|c| CallFact {
@@ -1193,7 +1193,7 @@ mod tests {
                 module_declarations: Vec::new(),
                 unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
-                source,
+                source: source.into(),
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -1332,7 +1332,7 @@ mod tests {
     }
 
     fn with_body(mut test: TestFact, body: &str) -> TestFact {
-        test.body = body.to_string();
+        test.body = body.into();
         test
     }
 
@@ -1704,7 +1704,7 @@ mod tests {
             .to_string();
         let mut index = index_with_source(vec![outer], Vec::new(), source);
         let test = TestFact {
-            body: "fn test_macro_entry() {\n    beta_inner!();\n}".to_string(),
+            body: "fn test_macro_entry() {\n    beta_inner!();\n}".into(),
             ..make_test_at("test_file_local", "tests/file_local.rs", 7, vec!["outer"])
         };
         let path = PathBuf::from("src/lib.rs");
@@ -1810,7 +1810,7 @@ mod tests {
         let source = "macro_rules! call_inner {\n    ($a:expr, $b:expr) => { inner($a, $b) };\n}"
             .to_string();
         let test = TestFact {
-            body: "fn test_macro_entry() {\n    call_inner!(10, 3);\n}".to_string(),
+            body: "fn test_macro_entry() {\n    call_inner!(10, 3);\n}".into(),
             ..make_test("test_macro_entry", vec![])
         };
         let index = index_with_source(Vec::new(), vec![test], source);
