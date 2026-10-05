@@ -231,10 +231,10 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
     // miss; that agrees with "no path". A calling test does not.
     no_path["related_tests"] = json!([
         {"name": "same_file", "relation_reason": "same_test_file", "miss": "no_call_path"},
-        {"name": "named", "relation_reason": "owner_named_test", "miss": "no_call_path"},
+        {"name": "seam", "relation_reason": "seam_callee_call", "miss": "no_call_path"},
     ]);
     assert!(finding_contradictions(&no_path).is_empty());
-    no_path["related_tests"][1]["relation_reason"] = json!("helper_owner_call");
+    no_path["related_tests"][1]["relation_reason"] = json!("owner_named_test");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]

@@ -1,8 +1,8 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons,
+    ensure_unknown_stop_reason, exact_error_variant, is_proximity_only, missing_evidence,
+    recommended_next_step, stop_reasons,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -183,13 +183,15 @@ fn annotate_related_test_misses(
         .map(|test| strength_rank(&test.oracle_strength))
         .min();
     if matches!(class, ExposureClass::NoStaticPath) {
-        // #6580: a test linked only by file, module, or name never calls the
-        // owner, so that is why it misses. An assertion-level reason `reveal`
-        // recorded first (`assertion_not_credited`) would point the reader at
-        // assertion admission instead of the missing call.
+        // #6580: reach is `No` only when every owner-anchored row is
+        // proximity-only and seam-callee rows are set aside (`reach_evidence`),
+        // so such a row never calls the owner and that is why it misses. An
+        // assertion-level reason `reveal` recorded first
+        // (`assertion_not_credited`) would point the reader at assertion
+        // admission instead of the missing call.
         for test in related_tests
             .iter_mut()
-            .filter(|test| !test.relation_reason.is_some_and(is_call_relation))
+            .filter(|test| test.relation_reason.is_none_or(reaches_nothing))
         {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
@@ -227,17 +229,10 @@ fn annotate_related_test_misses(
     }
 }
 
-/// Relations established by a call from the test to the owner, its helper,
-/// its seam callee, or a followed re-export. Every other relation is
-/// proximity or naming only.
-fn is_call_relation(reason: RelationReason) -> bool {
-    matches!(
-        reason,
-        RelationReason::DirectOwnerCall
-            | RelationReason::HelperOwnerCall
-            | RelationReason::SeamCalleeCall
-            | RelationReason::ReExportChainFollowed
-    )
+/// Relations `reach_evidence` does not count as reaching the owner: the
+/// proximity-only links, and a seam-callee call, which it sets aside.
+fn reaches_nothing(reason: RelationReason) -> bool {
+    is_proximity_only(reason) || reason == RelationReason::SeamCalleeCall
 }
 
 /// Strongest first.
@@ -549,8 +544,18 @@ mod tests {
                 Some(crate::domain::RelatedTestMiss::NoAssertion),
             ),
             row(
+                "seam_callee_refused",
+                RelationReason::SeamCalleeCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
                 "direct_call_refused",
                 RelationReason::DirectOwnerCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "owner_named_refused",
+                RelationReason::OwnerNamedTest,
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
             ),
         ];
@@ -566,6 +571,8 @@ mod tests {
             vec![
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
             ]
         );
