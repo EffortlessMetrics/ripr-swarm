@@ -61,6 +61,9 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Agent receipt recovery commands preserve native Unix roots and relative or
+  absolute workflow verify output paths when pasted from another directory.
+  Custom missing verify inputs still emit no unrelated producer hint (#6684).
 - Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
   JSON through the same product importer as `ripr calibrate cargo-mutants`.
   A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
