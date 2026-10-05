@@ -135,6 +135,16 @@ developer who disagreed had to re-derive the analysis.
   a direct, reachable, strong row without sink alignment is unconfirmed. These
   controls consume frozen packets (#5510); whether the live perl-lsp emitter
   produces complete, unblocked packets is tracked by #3216 and #3223.
+- `crates/ripr/src/analysis/language/perl/tests.rs` (#5510 section) — the
+  packet-backed matrix: advisory, deferred, weak, missing and limited rows keep
+  no miss; the reason follows relation, test and oracle IDs under reordered
+  packet arrays; and the rule writes no field but `miss`.
+- `crates/ripr/src/output/related_test_miss.rs::tests`,
+  `crates/ripr/src/output/human.rs::tests`, `crates/ripr/src/lsp/tests.rs`,
+  `crates/ripr/src/mcp/gaps.rs::tests` — the same packet-backed row, token and
+  shared sentence in check JSON, the context packet, human-full, `ripr
+  explain`, the human digest, LSP hover, related information and diagnostic
+  data, and MCP gap evidence; no projected decision reads `miss`.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.

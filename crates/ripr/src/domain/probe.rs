@@ -546,8 +546,8 @@ impl SourceCurrentness {
     /// Delta-only resolution for producers that seed probes from head-side
     /// lines and never produce removed-only probes (#3281). A probe whose
     /// expression is candidate-side code (`after` present) is
-    /// `CandidateCurrent`; a producer with no delta evidence at all (the
-    /// Perl fact-packet path) stays the explicit unknown. Removed-only
+    /// `CandidateCurrent`; a producer with no delta evidence at all stays
+    /// the explicit unknown. Removed-only
     /// probes need the diff-level resolver in
     /// `analysis::probes` (movement evidence), not this helper.
     pub fn from_probe_delta(before: Option<&str>, after: Option<&str>) -> Self {
@@ -624,8 +624,9 @@ impl Finding {
     /// agent action derived from a finding must flow through this
     /// predicate. A finding qualifies only when its producer proved the
     /// source is candidate-current; `base_deleted` and `moved_or_renamed`
-    /// are base-side evidence, and `unresolved_subject` (the Perl
-    /// fact-packet path today, and pre-#3280 artifacts) is not established
+    /// are base-side evidence, and `unresolved_subject` (a Perl change the
+    /// diff does not add a line to or whose source is not on disk, and
+    /// pre-#3280 artifacts) is not established
     /// current. Classifications, severity, and repair readiness never
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {

@@ -90,6 +90,40 @@ pub(crate) enum RepairAttemptState {
     Failed,
 }
 
+impl RepairAttemptState {
+    /// The serialized spelling of the state, for surfaces that must use the
+    /// same vocabulary the manifest serializes (the #6033 after-phase
+    /// failure envelope). One owner beside the enum so the serde rename and
+    /// this label cannot drift.
+    pub(crate) fn as_label(&self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::AwaitingEdit => "awaiting_edit",
+            Self::ReadyToFinish => "ready_to_finish",
+            Self::Stale => "stale",
+            Self::Incomparable => "incomparable",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// The durable state a finished attempt carries for a given finish outcome.
+/// One owner beside the finish transition, so the manifest write, `agent
+/// status`, and the #6033 after-phase failure envelope cannot drift.
+pub(crate) fn repair_attempt_state_for_finish(after: &RepairAttemptAfter) -> RepairAttemptState {
+    if after.current {
+        match after.verdict.status {
+            crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
+            crate::edit_cage::EditCageVerdictStatus::Violated => RepairAttemptState::Failed,
+            crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+                RepairAttemptState::Incomparable
+            }
+        }
+    } else {
+        RepairAttemptState::Stale
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptArtifact {
@@ -931,8 +965,12 @@ pub(crate) fn begin_repair_attempt_with_identity(
             "prepared repair attempt identity does not match its root and seam".to_string(),
         );
     }
-    let repository_head = crate::agent::artifact::current_git_head(canonical_root)
+    // Head identity (not just HEAD) pins the publication: the finalize
+    // path re-verifies after staging, and an A-B-A swap inside that window
+    // is undetectable by commit comparison alone (#6822).
+    let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+    let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
     // directory is reserved. On mismatch nothing exists to clean up.
@@ -958,7 +996,7 @@ pub(crate) fn begin_repair_attempt_with_identity(
         AttemptPublication {
             root_argument,
             seam_id,
-            repository_head,
+            repository_identity,
             expected_repository_head,
             created_unix_ms,
             repair_attempt_id,
@@ -971,7 +1009,9 @@ pub(crate) fn begin_repair_attempt_with_identity(
 struct AttemptPublication<'a> {
     root_argument: &'a Path,
     seam_id: &'a str,
-    repository_head: String,
+    /// The pre-staging pin the finalize path re-verifies: an identity, not
+    /// a commit, so an A-B-A swap inside the staging window refuses (#6822).
+    repository_identity: crate::agent::artifact::HeadIdentity,
     /// The caller's verified head pin, when the publication is trust-bound.
     /// Re-checked immediately before the durable manifest write, so the
     /// finalize path verifies rather than trusting the earlier read.
@@ -1001,25 +1041,36 @@ fn complete_repair_attempt(
                 publication.next_command_suffix.unwrap_or_default()
             );
             // Finalize-path head re-verification: the earlier pre-publication
-            // gate read HEAD before the artifacts were staged; the durable
-            // manifest is the authority, so HEAD is re-read immediately
-            // before it is written and any move in the window aborts with the
-            // typed refusal instead of publishing a mismatched attempt.
-            let final_head = crate::agent::artifact::current_git_head(canonical_root)
-                .map_err(|error| {
-                    format!("repair attempt finalize head verification failed: {error}")
-                })?;
+            // gate pinned the head identity before the artifacts were staged;
+            // the durable manifest is the authority, so the identity is
+            // re-read immediately before it is written and any move in the
+            // window aborts with the typed refusal instead of publishing a
+            // mismatched attempt. Identity comparison (not just HEAD) keeps
+            // an A-B-A swap inside the window from publishing (#6822).
+            let final_identity =
+                crate::agent::artifact::current_git_head_identity(canonical_root).map_err(
+                    |error| {
+                        format!("repair attempt finalize head verification failed: {error}")
+                    },
+                )?;
             if let Some(expected) = publication.expected_repository_head
-                && expected != final_head
+                && expected != final_identity.head
             {
                 return Err(format!(
-                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh binding"
+                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh binding",
+                    final_identity.head
                 ));
             }
-            if final_head != publication.repository_head {
+            if final_identity != publication.repository_identity {
+                let pinned = publication.repository_identity.head.clone();
+                if final_identity.head == pinned {
+                    return Err(format!(
+                        "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` and the repository HEAD returned to the same commit after an intervening move; re-run the before phase to prepare a fresh attempt"
+                    ));
+                }
                 return Err(format!(
-                    "repository HEAD moved during attempt publication; the attempt pins head `{}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh attempt",
-                    publication.repository_head
+                    "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh attempt",
+                    final_identity.head
                 ));
             }
             let manifest = RepairAttemptManifest {
@@ -1028,7 +1079,7 @@ fn complete_repair_attempt(
                 repair_attempt_id: publication.repair_attempt_id,
                 state: RepairAttemptState::AwaitingEdit,
                 root: root_path_display(canonical_root),
-                repository_head: publication.repository_head,
+                repository_head: publication.repository_identity.head.clone(),
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
                 seam_id: publication.seam_id.to_string(),
                 created_unix_ms: publication.created_unix_ms,
@@ -2129,6 +2180,31 @@ pub(crate) fn finish_repair_attempt(
     finish_repair_attempt_from(root, None, attempt_id, packet_path, movement)
 }
 
+/// After-phase currentness for an evaluation window bracketed by
+/// `before` (#5930): the window is current only when HEAD did not move
+/// during evaluation (identity comparison, so an A-B-A swap still shows)
+/// and the bracketing head is admitted against the manifest head. It
+/// returns the verdict with the head to record. `finish_repair_attempt_from`
+/// is the only caller; the signature keeps the decision testable without
+/// injecting movement mid-evaluation.
+fn after_phase_window_is_current(
+    root: &Path,
+    before: &crate::agent::artifact::HeadIdentity,
+    manifest_head: &str,
+    movement: HeadMovement,
+) -> Result<(bool, String), String> {
+    let current_head = before.head.clone();
+    let current = *before == crate::agent::artifact::current_git_head_identity(root)?
+        && (current_head == manifest_head
+            || (movement == HeadMovement::AdmitDescendantCommits
+                && crate::agent::artifact::git_merge_base_is_ancestor(
+                    root,
+                    manifest_head,
+                    &current_head,
+                )?));
+    Ok((current, current_head))
+}
+
 pub(crate) fn finish_repair_attempt_from(
     root: &Path,
     store: Option<&Path>,
@@ -2187,17 +2263,14 @@ pub(crate) fn finish_repair_attempt_from(
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
-    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    // Head identity (not just HEAD) brackets the evaluation: an A-B-A
+    // swap inside the window is undetectable by commit comparison alone,
+    // so the reflog fingerprint makes `current` robust to it (#5930).
+    let before = crate::agent::artifact::current_git_head_identity(&root)?;
     let (delta, mut verdict) =
         evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
-    let current = current_head == crate::agent::artifact::current_git_head(&root)?
-        && (current_head == manifest.repository_head
-            || (movement == HeadMovement::AdmitDescendantCommits
-                && crate::agent::artifact::git_merge_base_is_ancestor(
-                    &root,
-                    &manifest.repository_head,
-                    &current_head,
-                )?));
+    let (current, current_head) =
+        after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -2215,17 +2288,7 @@ pub(crate) fn finish_repair_attempt_from(
     // This after phase reached the durable finish, so an earlier refusal no
     // longer describes the attempt's last after phase.
     manifest.last_after_refusal = None;
-    manifest.state = if after.current {
-        match after.verdict.status {
-            crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
-            crate::edit_cage::EditCageVerdictStatus::Violated => RepairAttemptState::Failed,
-            crate::edit_cage::EditCageVerdictStatus::Incomparable => {
-                RepairAttemptState::Incomparable
-            }
-        }
-    } else {
-        RepairAttemptState::Stale
-    };
+    manifest.state = repair_attempt_state_for_finish(&after);
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize completed repair attempt failed: {error}"))?;
     bytes.push(b'\n');
@@ -4113,7 +4176,7 @@ mod tests {
         // so the occupied manifest path is what actually forces the publish
         // failure.
         let root = test_repo_root("publish")?;
-        let head = crate::agent::artifact::current_git_head(&root)?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let store = prepared_store(&root)?;
         let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
@@ -4131,7 +4194,7 @@ mod tests {
             AttemptPublication {
                 root_argument: &root,
                 seam_id: "seam:sample",
-                repository_head: head,
+                repository_identity: pinned,
                 expected_repository_head: None,
                 created_unix_ms: 1,
                 repair_attempt_id: attempt_id,
@@ -4155,6 +4218,79 @@ mod tests {
                 "failed manifest write left the attempt directory and staged artifacts behind"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// The begin path re-verifies the pinned head identity after staging
+    /// (#6822): a pin that predates an A-B-A swap refuses publication even
+    /// though the commit comparison alone would pass. The stale pin is
+    /// exactly what the pre-staging read passes after a mid-window swap;
+    /// movement cannot be injected mid-staging deterministically, so the
+    /// test drives the real `complete_repair_attempt` (real staging, real
+    /// finalize re-read) with that stale pin.
+    #[test]
+    fn begin_finalize_refuses_a_stale_pin_after_an_a_b_a_swap() -> Result<(), String> {
+        let root = test_repo_root("begin-aba")?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
+        let head = pinned.head.clone();
+        // A -> B -> A between the pin read and the finalize re-read.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234568")?;
+        let store = prepared_store(&root)?;
+        let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+        let result = complete_repair_attempt(
+            &store,
+            &attempt_directory,
+            AttemptPublication {
+                root_argument: &root,
+                seam_id: "seam:sample",
+                repository_identity: pinned,
+                expected_repository_head: None,
+                created_unix_ms: 1,
+                repair_attempt_id: attempt_id,
+                sources: &[BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &source,
+                }],
+                next_command_suffix: None,
+            },
+        );
+        let attempt_remaining = attempt_directory.exists();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        match result {
+            Err(error) if error.contains("moved during attempt publication") => {}
+            Err(error) => {
+                return Err(format!(
+                    "stale pin refused with unexpected error: {error:?}"
+                ));
+            }
+            Ok(_) => {
+                return Err(
+                    "complete_repair_attempt published over a stale pin after an A-B-A swap"
+                        .to_string(),
+                );
+            }
+        }
+        if attempt_remaining {
+            return Err("a refused publish left its attempt directory behind".to_string());
         }
         Ok(())
     }
@@ -5140,6 +5276,62 @@ mod tests {
             AfterPhaseHeadAdmission::RefusedDiverged { current_head }
                 if current_head == rewritten => {}
             other => return Err(format!("rewritten history must refuse: {other:?}")),
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// The after-phase window decision observes the production currentness
+    /// predicate `finish_repair_attempt_from` calls, not just helper
+    /// equality (#5930, #6827 review): a `before` identity that predates an
+    /// A-B-A swap decides `current=false` even though the commit comparison
+    /// alone would pass. Movement cannot be injected mid-evaluation
+    /// deterministically, so the test brackets the decision with a stale
+    /// `before`, which is exactly what the call site passes after a
+    /// mid-window swap.
+    #[test]
+    fn after_phase_window_reports_an_a_b_a_swap_as_not_current() -> Result<(), String> {
+        let root = test_repo_root("window-aba")?;
+        let head = crate::agent::artifact::current_git_head(&root)?;
+        let before = crate::agent::artifact::current_git_head_identity(&root)?;
+        let (current, recorded) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if !current {
+            return Err("a quiet window at the manifest head must be current".to_string());
+        }
+        if recorded != head {
+            return Err(format!(
+                "the window must record the bracketing head, got {recorded}"
+            ));
+        }
+        // A -> B -> A between the bracketing reads.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let (moved, _) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if moved {
+            return Err("an A-B-A swap inside the window must not be current".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;

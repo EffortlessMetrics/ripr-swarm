@@ -1,10 +1,11 @@
 use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, activation_evidence_with_value_facts,
-    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression, same_test_pairing_missing_summary,
+    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
+    activation_evidence_with_value_facts, callee_is_unique, classify, confidence_score,
+    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
+    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -154,6 +155,10 @@ impl ClassifiedProbeEvidence {
                 )
             });
         let package_defeats_by_file = FileDefeatMemo::default();
+        // Built lazily: only a match arm beside an owner-calling test asks
+        // whether a same-file test may run the owner (#6297).
+        let proximity_reach = TransitiveReachIndex::new(context.index);
+        let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -217,6 +222,13 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                proximity_may_reach_owner: &|test| {
+                    context.owner_fn.is_none_or(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_may_reach(test)
+                    })
+                },
             },
             arm_selector.as_ref(),
         );
@@ -482,7 +494,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 9,
-            body: "match expect_response(&input, \"ready\") { .. }".to_string(),
+            body: "match expect_response(&input, \"ready\") { .. }".into(),
             calls: Vec::new(),
             assertions: vec![guarded_oracle()],
             literals: Vec::new(),
@@ -499,7 +511,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 4,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -539,7 +551,7 @@ mod tests {
             file: PathBuf::from("crates/alpha/src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -691,7 +703,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -738,7 +750,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -789,7 +801,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 6,
-            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".to_string(),
+            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),

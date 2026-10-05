@@ -170,19 +170,25 @@ issue sanctions is the typed static limitation
   `try_parse_summary` seam `return Err(ParseSummaryError::MalformedSource);`
   classifies `exposed` with `exact_error_variant` / `strong` — credited only
   through the pre-existing variant-bound path, with no wrapper heuristics.
-- Wrapper `map_err(Into::into)` seam: classifies `weakly_exposed`, never
-  `exposed`; lexical confirmation is refused by construction (every overlap
-  between the seam expression and witness text is token coincidence), and the
-  finding carries `static_limit_kind: wrapper_error_binding_unresolved` with
-  limitation evidence naming the unresolved `Into`/`From`-through-`Box` edge.
-  The downcast witness and the typed sibling test are still listed as related,
-  but the emitted guidance no longer prescribes an assertion the suite may
-  already contain.
-- Fail-closed companions in the same input stay `weakly_exposed` trivially: a
+- Wrapper `map_err(Into::into)` seams with asserting observers classify
+  `weakly_exposed`, never `exposed`; lexical confirmation is refused by
+  construction (every overlap between the seam expression and witness text is
+  token coincidence), and the finding carries
+  `static_limit_kind: wrapper_error_binding_unresolved` with limitation
+  evidence naming the unresolved `Into`/`From`-through-`Box` edge. The downcast
+  witness and the typed sibling test are still listed as related, but the
+  emitted guidance no longer prescribes an assertion the suite may already
+  contain.
+- Asserting fail-closed companions in the same input stay `weakly_exposed`: a
   wrong-sibling downcast witness, an unrelated-enum downcast witness, a broad
-  `is_err()`-only observer, a stringified conversion
-  (`map_err(|error| error.to_string().into())`), and an ignored `matches!`
-  result.
+  `is_err()`-only observer, and a stringified conversion
+  (`map_err(|error| error.to_string().into())`).
+- The ignored `matches!` result in `theme_summary` is not an asserting observer.
+  Its wrapper `error_path` and `return_value` findings classify
+  `reachable_unrevealed`, retain a `no_assertion` consumer and `unknown` / `none`
+  oracle metadata, and recommend adding an assertion. Secondary missing text
+  may retain the unresolved wrapper-binding context while the optional
+  `static_limit_kind` and `static_limitation` fields are absent.
 - Companion fixtures: `fixtures/error_variant_boxed_wrapper_fail_closed`
   (all-weak source for the wrong-sibling and unrelated-enum shapes) and
   `fixtures/error_variant_wrapper_{callee_only_pin,foreign_pin,
