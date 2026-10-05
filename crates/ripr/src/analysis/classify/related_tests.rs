@@ -6093,4 +6093,128 @@ quickcheck! {
         );
         Ok(())
     }
+
+    /// #1924 measurement: string-churn profile of the classify relate path.
+    ///
+    /// Builds a high-cardinality fixture (200 tests sharing long path
+    /// prefixes and module names, 200 probes) and drives the full relate
+    /// path, reporting string-byte volumes (total vs deduplicated) and
+    /// wall time. This is the profile the interning gate requires: it
+    /// pins the duplication ratio as a fact about the code and fixture.
+    /// The go/no-go judgment lives on #1924 with the measured numbers;
+    /// this test asserts measurement validity (completion, exact counts,
+    /// consistency), not a gate threshold.
+    #[test]
+    fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
+        use std::collections::HashSet;
+        use std::time::Instant;
+
+        const GROUPS: usize = 20;
+        const PER_GROUP: usize = 10;
+        const COUNT: usize = GROUPS * PER_GROUP;
+
+        // Owned generator inputs: the volume source of truth.
+        let mut files: Vec<String> = Vec::with_capacity(COUNT);
+        let mut names: Vec<String> = Vec::with_capacity(COUNT);
+        let mut bodies: Vec<String> = Vec::with_capacity(COUNT);
+        let mut summaries = Vec::with_capacity(COUNT);
+        for g in 0..GROUPS {
+            for t in 0..PER_GROUP {
+                let i = g * PER_GROUP + t;
+                let file = format!("crates/ripr/tests/integration/area_{g:02}/checks_{g:02}.rs");
+                let name = format!("check_{i:03}_behaves");
+                let owner = format!("verify_{i:03}");
+                let body = format!("assert!({owner}(input));");
+                files.push(file.clone());
+                names.push(name.clone());
+                bodies.push(body.clone());
+                let mut summary = test(&file, &name, &body);
+                summary.calls = vec![CallFact {
+                    line: 1,
+                    name: owner,
+                    text: body,
+                }];
+                summaries.push(summary);
+            }
+        }
+        let index_built = Instant::now();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: summaries,
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let index_elapsed = index_built.elapsed();
+
+        // Relate every probe against its own owner; time the whole path.
+        // Also count indexed candidate evaluations: each evaluation runs
+        // the per-candidate string matching (lowering, normalization,
+        // substring checks) that interning would have to beat.
+        let started = Instant::now();
+        let mut related_own = 0usize;
+        let mut candidate_evaluations = 0usize;
+        for (i, expected) in names.iter().enumerate() {
+            let owner_name = format!("verify_{i:03}");
+            let owner = function("src/owners.rs", &owner_name);
+            let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+            candidate_evaluations += candidate_index
+                .candidate_indices(&probe, Some(&owner), None, None)
+                .len();
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+            if related.iter().any(|(test, _)| test.name == *expected) {
+                related_own += 1;
+            }
+        }
+        let elapsed = started.elapsed();
+
+        // Volumes from the generator inputs (what summaries retain).
+        let mut total_bytes: usize = 0;
+        let mut unique: HashSet<&str> = HashSet::new();
+        for part in files.iter().chain(names.iter()).chain(bodies.iter()) {
+            total_bytes += part.len();
+            unique.insert(part.as_str());
+        }
+        let unique_bytes: usize = unique.iter().map(|s| s.len()).sum();
+        let unique_files: HashSet<&str> = files.iter().map(|file| file.as_str()).collect();
+
+        if related_own != COUNT {
+            return Err(format!(
+                "every probe must relate its own test, got {related_own}/{COUNT}"
+            ));
+        }
+        if unique_files.len() != GROUPS {
+            return Err(format!(
+                "fixture must span exactly {GROUPS} files, got {}",
+                unique_files.len()
+            ));
+        }
+        if unique_bytes > total_bytes || total_bytes == 0 {
+            return Err(format!(
+                "inconsistent volumes: unique {unique_bytes} total {total_bytes}"
+            ));
+        }
+        if candidate_evaluations == 0 {
+            return Err("candidate index must select candidates".to_string());
+        }
+        // The trigram index must narrow matching to ~O(matches per probe),
+        // not the full P×T scan: on this fixture each probe matches its own
+        // test, so anything far above one evaluation per probe means the
+        // narrowing regressed (and the #1924 interning premise would need a
+        // re-measurement, since per-candidate string work scales with it).
+        if candidate_evaluations > COUNT * 2 {
+            return Err(format!(
+                "candidate index must narrow matching, got {candidate_evaluations} evaluations for {COUNT} probes"
+            ));
+        }
+        eprintln!(
+            "ripr-churn-profile tests={COUNT} probes={COUNT} full_scan_opportunities={} \
+             indexed_candidate_evaluations={candidate_evaluations} \
+             string_total_bytes={total_bytes} string_unique_bytes={unique_bytes} \
+             duplication_ratio={:.2} index_build_ms={} relate_wall_ms={}",
+            COUNT * COUNT,
+            total_bytes as f64 / unique_bytes as f64,
+            index_elapsed.as_millis(),
+            elapsed.as_millis()
+        );
+        Ok(())
+    }
 }
