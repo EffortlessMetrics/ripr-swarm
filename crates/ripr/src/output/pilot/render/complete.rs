@@ -13,7 +13,7 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
 };
-use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
+use crate::output::pilot::ranking::{actionable_in_owner, actionable_total, top_actionable_seams};
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
     PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -229,7 +229,7 @@ pub(crate) fn render_pilot_summary_md(
         } else {
             out.push_str("## Ranked Seams\n\n");
             out.push_str(
-                "None of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand.\n\n",
+                "None of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.\n\n",
             );
         }
         for (idx, entry) in top.iter().enumerate() {
@@ -244,6 +244,22 @@ pub(crate) fn render_pilot_summary_md(
                 entry.seam.kind().as_str()
             ));
             out.push_str(&format!("   - Owner: `{}`\n", entry.seam.owner()));
+            // Ranking spreads the list across owners (#5770); say once, on
+            // the owner's first pick, what else it stands for, so the owner's
+            // other seams stay visible.
+            let same_owner = |shown: &&ClassifiedSeam| -> bool {
+                shown.seam.file() == entry.seam.file() && shown.seam.owner() == entry.seam.owner()
+            };
+            let first_of_owner = top.iter().position(same_owner) == Some(idx);
+            let unlisted = actionable_in_owner(classified, entry)
+                .saturating_sub(top.iter().filter(|shown| same_owner(shown)).count());
+            if first_of_owner && unlisted > 0 {
+                out.push_str(&format!(
+                    "   - Also in this function: {} more actionable {} not listed here\n",
+                    unlisted,
+                    if unlisted == 1 { "seam" } else { "seams" }
+                ));
+            }
             out.push_str(&format!("   - Why: {}\n", why_line(entry)));
             out.push_str(&format!(
                 "   - Related test present: {}\n",

@@ -8,7 +8,7 @@ use crate::agent::loop_commands::{
     agent_receipt_command, agent_review_summary_command, agent_review_summary_markdown_command,
     agent_status_command, agent_status_markdown_command, agent_verify_command,
     anchored_redirect_target, bound_root, check_analysis_outcome_command,
-    check_repo_exposure_command, display_path, shell_arg,
+    check_repo_exposure_command, display_path, root_path_display, shell_arg,
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
@@ -297,9 +297,9 @@ pub(crate) fn build_agent_status_report_from(
     store: Option<&Path>,
 ) -> AgentStatusReport {
     let root_display = display_path(root_argument);
-    // #3999: every next command binds the selected root once, here; the
-    // report's `root` field keeps the invocation spelling.
-    let command_root = bound_root(&root_display);
+    // #3999/#6313: bind command identity from the native root before rendering;
+    // the report's `root` field keeps its existing display presentation.
+    let command_root = bound_root(&root_path_display(root_argument));
     keep_follow_up_templates_reachable(&command_root);
     let artifacts = ARTIFACTS
         .iter()
@@ -1853,7 +1853,7 @@ pub(crate) fn selected_attempt_status_reading(
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
-    let command_root = bound_root(&display_path(root_argument));
+    let command_root = bound_root(&root_path_display(root_argument));
     let workflow_receipt = read_workflow_receipt(root);
     let view = status_repair_attempt(
         root,
@@ -2583,7 +2583,7 @@ fn command_for_missing_artifact(
     seam: Option<&AgentStatusSeam>,
     artifact: &AgentStatusArtifact,
 ) -> String {
-    let root = bound_root(&display_path(root_argument));
+    let root = bound_root(&root_path_display(root_argument));
     let seam_id = seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("<seam-id>");
