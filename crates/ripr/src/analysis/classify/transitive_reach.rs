@@ -405,6 +405,31 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
+    /// Whether `test` may run a function named `owner_name`, by name only
+    /// (#6297). It may when it calls the owner, calls a production function
+    /// that reaches the owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a
+    /// lower-case name with no indexed function: a std or trait method such
+    /// as `parse` or `to_string` can dispatch into the owner unseen. Only
+    /// constructors and indexed functions with no name path to the owner
+    /// rule it out. Macro bodies are the caller's concern.
+    pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact, owner_name: &str) -> bool {
+        let graph = self.graph();
+        let reaching = graph.names_reaching(owner_name);
+        test.calls.iter().any(|call| {
+            let name = call.name.as_str();
+            // The test's own `fn` line is recorded under its name.
+            let own_declaration = name == test.name
+                && contains_identifier(&call.text, "fn")
+                && call.text.contains(&format!("fn {name}"));
+            !is_macro_call(name)
+                && !own_declaration
+                && (name == owner_name
+                    || reaching.contains(name)
+                    || (!graph.by_name.contains_key(name)
+                        && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
+        })
+    }
+
     /// Every production function, for checks that scan impl owners.
     pub(in crate::analysis) fn production_functions(
         &self,
