@@ -416,6 +416,54 @@ fn opaque_and_unnegated_terminal_matcher_guards_do_not_gain_credit() -> Result<(
 }
 
 #[test]
+fn lexical_terminal_matcher_owns_condition_continuations_without_owning_sibling_assertions()
+-> Result<(), String> {
+    // The binding belongs to the enclosing test. Its expect_ spelling must
+    // not turn a continuation operand into a second assertion fact.
+    let body =
+        "if !matches!(\nexpect_value,\n2\n) {\nreturn Err(());\n}\nassert_eq!(sibling(), 7);";
+    let source = format!(
+        "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
+         #[test]\nfn observes_score() -> Result<(), ()> {{\n\
+         let expect_value = score();\n{body}\nOk(())\n}}\n"
+    );
+    let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+    let [test] = parsed.tests.as_slice() else {
+        return Err("condition-ownership control subject missing".to_string());
+    };
+    if test.name != "observes_score"
+        || !test
+            .calls
+            .iter()
+            .any(|call| call.name == "score" && call.line == 5)
+    {
+        return Err(format!(
+            "condition-ownership control lost its owner call: {test:?}"
+        ));
+    }
+    let facts = extract_assertions(body, 10);
+    let [guard, sibling] = facts.as_slice() else {
+        return Err(format!(
+            "condition continuation received separate credit: {facts:?}"
+        ));
+    };
+    if guard.line != 10
+        || guard.kind != OracleKind::ExactValue
+        || guard.strength != OracleStrength::Strong
+        || !guard.observed_tokens.contains(&"expect_value".to_string())
+        || sibling.line != 16
+        || !sibling.text.starts_with("assert_eq!(sibling()")
+        || sibling.kind != OracleKind::ExactValue
+        || sibling.strength != OracleStrength::Strong
+    {
+        return Err(format!(
+            "condition/sibling ownership or coordinates changed: {facts:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn consumed_matcher_failure_guards_keep_their_result_oracle() -> Result<(), String> {
     let source = r#"
 #[test]
