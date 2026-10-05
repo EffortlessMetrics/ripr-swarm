@@ -6,8 +6,8 @@
   "cases_total": 101,
   "by_truth": {
     "discriminated": 62,
-    "not_discriminated": 30,
-    "partially_discriminated": 9
+    "not_discriminated": 29,
+    "partially_discriminated": 10
   },
   "by_outcome": {
     "abstained": 9,
@@ -124,7 +124,7 @@
       "behavior_family": "predicate_boundary",
       "test_shape": "node_assert_strict_equal_far_from_boundary",
       "hard_case": false,
-      "truth": "not_discriminated",
+      "truth": "partially_discriminated",
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,

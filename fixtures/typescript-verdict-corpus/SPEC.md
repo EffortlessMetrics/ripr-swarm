@@ -40,10 +40,11 @@ own tests discriminate. A behavior-preserving rewrite lists the StrykerJS 10
 mutants of the edited line (jest, vitest and mocha runners; node:test through
 the command runner) and the outcome of each; a behavior change is its own
 single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
-vitest 5.0.3 (3.2.7 for `authored-ts-vitest-cart`), mocha 12.0.3, chai 6.3
+vitest 5.0.3 (3.2.7 for `authored-ts-vitest-cart`, replayed under 5.0.3), mocha 12.0.3, chai 6.3
 and tsx 4.23. The two subjects handed over from the Python corpus thread
 (`authored-ts-nodetest-pricing`, `authored-ts-vitest-cart`) list hand-applied
-mutants instead of Stryker's. All 178 mutant outcomes were then replayed by
+mutants instead of Stryker's, except their five boundary rewrites, which list
+Stryker's mutant set. All 185 mutant outcomes were then replayed by
 applying each mutant by hand and running the case's test command; every one
 agreed.
 
@@ -69,7 +70,11 @@ false silent, and the report must equal `expected/report.json` and
 
 StrykerJS's vitest runner, with vitest 5, reported mutants that only a test
 inside a `describe()` block detects as not detected. `authored-ts-vitest-orders` therefore keeps
-its tests at the top level; the replay confirmed every label.
+its tests at the top level. Run through the command runner on
+`authored-ts-vitest-cart`, Stryker reported every mutant of
+`ts-vitest-bulk-threshold` as not detected although each fails a plain
+`vitest run`; that case records the replayed outcomes. The replay confirmed
+every label.
 
 ## Refreshing
 

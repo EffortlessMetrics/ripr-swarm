@@ -5,7 +5,7 @@ index 0000000..1111111 100644
 @@ -1,5 +1,5 @@
  export function shippingFee(weight: number): number {
 -  if (weight > 20) {
-+  if (weight >= 21) {
++  if (20 < weight) {
      return 15;
    }
    return 5;

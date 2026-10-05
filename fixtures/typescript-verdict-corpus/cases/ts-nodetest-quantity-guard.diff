@@ -1,12 +1,13 @@
 diff --git a/src/pricing.ts b/src/pricing.ts
+index 0000000..1111111 100644
 --- a/src/pricing.ts
 +++ b/src/pricing.ts
-@@ -38,7 +38,7 @@ export function totalWithTax(subtotalCents: number): number {
+@@ -38,7 +38,7 @@
  
  export function parseQuantity(text: string): number {
    const value = Number.parseInt(text, 10);
 -  if (value <= 0) {
-+  if (value < 1) {
++  if (0 >= value) {
      throw new RangeError("quantity must be positive");
    }
    return value;

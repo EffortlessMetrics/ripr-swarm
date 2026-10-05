@@ -5,7 +5,7 @@ index 0000000..1111111 100644
 @@ -1,5 +1,5 @@
  export function isGoldTier(spend: number): boolean {
 -  if (spend >= 500) {
-+  if (!(spend < 500)) {
++  if (500 <= spend) {
      return true;
    }
    return false;

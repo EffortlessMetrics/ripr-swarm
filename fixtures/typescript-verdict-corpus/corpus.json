@@ -1010,16 +1010,28 @@
         "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
         "mutants": [
           {
-            "replacement": "if (subtotalCents > FREE_SHIPPING_CENTS) {",
+            "replacement": "if (true) {",
             "outcome": "tests_failed",
             "failing_test": "free shipping starts at the threshold",
-            "equivalence_review": "not equivalent: a 5000-cent order pays 499 shipping instead of shipping free"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (subtotalCents >= FREE_SHIPPING_CENTS - 1) {",
+            "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "free shipping starts at the threshold",
-            "equivalence_review": "not equivalent: a 4999-cent order ships free instead of paying 499"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (FREE_SHIPPING_CENTS < subtotalCents) {",
+            "outcome": "tests_failed",
+            "failing_test": "free shipping starts at the threshold",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
+          },
+          {
+            "replacement": "if (FREE_SHIPPING_CENTS > subtotalCents) {",
+            "outcome": "tests_failed",
+            "failing_test": "free shipping starts at the threshold",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1031,7 +1043,7 @@
           "silent"
         ]
       },
-      "reasoning": "\"free shipping starts at the threshold\" pins 4999 and 5000 with assert.equal from node:assert/strict, an exact-value oracle under RIPR-SPEC-0027, so both shifts fail it. ripr credits the predicate exposed, the ideal verdict.",
+      "reasoning": "\"free shipping starts at the threshold\" pins 4999 and 5000 with assert.equal from node:assert/strict, an exact-value oracle under RIPR-SPEC-0027, so every mutant of the rewritten `FREE_SHIPPING_CENTS <= subtotalCents` fails it. ripr credits the predicate exposed, the ideal verdict.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",
@@ -1054,22 +1066,34 @@
       "test_shape": "node_assert_strict_equal_far_from_boundary",
       "hard_case": null,
       "truth": {
-        "state": "not_discriminated",
+        "state": "partially_discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
         "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
         "mutants": [
           {
-            "replacement": "if (points > 5000) {",
-            "outcome": "tests_passed",
-            "failing_test": null,
-            "equivalence_review": "not equivalent: 5000 points earns silver instead of gold"
+            "replacement": "if (true) {",
+            "outcome": "tests_failed",
+            "failing_test": "tiers far from their thresholds",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (points > 4998) {",
+            "replacement": "if (false) {",
+            "outcome": "tests_failed",
+            "failing_test": "tiers far from their thresholds",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (5000 < points) {",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: 4999 points earns gold instead of silver"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
+          },
+          {
+            "replacement": "if (5000 > points) {",
+            "outcome": "tests_failed",
+            "failing_test": "tiers far from their thresholds",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1080,7 +1104,7 @@
           "limited"
         ]
       },
-      "reasoning": "\"tiers far from their thresholds\" checks 6000 and 0 points only, so neither shift of the 5000-point boundary fails it. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "\"tiers far from their thresholds\" checks 6000 and 0 points only, so the constant and flipped mutants of `5000 <= points` fail it while the off-by-one `5000 < points` passes. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -1109,16 +1133,28 @@
         "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
         "mutants": [
           {
-            "replacement": "if (points > 1000) {",
+            "replacement": "if (true) {",
             "outcome": "tests_failed",
-            "failing_test": "silver starts at one thousand points",
-            "equivalence_review": "not equivalent: 1000 points earns bronze instead of silver"
+            "failing_test": "tiers far from their thresholds",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (points > 998) {",
+            "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "silver starts at one thousand points",
-            "equivalence_review": "not equivalent: 999 points earns silver instead of bronze"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (1000 < points) {",
+            "outcome": "tests_failed",
+            "failing_test": "silver starts at one thousand points",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
+          },
+          {
+            "replacement": "if (1000 > points) {",
+            "outcome": "tests_failed",
+            "failing_test": "tiers far from their thresholds",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1130,7 +1166,7 @@
           "silent"
         ]
       },
-      "reasoning": "silver.test.ts imports legacy node:assert, whose equal compares with loose `==`; RIPR-SPEC-0027 reads it as relational, not exact. Comparing these strings loosely still pins 999 and 1000, so both shifts fail. ripr reports weakly_exposed, a false actionable verdict that follows the spec's own reading.",
+      "reasoning": "silver.test.ts imports legacy node:assert, whose equal compares with loose `==`; RIPR-SPEC-0027 reads it as relational, not exact. Comparing these strings loosely still pins 999 and 1000, so every mutant of `1000 <= points` fails. ripr reports weakly_exposed, a false actionable verdict that follows the spec's own reading.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -1245,16 +1281,28 @@
         "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
         "mutants": [
           {
-            "replacement": "if (value < 0) {",
-            "outcome": "tests_failed",
-            "failing_test": "zero quantity is rejected",
-            "equivalence_review": "not equivalent: quantity 0 is accepted instead of throwing"
-          },
-          {
-            "replacement": "if (value < 2) {",
+            "replacement": "if (true) {",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: quantity 1 throws instead of being accepted"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (false) {",
+            "outcome": "tests_failed",
+            "failing_test": "zero quantity is rejected",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (0 > value) {",
+            "outcome": "tests_failed",
+            "failing_test": "zero quantity is rejected",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
+          },
+          {
+            "replacement": "if (0 < value) {",
+            "outcome": "tests_failed",
+            "failing_test": "zero quantity is rejected",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1265,7 +1313,7 @@
           "limited"
         ]
       },
-      "reasoning": "\"zero quantity is rejected\" feeds only \"0\" to assert.throws, a broad error-path oracle under RIPR-SPEC-0027: `value < 0` accepts 0 and fails the test, while `value < 2` also rejects 1 and passes. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "\"zero quantity is rejected\" feeds only 0 to assert.throws, a broad error-path oracle under RIPR-SPEC-0027: the `false`, `0 > value` and `0 < value` mutants accept 0 and fail the test, while `if (true)` also rejects every valid quantity and passes. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -1508,19 +1556,31 @@
         "state": "discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "npx vitest run",
-        "toolchain": "Node.js v22.22.0, vitest 3.2.7, x86_64-linux",
+        "toolchain": "Node.js v22.22.0, vitest 5.0.3 (mutants of the rewritten line applied by hand), x86_64-linux",
         "mutants": [
           {
-            "replacement": "if (quantity > 10) {",
+            "replacement": "if (true) {",
             "outcome": "tests_failed",
-            "failing_test": "test/cart.test.ts > cart > gives the bulk discount from ten units",
-            "equivalence_review": "not equivalent: ten units get no discount"
+            "failing_test": "cart > gives the bulk discount from ten units",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (quantity > 8) {",
+            "replacement": "if (false) {",
             "outcome": "tests_failed",
-            "failing_test": "test/cart.test.ts > cart > gives the bulk discount from ten units",
-            "equivalence_review": "not equivalent: nine units get the discount"
+            "failing_test": "cart > gives the bulk discount from ten units",
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+          },
+          {
+            "replacement": "if (10 < quantity) {",
+            "outcome": "tests_failed",
+            "failing_test": "cart > gives the bulk discount from ten units",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
+          },
+          {
+            "replacement": "if (10 > quantity) {",
+            "outcome": "tests_failed",
+            "failing_test": "cart > gives the bulk discount from ten units",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1532,7 +1592,7 @@
           "silent"
         ]
       },
-      "reasoning": "\"gives the bulk discount from ten units\" pins 9 and 10 with toBe, so both shifts fail it. ripr credits exposed, the ideal verdict.",
+      "reasoning": "\"gives the bulk discount from ten units\" pins 9 and 10 with toBe, so every mutant of `10 <= quantity` fails it. ripr credits exposed, the ideal verdict.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",
@@ -1876,25 +1936,25 @@
             "replacement": "if (true) {",
             "outcome": "tests_failed",
             "failing_test": "discount starts exactly at 100",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "discount starts exactly at 100",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (total >= 99) {",
+            "replacement": "if (100 < total) {",
             "outcome": "tests_failed",
             "failing_test": "discount starts exactly at 100",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "if (total <= 99) {",
+            "replacement": "if (100 > total) {",
             "outcome": "tests_failed",
             "failing_test": "discount starts exactly at 100",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1906,7 +1966,7 @@
           "silent"
         ]
       },
-      "reasoning": "The test pins 99 and 100 with toBe, so every Stryker mutant of the rewritten `total > 99` fails it. ripr reports exposed on the anchor, the ideal credit.",
+      "reasoning": "The test pins 99 and 100 with toBe, so every Stryker mutant of the rewritten `100 <= total` fails it. ripr reports exposed on the anchor, the ideal credit.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "credited",
@@ -1938,25 +1998,25 @@
             "replacement": "if (true) {",
             "outcome": "tests_failed",
             "failing_test": "light parcels pay the base fee",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "heavy parcels pay the surcharge",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (weight > 21) {",
+            "replacement": "if (20 <= weight) {",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "if (weight < 21) {",
+            "replacement": "if (20 >= weight) {",
             "outcome": "tests_failed",
             "failing_test": "light parcels pay the base fee",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -1967,7 +2027,7 @@
           "limited"
         ]
       },
-      "reasoning": "The tests use weights 5 and 50 only, so the off-by-one `weight > 21` mutant passes while the constant and flipped mutants fail. ripr reports weakly_exposed on the anchor, the ideal gap.",
+      "reasoning": "The tests use weights 5 and 50 only, so the off-by-one `20 <= weight` mutant passes while the constant and flipped mutants fail. ripr reports weakly_exposed on the anchor, the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -2049,25 +2109,25 @@
             "replacement": "return true;",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "return false;",
             "outcome": "tests_failed",
             "failing_test": "a stocked item is available",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "return count > 1;",
+            "replacement": "return 0 <= count;",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "return count < 1;",
+            "replacement": "return 0 >= count;",
             "outcome": "tests_failed",
             "failing_test": "a stocked item is available",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -2078,7 +2138,7 @@
           "limited"
         ]
       },
-      "reasoning": "toBeTruthy on inStock(5) only rules out a false result, so `return true` and `count > 1` pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
+      "reasoning": "toBeTruthy on inStock(5) only rules out a false result, so `return true` and `0 <= count` pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -2397,25 +2457,25 @@
             "replacement": "return true;",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "return false;",
             "outcome": "tests_failed",
             "failing_test": "a thirty year old is not refused",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "return age >= 17;",
+            "replacement": "return 18 < age;",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "return age <= 17;",
+            "replacement": "return 18 > age;",
             "outcome": "tests_failed",
             "failing_test": "a thirty year old is not refused",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -2426,7 +2486,7 @@
           "limited"
         ]
       },
-      "reasoning": ".not.toBe(false) at age 30 only rules out false, so `return true` and `age >= 17` pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
+      "reasoning": ".not.toBe(false) at age 30 only rules out false, so `return true` and `18 < age` pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -2501,25 +2561,25 @@
             "replacement": "if (true) {",
             "outcome": "tests_failed",
             "failing_test": "999 points earn silver",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "1000 points earn gold",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (points >= 999) {",
+            "replacement": "if (1000 < points) {",
             "outcome": "tests_failed",
-            "failing_test": "999 points earn silver",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "failing_test": "1000 points earn gold",
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "if (points <= 999) {",
+            "replacement": "if (1000 > points) {",
             "outcome": "tests_failed",
             "failing_test": "999 points earn silver",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -2531,7 +2591,7 @@
           "silent"
         ]
       },
-      "reasoning": "The test.each table pins 999 and 1000, so every mutant of `points > 999` fails a row. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+      "reasoning": "The test.each table pins 999 and 1000, so every mutant of `1000 <= points` fails a row. ripr reports weakly_exposed on the anchor, a false actionable gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -2819,25 +2879,25 @@
             "replacement": "adult: true,",
             "outcome": "tests_failed",
             "failing_test": "profile records adulthood",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "adult: false,",
             "outcome": "tests_failed",
             "failing_test": "profile records adulthood",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "adult: age >= 17,",
+            "replacement": "adult: 18 < age,",
             "outcome": "tests_failed",
             "failing_test": "profile records adulthood",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "adult: age <= 17,",
+            "replacement": "adult: 18 > age,",
             "outcome": "tests_failed",
             "failing_test": "profile records adulthood",
-            "equivalence_review": "not equivalent: the failing test observes the difference"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -2849,7 +2909,7 @@
           "silent"
         ]
       },
-      "reasoning": "toMatchObject pins adult at 17 and 18, so every mutant of the field fails it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+      "reasoning": "toMatchObject pins adult at 17 and 18, so every mutant of `18 <= age` fails it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
@@ -5550,46 +5610,28 @@
         "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
         "mutants": [
           {
-            "replacement": "if (spend < 500) {",
-            "outcome": "tests_failed",
-            "failing_test": "isGoldTier spend 499 -> false",
-            "equivalence_review": "not equivalent: inverts the predicate"
-          },
-          {
             "replacement": "if (true) {",
             "outcome": "tests_failed",
             "failing_test": "isGoldTier spend 499 -> false",
-            "equivalence_review": "not equivalent: 499 becomes gold"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
             "replacement": "if (false) {",
             "outcome": "tests_failed",
             "failing_test": "isGoldTier spend 500 -> true",
-            "equivalence_review": "not equivalent: 500 is no longer gold"
+            "equivalence_review": "not equivalent: the result no longer depends on the compared value"
           },
           {
-            "replacement": "if (!(true)) {",
+            "replacement": "if (500 < spend) {",
             "outcome": "tests_failed",
             "failing_test": "isGoldTier spend 500 -> true",
-            "equivalence_review": "not equivalent: always false"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           },
           {
-            "replacement": "if (!(false)) {",
+            "replacement": "if (500 > spend) {",
             "outcome": "tests_failed",
             "failing_test": "isGoldTier spend 499 -> false",
-            "equivalence_review": "not equivalent: always true"
-          },
-          {
-            "replacement": "if (!(spend <= 500)) {",
-            "outcome": "tests_failed",
-            "failing_test": "isGoldTier spend 500 -> true",
-            "equivalence_review": "not equivalent: 500 is no longer gold"
-          },
-          {
-            "replacement": "if (!(spend >= 500)) {",
-            "outcome": "tests_failed",
-            "failing_test": "isGoldTier spend 499 -> false",
-            "equivalence_review": "not equivalent: inverts the predicate"
+            "equivalence_review": "not equivalent: the result differs at the boundary value"
           }
         ]
       },
@@ -5601,7 +5643,7 @@
           "silent"
         ]
       },
-      "reasoning": "`spend >= 500` is rewritten to the exactly equivalent `!(spend < 500)`; the it.each table pins 499 -> false and 500 -> true, so all seven Stryker mutants fail a row. ripr reports weakly_exposed with typescript_table_case_unresolved and typescript_dynamic_assertion_unresolved because toBe(expected) reads a row value, an under-credit. As with the order case, a describe() wrapper made Stryker's vitest runner report every mutant as not detected, so the table is at top level.",
+      "reasoning": "`spend >= 500` is rewritten to the exactly equivalent `500 <= spend`; the it.each table pins 499 -> false and 500 -> true, so every mutant fails a row. ripr reports weakly_exposed with typescript_table_case_unresolved and typescript_dynamic_assertion_unresolved because toBe(expected) reads a row value, an under-credit. Tests sit at top level because a describe() wrapper made Stryker's vitest runner report detected mutants as not detected.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",

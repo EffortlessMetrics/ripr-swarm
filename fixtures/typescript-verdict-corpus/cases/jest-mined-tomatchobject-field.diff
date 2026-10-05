@@ -7,7 +7,7 @@ index 0000000..1111111 100644
    return {
      name,
 -    adult: age >= 18,
-+    adult: age > 17,
++    adult: 18 <= age,
      tags: [] as string[],
    };
  }

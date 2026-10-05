@@ -15,7 +15,7 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 101.
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `ts-nodetest-shipping-threshold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
-| `ts-nodetest-gold-threshold` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `ts-nodetest-gold-threshold` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `ts-nodetest-silver-legacy-assert` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `ts-nodetest-gold-discount-rate` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `ts-nodetest-tax-self-computed` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
