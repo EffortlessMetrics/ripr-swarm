@@ -70,7 +70,15 @@ fn repository_heads_line(report: &TargetedTestOutcomeReport) -> String {
             code_span(before),
             code_span(after)
         ),
-        _ => "- repository heads: at least one snapshot does not carry a head SHA, so the receipt cannot confirm the pair came from the same repository\n".to_string(),
+        (Some(only), None) => format!(
+            "- repository heads: the before snapshot reports {}, the after snapshot does not carry a head SHA, so the receipt cannot confirm the pair came from the same repository\n",
+            code_span(only)
+        ),
+        (None, Some(only)) => format!(
+            "- repository heads: the after snapshot reports {}, the before snapshot does not carry a head SHA, so the receipt cannot confirm the pair came from the same repository\n",
+            code_span(only)
+        ),
+        (None, None) => "- repository heads: neither snapshot carries a head SHA, so the receipt cannot confirm the pair came from the same repository\n".to_string(),
     }
 }
 

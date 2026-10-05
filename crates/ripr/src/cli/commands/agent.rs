@@ -57,7 +57,7 @@ const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 /// shape identifiable from `schema_version` alone; the exit code for this
 /// path stays `2` — the attempt is terminal and the recovery is a new
 /// attempt, not a retry of this one.
-const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.1";
+const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
@@ -1422,6 +1422,12 @@ fn run_agent_repair_phase(
                                         eprintln!(
                                             "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
                                         );
+                                        // The durable state is retryable again,
+                                        // so the terminal marker must not stand:
+                                        // the error path would otherwise report
+                                        // `failed` in the envelope and withdraw
+                                        // artifacts a retry owns (#6701 review).
+                                        refusal.terminal_finish = None;
                                         apply_record_result = Err(error);
                                     }
                                     Err(restore_error) => {

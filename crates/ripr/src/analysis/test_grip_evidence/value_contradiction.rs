@@ -134,6 +134,30 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
         return None;
     }
     let inside = super::delimited_contents_at(trimmed, open)?;
+    // The call must consume the whole operand: `owner(1).abs()` or
+    // `owner(1) + 1` asserts a value the fold of `owner(1)` never computed,
+    // so a trailing expression leaves the pair not evaluable instead of
+    // contradicting against a transformed result.
+    let bytes = trimmed.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (offset, byte) in bytes[open..].iter().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    if !trimmed[close + 1..].trim().is_empty() {
+        return None;
+    }
     Some(super::split_top_level_commas(&inside))
 }
 
@@ -706,6 +730,24 @@ impl Pricing {
         let verdict =
             verdict_for_owner(owner, "assert_eq!(discounted_total(5_000, 5_000), 5_000);")?;
         assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
+        Ok(())
+    }
+
+    #[test]
+    fn transformed_owner_result_is_not_evaluable() -> Result<(), String> {
+        // A method or arithmetic on the call's result asserts a value the
+        // owner fold never computed; the fold must stay silent rather than
+        // contradict a passing assertion.
+        for assertion in [
+            "assert_eq!(discounted_total(5_000, 5_000).max(3_500), 3_500);",
+            "assert_eq!(discounted_total(5_000, 5_000) - 500, 3_000);",
+        ] {
+            assert_eq!(
+                verdict_for_owner(BOUNDARY_OWNER, assertion)?,
+                ExactValueVerdict::NotEvaluable,
+                "{assertion}"
+            );
+        }
         Ok(())
     }
 

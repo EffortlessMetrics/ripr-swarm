@@ -2823,7 +2823,7 @@ mod tests {
         assert!(json["inputs"]["after_repository_head"].is_null());
         assert!(json["inputs"]["head_match"].is_null());
         let markdown = render_targeted_test_outcome_md(&report);
-        assert!(markdown.contains("does not carry a head SHA"));
+        assert!(markdown.contains("neither snapshot carries a head SHA"));
         Ok(())
     }
 }

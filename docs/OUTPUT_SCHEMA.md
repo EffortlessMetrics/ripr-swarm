@@ -56,7 +56,7 @@ map is:
 | `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
 | `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
 | `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
-| `ripr agent repair --phase after --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.1` |
+| `ripr agent repair --phase after --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
@@ -7425,14 +7425,14 @@ Field contract:
   One post-verify failure shape is typed instead (#6033): when the edit cage
   finished the attempt as not receipt-ready (verdict `violated` or
   `incomparable`, or the head moved so the attempt is `stale`), the phase
-  prints the `repair_after_failure` document (`schema_version` `0.1`) rather
+  prints the `repair_after_failure` document (`schema_version` `0.4`) rather
   than the success-shaped verify document — `status: "advisory"` with a
   gap-closed movement summary beside a terminal attempt is a green repair
   story a stdout-only driver cannot trust:
 
   ```json
   {
-    "schema_version": "0.1",
+    "schema_version": "0.4",
     "kind": "repair_after_failure",
     "attempt_id": "<repair-attempt-id>",
     "attempt_state": "failed",

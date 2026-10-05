@@ -5,7 +5,7 @@ Status: advisory
 Inputs:
 - before: `fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json`
 - after: `fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json`
-- repository heads: at least one snapshot does not carry a head SHA, so the receipt cannot confirm the pair came from the same repository
+- repository heads: neither snapshot carries a head SHA, so the receipt cannot confirm the pair came from the same repository
 
 ## Summary
 

@@ -23131,6 +23131,8 @@ fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_share
     add_boundary_test(&root)?;
     let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
     assert_failure(&after);
+    // The terminal cage failure is not a retryable refusal: exit 2, not 3.
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
 
     let stdout: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&after.stdout))
         .map_err(|error| {
@@ -23140,7 +23142,7 @@ fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_share
         )
     })?;
     assert_eq!(stdout["kind"], "repair_after_failure", "{stdout}");
-    assert_eq!(stdout["schema_version"], "0.1", "{stdout}");
+    assert_eq!(stdout["schema_version"], "0.4", "{stdout}");
     assert_eq!(stdout["attempt_id"], attempt_id, "{stdout}");
     assert_eq!(stdout["attempt_state"], "failed", "{stdout}");
     assert_eq!(stdout["edit_cage_verdict"], "violated", "{stdout}");
