@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 111.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 154.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 40/111 | 0.3604 |
-| False actionable (of discriminated) | 36/60 | 0.6000 |
-| False exposed (of not fully discriminated) | 4/51 | 0.0784 |
-| False silent (of not fully discriminated) | 0/51 | 0.0000 |
-| Ideal verdict | 34/111 | 0.3063 |
-| Abstained (limited or silent where acceptable) | 37/111 | 0.3333 |
-| Findings with a contradiction | 2/145 | 0.0138 |
+| False verdicts (all cases) | 51/154 | 0.3312 |
+| False actionable (of discriminated) | 45/76 | 0.5921 |
+| False exposed (of not fully discriminated) | 6/78 | 0.0769 |
+| False silent (of not fully discriminated) | 0/78 | 0.0000 |
+| Ideal verdict | 56/154 | 0.3636 |
+| Abstained (limited or silent where acceptable) | 47/154 | 0.3052 |
+| Findings with a contradiction | 2/205 | 0.0098 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 77 | 30/77 | 26/40 | 4/37 | 0/37 | 29/77 | 18/77 |
+| authored | 120 | 41/120 | 35/56 | 6/64 | 0/64 | 51/120 | 28/120 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -125,6 +125,49 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
+| `spec0225-wv-literal-derived` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-manual-eq-ignores-field` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-ok-wrapped-literal` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-let-binding-literal` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-expected-binding` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-expected-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-functional-update-default` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0225-wv-non-owner-call` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-sibling-field-read` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-assert-ne-literal` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-field-type-manual-eq` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-expected-reads-result-field` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `spec0225-wv-let-mut-overwrite` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-wrapper-manual-eq` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-expected-via-field-binding` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-nested-manual-eq` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0225-wv-nested-derived-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0226-gate-split-boundary-agreement` | authored | partially_discriminated | gap | credited | exposed, propagation_unknown | false_exposed | no | none |
+| `spec0226-ledger-push-exact-history` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `spec0226-journal-push-seeded-contains` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0226-parse-x-map-err-into` | authored | discriminated | credited | limited | weakly_exposed | abstained | no | none |
+| `spec0226-bump-guarded-return` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-guard-same-test-flip` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0227-check-guard-edge-is-err-only` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-guard-far-is-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-guard-split-tests` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-variant-is-err` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-variant-should-panic` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-check-variant-bare-unwrap-err` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `spec0227-check-ok-value-is-ok` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-total-question-mark-is-err` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0228-field-write-direct-read` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-getter-read` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-misnamed-getter` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-sibling-read` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-no-read` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-enum-variant` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `spec0228-field-write-enum-other-field` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `spec0228-deref-mut-param-write` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `spec0228-field-collection-push` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `mined-doctest-only-read-u16` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `mined-doctest-ignored-read-u16-le` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `mined-bool-property-read-u32` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |

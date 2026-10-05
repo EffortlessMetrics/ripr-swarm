@@ -6,6 +6,6 @@
   property checked over a sample loop, a round trip that cannot tell a
   symmetric key apart, and a lookup table with an asserted and an unasserted row.
   Three of the four discriminated cases score `false_actionable` today
-  (corpus 2026-10-04.6, 111 cases). Authored false actionable moves from
-  23/36 to 26/40 and the overall rate from 0.589 to 0.600; upstream rates are
+  (corpus 2026-10-04.8, 154 cases). Authored false actionable moves from
+  32/52 to 35/56 and the overall rate from 0.583 to 0.592; upstream rates are
   unchanged.
