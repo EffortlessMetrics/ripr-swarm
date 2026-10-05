@@ -609,6 +609,9 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ("core.autocrlf", "true"),
         ("core.pager", "/bin/false"),
         ("log.showSignature", "true"),
+        // #5325: a dangling orderfile must not abort the run; the diff
+        // invocation pins `diff.orderFile=/dev/null`.
+        ("diff.orderFile", "/nonexistent-ripr-orderfile"),
     ];
     for (key, value) in settings {
         let ran = ripr(
@@ -622,6 +625,26 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         )?;
         assert_found_change(&ran, &format!("git config {key}={value}"))?;
     }
+    // #5325, live half: an orderfile that exists must also leave the
+    // result alone. (This single-file diff cannot observe reordering; the
+    // row locks the no-abort contract for ambient orderfiles.)
+    let order_path = scratch.path.join("orderfile");
+    fs::write(&order_path, "tests/t.rs\nsrc/lib.rs\n")
+        .map_err(|e| format!("write orderfile failed: {e}"))?;
+    let order_value = order_path
+        .to_str()
+        .ok_or_else(|| format!("orderfile path is not UTF-8: {}", order_path.display()))?
+        .to_owned();
+    let ran = ripr(
+        &root,
+        &["check"],
+        &[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+            ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+        ],
+    )?;
+    assert_found_change(&ran, "git config diff.orderFile=<live>")?;
     Ok(())
 }
 
