@@ -1250,7 +1250,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0239-ripr-plus-last-good-receipt.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Issue #6295 records which receipt `ripr plus` keeps as last good when a later run fails to read or compose: one a run composed (any status but indeterminate, or indeterminate with cause quality_evidence_incomplete), never an earlier error receipt, none under --check, and never presented as current evidence (#5310)."
+standalone_reason = "Issue #6295 records which receipt `ripr plus` keeps as last good when a later run fails to read or compose: one a run composed (any status but indeterminate, or indeterminate with cause quality_evidence_incomplete), never an earlier error receipt, no copy when --check fails after composition, and never presented as current evidence (#5310)."
 
 [[artifact]]
 id = "RIPR-SPEC-0221"

@@ -289,7 +289,8 @@ receipt it replaces (any status other than `indeterminate`, or `indeterminate`
 with cause `quality_evidence_incomplete`), that receipt and its Markdown, when
 present, are first copied to ripr-plus.last-good.{json,md}. An earlier failed
 run's error receipt is never kept. A --check failure on a composed receipt
-writes that receipt and keeps no last-good copy.
+writes that receipt and makes no last-good copy; a copy an earlier failure
+left stays until a later failure replaces it.
 The copy describes an earlier run, may be stale for the current HEAD, and is
 not current evidence.
 

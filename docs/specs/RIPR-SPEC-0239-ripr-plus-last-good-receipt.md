@@ -51,8 +51,10 @@ skipped every `indeterminate` receipt kept nothing `ripr plus` itself wrote.
   an earlier run, may be stale for the current HEAD, and is not current
   evidence; when nothing was copied, it says any copy still on disk is from an
   earlier run.
-- A `--check` failure on a composed receipt writes that receipt and keeps no
-  last-good copy.
+- A `--check` failure on a composed receipt writes that receipt and makes no
+  last-good copy. No run removes a copy: one an earlier failure left stays
+  until a later failure replaces it, and every message says such a copy is
+  from an earlier run.
 - The canonical path always carries the failed run's error receipt, so no
   reader mistakes a kept copy for the current result.
 
@@ -64,7 +66,8 @@ skipped every `indeterminate` receipt kept nothing `ripr plus` itself wrote.
 - A legacy `pass` receipt is kept and is not replaced by a second failure.
 - Blocked destinations are not written, and the message names only the copies
   that were.
-- `--check` on a valid input leaves no last-good files.
+- `--check` on a valid input makes no last-good files, and leaves a copy an
+  earlier failure made byte for byte.
 
 ## Non-Goals
 
