@@ -9927,8 +9927,12 @@ Field contract:
 - `ripr_zero.suppressed` - current findings hidden by suppression or
   configured-off severity while remaining visible in the status report.
 - `baseline.metadata.current`, `stale`, `missing_metadata`, and `unknown` -
-  baseline review metadata health counts. Missing metadata must not hide the
-  entry.
+  baseline review metadata health counts. `stale` includes past-due
+  `unix_ms:<millis>` and `YYYY-MM-DD` `review_after` values, and RFC3339
+  datetimes after conversion to a UTC calendar date. Impossible Gregorian dates,
+  a `T` suffix that is not RFC3339, and `*:60` values that are not `23:59:60`
+  UTC (including offset leap-second forms) count as `unknown`, not `current`.
+  Missing metadata must not hide the entry.
 - `debt_delta.*` - baseline movement buckets copied from the baseline debt
   delta report so summaries can show old debt, new debt, resolved debt,
   acknowledgements, suppressions, stale entries, invalid entries, and missing
