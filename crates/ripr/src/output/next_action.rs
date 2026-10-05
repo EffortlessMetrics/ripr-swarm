@@ -211,7 +211,7 @@ mod tests {
 
     fn test_subject(item: Option<&str>) -> NextActionSubject {
         NextActionSubject {
-            root: "E:/repo".to_string(),
+            root: "/repo".to_string(),
             diff_source: NextActionDiffSource::Committed {
                 base: Some("base1".to_string()),
                 head: Some("head1".to_string()),
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(lines[1], "  producer: repair_card");
         assert_eq!(
             lines[2],
-            "  subject: seam:demo @ E:/repo (committed base1..head1)"
+            "  subject: seam:demo @ /repo (committed base1..head1)"
         );
         assert_eq!(
             lines[3],

@@ -1161,7 +1161,7 @@ mod tests {
     fn base_input() -> NextActionInput<'static> {
         NextActionInput {
             producer: NextActionProducer::RepairCard,
-            root: "E:/repo".to_string(),
+            root: "/repo".to_string(),
             diff_source: NextActionDiffSource::Committed {
                 base: Some("base1".to_string()),
                 head: Some("head1".to_string()),
@@ -1204,7 +1204,7 @@ mod tests {
 
     fn test_subject() -> NextActionSubject {
         NextActionSubject {
-            root: "E:/repo".to_string(),
+            root: "/repo".to_string(),
             diff_source: NextActionDiffSource::Committed {
                 base: Some("base1".to_string()),
                 head: Some("head1".to_string()),
@@ -1605,12 +1605,12 @@ mod tests {
         input.offered_command = Some(&spec);
         // A foreign-looking root and a decoy item from elsewhere: the
         // selector binds exactly what the producer bound.
-        input.root = "F:/decoy/checkout".to_string();
+        input.root = "/decoy/checkout".to_string();
         input.item_id = "seam:elsewhere".to_string();
         input.card_item = Some("seam:elsewhere".to_string());
         let action = select_canonical_next_action(&input)
             .map_err(|error| format!("foreign root binds: {error}"))?;
-        assert_eq!(action.subject().root, "F:/decoy/checkout");
+        assert_eq!(action.subject().root, "/decoy/checkout");
         assert_eq!(action.subject().item.as_deref(), Some("seam:elsewhere"));
 
         let mut blank = base_input();
