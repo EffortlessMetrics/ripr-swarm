@@ -386,8 +386,8 @@ struct StaleCleanup {
 /// Removes a previous run's outputs so a failed run cannot leave a stale
 /// `latest.*` that a later reader mistakes for this run's routing. An output
 /// that appeared or changed since `previous` was taken was written by a
-/// concurrent run sharing the target directory, so it is left in place
-/// (#5307). The stamp check and the removal are not atomic: a write landing
+/// concurrent run sharing the target directory, so it and its partner are
+/// left in place (#5307). The stamp check and the removal are not atomic: a write landing
 /// between them can still be removed, which narrows the race to that window.
 /// The stamp is size plus modification time, so on a filesystem with coarse
 /// timestamps (FAT, some network mounts) a same-size rewrite within one tick,
@@ -395,37 +395,34 @@ struct StaleCleanup {
 /// as unchanged and is removed.
 fn discard_stale_outputs(repo: &Path, previous: &[OutputState; 2]) -> StaleCleanup {
     let mut cleanup = StaleCleanup::default();
-    for (relative, before) in OUTPUTS.into_iter().zip(previous) {
-        let now = match stamp_output(repo, relative) {
-            OutputState::Absent => continue,
-            OutputState::Unreadable(err) => {
-                cleanup
-                    .failed
-                    .push(format!("{relative}: could not read its metadata: {err}"));
-                continue;
-            }
-            OutputState::Present(now) => now,
-        };
-        match before {
-            OutputState::Present(before) if *before == now => {}
-            OutputState::Unreadable(err) => {
-                // Without a start stamp the run cannot tell its own stale
-                // output from a concurrent run's, so it neither deletes nor
-                // claims the output is newer.
-                cleanup.failed.push(format!(
-                    "{relative}: could not read its metadata when this run started ({err})"
-                ));
-                continue;
-            }
-            OutputState::Absent | OutputState::Present(_) => {
-                cleanup.left.push(relative);
-                continue;
-            }
-        }
-        match fs::remove_file(repo.join(relative)) {
-            Ok(()) => cleanup.removed.push(relative),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => cleanup.failed.push(format!("{relative}: {err}")),
+    let current = stamp_outputs(repo);
+    // The JSON and Markdown are one receipt. A concurrent run can publish both
+    // between this run's two start reads, so the start pair may mix an old
+    // stamp with a new one; when either output is newer, the pair belongs to
+    // another run and neither is removed.
+    let newer_generation = current.iter().zip(previous).any(|pair| match pair {
+        (OutputState::Present(_), OutputState::Absent) => true,
+        (OutputState::Present(now), OutputState::Present(before)) => now != before,
+        _ => false,
+    });
+    for ((relative, now), before) in OUTPUTS.into_iter().zip(current).zip(previous) {
+        match (now, before) {
+            (OutputState::Absent, _) => {}
+            (OutputState::Unreadable(err), _) => cleanup
+                .failed
+                .push(format!("{relative}: could not read its metadata: {err}")),
+            // Without a start stamp the run cannot tell its own stale output
+            // from a concurrent run's, so it neither deletes nor claims the
+            // output is newer.
+            (OutputState::Present(_), OutputState::Unreadable(err)) => cleanup.failed.push(
+                format!("{relative}: could not read its metadata when this run started ({err})"),
+            ),
+            (OutputState::Present(_), _) if newer_generation => cleanup.left.push(relative),
+            (OutputState::Present(_), _) => match fs::remove_file(repo.join(relative)) {
+                Ok(()) => cleanup.removed.push(relative),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => cleanup.failed.push(format!("{relative}: {err}")),
+            },
         }
     }
     cleanup
@@ -1039,34 +1036,77 @@ mod tests {
         Ok(())
     }
 
-    /// One output written by a concurrent run is named with singular wording.
+    /// The outputs are one receipt: when a concurrent run's Markdown appears,
+    /// the JSON beside it is not removed even though its stamp is unchanged.
     #[test]
-    fn one_concurrent_output_is_left_with_singular_wording() -> Result<(), String> {
-        let repo = fresh_repo("concurrent-one")?;
+    fn a_newer_markdown_keeps_its_unchanged_json_partner() -> Result<(), String> {
+        let repo = fresh_repo("newer-partner")?;
         fs::create_dir_all(repo.join("target/xtask/impacted-evidence"))
             .map_err(|err| format!("create {}: {err}", repo.display()))?;
         fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
         let previous = stamp_outputs(&repo);
         fs::write(repo.join(IMPACTED_MD), "concurrent").map_err(|err| err.to_string())?;
         let message = refuse_with_stale_cleanup(&repo, "boom.".to_string(), false, &previous);
+        let json_left = repo.join(IMPACTED_JSON).exists();
         let md_left = repo.join(IMPACTED_MD).exists();
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        assert!(json_left && md_left, "{message}");
+        assert!(!message.contains("Removed stale"), "{message}");
         assert!(
-            message.contains(&format!("Removed stale {IMPACTED_JSON}.")),
+            message.contains(&format!("Left {IMPACTED_JSON} and {IMPACTED_MD} in place")),
             "{message}"
         );
+        Ok(())
+    }
+
+    /// Codex interleaving: a concurrent run publishes both outputs between the
+    /// two start reads, so the start pair holds the old JSON stamp and the new
+    /// Markdown stamp. Neither current output is removed.
+    #[test]
+    fn mixed_start_pair_from_an_interleaved_publish_keeps_both() -> Result<(), String> {
+        let repo = fresh_repo("interleaved")?;
+        fs::create_dir_all(repo.join("target/xtask/impacted-evidence"))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
+        let old_json = stamp_output(&repo, IMPACTED_JSON);
+        fs::write(repo.join(IMPACTED_JSON), r#"{"status":"concurrent"}"#)
+            .map_err(|err| err.to_string())?;
+        fs::write(repo.join(IMPACTED_MD), "concurrent").map_err(|err| err.to_string())?;
+        let new_md = stamp_output(&repo, IMPACTED_MD);
+        let message =
+            refuse_with_stale_cleanup(&repo, "boom.".to_string(), false, &[old_json, new_md]);
+        let json_left = repo.join(IMPACTED_JSON).exists();
+        let md_left = repo.join(IMPACTED_MD).exists();
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        assert!(json_left && md_left, "{message}");
+        assert!(!message.contains("Removed stale"), "{message}");
+        Ok(())
+    }
+
+    /// A single output written by a concurrent run, with no partner on disk,
+    /// is named with singular wording.
+    #[test]
+    fn one_concurrent_output_is_left_with_singular_wording() -> Result<(), String> {
+        let repo = fresh_repo("concurrent-one")?;
+        fs::create_dir_all(repo.join("target/xtask/impacted-evidence"))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        let previous = stamp_outputs(&repo);
+        fs::write(repo.join(IMPACTED_MD), "concurrent").map_err(|err| err.to_string())?;
+        let message = refuse_with_stale_cleanup(&repo, "boom.".to_string(), false, &previous);
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         assert!(
             message.contains(&format!(
                 "Left {IMPACTED_MD} in place: it was written after this run started, so it does not describe this refused run."
             )),
             "{message}"
         );
-        assert!(md_left);
         Ok(())
     }
 
     /// A metadata error other than `NotFound` is reported as a cleanup
-    /// failure, never read as an absent output.
+    /// failure, never read as an absent output. Unix only: Windows reports a
+    /// file in a path's directory position as `NotFound`.
+    #[cfg(unix)]
     #[test]
     fn unreadable_output_metadata_is_reported_not_skipped() -> Result<(), String> {
         let repo = fresh_repo("unreadable-now")?;
