@@ -773,6 +773,43 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
         .map_err(|e| format!("restore hostile file failed: {e}"))?;
 
+    // The typed refusal envelope on stderr is JSON: a bidi character in the
+    // seam id must stay a parseable JSON escape, not become `\u{202e}`.
+    let refusal = ripr(
+        &root,
+        &[
+            "agent",
+            "card",
+            "--root",
+            ".",
+            "--seam-id",
+            "x\u{202e}y",
+            "--json",
+        ],
+        &[],
+    )?;
+    // A typed refusal exits 3 (decision), which `assert_sane` does not allow.
+    if refusal.code != Some(3) || refusal.stderr.contains("panicked") {
+        return Err(format!("unexpected refusal run\n{:?}", refusal.stderr));
+    }
+    if leaks(&refusal.stderr) {
+        return Err(format!("refusal leaked\n{:?}", refusal.stderr));
+    }
+    let envelope_end = refusal
+        .stderr
+        .find("\n}\n")
+        .ok_or_else(|| format!("no JSON envelope on stderr\n{}", refusal.stderr))?;
+    let envelope: serde_json::Value = serde_json::from_str(&refusal.stderr[..envelope_end + 2])
+        .map_err(|e| {
+            format!(
+                "refusal envelope is not valid JSON: {e}\n{}",
+                refusal.stderr
+            )
+        })?;
+    if envelope["error"]["seam_id"] != "x\u{202e}y" {
+        return Err(format!("seam id did not round-trip\n{envelope}"));
+    }
+
     // A bad ref echoed back by the failure path.
     let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
     assert_sane(&bad_ref, "check with hostile ref")?;
