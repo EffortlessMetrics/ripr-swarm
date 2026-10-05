@@ -1908,10 +1908,10 @@ pub(crate) fn compile_work_portfolio(
         let owner = active_claims
             .iter()
             .find(|claim| {
-                match claim.issue {
+                (match claim.issue {
                     Some(number) => members.contains(&number),
                     None => false,
-                } || members
+                }) || members
                     .iter()
                     .any(|member| issue_branch_matches(issues, claim, *member))
             })
@@ -4114,20 +4114,20 @@ mod tests {
     fn work_portfolio_provenance_rejects_path_traversal() -> Result<(), String> {
         let sha = "0".repeat(64);
         let template = format!(
-            r#"{{
+            r##"{{
             "schema_version": "work_portfolio_provenance.v1",
             "repository": "EffortlessMetrics/ripr-swarm",
             "captured_at": "2026-10-05T12:00:00Z",
             "capture_method": "test",
             "corpora": [
                 {{
-                    "name": "##NAME##",
+                    "name": "@NAME@",
                     "files": [
-                        {{ "path": "##PATH##", "sha256": "{sha}" }}
+                        {{ "path": "@PATH@", "sha256": "{sha}" }}
                     ]
                 }}
             ]
-        }}"#
+        }}"##
         );
         for (name, path) in [
             ("../escape", "campaigns.json"),
@@ -4135,8 +4135,8 @@ mod tests {
             ("corpus", "sub/../../campaigns.json"),
         ] {
             let body = template
-                .replace("##NAME##", name)
-                .replace("##PATH##", path);
+                .replace("@NAME@", name)
+                .replace("@PATH@", path);
             if load_work_portfolio_provenance(&body).is_ok() {
                 return Err(format!(
                     "provenance with name `{name}` and path `{path}` must fail closed"
