@@ -180,17 +180,14 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     }
     // HTML comments are copied into CHANGELOG.md verbatim at the fold, so a
     // second section line or a reference hidden in a comment is not an entry.
-    if body
-        .iter()
-        .any(|line| line.trim_start().starts_with("<!--"))
-    {
+    if body.iter().any(|line| line.contains("<!--")) {
         violations.push(format!(
-            "{path}: only the first line may be an HTML comment; one fragment holds one section"
+            "{path}: only the first line may hold an HTML comment; one fragment holds one section"
         ));
     }
     if !body
         .iter()
-        .filter(|line| !line.trim_start().starts_with("<!--"))
+        .filter(|line| !line.contains("<!--"))
         .any(|line| has_issue_reference(line))
     {
         violations.push(format!(
@@ -345,7 +342,11 @@ mod tests {
         let hidden = "<!-- section: Fixed -->\n- x.\n<!-- #12 -->\n";
         let violations = fragment_violations("hidden.md", hidden);
         assert_eq!(violations.len(), 2, "{violations:?}");
-        assert!(violations[0].contains("only the first line may be an HTML comment"));
+        assert!(violations[0].contains("only the first line may hold an HTML comment"));
+        let inline = "<!-- section: Fixed -->\n- Fixed something <!-- (#12) -->\n";
+        let violations = fragment_violations("inline.md", inline);
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(violations[1].contains("names no issue or PR"));
         let two_sections =
             "<!-- section: Fixed -->\n- x (#1).\n<!-- section: Added -->\n- y (#2).\n";
         let violations = fragment_violations("two.md", two_sections);
