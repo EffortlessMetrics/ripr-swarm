@@ -22,6 +22,7 @@ use crate::analysis_outcome::{
 use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::Finding;
+use crate::terminal_text::terminal_safe;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -148,15 +149,18 @@ fn committed_history_overlay(
     if crate::is_verbose() {
         let dirty = overlay.dirty_paths().collect::<Vec<_>>();
         eprintln!(
-            "ripr: committed-history diff; reading HEAD content for {} tracked file(s) with uncommitted changes: {}",
-            dirty.len(),
-            dirty.join(", ")
+            "{}",
+            terminal_safe(format!(
+                "ripr: committed-history diff; reading HEAD content for {} tracked file(s) with uncommitted changes: {}",
+                dirty.len(),
+                dirty.join(", ")
+            ))
         );
     }
     if let Some(message) =
         committed_paths_missing_disclosure(&overlay.committed_paths_missing_on_disk())
     {
-        eprintln!("{message}");
+        eprintln!("{}", terminal_safe(message));
     }
     Ok(Some(std::sync::Arc::new(overlay)))
 }
@@ -733,6 +737,10 @@ fn run_pipeline_for_diff_text(
         None => &changed_files,
     };
 
+    // Limitations kept only because they describe caller-supplied evidence
+    // (#5421). They say nothing about whether the diff parsed, so the
+    // malformed-diff check below must not treat them as an explanation.
+    let mut supplied_evidence_limitations = 0usize;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -770,7 +778,12 @@ fn run_pipeline_for_diff_text(
                 // adapter ran above and is unaffected. An adapter that did
                 // produce findings consumed its workspace index (a Bun bridge
                 // profile reports Rust-line findings from TypeScript tests),
-                // so its limitations still qualify those findings.
+                // so its limitations still qualify those findings. The Perl
+                // adapter never scans the workspace: it only reads the fact
+                // packet the caller supplied, so a limitation it reports (a
+                // packet declared partial) concerns that explicit evidence
+                // and is always kept (#5421).
+                let reads_only_supplied_evidence = matches!(language, LanguageId::Perl);
                 let adapter_language = match language {
                     LanguageId::JavaScript => LanguageId::TypeScript,
                     other => *other,
@@ -779,6 +792,9 @@ fn run_pipeline_for_diff_text(
                     .iter()
                     .any(|file| route(&file.path) == Some(adapter_language));
                 if diff_touches_language || produced_findings {
+                    limitations.extend(result.limitations);
+                } else if reads_only_supplied_evidence {
+                    supplied_evidence_limitations += result.limitations.len();
                     limitations.extend(result.limitations);
                 }
                 if result.changed_files_by_language.is_empty() {
@@ -959,7 +975,7 @@ fn run_pipeline_for_diff_text(
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
-        && limitations.is_empty()
+        && limitations.len() == supplied_evidence_limitations
     {
         limitations.push(
             AnalysisLimitation::new(
