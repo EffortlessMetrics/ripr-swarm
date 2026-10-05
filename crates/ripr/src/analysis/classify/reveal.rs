@@ -484,9 +484,15 @@ fn analyze_related_assertions(
         // `let reason = |x| ..` closure or any other local use of the name
         // may shadow the owner, so its calls say nothing about the owner.
         // A `let` bound to an owner call may carry the arm's result to the
-        // expected side, so such a test confirms nothing either.
+        // expected side, so such a test confirms nothing either. A test that
+        // never names the owner (it reaches it only through a wrapper) passes
+        // no input to read, so its tokens confirm as before selection (#6297).
+        let arm_selector = match_context
+            .arm_selector
+            .filter(|selector| selector.mentioned_by(test));
         let match_context = RevealMatchContext {
-            arm_inputs_readable: match_context.arm_selector.is_some_and(|selector| {
+            arm_selector,
+            arm_inputs_readable: arm_selector.is_some_and(|selector| {
                 selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
             }),
             ..match_context

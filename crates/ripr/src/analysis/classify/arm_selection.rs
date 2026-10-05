@@ -419,6 +419,13 @@ impl ArmSelector {
     /// `None` when the body names the owner anywhere other than a call
     /// this module can read (a function pointer, a multi-line call, a
     /// differently shaped call), since such a use may select any arm.
+    /// Whether the test names the owner at all. A test that reaches the
+    /// owner only through other functions passes no input this selector
+    /// reads, so selection has nothing to outrank there (#6297).
+    pub(in crate::analysis) fn mentioned_by(&self, test: &TestSummary) -> bool {
+        !whole_word_offsets(&mask_comments_and_strings(&test.body), &self.owner).is_empty()
+    }
+
     pub(in crate::analysis) fn observed_inputs(
         &self,
         test: &TestSummary,

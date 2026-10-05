@@ -218,6 +218,9 @@ Implemented:
   shares one may still be another arm of the hunk; the arm is then named
   against that arm's pattern;
 - selection outranks tokens whenever the scrutinee is a direct owner input.
+  A test that never names the owner (it reaches it only through a wrapper)
+  passes no input to read, so its assertion tokens confirm as they did
+  before selection (#6297, `match_arm_proximity_wrapper_confirms`).
 
 Not yet implemented (each reads as not provable):
 
