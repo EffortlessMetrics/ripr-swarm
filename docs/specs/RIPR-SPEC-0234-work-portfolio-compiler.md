@@ -1,4 +1,4 @@
-# RIPR-SPEC-0233: Read-only deterministic multi-campaign work-portfolio compiler
+# RIPR-SPEC-0234: Read-only deterministic multi-campaign work-portfolio compiler
 
 Status: proposed
 

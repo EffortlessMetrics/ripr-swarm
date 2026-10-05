@@ -476,7 +476,7 @@ def main():
         "schema_version": "work_portfolio_provenance.v1",
         "repository": REPOSITORY,
         "captured_at": CAPTURED_AT,
-        "capture_method": "authored captured-input corpora for the RIPR-SPEC-0233 work-portfolio compiler; regenerate with fixtures/work_portfolio/author_corpus.py",
+        "capture_method": "authored captured-input corpora for the RIPR-SPEC-0234 work-portfolio compiler; regenerate with fixtures/work_portfolio/author_corpus.py",
         "corpora": [],
     }
     for name, builder in VARIANTS.items():

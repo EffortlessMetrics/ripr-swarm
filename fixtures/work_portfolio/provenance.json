@@ -2,7 +2,7 @@
   "schema_version": "work_portfolio_provenance.v1",
   "repository": "EffortlessMetrics/ripr-swarm",
   "captured_at": "2026-10-05T12:00:00Z",
-  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0233 work-portfolio compiler; regenerate with fixtures/work_portfolio/author_corpus.py",
+  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0234 work-portfolio compiler; regenerate with fixtures/work_portfolio/author_corpus.py",
   "corpora": [
     {
       "name": "corpus",

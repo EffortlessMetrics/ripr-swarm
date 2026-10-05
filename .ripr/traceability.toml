@@ -12463,9 +12463,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0233"
+id = "RIPR-SPEC-0234"
 name = "Read-only deterministic multi-campaign work-portfolio compiler"
-spec = "docs/specs/RIPR-SPEC-0233-work-portfolio-compiler.md"
+spec = "docs/specs/RIPR-SPEC-0234-work-portfolio-compiler.md"
 tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_multiple_campaigns_and_independent_lanes_one_snapshot",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_no_global_default_campaign_required_or_synthesized",
@@ -12496,7 +12496,7 @@ code = [
   "xtask/src/dispatch.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0233-work-portfolio-compiler.md",
+  "docs/specs/RIPR-SPEC-0234-work-portfolio-compiler.md",
 ]
 metrics = [
   "unit_test_pass_rate",

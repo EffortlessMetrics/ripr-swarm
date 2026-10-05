@@ -2214,7 +2214,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/work-portfolio.{json,md}",
             false,
             false,
-            "Compiles immutable captured inputs into the read-only deterministic multi-campaign work-portfolio snapshot (#1704, RIPR-SPEC-0233); selects no work, synthesizes no default campaign, and mutates no GitHub, branch, worktree, claim, spec, campaign or source state.",
+            "Compiles immutable captured inputs into the read-only deterministic multi-campaign work-portfolio snapshot (#1704, RIPR-SPEC-0234); selects no work, synthesizes no default campaign, and mutates no GitHub, branch, worktree, claim, spec, campaign or source state.",
         ),
         command_entry(
             "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",

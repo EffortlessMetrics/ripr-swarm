@@ -1,4 +1,4 @@
-# Work portfolio captured corpora (RIPR-SPEC-0233, #1704)
+# Work portfolio captured corpora (RIPR-SPEC-0234, #1704)
 
 Deterministic captured-input corpora for the read-only work-portfolio
 compiler in `xtask/src/work_portfolio.rs`. The compiler never reads live

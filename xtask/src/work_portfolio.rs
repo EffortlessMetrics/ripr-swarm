@@ -1,5 +1,5 @@
 //! Read-only deterministic multi-campaign work-portfolio compiler (#1704,
-//! slice #1794, RIPR-SPEC-0233).
+//! slice #1794, RIPR-SPEC-0234).
 //!
 //! `cargo xtask work portfolio [--captured <dir>] [--json]`,
 //! `cargo xtask work candidates [--campaign <id>] [--surface <id>]
@@ -2966,7 +2966,7 @@ fn load_and_compile(dir: &str) -> Result<WorkPortfolioSnapshotV1, String> {
 }
 
 /// `cargo xtask work portfolio [--captured <dir>] [--json]` (#1704,
-/// RIPR-SPEC-0233): compile the captured directory into the versioned
+/// RIPR-SPEC-0234): compile the captured directory into the versioned
 /// snapshot, write the standard reports, and render JSON or the derived
 /// Markdown to stdout. Read-only: no GitHub, branch, worktree, claim, spec,
 /// campaign or source state is touched.
