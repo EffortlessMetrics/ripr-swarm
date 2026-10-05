@@ -9808,7 +9808,7 @@
         ]
       },
       "reasoning": "Grid cell: boolean logic (`!hidden` rewritten as `false == hidden`; mutants flip it to `!=` or replace the body with a constant) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197, RIPR-SPEC-0231.",
-      "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown and static_unknown.",
+      "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown.",
       "labeling_observation": {
         "ripr_commit": "1273096",
         "full_checkout_verdict": "gap",
