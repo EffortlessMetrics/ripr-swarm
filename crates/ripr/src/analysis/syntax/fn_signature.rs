@@ -168,6 +168,8 @@ pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeE
                 | "repr"
                 | "non_exhaustive"
                 | "must_use"
+                | "clippy"
+                | "rustfmt"
         )
     });
     let mut fields = Vec::new();

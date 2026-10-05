@@ -1311,3 +1311,17 @@ fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
         assert!(admitted_texts(&index, &pin).is_empty(), "{foreign_clone}");
     }
 }
+
+/// #6692 review: lint-tool attributes (`clippy::`, `rustfmt::`) do not
+/// change equality, so they keep the derived-equality reading.
+#[test]
+fn a_clone_field_pin_allows_lint_tool_attributes_on_the_type() {
+    for attribute in ["#[rustfmt::skip]", "#[clippy::has_significant_drop]"] {
+        let lib = WINDOW_LIB.replace(
+            "#[derive(Debug, PartialEq, Eq)]\npub struct Window",
+            &format!("#[derive(Debug, PartialEq, Eq)]\n{attribute}\npub struct Window"),
+        );
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_some(), "{lib}");
+    }
+}

@@ -11202,6 +11202,10 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_compared_with_its_own_receiver_pins_its_fields",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_derived_equality_and_the_returned_literal",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_a_field_type_that_compares_by_value",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_a_receiver_built_without_the_clone",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_the_changed_line_at_the_literals_own_depth",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_refuses_competitors_and_unreadable_shapes",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_allows_lint_tool_attributes_on_the_type",
   "crates/ripr/tests/clone_field_whole_equality.rs::a_clone_compared_with_its_original_through_derived_equality_is_exposed",
   "crates/ripr/tests/clone_field_whole_equality.rs::clone_field_credit_refuses_manual_equality_inequality_and_other_values",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::only_a_plain_assert_eq_against_an_owner_free_value_pins",
@@ -11284,6 +11288,7 @@ code = [
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs",
 ]
 outputs = [
   "fixtures/predicate_boundary_oracle_refused/expected/check.json",
@@ -12456,7 +12461,11 @@ metrics = [
 id = "RIPR-SPEC-0228"
 name = "Rust field writes are probed and observed, not unknown"
 spec = "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::let_binding_type_annotations_are_not_field_construction",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::struct_literal_fields_keep_field_construction_beside_let_bindings",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::reordered_replacement_does_not_repeat_the_removed_static_unknown",
+]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",

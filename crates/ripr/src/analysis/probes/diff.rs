@@ -175,6 +175,14 @@ pub(crate) fn probes_for_file_with_relations(
             if has_matching_added_line(removed, &family, changed) {
                 continue;
             }
+            if family == ProbeFamily::StaticUnknown
+                && has_adjacent_reordered_added_line(removed, changed)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
+            {
+                continue;
+            }
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 removed,
@@ -763,11 +771,6 @@ fn has_matching_added_line(
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
 ) -> bool {
-    if *removed_family == ProbeFamily::StaticUnknown
-        && has_adjacent_reordered_added_line(removed_line, changed)
-    {
-        return true;
-    }
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().any(|line| {
@@ -792,9 +795,11 @@ fn has_matching_added_line(
 /// same non-whitespace characters only reorders them (an operand swap such
 /// as `(hi << 8) | lo` -> `lo | (hi << 8)`). The added line's own probe
 /// already carries the change, with this removed text as its `before`, so
-/// the removed side's catch-all `static_unknown` adds nothing. Only the
-/// static-unknown catch-all is suppressed this way; a removed line with a
-/// concrete family keeps the existing family-and-token pairing.
+/// the removed side's catch-all `static_unknown` adds nothing. The caller
+/// suppresses it only when an added-side probe really carries this removed
+/// text as its `before`. Only the static-unknown catch-all is suppressed
+/// this way; a removed line with a concrete family keeps the existing
+/// family-and-token pairing.
 fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
     let removed = sorted_code_characters(&removed_line.text);
     !removed.is_empty()
@@ -806,12 +811,29 @@ fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &Chang
         })
 }
 
-/// The non-whitespace characters of a line in sorted order.
+/// The characters of a line in sorted order, without whitespace outside
+/// string literals: `"a b"` and `"ab"` differ, so changing a literal's
+/// spacing is never read as a reorder.
 fn sorted_code_characters(text: &str) -> Vec<char> {
-    let mut characters = text
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<Vec<_>>();
+    let mut characters = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in text.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+        } else if character == '"' {
+            in_string = true;
+        }
+        if in_string || character == '"' || !character.is_whitespace() {
+            characters.push(character);
+        }
+    }
     characters.sort_unstable();
     characters
 }
@@ -1902,6 +1924,16 @@ mod tests {
                 .any(|probe| probe.expression == removed
                     && probe.family == ProbeFamily::StaticUnknown),
             "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
+        );
+        // Whitespace inside a string literal is content, not layout.
+        let spaced = "log(\"a b\", x) | y";
+        assert_ne!(
+            sorted_code_characters(spaced),
+            sorted_code_characters("log(\"ab\", x) | y")
+        );
+        assert_eq!(
+            sorted_code_characters(spaced),
+            sorted_code_characters("y | log(\"a b\",x)")
         );
     }
 

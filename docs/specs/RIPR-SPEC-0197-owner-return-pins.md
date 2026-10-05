@@ -163,10 +163,14 @@ rule only for an assertion whose context was admitted.
    the changed closure. A binary bitwise `|` (#6675) evaluates both
    operands on every input, like `&`, `^`, `<<`, `>>`, `+` and `*`, so
    `u16::from(lo) | (u16::from(hi) << 8)` is unconditional. A `|` counts
-   as binary only when it directly follows a completed operand (a
-   non-keyword identifier or number, `)`, `]` or `?`); a closure's opening
-   pipe never does (`f(|x| ..)`, `move |x| ..`), so every closure still
-   fails closed. When the owner has no `?` and no other
+   as binary only when it directly follows a completed operand token: an
+   identifier or number other than `async`, `break`, `else`, `in`, `let`,
+   `move`, `mut`, `return`, `static` or `yield`, or a `)`, `]` or `?`. A
+   closure's opening pipe never does (`f(|x| ..)`, `move |x| ..`,
+   `Foo { f: |x| x }`, `[|x| x]`), so every closure still fails closed. A
+   `|` inside a macro invocation's arguments
+   (`matches!(k, A | B)`) or in a tail holding a `let` may separate pattern
+   alternatives, which short-circuit, so it is never binary. When the owner has no `?` and no other
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
@@ -208,10 +212,26 @@ rule only for an assertion whose context was admitted.
    attribute, and its type compares by value as RIPR-SPEC-0225 rule 4
    defines (a standard value type, a reference, tuple, array or standard
    container of such types, or a workspace type that meets these equality
-   rules recursively). No workspace `trait Clone` may exist, the test's file
-   may not import a foreign `Clone`, and no other `fn clone` with a
-   receiver may compete. The test side reuses rules 1, 2 and 4 with one
-   change: the non-owner operand must be exactly the clone call's receiver.
+   rules recursively). The value-type list extends RIPR-SPEC-0225 rule 4
+   with `Box`, `Rc`, `Arc`, `VecDeque`, the `BTreeMap`/`BTreeSet`/`HashMap`/
+   `HashSet` collections and the float types; a workspace type with generic
+   arguments fails closed. The changed line must be one whole field
+   initializer at the literal's own brace depth: a field of a nested literal
+   or an argument of a call within a field (`start: f(Raw { start: .. })`)
+   is not the outer field's value. No workspace `trait Clone` may exist, the
+   test's file may not import a foreign `Clone`, and no other `fn clone`
+   with a receiver may compete. The test side reuses rules 1, 2 and 4 with
+   two changes: the non-owner operand must be exactly the clone call's
+   receiver, and that receiver must be built without the clone under test.
+   Every `let` of it initializes it with a `T { .. }` or `T(..)` literal or
+   a call to `T`'s one inherent constructor whose body clones nothing; no
+   initializer mentions `clone`, `clone_from`, `cloned` or `to_owned`
+   (`let w: Window = base.clone();` is refused, since an idempotent wrong
+   field would survive the comparison); `Default`/`From` constructors are not
+   read; and the test may not reassign the receiver or borrow it `&mut`.
+   Anything ripr cannot read fails closed: a lexical-fallback owner file, a
+   duplicate declaration of `T`, generic arguments on a workspace field
+   type, a UFCS `Clone::clone(&w)` call, or a receiver bound some other way.
    `assert_ne!`, a comparison with any other value
    (`assert_eq!(w.clone(), Window::new(3, 9))`) and a hand-written
    `PartialEq` give no credit. A confirmed clone pin clears the
