@@ -4176,7 +4176,8 @@ mod tests {
                 worktree_path: None,
             }
         }
-        let open = vec![&approved_pr()];
+        let approved = approved_pr();
+        let open = vec![&approved];
         let empty_prs: Vec<&WorkCapturedPullRequestV1> = Vec::new();
         let no_claims: Vec<&WorkCapturedClaimV1> = Vec::new();
         let (kind, _) = classify_candidate(
