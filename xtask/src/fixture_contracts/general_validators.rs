@@ -2197,9 +2197,7 @@ pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
                         "issue lifecycle contract plan control corpus assessment failed: {failure}"
                     ));
                 }
-                for failure in
-                    contract_plan::assess_control_rows_against_counting_law(&controls)
-                {
+                for failure in contract_plan::assess_control_rows_against_counting_law(&controls) {
                     violations.push(format!(
                         "issue lifecycle contract plan counting law failed: {failure}"
                     ));

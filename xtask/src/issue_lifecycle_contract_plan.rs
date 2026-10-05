@@ -589,16 +589,12 @@ fn verify_issue_payload_binding(
                 row.id
             )
         })?;
-    let (repository, suffix) = row
-        .snapshot
-        .issue_ref
-        .split_once('#')
-        .ok_or_else(|| {
-            format!(
-                "contract plan row `{}` issue ref `{}` is not an `owner/repo#number` reference",
-                row.id, row.snapshot.issue_ref
-            )
-        })?;
+    let (repository, suffix) = row.snapshot.issue_ref.split_once('#').ok_or_else(|| {
+        format!(
+            "contract plan row `{}` issue ref `{}` is not an `owner/repo#number` reference",
+            row.id, row.snapshot.issue_ref
+        )
+    })?;
     let expected_repository = format!("https://api.github.com/repos/{repository}");
     let referenced_number: u64 = suffix.parse().map_err(|_error| {
         format!(
@@ -752,12 +748,14 @@ fn verify_retrieval_step_bytes(
         })?;
     let suffix = match surface {
         "issue" => format!("repos/{repository}/issues/{}", row.snapshot.issue_number),
-        "comments" => {
-            format!("repos/{repository}/issues/{}/comments", row.snapshot.issue_number)
-        }
-        "timeline" => {
-            format!("repos/{repository}/issues/{}/timeline", row.snapshot.issue_number)
-        }
+        "comments" => format!(
+            "repos/{repository}/issues/{}/comments",
+            row.snapshot.issue_number
+        ),
+        "timeline" => format!(
+            "repos/{repository}/issues/{}/timeline",
+            row.snapshot.issue_number
+        ),
         other => return Err(format!("unknown retrieval surface `{other}`")),
     };
     let foreign_suffix = format!("/issues/{}", row.snapshot.issue_number);
@@ -1236,7 +1234,8 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
                         row.id
                     ));
                 }
-                if row.planning
+                if row
+                    .planning
                     .stop_conditions
                     .iter()
                     .any(|condition| condition.trim().is_empty())
@@ -1461,7 +1460,8 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
             }
         }
     }
-    if row.planning
+    if row
+        .planning
         .acceptance_covered
         .iter()
         .chain(row.planning.acceptance_omitted.iter())
@@ -1510,7 +1510,10 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
     for (section, entries) in [
         ("work items", row.planning.work_items.len()),
         ("edit cages", row.planning.edit_cages.len()),
-        ("semantic conflict resources", row.planning.conflict_resources.len()),
+        (
+            "semantic conflict resources",
+            row.planning.conflict_resources.len(),
+        ),
         ("proof commands", row.planning.proof_commands.len()),
         ("stop conditions", row.planning.stop_conditions.len()),
         ("non-goals", row.planning.non_goals.len()),
@@ -1524,7 +1527,10 @@ pub(crate) fn assess_contract_plan_row(row: &IssueLifecycleContractPlanRowV1) ->
     }
     for (section, entries) in [
         ("edit cages", &row.planning.edit_cages),
-        ("semantic conflict resources", &row.planning.conflict_resources),
+        (
+            "semantic conflict resources",
+            &row.planning.conflict_resources,
+        ),
         ("stop conditions", &row.planning.stop_conditions),
         ("non-goals", &row.planning.non_goals),
     ] {
@@ -3352,10 +3358,13 @@ mod tests {
         let (corpus, _controls, _provenance) = load_committed()?;
         let row = row_by_category(&corpus, "contract_required")?;
         let mut standalone = row.clone();
-        standalone.planning.work_items.push(IssueLifecyclePlanWorkItemV1 {
-            id: "wi-standalone-projection-check".to_string(),
-            depends_on: Vec::new(),
-        });
+        standalone
+            .planning
+            .work_items
+            .push(IssueLifecyclePlanWorkItemV1 {
+                id: "wi-standalone-projection-check".to_string(),
+                depends_on: Vec::new(),
+            });
         standalone
             .attempt
             .plan
@@ -3376,9 +3385,7 @@ mod tests {
             .iter()
             .any(|edge| edge.starts_with("wi-standalone-projection-check->"))
         {
-            return Err(
-                "a dependency-free work item must not emit a dependency edge".to_string(),
-            );
+            return Err("a dependency-free work item must not emit a dependency edge".to_string());
         }
         Ok(())
     }
@@ -3632,8 +3639,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_outer_row_id_bound_to_lifecycle_id()
-    -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_outer_row_id_bound_to_lifecycle_id() -> Result<(), String>
+    {
         let (corpus, _controls, _provenance) = load_committed()?;
         let mut drifted = row_by_category(&corpus, "contract_required")?.clone();
         drifted.id = "drifted-outer-id".to_string();
@@ -3735,9 +3742,7 @@ mod tests {
             .iter()
             .any(|failure| failure.contains("work item dependencies form a cycle"))
         {
-            return Err(format!(
-                "a self-edge must fail the law, got {failures:?}"
-            ));
+            return Err(format!("a self-edge must fail the law, got {failures:?}"));
         }
         let mut two_cycle = row.clone();
         let first = two_cycle.planning.work_items[0].id.clone();
@@ -3825,10 +3830,7 @@ mod tests {
             contract.root.role = contract.author.role.clone();
         }
         let failures = assess_contract_plan_row(&role_alias);
-        if !failures
-            .iter()
-            .any(|failure| failure.contains("root role"))
-        {
+        if !failures.iter().any(|failure| failure.contains("root role")) {
             return Err(format!(
                 "a root role aliased to the author must fail the law, got {failures:?}"
             ));
@@ -3842,10 +3844,7 @@ mod tests {
             contract.root.config_identity = contract.author.config_identity.clone();
         }
         let failures = assess_contract_plan_row(&config_alias);
-        if !failures
-            .iter()
-            .any(|failure| failure.contains("root config identity"))
-        {
+        if !failures.iter().any(|failure| failure.contains("root config identity")) {
             return Err(format!(
                 "a root config aliased to the author must fail the law, got {failures:?}"
             ));
