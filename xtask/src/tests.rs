@@ -11117,6 +11117,19 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
+    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
+    assert_ne!(
+        uncancellable_fallback, workflow,
+        "fixture must actually swap the hosted fallback condition"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
+        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+    );
+
     let shared_group = workflow.replace(
         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
