@@ -70,6 +70,9 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Agent receipt recovery commands preserve native Unix roots and relative or
+  absolute workflow verify output paths when pasted from another directory.
+  Custom missing verify inputs still emit no unrelated producer hint (#6684).
 - `ripr swarm ingest` no longer fails the packet's forbidden-edit guard open
   on path spellings. `SRC/PRICING.py`, absolute or verbatim `\\?\` paths
   under the root, symlinked-root spellings, drive-relative forms, and
@@ -207,6 +210,9 @@ are scoped or reviewed.
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
   `ripr.toml` already failed loudly.
+- Config: workspace status and Python repair config-profile detection treat a
+  dangling `ripr.toml` symlink as present (the same fact `load_for_root`
+  already returns), never as built-in defaults (#5404).
 - The workflow from `ripr init --ci github` now explains a failed install.
   When no prebuilt binary fits the runner and the runner has no `cargo`, the
   Install ripr step fails with the cause and the fix (install Rust or add a
