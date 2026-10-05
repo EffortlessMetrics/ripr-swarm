@@ -82,11 +82,15 @@ rule only for an assertion whose context was admitted.
    Resolution reads the test's own module item list. A bare lock needs a
    direct `use serial_test::<lock>` item there (optionally renamed, `r#`
    normalized) and no other `use` binding the same name; imports in function
-   bodies, sibling modules, globs or macro token trees bind nothing. A
-   `serial_test::<lock>` path needs that module to bind no local
-   `serial_test` (`mod`, `use .. as`, `extern crate .. as`), to hold no
-   item-position macro call, and to import no glob except `super::*` into an
-   enclosing in-file module that meets the same rule. Every other
+   bodies, sibling modules, globs or macro token trees bind nothing. Both
+   forms need `serial_test` in that module to be the crate: the module binds
+   no local `serial_test` (`mod`, `use .. as`, `extern crate .. as`), holds no
+   item-position macro call, carries no attribute on a direct item other than
+   built-ins, std derives and resolved locks (`cfg_attr` and any other
+   attribute or derive macro could emit a module), and imports no glob except
+   `super::*` into an enclosing in-file module that meets the same rule. The
+   crate name is trusted: a manifest `package = ..` rename that points
+   `serial_test` at another crate is outside what source can show. Every other
    attribute (`ignore`, async runtime tests, parameterizing macros such as
    `rstest` or `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's

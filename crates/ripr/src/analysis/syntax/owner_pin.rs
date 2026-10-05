@@ -483,7 +483,7 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
             SERIAL_TEST_LOCKS.contains(&leaf) && serial_test_path_is_the_crate(&module)
         }
         Some(_) => false,
-        None => bare_lock_bound_in_module(&path, &module),
+        None => bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module),
     };
     admitted && lock_arguments_are_bare_keys(attr)
 }
@@ -496,7 +496,8 @@ const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_
 /// item of that module counts: an explicit import shadows globs and the
 /// `#[macro_use]` prelude, and a second explicit binding of the name there
 /// would not compile, so another one refuses. Imports in function bodies,
-/// sibling modules or macro token trees bind nothing for this attribute.
+/// sibling modules or macro token trees bind nothing for this attribute. The
+/// caller still checks that `serial_test` in that path is the crate.
 fn bare_lock_bound_in_module(name: &str, module: &SyntaxNode) -> bool {
     let name = unraw(name);
     let mut bound = false;
@@ -520,12 +521,19 @@ fn bare_lock_bound_in_module(name: &str, module: &SyntaxNode) -> bool {
 
 /// Whether `serial_test::..` in the test's module resolves to the extern
 /// crate: the module binds no item named `serial_test` (`mod`, `use .. as`,
-/// `extern crate .. as`), has no item-position macro call that could emit
-/// one, and imports no glob except `super::*` into an enclosing module of
-/// this file that satisfies the same rule. Any other glob may bring a
-/// `serial_test` that shadows the extern prelude, so it refuses.
+/// `extern crate .. as`), has no item-position macro call or other
+/// attribute or derive macro on a direct item that could emit one, and
+/// imports no glob except `super::*` into an enclosing module of this file
+/// that satisfies the same rule. Any other glob may bring a `serial_test`
+/// that shadows the extern prelude, so it refuses.
 fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
     for item in module.children().filter_map(ast::Item::cast) {
+        if item
+            .attrs()
+            .any(|attr| !attribute_emits_no_items(&attr, module))
+        {
+            return false;
+        }
         match &item {
             ast::Item::MacroCall(_) => return false,
             ast::Item::Module(inner)
@@ -579,6 +587,71 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
         }
     }
     true
+}
+
+/// Built-in attributes and std derives expand to no new items. A
+/// `serial_test` lock is trusted here because it is the crate's only when the
+/// surrounding check passes; a bare name must be bound to a lock (renames
+/// included).
+/// Anything else (`cfg_attr` included) may emit a `serial_test` module.
+fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    const BUILTIN: &[&str] = &[
+        "test",
+        "cfg",
+        "allow",
+        "warn",
+        "deny",
+        "forbid",
+        "expect",
+        "doc",
+        "inline",
+        "cold",
+        "must_use",
+        "non_exhaustive",
+        "repr",
+        "path",
+        "ignore",
+        "should_panic",
+        "track_caller",
+        "deprecated",
+        "macro_use",
+        "macro_export",
+    ];
+    const STD_DERIVES: &[&str] = &[
+        "Debug",
+        "Clone",
+        "Copy",
+        "PartialEq",
+        "Eq",
+        "PartialOrd",
+        "Ord",
+        "Hash",
+        "Default",
+    ];
+    let Some(path) = attr.path() else {
+        // `cfg(..)` parses as its own meta kind with no path.
+        return attr.simple_name().as_deref() == Some("cfg");
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    if let Some(("serial_test", leaf)) = path.split_once("::") {
+        return SERIAL_TEST_LOCKS.contains(&leaf);
+    }
+    if path == "derive" {
+        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+            return false;
+        };
+        return meta.token_tree().is_some_and(|tree| {
+            let text = tree.syntax().text().to_string();
+            text.trim_start_matches('(')
+                .trim_end_matches(')')
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .all(|name| STD_DERIVES.contains(&name))
+        });
+    }
+    BUILTIN.contains(&path.as_str())
+        || (!path.contains("::") && bare_lock_bound_in_module(&path, module))
 }
 
 fn unraw(name: &str) -> &str {
