@@ -802,6 +802,13 @@ impl PackageWalk {
     /// walk's cost (about a millisecond a file), and the walk expands one
     /// file at a time.
     fn scan_ahead(&mut self, workspace_root: &Path, target: &Path, file: &Path) {
+        // `file` is expanded next; the others wait in `read_ahead`, which
+        // stays within its pending limit. A full cache reads `file` alone
+        // without visiting the queue.
+        let room = self
+            .pending_read_ahead_limit
+            .saturating_sub(self.read_ahead.len());
+        let others = (READ_AHEAD_FILES - 1).min(room);
         let unscanned = |queued: &&PathBuf| {
             queued.as_path() != file
                 && !self.scans.contains_key(*queued)
@@ -810,7 +817,9 @@ impl PackageWalk {
         // The same order `step` picks in: nearest the target first, or the
         // stack top past the directed bound. Past the bound the queue can be
         // long, so only the entries the batch takes are visited.
-        let pending = if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+        let pending = if others == 0 {
+            Vec::new()
+        } else if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
             // Reversed so the stable sort breaks ties the way `step`'s
             // `max_by_key` does: the later queue entry first.
             let mut nearest = self
@@ -825,7 +834,7 @@ impl PackageWalk {
         } else {
             let mut stack_top = Vec::new();
             for queued in self.queue.iter().rev().map(|(queued, _)| queued) {
-                if stack_top.len() >= READ_AHEAD_FILES {
+                if stack_top.len() >= others {
                     break;
                 }
                 if unscanned(&queued) && !stack_top.contains(&queued) {
@@ -834,15 +843,9 @@ impl PackageWalk {
             }
             stack_top
         };
-        // `file` is expanded next; the others wait in `read_ahead`, which
-        // stays within its pending limit.
-        let room = self
-            .pending_read_ahead_limit
-            .saturating_sub(self.read_ahead.len());
-        let limit = READ_AHEAD_FILES.min(room + 1);
         let mut batch = vec![file.to_path_buf()];
         for queued in pending {
-            if batch.len() >= limit {
+            if batch.len() > others {
                 break;
             }
             if !batch.contains(queued) {
