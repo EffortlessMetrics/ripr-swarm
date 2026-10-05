@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (3)
+
+Reason:
+RIPR-SPEC-0224, #5508: combined-tree fix; #5255 landed this fixture with the pre-#5578 observation_unconfirmed wording. No verdict change.
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
