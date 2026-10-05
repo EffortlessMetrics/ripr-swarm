@@ -78,6 +78,9 @@ pub(in crate::analysis::test_grip_evidence) struct TypeMentionIndex {
     /// `char`'s `Debug`, not every type's. A gated trait with no matching
     /// entry never dispatches.
     trait_uses: BTreeMap<(GatedTrait, Option<String>), TraitUse>,
+    /// Type-shaped identifiers in each struct or enum definition, by type
+    /// name: what `self.field` or a `match self` binding may hold.
+    field_types: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Where test-reached code first uses a gated trait's call syntax.
@@ -92,6 +95,11 @@ struct TraitUse {
 impl TypeMentionIndex {
     pub(in crate::analysis::test_grip_evidence) fn build(context: &CompactGripContext<'_>) -> Self {
         let mut index = Self::default();
+        for (_, facts) in context.index.files().iter() {
+            for (name, fields) in type_definitions(&facts.data().source) {
+                index.field_types.entry(name).or_default().extend(fields);
+            }
+        }
         let mut tests: Vec<_> = context.tests.iter().map(|indexed| indexed.test).collect();
         tests.sort_by(|a, b| {
             (&a.file, a.start_line, &a.name).cmp(&(&b.file, b.start_line, &b.name))
@@ -134,7 +142,7 @@ impl TypeMentionIndex {
         for _ in 0..MAX_TRANSITIVE_DEPTH {
             let mut grew = false;
             for (callee, root) in std::mem::take(&mut deferred) {
-                if !index.may_dispatch(&callee.id.0) {
+                if !index.may_dispatch(&callee.id.0) && !same_gated_trait(callee, &root) {
                     deferred.push((callee, root));
                 } else if reached.insert(callee.id.0.as_str()) {
                     index.add_dispatch_reached(callee, root);
@@ -168,7 +176,12 @@ impl TypeMentionIndex {
                     // Name matching reaches every same-named method; a gated
                     // trait's method still needs its syntax (`Display::fmt`
                     // calling `.fmt(f)` must not reach an unused `Debug::fmt`).
-                    if is_trait_impl_method(callee) && !index.may_dispatch(&callee.id.0) {
+                    // Delegation within one trait (`Display::fmt` calling
+                    // an inner `Display::fmt`) passes the root's gate.
+                    if is_trait_impl_method(callee)
+                        && !index.may_dispatch(&callee.id.0)
+                        && !same_gated_trait(callee, &root)
+                    {
                         if !reached.contains(callee.id.0.as_str()) {
                             deferred.push((callee, root.clone()));
                         }
@@ -227,13 +240,53 @@ impl TypeMentionIndex {
     }
 
     fn add_function_trait_uses(&mut self, function: &FunctionSummary) {
+        let test_code = is_test_file(&function.file) || is_generic_signature(&function.body);
         self.add_trait_uses(
             &function.body,
             &function.name,
             &function.file,
             function.start_line,
-            is_test_file(&function.file) || is_generic_signature(&function.body),
+            test_code,
         );
+        if test_code || gated_trait_uses(&function.body).is_empty() {
+            return;
+        }
+        // A method that uses the syntax on `self`, `Self` or a field
+        // (`self.to_string()`, `format!("{:?}", self.inner)`) runs it for
+        // its own type and the types it holds, which its body never names.
+        let words = words(&function.body);
+        if !(words.contains("self") || words.contains("Self")) {
+            return;
+        }
+        let Some(self_type) = impl_self_type_name(&function.id.0) else {
+            return;
+        };
+        let held = self.held_types(&self_type);
+        self.add_trait_uses_for(
+            &function.body,
+            &function.name,
+            &function.file,
+            function.start_line,
+            held.into_iter().map(Some).collect(),
+        );
+    }
+
+    /// `self_type` and the types its fields hold, a few levels deep.
+    fn held_types(&self, self_type: &str) -> BTreeSet<String> {
+        let mut held = BTreeSet::from([self_type.to_string()]);
+        let mut frontier = vec![self_type.to_string()];
+        for _ in 0..HELD_TYPE_DEPTH {
+            let mut next = Vec::new();
+            for name in frontier {
+                for field in self.field_types.get(&name).into_iter().flatten() {
+                    if held.insert(field.clone()) {
+                        next.push(field.clone());
+                    }
+                }
+            }
+            frontier = next;
+        }
+        held
     }
 
     fn add_trait_uses(
@@ -244,10 +297,6 @@ impl TypeMentionIndex {
         line: usize,
         test_code: bool,
     ) {
-        let uses = gated_trait_uses(body);
-        if uses.is_empty() {
-            return;
-        }
         let types: Vec<Option<String>> = if test_code {
             vec![None]
         } else {
@@ -256,6 +305,18 @@ impl TypeMentionIndex {
                 .map(|(token, _)| Some(token))
                 .collect()
         };
+        self.add_trait_uses_for(body, site, file, line, types);
+    }
+
+    fn add_trait_uses_for(
+        &mut self,
+        body: &str,
+        site: &str,
+        file: &std::path::Path,
+        line: usize,
+        types: Vec<Option<String>>,
+    ) {
+        let uses = gated_trait_uses(body);
         for (gated, syntax) in uses {
             for type_name in &types {
                 self.trait_uses
@@ -533,7 +594,6 @@ impl GatedTrait {
                 "contains",
                 "dedup",
                 "dedup_by_key",
-                "position",
             ],
             Self::Ord => &[
                 "cmp",
@@ -688,8 +748,17 @@ fn words(code: &str) -> BTreeSet<&str> {
 fn format_placeholders(body: &str) -> (bool, bool) {
     let mut display = false;
     let mut debug = false;
-    for (start, literal) in string_literals(body) {
-        if is_failure_message(&body[..start]) {
+    let literals = string_literals(body);
+    // The enclosing-call scan reads a copy with literal contents blanked, so
+    // a `(` inside an earlier message cannot shift its depth.
+    let mut masked = body.as_bytes().to_vec();
+    for (_, literal) in &literals {
+        let from = literal.as_ptr() as usize - body.as_ptr() as usize;
+        masked[from..from + literal.len()].fill(b' ');
+    }
+    let masked = String::from_utf8(masked).unwrap_or_else(|_| body.to_string());
+    for (start, literal) in literals {
+        if masked.get(..start).is_some_and(is_failure_message) {
             continue;
         }
         let mut rest = literal;
@@ -799,13 +868,19 @@ fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
     (bytes.get(quote) == Some(&b'"')).then_some((hashes, quote))
 }
 
+/// How far back `is_failure_message` looks for the enclosing call.
+const FAILURE_MESSAGE_SCAN_LIMIT: usize = 4096;
+
 /// Whether the call that encloses the end of `before` formats its message
 /// only on failure.
 fn is_failure_message(before: &str) -> bool {
     let bytes = before.as_bytes();
     let mut depth = 0usize;
     let mut i = bytes.len();
-    while i > 0 {
+    // A long table literal would make each lookup quadratic; past the cap the
+    // literal counts as a use, which only widens what may dispatch.
+    let floor = bytes.len().saturating_sub(FAILURE_MESSAGE_SCAN_LIMIT);
+    while i > floor {
         i -= 1;
         match bytes[i] {
             b')' => depth += 1,
@@ -836,6 +911,82 @@ fn is_failure_message(before: &str) -> bool {
         }
     }
     false
+}
+
+/// How many levels of fields `held_types` follows from a method's self type.
+const HELD_TYPE_DEPTH: usize = 3;
+
+/// Whether `callee` implements the same gated trait as the root that reached
+/// it, so the root's gate covers it.
+fn same_gated_trait(callee: &FunctionSummary, root: &DispatchRoot) -> bool {
+    GatedTrait::of_owner(&callee.id.0)
+        .is_some_and(|gated| GatedTrait::of_owner(&root.id) == Some(gated))
+}
+
+/// Each `struct` or `enum` definition in `source` with the type-shaped
+/// identifiers its fields or variants name. Enum variant names are kept
+/// too; they only widen what may dispatch.
+fn type_definitions(source: &str) -> Vec<(String, BTreeSet<String>)> {
+    let code = source
+        .lines()
+        .map(strip_comments_and_strings)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = code.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_ident(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_ident(bytes[i]) {
+            i += 1;
+        }
+        if !matches!(&code[start..i], "struct" | "enum") {
+            continue;
+        }
+        let name_start = code[i..]
+            .find(|ch: char| !ch.is_whitespace())
+            .map_or(bytes.len(), |at| i + at);
+        let name_end = code[name_start..]
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(bytes.len(), |at| name_start + at);
+        let name = &code[name_start..name_end];
+        if name.is_empty() {
+            continue;
+        }
+        // The definition runs to the `;` of a unit or tuple struct or the
+        // brace that closes its fields, whichever comes first at depth 0.
+        let mut depth = 0usize;
+        let mut end = name_end;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' | b'{' | b'[' => depth += 1,
+                b')' | b']' => depth = depth.saturating_sub(1),
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                b';' if depth == 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        let fields = identifiers(&code[name_end..end.min(bytes.len())])
+            .into_iter()
+            .map(|(token, _)| token)
+            .filter(|token| token != name)
+            .collect();
+        out.push((name.to_string(), fields));
+        i = name_end;
+    }
+    out
 }
 
 /// The `use` items of a file, one per line.
@@ -1069,6 +1220,42 @@ mod tests {
             (false, true)
         );
         assert_eq!(format_placeholders("let b = br\"{x}\";"), (true, false));
+    }
+
+    #[test]
+    fn a_paren_in_an_earlier_message_does_not_hide_the_enclosing_call() {
+        // The `assert(` inside the first literal is text, not the call
+        // that encloses the placeholder.
+        assert_eq!(
+            format_placeholders("let s = label(\"assert(\", \"{:?}\");"),
+            (false, true)
+        );
+        assert_eq!(
+            format_placeholders("let s = f(\")\", format!(\"{}\", a));"),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn type_definitions_read_struct_and_enum_fields() {
+        let found = type_definitions(
+            "pub struct Wrapper { inner: Amount, items: Vec<Item> }\n\
+             struct Quoted(char);\n\
+             struct Unit;\n\
+             enum Kind { Plain(Text), Pair { left: Left } }\n\
+             // struct Commented { x: Hidden }\n",
+        );
+        let get = |name: &str| {
+            found
+                .iter()
+                .find(|(found, _)| found == name)
+                .map(|(_, fields)| fields.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        assert_eq!(get("Wrapper"), Some(vec!["Amount", "Item", "Vec"]));
+        assert_eq!(get("Quoted"), Some(vec!["char"]));
+        assert_eq!(get("Unit"), Some(vec![]));
+        assert_eq!(get("Kind"), Some(vec!["Left", "Pair", "Plain", "Text"]));
+        assert_eq!(get("Commented"), None);
     }
 
     #[test]

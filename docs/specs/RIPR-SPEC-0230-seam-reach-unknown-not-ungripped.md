@@ -73,7 +73,7 @@ and a test that only builds a value does not run them:
 | --- | --- |
 | `Display` | `to_string`, a `{}` / `{name}` / `{:>8}` placeholder, insta `assert_snapshot!` / `assert_display_snapshot!` |
 | `Debug` | `dbg!`, a `{:?}` / `{x:#?}` placeholder, `assert_debug_snapshot!`, expect_test `assert_debug_eq` |
-| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key`, `position` |
+| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key` |
 | `PartialOrd`, `Ord` | ` < `, ` > `, `<=`, `>=`, `cmp`, `partial_cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, `clamp`, `sort`, `sort_unstable`, `sort_by_key`, `sort_unstable_by_key`, `max_by_key`, `min_by_key`, `binary_search`, `select_nth_unstable`, `is_sorted`, `BTreeMap`, `BTreeSet`, `BinaryHeap` |
 | `Hash` | `hash`, `hash_one`, `Hasher`, `BuildHasher`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
 | `Clone` | `clone`, `cloned`, `clone_from`, `to_owned`, `to_vec`, `resize`, `extend_from_slice`, `vec![` |
@@ -86,8 +86,13 @@ A gated impl passes when a test, a helper in a test file, a test file's
 `use` items (`use serde_json::to_string;`), or a generic test-reached
 function (`fn render<T: Display>`, an `impl Trait` or `dyn` argument) uses
 the syntax, or when other test-reached production code uses it in a body
-that also names `T`. A `Display` impl that writes a `char` with `{:?}` runs `char`'s
-`Debug`, not every type's. A placeholder inside an `assert!`, `assert_eq!`,
+that also names `T`. A method body that uses `self` or `Self` also counts for
+its impl's self type and the types that type's fields or variants name, a few
+levels deep (`self.to_string()`, `format!("{:?}", self.inner)`). A
+`Display` impl that writes a `char` field with `{:?}` runs `char`'s `Debug`,
+not every type's. Delegation within one trait passes the delegating impl's
+gate: an `Outer` `Display` that calls `self.0.fmt(f)` reaches `Inner`'s
+`Display`. A placeholder inside an `assert!`, `assert_eq!`,
 `panic!`, `expect` or similar failure message does not count: it formats only
 when the test fails. `assert_eq!` does not run `Debug` for the same reason.
 
@@ -117,16 +122,25 @@ record carries the reach summary as an `opaque_static_evidence` limitation.
 
 When none fires, reach stays `no` and the seam stays `ungripped`.
 
-Known limits, both in the fail-closed direction (the seam stays
-`ungripped`, or reads `opaque` where it might not need to):
+Known limits. Those that widen dispatch make a seam read `opaque` where it
+might not need to. Those that narrow it leave a seam `ungripped` that a test
+may run, so each is named here:
 
 - A lowercase self type that is not a primitive never counts as mentioned.
 - The gate is per trait and name-wide within its scope: one test that uses
   `{:?}` lets every `Debug` impl of a test-used type dispatch.
-- The syntax table is a closed approximation. Syntax it does not list (a
-  custom assertion macro that formats, a method of a generic `impl<T>`
-  block that names no type parameter in its own signature) does not pass
-  the gate, and the impl reads `ungripped`.
+- Narrows: the syntax table is a closed approximation. Syntax it does not
+  list (a custom assertion macro that formats, a method of a generic
+  `impl<T>` block that names no type parameter in its own signature) does
+  not pass the gate, and the impl reads `ungripped`.
+- Narrows: production code that uses the syntax on a value whose type its
+  body never names, outside `self` and its fields (a local bound from a
+  call's return value in a free function), does not count for that type.
+- Narrows: a gated callee still waiting for its trait's syntax when the
+  rounds reach `MAX_TRANSITIVE_DEPTH` is not reached.
+- Widens: a test file's unused `use` item counts as syntax.
+- Widens: the failure-message check looks back at most 4096 bytes for the
+  enclosing call; a placeholder past that counts as a use.
 - Comments and strings are stripped line by line, so a type named only inside
   a block comment or multi-line string still counts as a mention.
 - Matching is by name, as in RIPR-SPEC-0114. A test that calls a common name
