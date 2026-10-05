@@ -1619,11 +1619,13 @@ fn extract_parser_oracles(
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
-        // point as WholeObjectEquality.
+        // point as WholeObjectEquality. An assertion RIPR-SPEC-0231 weakened
+        // is never upgraded, matching the line-scan path in `scan.rs`.
         if matches!(
             classification.kind,
             OracleKind::ExactValue | OracleKind::WholeObjectEquality
-        ) && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+        ) && classification.strength == OracleStrength::Strong
+            && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
         {
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
