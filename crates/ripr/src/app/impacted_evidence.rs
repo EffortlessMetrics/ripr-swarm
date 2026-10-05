@@ -379,7 +379,8 @@ fn stamp_outputs(repo: &Path) -> [OutputState; 2] {
 struct StaleCleanup {
     removed: Vec<&'static str>,
     failed: Vec<String>,
-    /// Written by a concurrent run after this run started; left in place.
+    /// Written by a concurrent run after this run started, or the unchanged
+    /// partner of such an output; left in place.
     left: Vec<&'static str>,
 }
 
@@ -447,15 +448,16 @@ fn refuse_with_stale_cleanup(
         message.push_str(&format!(" Removed stale {}.", removed.join(" and ")));
     }
     if !left.is_empty() {
+        // The pair rule can leave an unchanged partner beside the newer
+        // output, so the reason names the concurrent write, not each file.
         let (pronoun, verb) = if left.len() == 1 {
-            ("it", "was")
+            ("it", "does")
         } else {
-            ("they", "were")
+            ("they", "do")
         };
         message.push_str(&format!(
-            " Left {} in place: {pronoun} {verb} written after this run started, so {pronoun} {} not describe this refused run.",
+            " Left {} in place: another run wrote output after this run started, so {pronoun} {verb} not describe this refused run.",
             left.join(" and "),
-            if left.len() == 1 { "does" } else { "do" }
         ));
     }
     if !failed.is_empty() {
@@ -1056,6 +1058,12 @@ mod tests {
             message.contains(&format!("Left {IMPACTED_JSON} and {IMPACTED_MD} in place")),
             "{message}"
         );
+        assert!(
+            message.contains(
+                "in place: another run wrote output after this run started, so they do not describe this refused run."
+            ),
+            "{message}"
+        );
         Ok(())
     }
 
@@ -1096,7 +1104,7 @@ mod tests {
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         assert!(
             message.contains(&format!(
-                "Left {IMPACTED_MD} in place: it was written after this run started, so it does not describe this refused run."
+                "Left {IMPACTED_MD} in place: another run wrote output after this run started, so it does not describe this refused run."
             )),
             "{message}"
         );
