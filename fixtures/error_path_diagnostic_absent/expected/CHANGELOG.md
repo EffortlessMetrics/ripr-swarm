@@ -59,6 +59,32 @@ Updated:
 ## Pending — error_path_diagnostic_absent (5)
 
 Reason:
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_absent --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_absent (6)
+
+Reason:
+RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_absent --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_absent (7)
+
+Reason:
 RIPR-SPEC-0122: #5471 a refusal from a seam of another kind no longer speaks for an error_path finding, so check prints neither route nor a call-seam refusal; verdicts unchanged
 
 Command:

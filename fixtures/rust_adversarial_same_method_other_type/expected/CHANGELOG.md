@@ -92,6 +92,32 @@ Updated:
 ## Pending — rust_adversarial_same_method_other_type (8)
 
 Reason:
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (9)
+
+Reason:
+RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (10)
+
+Reason:
 RIPR-SPEC-0122: #5471 trait-impl owner now resolves a stub called as <WhileSome as Iterator>::size_hint, so the route prints with --kind return_value instead of a refusal
 
 Command:
