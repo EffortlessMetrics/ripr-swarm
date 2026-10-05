@@ -1223,7 +1223,7 @@ mod tests {
         assert_eq!(
             kept_again.map_err(|err| err.to_string())?,
             r#"{"status":"pass"}"#,
-            "an indeterminate receipt must never become the last good one"
+            "an error receipt must never become the last good one"
         );
         Ok(())
     }
