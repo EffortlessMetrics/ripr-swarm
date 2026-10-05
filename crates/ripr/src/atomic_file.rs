@@ -146,7 +146,11 @@ pub(crate) fn write_cache_streamed(
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> Result<(), String> {
     replace_with(path, false, fill)
-        .map_err(|failure| map_replace_failure(failure, label, ErrorPathPolicy::Omit))
+        .map_err(|failure| map_replace_failure(failure, label, ErrorPathPolicy::Omit))?;
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        sweep_stale_temp_files_once(dir);
+    }
+    Ok(())
 }
 
 fn map_replace_failure(
@@ -626,6 +630,25 @@ mod tests {
         write_cache(&root.join("b.json"), b"{}", "test cache")?;
         assert!(second.exists(), "the directory is swept once per process");
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn write_cache_streamed_sweeps_an_aged_stranded_temp_file() -> Result<(), String> {
+        use std::io::Write;
+        let root = isolated_dir("write-cache-streamed-sweep");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let stranded = root.join(".ripr-atomic-7-8-9.tmp");
+        let file = std::fs::File::create(&stranded).map_err(|err| err.to_string())?;
+        file.set_modified(std::time::SystemTime::now() - STALE_TEMP_GRACE * 3)
+            .map_err(|err| err.to_string())?;
+        super::write_cache_streamed(&root.join("a.json"), "test cache", |file| {
+            file.write_all(b"{}")
+        })?;
+        let swept = !stranded.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(swept, "a streamed cache write sweeps the directory too");
         Ok(())
     }
 }
