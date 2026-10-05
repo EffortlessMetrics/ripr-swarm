@@ -282,12 +282,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// seams reference it by index; evidence is unchanged.
 /// `1.31`: a seam with no related test reads reach `opaque`, not `no`, when
 /// a transitive, macro or trait-dispatch path is unresolved (#5411).
-/// `1.31` -> `1.32`: a related test whose exact-value assertion statically
+/// `1.32`: weak grip requires established activation; a seam whose
+/// activation is unknown classifies `activation_unknown`, not
+/// `weakly_gripped` (#5946). Old entries would keep the weak-grip class.
+/// `1.32` -> `1.33`: a related test whose exact-value assertion statically
 /// contradicts the owner's fold (#6026) keeps at most Weak oracle credit,
 /// keeps the seam's gap open, and names the contradiction in the evidence
 /// summary. Old classified entries would keep serving the wrong-valued
 /// assertion's `strongly_gripped` closure for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.33";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -355,9 +358,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.32";
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
-/// `0.37` -> `0.38`: same statically-contradicted exact-value assertion
-/// transition as full `1.32` (#6026).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
+/// `0.38` -> `0.39`: same statically-contradicted exact-value assertion
+/// transition as full `1.33` (#6026).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -427,9 +431,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
 /// `0.34` remains a separate, unaccepted integration proposal.
 /// `0.36`: same related-test table body as full `1.30`.
 /// `0.37`: same unresolved-reach transition as full `1.31` (#5411).
-/// `0.37` -> `0.38`: same statically-contradicted exact-value assertion
-/// transition as full `1.32` (#6026).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.38";
+/// `0.38`: same weak-grip activation transition as full `1.32` (#5946).
+/// `0.38` -> `0.39`: same statically-contradicted exact-value assertion
+/// transition as full `1.33` (#6026).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.39";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3700,7 +3705,8 @@ mod tests {
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
         // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
         // 1.30 -> 1.31: unresolved seam reach reads opaque (#5411).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.31");
+        // 1.31 -> 1.32: weak grip requires established activation (#5946).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.32");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3725,8 +3731,9 @@ mod tests {
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
         // 0.35 -> 0.36: same related-test table body as the outer cache.
         // 0.36 -> 0.37: same unresolved-reach transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.37");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.37");
+        // 0.37 -> 0.38: same weak-grip activation transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.38");
     }
 
     #[test]
@@ -3762,6 +3769,49 @@ mod tests {
         match cache.load_file_facts(&current_key) {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_entry_with_unknown_probe_shape_kind_loads_corrupt_ignored() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #5415 step 1: unknown kind strings fail at the decode boundary.
+        // This pins the full cache-load path, not just enum deserialization:
+        // the entry quarantines with a decode reason and a re-stored valid
+        // entry serves the same key again.
+        let scratch = integrity_scratch("unknown-probe-shape-kind")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        if facts.probe_shapes.is_empty() {
+            return Err("predicate fixture must decode at least one probe shape".to_owned());
+        }
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)) {
+            return Err("seeded file facts must warm hit".to_owned());
+        }
+        let entry = cache.entry_path(&key);
+        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        envelope["file_facts"]["probe_shapes"][0]["kind"] =
+            serde_json::Value::String("future_shape".to_string());
+        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        match cache.load_file_facts(&key) {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
+            other => {
+                return Err(format!(
+                    "unknown probe-shape kind must quarantine at decode, got {other:?}"
+                ));
+            }
+        }
+        cache.store_file_facts(&key, &facts)?;
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)) {
+            return Err("re-stored valid facts must serve the quarantined key".to_owned());
         }
         Ok(())
     }

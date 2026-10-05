@@ -1031,8 +1031,12 @@ The evidence-first fields are additive in schema `0.2`:
   `missing_discriminators` (the `left == right` entry).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
-  `observation_unconfirmed`: the oracle has the right shape but its text never
-  names the changed expression (`observation_unverified`). Tests are listed
+  `observation_unconfirmed`: the oracle has the right shape but ripr could not
+  confirm that it observes the changed behavior (for Rust, its text never
+  names the changed expression, `observation_unverified`; for Perl, the
+  packet establishes no sink alignment). It is an unknown, not an
+  established miss: only `assertion_not_observing` claims the assertion
+  observes something else. Tests are listed
   even when they supply no oracle, so `related_tests_total` counts every
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
@@ -2347,7 +2351,17 @@ Field contract:
   artifacts, or `"gap_decision_ledger"` when repo badge formats are explicitly
   rendered from supplied GapRecord projection targets. Diff-scoped badge
   formats currently use `finding_exposure`; repo-scoped public badge formats
-  use `canonical_actionable_gap` unless `--gap-ledger` is supplied.
+  use `canonical_actionable_gap` unless `--gap-ledger` is supplied. The
+  `canonical_actionable_gap` count derives from the same full classified seam
+  inventory `repo-exposure-json` renders, so the two artifacts cannot
+  contradict each other on one tree (#5261); these badge formats — and the
+  repo badge-plus formats, whose measured path renders that same walk when a
+  test-efficiency report exists — are therefore full-repo audit-path
+  surfaces and disclose the same invocation cost class. When the classified
+  inventory was seam-capped, the public projection resolves to `limited`
+  (`run_status` `limited_seam_cap`, with the cap named in
+  `limited_reason`) instead of presenting a partial count as a full-scan
+  result.
 - `message` — the headline rendered as a string for Shields compatibility.
   Diff-scoped and internal badges render the bare count (for example `"5"`).
   Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
@@ -7681,8 +7695,11 @@ Field contract:
   movement recomputed from those artifacts.
 - `provenance.ripr_version` - the `ripr` binary version that rendered the
   receipt.
-- `provenance.repo_root` - the `--root` argument normalized to forward slashes
-  for reporting.
+- `provenance.repo_root` - the `--root` argument rendered as a filesystem
+  locator, with one leading `./` omitted. On Unix, literal filename
+  backslashes are preserved; on Windows, path separators render as `/`.
+  Consumers must preserve Unix filename backslashes when reopening this
+  identity.
 - `provenance.config_fingerprint` - stable fingerprint of `ripr.toml` when that
   file exists under the root, or `null` when no config file is present. The
   receipt reads the file text only; it does not rerun analysis.
@@ -9129,6 +9146,35 @@ Field contract:
 - `inputs.gap_ledger` - optional explicit gap decision ledger input. When
   supplied, gate candidates come from GapRecord gate-candidate projection
   targets instead of raw PR guidance candidates.
+- `subject` - identity of the evaluation (#5263): `analyzer_version` (the
+  writing binary's build identity, the same stamp `check --write-artifact`
+  records) plus one entry per consumed input keyed by input name — every
+  CLI-supplied input that can change the decision (`pr_guidance`,
+  `gap_ledger`, `repo_exposure`, `sarif_policy`, `labels_json`,
+  `agent_verify`, `agent_receipt`, `recommendation_calibration`,
+  `mutation_calibration`, `baseline`, `exception_policy`), not only the
+  candidate sources. Each entry carries `content_hash`, the `sha256:<hex>`
+  of the exact bytes consumed (`null` only when the bytes could not be read;
+  the read failure itself surfaces as a `config_error` or warning). Read
+  model: every decision-affecting input hashes exactly the bytes its reader
+  parsed; only the warn-only inputs that no reader parses (`repo_exposure`,
+  `sarif_policy`, `agent_verify`, `agent_receipt`) hash a fresh read taken
+  at subject-build time. The auto-loaded causal artifacts are outside
+  this block: they are workspace-durable files that self-identify (the
+  canonical-delta artifact carries its own identity fields), not invocation
+  inputs. `labels_sha256` appears when `--labels` strings were supplied on
+  the command line (SHA-256 over the label strings joined with NUL
+  separators); labels supplied through `--labels-json` hash as that file's
+  entry instead. The `pr_guidance` entry additionally carries
+  `producer_subject` only when its document recorded a `run_receipt` with
+  resolved, non-empty `base_sha` and `head_sha`; a receipt missing either is
+  treated as absent rather than partly quoted, so no identity value here is
+  ever inferred from a different field. The copied producer values mirror
+  the producer's receipt verbatim (`base_sha`, `head_sha`, `root_identity`,
+  `reusable_cache_identity`) so a `pr-ledger record --base/--head` assertion
+  can be cross-checked against what the gate actually consumed. The block
+  has no timestamp: identical evaluations stay byte-identical, and staleness
+  is carried by the content hashes and producer SHAs.
 - `policy.mode` - effective gate mode after config and CLI precedence.
 - `policy.threshold` - initially `high_confidence_new_gap`.
 - `policy.acknowledgement_labels` - configured labels that can turn a blocking
@@ -15355,7 +15401,12 @@ Field contract:
 - `top_actionable_seams[]` — ranked seams using class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
   then `opaque`, with evidence tie-breakers for missing discriminator, related
-  test, suggested assertion, and stable location.
+  test, suggested assertion, and stable location. Within each class, each
+  owning function's (file plus owner) first seam in the whole ranking comes
+  before any function's second, so adjacent seams of one function cannot fill
+  the list; a function already ranked in a higher class counts as having its
+  first. `pilot-summary.md` names how many actionable seams each listed
+  function has beyond the ones shown, among the seams pilot analyzed.
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.
@@ -15384,13 +15435,19 @@ Field contract:
   ripr adapter reads (Go, Java, C, shell and others); the empty ranking is then
   a non-claim, and no follow-up command applies. `unanalyzed_languages` —
   additive, present only when such source exists — lists `{language,
-  file_count}` per language name.
+  file_count}` per language name. `rust_excluded_from_scope` — additive,
+  present only when Rust files exist but Rust is not in the effective
+  `[languages] enabled` set (#5205) — carries `{language: "rust",
+  file_count, enabled: false, guidance}`; pilot bypasses the Rust inventory
+  in that state, so the empty ranking discloses the exclusion rather than a
+  clean result, on the terminal and Markdown as well as here.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, `after_snapshot_command`
-  and `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, or when
+  `rust_excluded_from_scope` is present, `after_snapshot_command` and
+  `outcome_command` are `null`: there is no seam to snapshot or measure.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
@@ -16794,8 +16851,12 @@ JSON shape:
 ```
 
 `status` is `advisory` when records parse cleanly, `advisory_with_warnings`
-when records are present but violate projection-safety checks, and `blocked`
-when no records can be read. The summary counts are projection inputs only;
+when records are present but violate projection-safety checks, `no_records`
+when the input parsed cleanly but zero gap records were derived from it (for
+the `--check-output` route a warning then names how many findings the
+Python/TypeScript/Perl-only projections skipped), and `blocked` when no
+records can be read because the artifact is missing, unreadable, or
+malformed. The summary counts are projection inputs only;
 they are not gate authority.
 
 `source_subject` records which source contents the ledger was computed from
@@ -17384,7 +17445,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.32",
+      "schema_version": "1.33",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
