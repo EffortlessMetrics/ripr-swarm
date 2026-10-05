@@ -7727,8 +7727,11 @@ Field contract:
   movement recomputed from those artifacts.
 - `provenance.ripr_version` - the `ripr` binary version that rendered the
   receipt.
-- `provenance.repo_root` - the `--root` argument normalized to forward slashes
-  for reporting.
+- `provenance.repo_root` - the `--root` argument rendered as a filesystem
+  locator, with one leading `./` omitted. On Unix, literal filename
+  backslashes are preserved; on Windows, path separators render as `/`.
+  Consumers must preserve Unix filename backslashes when reopening this
+  identity.
 - `provenance.config_fingerprint` - stable fingerprint of `ripr.toml` when that
   file exists under the root, or `null` when no config file is present. The
   receipt reads the file text only; it does not rerun analysis.
@@ -14237,7 +14240,8 @@ The queue envelope is:
       "refresh_commands": [
         "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/reports/repo-exposure.json",
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
-      ]
+      ],
+      "refresh_replayable": true
     }
   ]
 }
@@ -14252,7 +14256,7 @@ array; pass `--language rust` to consider Rust records.
 
 `source_currentness` is the live producer-backed authority for a packet source.
 It contains `status`, `queue_state`, `reason`, `refresh_commands`,
-`source_kind`, and `source_path`. A packet is assignable only when
+`refresh_replayable`, `source_kind`, and `source_path`. A packet is assignable only when
 `source_currentness.status = "current"` and `queue_state = "queued"`; the
 rendered packet mirrors these values as `staleness_status`, `queue_state`, and
 `staleness_reason`. `current` requires a canonical repo-exposure artifact with
@@ -14260,14 +14264,25 @@ matching repository root, exact clean HEAD, producer input identity, content
 commitment, and GapRecords. The input identity is recomputed from the current
 producer-consumed configuration, including an untracked `ripr.toml`; a changed
 or invalid relevant configuration therefore fails closed as stale or
-`not_evaluated`. `refresh_commands` replay the ledger's own source route. A
-repo-exposure ledger gets `ripr check --format repo-exposure-json` and
-`ripr reports gap-ledger --repo-exposure`. A check-output ledger (the
-Python/TypeScript preview route) gets `ripr check --json` with the base its
-check output recorded and `ripr reports gap-ledger --check-output`; it stays
-`not_evaluated` because check output carries no producer snapshot identity.
-Check output does not record a `--diff` scope, so a check run from a diff file
-must be rerun with the same `--diff`; the blocked reason says so.
+`not_evaluated`. `refresh_commands` replay the ledger's own source route when
+that route can be replayed faithfully, and `refresh_replayable` types that
+guarantee: `true` only for a repo-exposure ledger, whose commands regenerate
+its own recorded route. A repo-exposure ledger gets
+`ripr check --format repo-exposure-json` and
+`ripr reports gap-ledger --repo-exposure` with `refresh_replayable: true`. A
+check-output ledger (the Python/TypeScript preview route) stays
+`not_evaluated` because check output carries no producer snapshot identity,
+and it renders `refresh_replayable: false` with no runnable refresh command
+(#5985): check output does not record whether its scope came from `--diff`,
+so a regenerated check could silently rebuild the ledger at a different
+scope, or truncate the recorded check output through its own redirect. To
+refresh, rerun the original `ripr check` invocation with the same `--diff`
+when one was used, then run `ripr reports gap-ledger --check-output` for the
+fresh check output; the blocked reason carries this route. A records or
+unidentified source kind also renders `refresh_replayable: false`: its
+commands are the repo-exposure regeneration route as a recovery path, which
+replaces rather than replays the recorded records input, and the blocked
+reason names that regeneration.
 
 `staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
 proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
@@ -14328,7 +14343,7 @@ The ingest envelope is:
   "classification": {
     "state": "edited_forbidden_file",
     "outcome": "unknown",
-    "reason": "Agent result reports edits to files forbidden by the packet.",
+    "reason": "forbidden_edit",
     "gap_id": "gap:python:pricing-boundary",
     "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
   },
@@ -14340,6 +14355,7 @@ The ingest envelope is:
     "allowed_files": ["tests/test_pricing.py"],
     "forbidden_files": ["app/pricing.py"],
     "edited_forbidden_files": ["app/pricing.py"],
+    "edited_files_outside_root": [],
     "verify": {
       "present": true,
       "status": "passed",
@@ -14350,7 +14366,12 @@ The ingest envelope is:
     "receipt": {
       "present": true,
       "path": "target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
-      "movement": "resolved"
+      "movement": "resolved",
+      "provenance": {
+        "before_sha256": "a1b2c3d4e5f60011a1b2c3d4e5f60011a1b2c3d4e5f60011a1b2c3d4e5f60011",
+        "after_sha256": "f0e1d2c3b4a50099f0e1d2c3b4a50099f0e1d2c3b4a50099f0e1d2c3b4a50099",
+        "snapshot_provenance_present": true
+      }
     }
   },
   "safety": {
@@ -14382,6 +14403,24 @@ top-level `attempt_outcome` are one of `attempted_no_receipt`,
 `status: "advisory"` even when `attempt_outcome = "resolved"` because it
 classifies an external result artifact; it does not run verification or write
 the receipt.
+
+Edited and forbidden path entries are compared after canonicalization
+(#5984): backslashes fold to `/`, `.` and `..` segments resolve, absolute
+paths under the selected root become root-relative, directly named absolute
+or drive-prefixed entries resolve against the filesystem when they exist (so
+symlinked-root, verbatim `\\?\`, and drive-relative spellings anchor to
+their real location), root-relative entries that name an existing file
+resolve against the selected root (so a symlinked spelling anchors to the
+file it writes through), and comparison folds ASCII case (Windows
+convention), so `SRC/PRICING.py`, an absolute path under the root, or
+`tests/../src/pricing.py` all match a forbidden `src/pricing.py` entry and
+still classify `edited_forbidden_file` before any verify or receipt
+success. `evidence.edited_files_outside_root`
+lists edited entries that do not resolve inside the selected root — absolute
+paths not under it, `..` climbs above it, or spellings whose containment
+cannot be established (a drive-relative entry that resolves to nothing) — as
+unmatched evidence for review; they cannot equal a root-relative forbidden
+entry, so they do not fire the guard.
 
 `classification.reason` carries a machine-readable string for every outcome.
 For `unknown` outcomes it is always one of the following closed set of
@@ -15430,7 +15469,12 @@ Field contract:
 - `top_actionable_seams[]` — ranked seams using class order
   `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
   then `opaque`, with evidence tie-breakers for missing discriminator, related
-  test, suggested assertion, and stable location.
+  test, suggested assertion, and stable location. Within each class, each
+  owning function's (file plus owner) first seam in the whole ranking comes
+  before any function's second, so adjacent seams of one function cannot fill
+  the list; a function already ranked in a higher class counts as having its
+  first. `pilot-summary.md` names how many actionable seams each listed
+  function has beyond the ones shown, among the seams pilot analyzed.
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.
