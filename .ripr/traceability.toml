@@ -8991,6 +8991,8 @@ code = [
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/testing/fixture_git.rs",
+  "crates/ripr/src/analysis/cancellation.rs",
+  "crates/ripr/src/analysis/facts/build.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",
