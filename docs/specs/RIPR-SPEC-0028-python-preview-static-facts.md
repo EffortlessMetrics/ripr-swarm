@@ -176,11 +176,12 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` → smoke oracle
-- `assert a == b` and `assert a != b` → exact-value oracle (for `==`) or
-  smoke-style negative oracle (for `!=`, recorded as broad)
-- `assert isinstance(value, SomeType)` → broad-type oracle
+- `assert a == b` → exact-value oracle; `assert a != b` and other
+  non-equality comparisons → relational check, weak
+- `assert isinstance(value, SomeType)` → relational check, weak
 - `pytest.raises(...)` context manager → error-path oracle
-- `self.assertEqual(a, b)` and `assertNotEqual` → exact-value oracle
+- `self.assertEqual(a, b)` → exact-value oracle; `assertNotEqual` →
+  relational check, weak
 - `self.assertRaises(...)` → error-path oracle
 - `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
@@ -754,6 +755,15 @@ Follow-up implementation belongs to Campaign 27 work item
 and additive output metadata land first under RIPR-SPEC-0026 work items.
 This spec PR records the per-language contract; no analyzer behavior
 changes in the spec PR.
+
+## Later Amendment
+
+RIPR-SPEC-0233 (2026-10-04) owns the Python assertion table, per-test
+oracle selection, the error-path gate, relation order and static-limit
+precedence. It corrects three oracle lines in place above: `!=`,
+`isinstance` and `assertNotEqual` were listed as broad, broad-type and
+exact-value oracles, but the code records all three as
+`relational_check` / weak, and no broad-type kind exists.
 
 ## Metrics
 

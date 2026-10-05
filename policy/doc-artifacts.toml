@@ -1238,6 +1238,46 @@ owner = "product-analysis"
 standalone_reason = "Makes the Rust oracle kind and strength precedence chain normative and narrows what each step admits, so assert_ne!, guarded Err(e) patterns, wildcard-only patterns, substring identifier matches and inequality helper names stop reading as strong or effect oracles (#5513)."
 
 [[artifact]]
+id = "RIPR-SPEC-0233"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0233-python-oracle-and-reach-rules.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes the Python adapter's assertion table, per-test oracle selection, error-path gate, reach order, static-limit precedence and verdict ladder normative, and closes order-dependent and substring-driven over-credit."
+
+[[artifact]]
+id = "RIPR-SPEC-0234"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0234-typescript-oracle-and-reach-rules.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes the TypeScript adapter's matcher table, verdict ladder, assertion collection and reach rules normative, and closes false exposed from name-only expect, substring observation guards, bare Error payloads and mocked owner dependencies."
+
+[[artifact]]
+id = "RIPR-SPEC-0235"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Defines the classification matrix ripr applies to ripr-perl-facts-v1 packet facts, binding oracles to their relation's test and capping each relation before the maximum is taken, so packets cannot produce false exposed or repair output on static_unknown."
+
+[[artifact]]
+id = "RIPR-SPEC-0236"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0236-seam-grip-classification-order.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes classify_seam's rule order normative, requires established activation for weakly_gripped (#5946), fills RIPR-SPEC-0230's opaque gaps, and lists each grip class's pilot, LSP, SARIF and headline consequences."
+
+[[artifact]]
+id = "RIPR-SPEC-0237"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes ripr pilot's ranking normative: class order, rank key, one seam per owning function per round across classes (#6294), truncation and an Also in this function count over the same ranked set."
+
+[[artifact]]
 id = "RIPR-SPEC-0221"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0221-agent-surface-benchmark.md"

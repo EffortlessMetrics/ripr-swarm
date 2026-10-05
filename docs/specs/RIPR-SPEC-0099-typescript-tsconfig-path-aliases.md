@@ -378,6 +378,15 @@ result:    NO typescript_path_alias_unresolved limitation emitted
 - `crates/ripr/src/config.rs` + `crates/ripr/src/config/model.rs` — `RawTypescriptConfig`, `TypescriptConfig`
 - `crates/ripr/src/analysis/mod.rs` — `resolve_tsconfig_paths: bool` in `AnalysisOptions`
 
+## Later Amendment
+
+RIPR-SPEC-0234 (2026-10-04) records the workspace package resolution of
+#4554 in the TypeScript reach chain. A non-relative specifier that names
+an in-workspace package's `package.json` `name` resolves through that
+manifest to exactly one indexed workspace source, after `paths` and
+whether or not `resolve_tsconfig_paths` is on. A shared or unresolved
+name fails closed.
+
 ## Metrics
 
 - `tsconfig_alias_flag_on_exposed` — flag ON + unique resolution → `exposed` (AC-1)

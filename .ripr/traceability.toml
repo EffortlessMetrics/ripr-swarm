@@ -12566,3 +12566,102 @@ outputs = [
 metrics = [
   "rust_oracle_strength_overstated",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0233"
+name = "Python oracle and reach rules"
+spec = "docs/specs/RIPR-SPEC-0233-python-oracle-and-reach-rules.md"
+tests = []
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/python/classify.rs",
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/probe_shape.rs",
+  "crates/ripr/src/analysis/language/python/related_tests.rs",
+  "crates/ripr/src/analysis/language/python/sink_alignment.rs",
+  "crates/ripr/src/analysis/language/python/static_limits.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0233-python-oracle-and-reach-rules.md",
+]
+metrics = [
+  "python_oracle_reach_acceptance_mismatches",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0234"
+name = "TypeScript oracle and reach rules"
+spec = "docs/specs/RIPR-SPEC-0234-typescript-oracle-and-reach-rules.md"
+tests = []
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/typescript/actionability.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0234-typescript-oracle-and-reach-rules.md",
+]
+metrics = [
+  "typescript_oracle_reach_acceptance_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0235"
+name = "Perl fact-packet classification"
+spec = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
+tests = []
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/perl/mod.rs",
+  "crates/ripr/src/analysis/language/perl/static_limit.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md",
+]
+metrics = [
+  "perl_packet_class_overstated",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0236"
+name = "Seam grip classification order"
+spec = "docs/specs/RIPR-SPEC-0236-seam-grip-classification-order.md"
+tests = []
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/seam_classification.rs",
+  "crates/ripr/src/analysis/seams.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs",
+  "crates/ripr/src/output/evidence_record.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0236-seam-grip-classification-order.md",
+]
+metrics = [
+  "seam_class_rule_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0237"
+name = "Pilot seam ranking"
+spec = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
+tests = []
+fixtures = []
+code = [
+  "crates/ripr/src/output/pilot/ranking.rs",
+  "crates/ripr/src/output/pilot/render/complete.rs",
+  "crates/ripr/src/cli/commands/pilot.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md",
+]
+metrics = [
+  "pilot_ranking_order_mismatches",
+]

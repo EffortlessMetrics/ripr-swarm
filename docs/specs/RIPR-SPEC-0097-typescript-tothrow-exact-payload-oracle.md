@@ -198,6 +198,22 @@ After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
     all-literal object, then PascalCase class ref (in that priority order)
     for both sync `toThrow` and async `.rejects.toThrow`.
 
+## Later Amendment
+
+RIPR-SPEC-0234 rule 4 (2026-10-04) adds two exceptions to this spec's
+reading. A payload whose whole text is `Error` stays BroadError / Weak,
+because every thrown error is an `Error`, unless the old side throws a
+primitive literal (`globalThis.Error` already stays BroadError under the
+uppercase-first gate). On a message-only change, where the changed line
+is a `throw` or `Promise.reject(...)` and every differing token lies
+inside a string literal of the thrown or rejected message argument, a PascalCase class payload reads
+BroadError / Weak, and a string payload reads ExactErrorVariant only
+when it is not a substring of the old message (adjacent `+` literals
+joined; a non-literal operand reads BroadError). Both otherwise pass on
+the old and new versions. On any other change, including this spec's
+fixture `typescript_tothrow_exact_oracle` (a condition change), every
+payload keeps this spec's reading.
+
 ## Metrics
 
 - `tothrow_exact_payload_upgrades_to_exact_error_variant`: fixture

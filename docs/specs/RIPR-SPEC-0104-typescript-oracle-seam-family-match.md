@@ -222,6 +222,13 @@ oracle_kind: exact_value
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
+## Later Amendment
+
+RIPR-SPEC-0234 (2026-10-04) states the aggregation this spec feeds. The
+class reads the strongest family-matched assertion, and ties keep the
+first one seen. `related_tests[]` oracle fields stay each test's own
+strongest assertion and are not family-filtered.
+
 ## Metrics
 
 - `typescript_oracle_seam_family_honesty`: a `ReturnValue` seam with only a

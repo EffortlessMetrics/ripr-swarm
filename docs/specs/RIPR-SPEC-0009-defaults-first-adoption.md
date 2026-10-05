@@ -571,6 +571,13 @@ Current implementation pieces:
   `cargo install ripr`, checked package install, GitHub Release server assets,
   VSIX packaging, and known defaults-first limits.
 
+## Later Amendment
+
+RIPR-SPEC-0237 (2026-10-04) specifies the order that
+`output/pilot/ranking.rs` produces (class order, rank key and owner
+spread) and the Markdown "Also in this function" count. RIPR-SPEC-0236
+owns which grip classes enter the ranked set.
+
 ## Metrics
 
 - `time_to_first_actionable_seam`
