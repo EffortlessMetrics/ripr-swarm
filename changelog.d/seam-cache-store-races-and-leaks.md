@@ -8,4 +8,4 @@
 - When one classified record (or the cache metadata) exceeds
   `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, ripr now prints one stderr line
   naming the record, its encoded size and the value that restores warm runs.
-  Before, every run recomputed with no visible reason.
+  Before, every run recomputed with no visible reason (#6664).
