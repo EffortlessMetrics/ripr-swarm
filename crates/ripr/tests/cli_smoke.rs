@@ -23635,3 +23635,49 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
+
+/// #5252 item 7: `init` into a directory that is not a Git work tree warns
+/// instead of silently writing branch-based configuration; a real repo stays
+/// quiet. The warning is advisory: files are still written, exit stays 0.
+#[test]
+fn init_warns_when_the_root_is_not_a_git_work_tree() -> Result<(), String> {
+    // `.cargo/config.toml` redirects TMPDIR into `target/`, which is inside
+    // the checkout's work tree, so the plain temp helper cannot host the
+    // non-repo half. The sibling-of-workspace helper escapes it; the git
+    // precondition below pins that on every machine.
+    let bare = unique_external_workspace("init-nonrepo-warning")?;
+    std::fs::create_dir_all(&bare).map_err(|e| format!("create bare root: {e}"))?;
+    let outside = run_command("git", Some(&bare), &["rev-parse", "--is-inside-work-tree"])
+        .map_err(|e| e.to_string())?;
+    assert!(
+        !outside.status.success(),
+        "fixture must sit outside any work tree: {outside:?}"
+    );
+    let bare_arg = bare.display().to_string();
+    let output = run_ripr(&["init", "--ci", "github", "--root", &bare_arg]);
+    assert_success(&output);
+    assert!(
+        bare.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {output:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not inside a Git work tree"),
+        "init into a non-repo must warn: {stderr}"
+    );
+
+    let repo = unique_temp_workspace("init-repo-stays-quiet");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    let repo_arg = repo.display().to_string();
+    let quiet = run_ripr(&["init", "--ci", "github", "--root", &repo_arg]);
+    assert_success(&quiet);
+    let quiet_stderr = String::from_utf8_lossy(&quiet.stderr);
+    assert!(
+        !quiet_stderr.contains("not inside a Git work tree"),
+        "init inside a work tree must stay quiet: {quiet_stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&bare);
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}

@@ -24,6 +24,12 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if let Some(warning) = unanalyzed_root_warning(&options.root) {
         eprintln!("{warning}");
     }
+    // #5252 item 7: `init` into a non-repo wrote branch-based configuration
+    // with no hint that no branch exists there. Advisory like the root
+    // warning, in both dry-run and real runs.
+    if let Some(warning) = non_git_root_warning(&options.root) {
+        eprintln!("{warning}");
+    }
     // #5208: an unreleased generator cannot pin itself — that version does
     // not exist on crates.io, so the install step would fail. The workflow
     // pins the latest release instead; say so loudly, on stderr like the
@@ -66,6 +72,22 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
         "ripr: warning: the root `{}` has {found} source and no Rust, TypeScript/JavaScript or Python source. ripr does not analyze these languages, so `ripr check` and this configuration will report their changes as not analyzed.",
         output::path::human_path(root)
     ))
+}
+
+/// Warn before configuring a directory that is not a Git work tree: the
+/// generated workflow and Next steps assume branch-based analysis, which has
+/// no branch to compare outside a repository. The shared bounded probe
+/// decides; anything it cannot verify as a work tree warns, since the
+/// configuration is written either way.
+fn non_git_root_warning(root: &Path) -> Option<String> {
+    match crate::git::probe_work_tree_root(root) {
+        Ok(crate::git::WorkTreeRootProbe::Root)
+        | Ok(crate::git::WorkTreeRootProbe::InsideWorkTree) => None,
+        _ => Some(format!(
+            "ripr: warning: the root `{}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository.",
+            output::path::human_path(root)
+        )),
+    }
 }
 
 /// What `ripr init` would do to one file.
@@ -595,6 +617,31 @@ mod tests {
         std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
             .map_err(|err| format!("write lib.rs: {err}"))?;
         assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// #5252 item 7: a real repository stays quiet. (The warns half cannot
+    /// be pinned at unit level: the unit-test temp root sits inside the
+    /// checkout's work tree under test, so only the smoke test's
+    /// outside-the-checkout fixture with its git-pinned precondition can
+    /// carry it.)
+    #[test]
+    fn non_git_root_warning_stays_quiet_inside_a_work_tree() -> Result<(), String> {
+        let root = temp_root("git-quiet")?;
+        let init = std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .current_dir(&root)
+            .output()
+            .map_err(|err| format!("git init failed: {err}"))?;
+        if !init.status.success() {
+            return Err(format!(
+                "git init failed: {}",
+                String::from_utf8_lossy(&init.stderr)
+            ));
+        }
+        assert_eq!(non_git_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
     }
