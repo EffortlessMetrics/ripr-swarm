@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- Predicate same-test pairing no longer treats a boundary literal buried
+  inside an argument expression as a boundary input. `gate(if false { 10 }
+  else { 50 })` and `gate(std::cmp::max(10, 50))` fall back to
+  `same_test_pairing_missing`; a plain literal, a local bound to it, or an
+  infection `==` fact still pairs (#6668).
+
 - CI: ub-review selects RIPR's companion configuration and Rust repository
   identity, and requests resolved-candidate receipts under the same PR-specific
   artifact name used for upload. Review remains advisory; artifact retrieval

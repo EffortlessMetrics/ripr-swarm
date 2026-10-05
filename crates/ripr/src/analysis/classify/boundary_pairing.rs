@@ -28,7 +28,10 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 ///
 /// Boundary credit is the activation authority's `==` facts (named constants,
 /// helper hops, local bindings), not a second matcher. Call-argument matching
-/// remains only for the literal/parameter shape those facts do not cover.
+/// remains only for the literal/parameter shape those facts do not cover: the
+/// argument must *be* the boundary literal or a name bound to it. An expression
+/// that merely mentions the literal (`if false { 10 } else { 50 }`,
+/// `std::cmp::max(10, 50)`) does not pair (#6668).
 ///
 /// Non-predicate probes are not this gate; the caller must not use a `true`
 /// result to promote a family this function does not judge.
@@ -193,7 +196,7 @@ fn argument_list_activates_boundary(
 ) -> bool {
     let arg_values: Vec<Vec<String>> = arguments
         .iter()
-        .map(|argument| owner_argument_values(test, argument))
+        .map(|argument| pairing_argument_values(test, argument))
         .collect();
     let Some((left, right)) = comparison_operands(&probe.expression) else {
         return false;
@@ -316,6 +319,97 @@ fn find_marker(text: &str, marker: &str) -> Option<usize> {
     None
 }
 
+/// Values pairing may treat as this argument's input. Unlike
+/// [`owner_argument_values`], which collects every scalar token inside the
+/// expression, this admits only the argument as a whole: a scalar literal
+/// (including a type suffix), or a plain identifier resolved to a local /
+/// rstest binding. Compound expressions that merely contain a boundary
+/// token are empty; infection `==` facts remain the call-level path for
+/// named constants.
+fn pairing_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
+    let trimmed = argument.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if argument_is_plain_identifier(trimmed) || argument_is_whole_scalar_literal(trimmed) {
+        return owner_argument_values(test, trimmed);
+    }
+    Vec::new()
+}
+
+fn argument_is_plain_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with(|ch: char| ch.is_ascii_digit())
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn argument_is_whole_scalar_literal(argument: &str) -> bool {
+    if argument == "true" || argument == "false" {
+        return true;
+    }
+    if argument_is_whole_quoted_literal(argument) {
+        return true;
+    }
+    if argument.contains(char::is_whitespace) {
+        return false;
+    }
+    if extract_literals(argument).len() != 1 {
+        return false;
+    }
+    !argument.chars().any(|ch| {
+        matches!(
+            ch,
+            '(' | ')'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | ','
+                | '+'
+                | '*'
+                | '/'
+                | '%'
+                | '|'
+                | '&'
+                | '^'
+                | '<'
+                | '>'
+                | '?'
+                | ';'
+                | '='
+                | '!'
+                | ':'
+        )
+    })
+}
+
+fn argument_is_whole_quoted_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let Some((&quote, rest)) = bytes.split_first() else {
+        return false;
+    };
+    if quote != b'"' && quote != b'\'' {
+        return false;
+    }
+    let mut escaped = false;
+    for (offset, &byte) in rest.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if byte == quote {
+            return offset + 1 == rest.len();
+        }
+    }
+    false
+}
+
 fn parameter_index(parameters: &[String], operand: &str) -> Option<usize> {
     parameters.iter().position(|parameter| parameter == operand)
 }
@@ -405,6 +499,159 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "assert_eq!(gate(10), true) must pair"
+        );
+    }
+
+    #[test]
+    fn buried_if_expression_argument_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let buried = test_summary(
+            "buried_if",
+            "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            )],
+            vec![exact(
+                "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            )],
+            &["10", "50"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&buried],
+                &ActivationEvidence::default(),
+            ),
+            "gate(if false {{ 10 }} else {{ 50 }}) evaluates to 50, so mentioning 10 must not pair"
+        );
+    }
+
+    #[test]
+    fn buried_max_call_argument_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let buried = test_summary(
+            "buried_max",
+            "assert_eq!(gate(std::cmp::max(10, 50)), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(std::cmp::max(10, 50)), true);",
+            )],
+            vec![exact("assert_eq!(gate(std::cmp::max(10, 50)), true);")],
+            &["10", "50"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&buried],
+                &ActivationEvidence::default(),
+            ),
+            "gate(std::cmp::max(10, 50)) evaluates to 50, so mentioning 10 must not pair"
+        );
+    }
+
+    #[test]
+    fn buried_if_expression_in_assert_bang_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let buried = test_summary(
+            "buried_assert_bang",
+            "assert!(gate(if false { 10 } else { 50 }));",
+            vec![call("gate", "assert!(gate(if false { 10 } else { 50 }));")],
+            vec![exact("assert!(gate(if false { 10 } else { 50 }));")],
+            &["10", "50"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&buried],
+                &ActivationEvidence::default(),
+            ),
+            "a bool-owner assert!(gate(if false {{ 10 }} else {{ 50 }})) pin must not pair from a buried literal"
+        );
+    }
+
+    #[test]
+    fn local_bound_to_boundary_literal_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let paired = test_summary(
+            "local_boundary",
+            "let threshold = 10;\nassert_eq!(gate(threshold), true);",
+            vec![call("gate", "assert_eq!(gate(threshold), true);")],
+            vec![exact("assert_eq!(gate(threshold), true);")],
+            &["10"],
+        );
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&paired],
+                &ActivationEvidence::default(),
+            ),
+            "let threshold = 10; assert_eq!(gate(threshold), true) must pair"
+        );
+    }
+
+    #[test]
+    fn named_constant_activation_equality_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let paired = test_summary(
+            "const_boundary",
+            "assert_eq!(gate(LIMIT), true);",
+            vec![call("gate", "assert_eq!(gate(LIMIT), true);")],
+            vec![exact("assert_eq!(gate(LIMIT), true);")],
+            &["10"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(LIMIT), true); | named constant".to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&paired], &activation),
+            "gate(LIMIT) must pair when infection already recorded input == 10"
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&paired],
+                &ActivationEvidence::default(),
+            ),
+            "gate(LIMIT) must not pair from the identifier spelling alone"
+        );
+    }
+
+    #[test]
+    fn typed_literal_argument_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let paired = test_summary(
+            "typed_literal",
+            "assert_eq!(gate(10u32), true);",
+            vec![call("gate", "assert_eq!(gate(10u32), true);")],
+            vec![exact("assert_eq!(gate(10u32), true);")],
+            &["10"],
+        );
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&paired],
+                &ActivationEvidence::default(),
+            ),
+            "assert_eq!(gate(10u32), true) is the boundary literal itself and must pair"
         );
     }
 
@@ -622,6 +869,41 @@ mod tests {
         assert_eq!(let_binding_name("letter = gate(10);"), None);
         assert_eq!(let_binding_name("let_got = gate(10);"), None);
         assert_eq!(let_binding_name("let _ = gate(10);"), None);
+    }
+
+    #[test]
+    fn pairing_argument_values_keep_direct_inputs_and_drop_buried_literals() {
+        let local = test_summary(
+            "local",
+            "let threshold = 10;\nassert_eq!(gate(threshold), true);",
+            vec![],
+            vec![],
+            &["10"],
+        );
+        assert_eq!(
+            pairing_argument_values(&local, "10"),
+            vec!["10".to_string()]
+        );
+        assert_eq!(
+            pairing_argument_values(&local, "10u32"),
+            vec!["10".to_string()]
+        );
+        assert_eq!(
+            pairing_argument_values(&local, "threshold"),
+            vec!["10".to_string()]
+        );
+        assert!(
+            pairing_argument_values(&local, "if false { 10 } else { 50 }").is_empty(),
+            "an if-expression that mentions 10 is not the boundary input"
+        );
+        assert!(
+            pairing_argument_values(&local, "std::cmp::max(10, 50)").is_empty(),
+            "a call that mentions 10 is not the boundary input"
+        );
+        assert!(
+            pairing_argument_values(&local, "LIMIT").is_empty(),
+            "an unresolved name is not a pairing argument; infection == facts cover named constants"
+        );
     }
 
     #[test]
