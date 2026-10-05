@@ -552,6 +552,7 @@ impl GatedTrait {
                 "max_by_key",
                 "min_by_key",
                 "binary_search",
+                "select_nth_unstable",
                 "is_sorted",
                 "BTreeMap",
                 "BTreeSet",

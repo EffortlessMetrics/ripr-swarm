@@ -73,13 +73,13 @@ and a test that only builds a value does not run them:
 | --- | --- |
 | `Display` | `to_string`, a `{}` / `{name}` / `{:>8}` placeholder, insta `assert_snapshot!` / `assert_display_snapshot!` |
 | `Debug` | `dbg!`, a `{:?}` / `{x:#?}` placeholder, `assert_debug_snapshot!`, expect_test `assert_debug_eq` |
-| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key`, `position` |
-| `PartialOrd`, `Ord` | ` < `, ` > `, `<=`, `>=`, `cmp`, `partial_cmp`, `max`, `min`, `clamp`, `sort`, `sort_by_key`, `max_by_key`, `min_by_key`, `binary_search`, `BTreeMap`, `BTreeSet`, `BinaryHeap` |
-| `Hash` | `hash`, `Hasher`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
+| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key`, `position` |
+| `PartialOrd`, `Ord` | ` < `, ` > `, `<=`, `>=`, `cmp`, `partial_cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, `clamp`, `sort`, `sort_unstable`, `sort_by_key`, `sort_unstable_by_key`, `max_by_key`, `min_by_key`, `binary_search`, `select_nth_unstable`, `is_sorted`, `BTreeMap`, `BTreeSet`, `BinaryHeap` |
+| `Hash` | `hash`, `hash_one`, `Hasher`, `BuildHasher`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
 | `Clone` | `clone`, `cloned`, `clone_from`, `to_owned`, `to_vec`, `resize`, `extend_from_slice`, `vec![` |
 | `Default` | `default`, `Default`, `unwrap_or_default`, `or_default`, `take` |
 | `FromStr` | `parse`, `from_str`, `FromStr` |
-| `Serialize`, `Deserialize`, serde `Visitor<'de>` | `serde`, `serde_json`, `toml`, `bincode` and other format crates, `Serializer`, `Deserializer`, serde_test `assert_tokens`, insta `assert_json_snapshot!` and the other serde snapshot macros |
+| `Serialize`, `Deserialize`, serde `Visitor<'de>` | `serde`, the format crates `serde_json`, `serde_yaml`, `toml`, `bincode`, `postcard`, `ron`, `rmp_serde`, `ciborium`, `Serializer`, `Deserializer`, serde_test (`serde_test`, `assert_tokens`, `assert_ser_tokens`, `assert_de_tokens`), insta `assert_json_snapshot!`, `assert_yaml_snapshot!`, `assert_ron_snapshot!`, `assert_toml_snapshot!`, `assert_csv_snapshot!`, `assert_compact_json_snapshot!` |
 | `Arbitrary` | `arbitrary`, `Unstructured`, `fuzz_target`, `proptest`, `prop_compose`, `arbitrary_with`, `quickcheck` |
 
 A gated impl passes when a test, a helper in a test file, a test file's
