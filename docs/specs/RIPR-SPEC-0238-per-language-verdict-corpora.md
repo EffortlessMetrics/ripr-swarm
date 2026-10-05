@@ -106,8 +106,9 @@ Subjects are authored projects (`authored-py-<library>-<name>`) with a
 enabled the way a new user's repository enables it. Cases cover pytest
 (asserts, `parametrize`, `raises`, fixtures, `capsys`, `tmp_path`,
 `monkeypatch`), unittest (assert methods, mocks, mixins) and Hypothesis
-(`@given`, `@example`, `assume`), plus one case per RIPR-SPEC-0233
-acceptance example that can run. Truth is the same hand-applied mutant run
+(`@given`, `@example`, `assume`), plus at least one case per runnable
+RIPR-SPEC-0233 acceptance example (`fixtures/python-verdict-corpus/SPEC.md`
+lists the examples and alternate forms left out). Truth is the same hand-applied mutant run
 the Rust corpus uses, under the test command each case records.
 
 ## Required Evidence
@@ -150,6 +151,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_rejects_an_undeclared_language`
 - `each_language_owns_its_corpus_directory_and_run_paths`
 - `a_language_directory_must_declare_that_language`
+- `committed_python_corpus_is_valid_and_covers_each_test_library`
 
 ## Implementation Mapping
 

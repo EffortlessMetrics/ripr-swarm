@@ -266,7 +266,7 @@
           "limited"
         ]
       },
-      "reasoning": "test_tiers_far_from_thresholds checks 6000 and 0 points only, so neither shift of the 5000-point boundary fails it. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "Every test that reaches the gold predicate stays far from 5000 points: test_tiers_far_from_thresholds checks 6000 and 0, and the parametrized rows and quote(6000, 100) are no closer, so neither shift of the 5000-point boundary fails it. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "gap",
@@ -2116,7 +2116,7 @@
           "silent"
         ]
       },
-      "reasoning": "RIPR-SPEC-0233 example 26: the edit changes `content_kind(x)` to `content_type(x)`, a call whose name ends in `type`, and test_label_call asserts the result is 'b', so 'a' fails it. The spec says no static limit and exposed; ripr's verdict at labeling is recorded in the labeling observation.",
+      "reasoning": "RIPR-SPEC-0233 example 26: the edit changes `content_kind(x)` to `content_type(x)`, a call whose name ends in `type`, and test_label_call asserts the result is 'b', so 'a' fails it. The spec says no static limit and exposed; ripr reports static_unknown with metaprogramming, an acceptable limit with a misread call name.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "limited",
@@ -2486,36 +2486,35 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "predicate_boundary",
       "test_shape": "hypothesis_assert_eq_reference_implementation",
-      "hard_case": "the named limit misreads a @given argument as a pytest fixture",
+      "hard_case": "an exact property oracle whose generated inputs miss the boundary; the named limit misreads a @given argument as a pytest fixture",
       "truth": {
-        "state": "discriminated",
+        "state": "not_discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "python -m pytest -q -p no:cacheprovider",
         "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
         "mutants": [
           {
-            "replacement": "return -x if x >= 0 else x",
-            "outcome": "tests_failed",
-            "failing_test": "tests/test_stats.py::test_absolute_matches_builtin",
-            "equivalence_review": "not equivalent: absolute(5) returns -5"
+            "replacement": "return x if x >= 2 else -x",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: absolute(1) returns -1; the derandomized run never draws 1"
           },
           {
-            "replacement": "return x if x >= 0 else x",
-            "outcome": "tests_failed",
-            "failing_test": "tests/test_stats.py::test_absolute_matches_builtin",
-            "equivalence_review": "not equivalent: absolute(-3) returns -3"
+            "replacement": "return x if x >= -1 else -x",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: absolute(-1) returns -1; the derandomized run never draws -1"
           }
         ]
       },
       "expected": {
-        "ideal_verdict": "credited",
+        "ideal_verdict": "gap",
         "acceptable_verdicts": [
-          "credited",
-          "limited",
-          "silent"
+          "gap",
+          "limited"
         ]
       },
-      "reasoning": "test_absolute_matches_builtin compares absolute(x) with the builtin abs(x) for generated integers, so both mutants fail. ripr reports static_unknown and names unresolved_pytest_fixture for the @given argument, an acceptable limit, though x is a Hypothesis argument, not a pytest fixture.",
+      "reasoning": "test_absolute_matches_builtin compares absolute(x) with the builtin abs(x) for generated integers, an exact reference oracle, but the derandomized run (200 examples) draws 0 and no other value in [-3, 3], so shifting the rewritten `x >= 1` boundary to 2 or -1 passes. A property test with an exact oracle still needs the boundary input; ripr reports static_unknown and names unresolved_pytest_fixture for the @given argument, an acceptable limit, though x is a Hypothesis argument, not a pytest fixture.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "limited",

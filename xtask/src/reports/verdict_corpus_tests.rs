@@ -413,34 +413,27 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
         "corpus shrank to {}",
         corpus.cases.len()
     );
-    // One subject per test library the corpus exists to cover.
-    let subjects: BTreeSet<&str> = corpus
-        .subjects
-        .iter()
-        .map(|s| s.subject_id.as_str())
-        .collect();
+    // Every test library the corpus exists to cover keeps cases in both
+    // error directions: discriminated cases measure false actionable, the
+    // rest measure false exposed and false silent. A library whose subject
+    // stays listed after its cases are dropped fails here.
     for library in ["pytest", "unittest", "hypothesis"] {
+        let prefix = format!("authored-py-{library}-");
+        let states: Vec<&TruthState> = corpus
+            .cases
+            .iter()
+            .filter(|c| c.subject_id.starts_with(&prefix))
+            .map(|c| &c.truth.state)
+            .collect();
         assert!(
-            subjects
-                .iter()
-                .any(|id| id.starts_with(&format!("authored-py-{library}-"))),
-            "no {library} subject in {subjects:?}"
+            states.iter().any(|s| **s == TruthState::Discriminated),
+            "no discriminated {library} case"
+        );
+        assert!(
+            states.iter().any(|s| **s != TruthState::Discriminated),
+            "no {library} case that is not fully discriminated"
         );
     }
-    // Both error directions need a denominator: discriminated cases measure
-    // false actionable, the rest measure false exposed and false silent.
-    assert!(
-        corpus
-            .cases
-            .iter()
-            .any(|c| c.truth.state == TruthState::Discriminated)
-    );
-    assert!(
-        corpus
-            .cases
-            .iter()
-            .any(|c| c.truth.state != TruthState::Discriminated)
-    );
     Ok(())
 }
 

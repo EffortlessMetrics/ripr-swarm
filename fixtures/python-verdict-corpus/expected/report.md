@@ -5,9 +5,9 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 61.
 | Rate | Count | Rate |
 | --- | --- | --- |
 | False verdicts (all cases) | 21/61 | 0.3443 |
-| False actionable (of discriminated) | 15/33 | 0.4545 |
-| False exposed (of not fully discriminated) | 6/28 | 0.2143 |
-| False silent (of not fully discriminated) | 0/28 | 0.0000 |
+| False actionable (of discriminated) | 15/32 | 0.4688 |
+| False exposed (of not fully discriminated) | 6/29 | 0.2069 |
+| False silent (of not fully discriminated) | 0/29 | 0.0000 |
 | Ideal verdict | 25/61 | 0.4098 |
 | Abstained (limited or silent where acceptable) | 15/61 | 0.2459 |
 | Findings with a contradiction | 0/61 | 0.0000 |
@@ -66,7 +66,7 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 61.
 | `py-spec0233-ex32-split-dict` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `py-spec0233-ex33-spaced-getattr` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `py-hypothesis-clamp-invariant` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
-| `py-hypothesis-absolute-reference` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `py-hypothesis-absolute-reference` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `py-hypothesis-mean-bounds` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `py-hypothesis-passing-threshold` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `py-hypothesis-label-no-crash` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |

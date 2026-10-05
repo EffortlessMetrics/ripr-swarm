@@ -254,7 +254,7 @@ pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; 
 # Python verdict corpus (RIPR-SPEC-0238). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0233),
 # so these describe those cells, not real-world code. One more wrong case
-# out of 33 discriminated (0.030) or 28 not fully discriminated (0.036)
+# out of 32 discriminated (0.031) or 29 not fully discriminated (0.034)
 # exceeds the floor and regresses.
 
 [[metric]]

@@ -37,9 +37,9 @@
     },
     {
       "counts": {
-        "below_target": 4,
+        "below_target": 6,
         "failed": 0,
-        "meets_target": 1,
+        "meets_target": 2,
         "not_measured": 2,
         "regressed": 0
       },
@@ -48,6 +48,9 @@
         "trust.false_clean_on_bad_input",
         "trust.self_contradictions",
         "trust.false_verdict_rate",
+        "trust.verdict_corpus_python_false_actionable",
+        "trust.verdict_corpus_python_false_exposed",
+        "trust.verdict_corpus_python_false_silent",
         "trust.discriminator_claim_agreement",
         "trust.gap_claim_agreement",
         "trust.mutation_join_coverage",
@@ -515,10 +518,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/python-verdict-corpus/expected/report.json false_actionable_rate: 15/33",
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_actionable_rate: 15/32",
           "repo": null,
           "status": "below_target",
-          "value": 0.4545
+          "value": 0.4688
         }
       ],
       "source": "file:fixtures/python-verdict-corpus/expected/report.json#false_actionable_rate",
@@ -526,7 +529,7 @@
       "target": 0.05,
       "title": "Authored Python edits the project's tests fully catch that ripr still flags as a gap",
       "unit": "ratio",
-      "value": 0.4545
+      "value": 0.4688
     },
     {
       "baseline": {
@@ -541,10 +544,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/python-verdict-corpus/expected/report.json false_exposed_rate: 6/28",
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_exposed_rate: 6/29",
           "repo": null,
           "status": "below_target",
-          "value": 0.2143
+          "value": 0.2069
         }
       ],
       "source": "file:fixtures/python-verdict-corpus/expected/report.json#false_exposed_rate",
@@ -552,7 +555,7 @@
       "target": 0.0,
       "title": "Authored Python edits the project's tests miss that ripr credits as caught",
       "unit": "ratio",
-      "value": 0.2143
+      "value": 0.2069
     },
     {
       "baseline": {
@@ -567,7 +570,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/python-verdict-corpus/expected/report.json false_silent_rate: 0/28",
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_silent_rate: 0/29",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
@@ -1146,9 +1149,9 @@
   ],
   "revision": "c6ccf9d3f73a45ee586c298f45dfb5b537a51826",
   "rollup": {
-    "below_target": 12,
+    "below_target": 14,
     "failed": 0,
-    "meets_target": 6,
+    "meets_target": 7,
     "not_measured": 4,
     "regressed": 0
   },

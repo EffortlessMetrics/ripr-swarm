@@ -10,10 +10,13 @@ this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
   `capsys`, `isinstance`, `!=`, a package re-export and an owner no test references.
-- `authored-py-pytest-spec0233`: one owner per RIPR-SPEC-0233 acceptance
-  example (examples 9, 10 and the `lambda: 0` half of 33 are left out: 9 has
-  no realistic owner, 10 needs numpy, and `sorted(x, key=lambda: 0)` raises
-  at runtime).
+- `authored-py-pytest-spec0233`: at least one case per runnable
+  RIPR-SPEC-0233 acceptance example, one owner per case; examples 22 and 24
+  have two. Examples 9, 10 and the `lambda: 0` half of 33 are left out: 9
+  has no realistic owner, 10 needs numpy, and `sorted(x, key=lambda: 0)`
+  raises at runtime. Alternate forms within an example are not all covered:
+  6's assertEqual form, 19's `Exception, match=''`, 24's third form, 25's
+  no-import form, the alternate edits of 26 to 29, and 31's second test.
 - `authored-py-pytest-fixtures`: conftest fixtures, a parametrized fixture,
   `tmp_path`, `monkeypatch`, `capsys` on stderr.
 - `authored-py-unittest-accounts`: `assertEqual`, `assertTrue`,

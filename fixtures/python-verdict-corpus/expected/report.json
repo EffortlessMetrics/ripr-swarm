@@ -5,8 +5,8 @@
   "corpus_version": "2026-10-04.1",
   "cases_total": 61,
   "by_truth": {
-    "discriminated": 33,
-    "not_discriminated": 27,
+    "discriminated": 32,
+    "not_discriminated": 28,
     "partially_discriminated": 1
   },
   "by_outcome": {
@@ -27,17 +27,17 @@
   },
   "false_actionable_rate": {
     "numerator": 15,
-    "denominator": 33,
-    "rate": "0.4545"
+    "denominator": 32,
+    "rate": "0.4688"
   },
   "false_exposed_rate": {
     "numerator": 6,
-    "denominator": 28,
-    "rate": "0.2143"
+    "denominator": 29,
+    "rate": "0.2069"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 28,
+    "denominator": 29,
     "rate": "0.0000"
   },
   "ideal_rate": {
@@ -71,17 +71,17 @@
       },
       "false_actionable_rate": {
         "numerator": 15,
-        "denominator": 33,
-        "rate": "0.4545"
+        "denominator": 32,
+        "rate": "0.4688"
       },
       "false_exposed_rate": {
         "numerator": 6,
-        "denominator": 28,
-        "rate": "0.2143"
+        "denominator": 29,
+        "rate": "0.2069"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 28,
+        "denominator": 29,
         "rate": "0.0000"
       },
       "ideal_rate": {
@@ -1093,8 +1093,8 @@
       "behavior_family": "predicate_boundary",
       "test_shape": "hypothesis_assert_eq_reference_implementation",
       "hard_case": true,
-      "truth": "discriminated",
-      "ideal_verdict": "credited",
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
       "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": false,

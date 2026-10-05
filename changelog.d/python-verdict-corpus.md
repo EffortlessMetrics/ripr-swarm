@@ -4,5 +4,5 @@
   one case for each runnable RIPR-SPEC-0233 acceptance example, each labeled
   by running its mutants against the project's own tests.
   `cargo xtask verdict-corpus check --language python` scores them: today
-  15/33 false actionable, 6/28 false exposed, 0/28 false silent. The DX
+  15/32 false actionable, 6/29 false exposed, 0/29 false silent. The DX
   scoreboard gates those three rates against the committed baseline.
