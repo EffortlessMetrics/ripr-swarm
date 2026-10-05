@@ -436,6 +436,7 @@ fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, S
         )?;
     }
     let dir = fs::canonicalize(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    verify_own_checkout(&dir)?;
     let head = git(Some(&dir), &["rev-parse", "HEAD"])?;
     if head.trim() != entry.sha {
         let checkout = git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha]);
@@ -464,7 +465,27 @@ fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, S
     Ok(dir)
 }
 
-fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+/// Refuse a corpus directory that is not the root of its own repository.
+/// A `.git` left empty or partial (an interrupted clone, or a CI cache that
+/// restored `target/` without the object store) makes git walk up to the
+/// enclosing repository, and the pin checkout below would then detach the
+/// caller's own working tree.
+pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
+    let toplevel = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
+    let toplevel =
+        fs::canonicalize(toplevel.trim()).map_err(|err| format!("{}: {err}", toplevel.trim()))?;
+    if toplevel == dir {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not its own git checkout (git resolves it to {}); delete it and rerun with --clone",
+            dir.display(),
+            toplevel.display()
+        ))
+    }
+}
+
+pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
     let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let measured = capture_output_measured("git", &owned, cwd, &[], GIT_TIMEOUT, "git")?;
     if exited_zero(&measured) {
@@ -1363,13 +1384,23 @@ pub(crate) fn runner_class() -> String {
     }
 }
 
-/// The first `model name` in `/proc/cpuinfo` as a lowercase dash-separated
-/// slug, or `None` when the field is absent or empty.
+/// The first `model name` in `/proc/cpuinfo` (on Arm, the `CPU implementer`
+/// and `CPU part` codes) as a lowercase dash-separated slug, or `None` when
+/// neither is present.
 pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
-    let model = cpuinfo.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        (key.trim() == "model name").then(|| value.trim())
-    })?;
+    let field = |name: &str| {
+        cpuinfo.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            let value = value.trim();
+            (key.trim() == name && !value.is_empty()).then_some(value)
+        })
+    };
+    // Arm kernels print no `model name`; the implementer and part codes
+    // identify the core design instead.
+    let model = match field("model name") {
+        Some(model) => model.to_string(),
+        None => format!("arm-{}-{}", field("CPU implementer")?, field("CPU part")?),
+    };
     let slug = model
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())

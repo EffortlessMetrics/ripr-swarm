@@ -2010,4 +2010,38 @@ fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
     );
     assert_eq!(super::measure::cpu_model_slug("processor\t: 0\n"), None);
     assert_eq!(super::measure::cpu_model_slug("model name\t:  \n"), None);
+    assert_eq!(
+        super::measure::cpu_model_slug(
+            "processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\nCPU part\t: 0xd0c\n"
+        )
+        .as_deref(),
+        Some("arm-0x41-0xd0c")
+    );
+    assert_eq!(
+        super::measure::cpu_model_slug("CPU implementer\t: 0x41\n"),
+        None
+    );
+}
+
+#[test]
+fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo()
+-> Result<(), String> {
+    // An empty `.git` makes git fall through to the enclosing repository,
+    // which here is this workspace (the test runs inside it).
+    let root = std::env::temp_dir().join(format!("ripr-dx-own-checkout-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let parent = root.join("parent");
+    let nested = parent.join("corpus").join("serde");
+    fs::create_dir_all(nested.join(".git")).map_err(|err| err.to_string())?;
+    super::measure::git(Some(&parent), &["init", "--quiet"])?;
+    let nested = fs::canonicalize(&nested).map_err(|err| err.to_string())?;
+    let parent = fs::canonicalize(&parent).map_err(|err| err.to_string())?;
+
+    let refused = super::measure::verify_own_checkout(&nested);
+    let accepted = super::measure::verify_own_checkout(&parent);
+    let _ = fs::remove_dir_all(&root);
+
+    let err = refused.err().ok_or("a broken .git must be refused")?;
+    assert!(err.contains("is not its own git checkout"), "{err}");
+    accepted
 }
