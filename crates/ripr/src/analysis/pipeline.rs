@@ -1797,8 +1797,7 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
         if !in_section {
             continue;
         }
-        binary |= (line.starts_with("Binary files ") && line.ends_with(" differ"))
-            || line == "GIT binary patch";
+        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
         old_mode |= line.starts_with("old mode ");
         new_mode |= line.starts_with("new mode ");
     }
@@ -1806,6 +1805,20 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
         all_ok &= binary || (old_mode && new_mode);
     }
     sections > 0 && all_ok
+}
+
+/// `Binary files a/x and b/x differ`, where each side is a `a/`, `b/` path or
+/// `/dev/null` (added or deleted file). Anything else is not a sentinel.
+fn is_binary_sentinel(line: &str) -> bool {
+    let Some(rest) = line
+        .strip_prefix("Binary files ")
+        .and_then(|rest| rest.strip_suffix(" differ"))
+    else {
+        return false;
+    };
+    let side = |path: &str| path == "/dev/null" || path.starts_with("a/") || path.starts_with("b/");
+    rest.split_once(" and ")
+        .is_some_and(|(old, new)| side(old) && side(new))
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -2934,6 +2947,12 @@ mod tests {
         ));
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nBinary files nonsense\n"
+        ));
+        assert!(!has_only_non_text_changes(
+            "diff --git a/x.bin b/x.bin\nBinary files nonsense differ\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x.bin b/x.bin\nBinary files /dev/null and b/x.bin differ\n"
         ));
         assert!(!has_only_non_text_changes(
             "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n"
