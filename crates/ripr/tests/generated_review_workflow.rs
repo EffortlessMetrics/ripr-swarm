@@ -1221,14 +1221,7 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
                 "origin/--upload-pack=touch injected-marker",
             ] {
                 for (at, _) in text.match_indices(hostile) {
-                    // Quoted as its own argument, or inside a quoted argument such
-                    // as the fetch refspec `'+refs/heads/<branch>:refs/remotes/...'`.
-                    let adjacent = at > 0
-                        && text[..at].ends_with('\'')
-                        && text[at + hostile.len()..].starts_with('\'');
-                    let inside_quotes = text[..at].matches('\'').count() % 2 == 1
-                        && text[at + hostile.len()..].contains('\'');
-                    let quoted = adjacent || inside_quotes;
+                    let quoted = recovery_ref_occurrence_is_shell_quoted(text, at, hostile.len());
                     let in_prose =
                         text[..at].ends_with('`') && text[at + hostile.len()..].starts_with('`');
                     assert!(quoted || in_prose, "{label}: unquoted ref in `{text}`");
@@ -1296,6 +1289,89 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
     }
     fs::remove_dir_all(base)?;
     Ok(())
+}
+
+/// Whether one occurrence of a hostile token is a shell-quoted argument, or
+/// sits inside a closed quoted argument such as a fetch refspec.
+///
+/// Quote-count parity (`matches('\'').count() % 2`) is not enough: an odd or
+/// unterminated `'` before an unquoted token, plus any later quote, would
+/// pass that check. The opening quote must be a delimiter (start of the
+/// string or after whitespace), and the matching closer must end the
+/// argument (end of the string, whitespace, or another quote).
+fn recovery_ref_occurrence_is_shell_quoted(text: &str, at: usize, len: usize) -> bool {
+    let after = at + len;
+    let adjacent = at > 0
+        && text[..at].ends_with('\'')
+        && text.get(after..).is_some_and(|rest| rest.starts_with('\''));
+    adjacent || inside_closed_single_quoted_argument(text, at, after)
+}
+
+fn inside_closed_single_quoted_argument(text: &str, start: usize, end: usize) -> bool {
+    let Some(open) = text[..start].rfind('\'') else {
+        return false;
+    };
+    if open > 0 && !text[..open].ends_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(rel) = text.get(end..).and_then(|rest| rest.find('\'')) else {
+        return false;
+    };
+    let close = end + rel;
+    let after_close = close + 1;
+    if after_close < text.len()
+        && !text[after_close..].starts_with(char::is_whitespace)
+        && !text[after_close..].starts_with('\'')
+    {
+        return false;
+    }
+    true
+}
+
+#[test]
+fn recovery_ref_quoting_accepts_adjacent_and_refspec_forms() {
+    let hostile = "topic;touch injected-marker";
+    assert!(recovery_ref_occurrence_is_shell_quoted(
+        &format!("ripr first-pr --base '{hostile}' --head HEAD"),
+        "ripr first-pr --base '".len(),
+        hostile.len(),
+    ));
+    let refspec =
+        format!("git fetch origin -- '+refs/heads/{hostile}:refs/remotes/origin/{hostile}'");
+    let Some(at) = refspec.find(hostile) else {
+        panic!("refspec must carry the branch: {refspec}");
+    };
+    assert!(recovery_ref_occurrence_is_shell_quoted(
+        &refspec,
+        at,
+        hostile.len(),
+    ));
+}
+
+#[test]
+fn odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted() {
+    let hostile = "topic;touch injected-marker";
+    // Odd apostrophe before the ref plus a later quote: the discarded
+    // `matches('\'').count() % 2` check would accept this.
+    let odd = format!("don't fetch {hostile} 'later'");
+    let Some(at) = odd.find(hostile) else {
+        panic!("fixture must carry the ref: {odd}");
+    };
+    assert_eq!(odd[..at].matches('\'').count() % 2, 1);
+    assert!(odd[at + hostile.len()..].contains('\''));
+    assert!(
+        !recovery_ref_occurrence_is_shell_quoted(&odd, at, hostile.len()),
+        "odd quote before an unquoted ref must fail: {odd}"
+    );
+
+    let unterminated = format!("git fetch origin -- ' then {hostile}");
+    let Some(at) = unterminated.find(hostile) else {
+        panic!("fixture must carry the ref: {unterminated}");
+    };
+    assert!(
+        !recovery_ref_occurrence_is_shell_quoted(&unterminated, at, hostile.len()),
+        "unterminated quote before an unquoted ref must fail: {unterminated}"
+    );
 }
 
 /// Every `next_command` string the packet carries on the named check.
