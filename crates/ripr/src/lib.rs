@@ -50,6 +50,9 @@
 //! ```
 //!
 
+// Terminal-safe `eprintln!`/`eprint!` for every module declared below it.
+#[macro_use]
+mod stderr_guard;
 // Shared internal outcome vocabulary for parser and output children under
 // #2827. The public Rust API remains unchanged while internal projections
 // deliberately carry the contract.

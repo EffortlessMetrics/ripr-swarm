@@ -305,8 +305,10 @@ escape it with their own encoders.
 
 The same escape covers the other terminal-bound text: the GitHub workflow
 annotation encoders (`--format github`), the command-failure line on stderr
-(`CommandError` display) and the stderr warnings that quote a config value,
-workspace path or ref. A printed drill-in command is the exception to "escaped
+(`CommandError` display), and every library `eprintln!`/`eprint!`, which a
+crate-level shadow (`stderr_guard`) routes through the same escape so a new
+warning is safe by default. The progress sink writes to the stderr handle
+directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
 text": a control or bidi character in a command argument is spelled as bash
 `$'\xHH'` escapes, so the line carries no raw control byte and still names the
 same argument when pasted. PowerShell has no translation for that form, so no

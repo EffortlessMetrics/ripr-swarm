@@ -720,7 +720,12 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     let edit = |root: &Path| -> Result<(), String> {
         change_lib(root)?;
         fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
-            .map_err(|e| format!("write hostile file name failed: {e}"))
+            .map_err(|e| format!("write hostile file name failed: {e}"))?;
+        // Unanalyzed script and non-source disclosures name changed paths.
+        fs::write(root.join("s\u{1b}]0;pwn\u{7}.sh"), "echo hi\n")
+            .map_err(|e| format!("write hostile script name failed: {e}"))?;
+        fs::write(root.join("q\u{1b}[2J."), "x\n")
+            .map_err(|e| format!("write hostile extensionless name failed: {e}"))
     };
     repo(&root, edit)?;
 
