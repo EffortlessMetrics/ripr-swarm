@@ -1,4 +1,7 @@
 mod build;
+pub(crate) use build::CachedRustIndex;
+#[cfg(test)]
+pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
 mod harness_registry;

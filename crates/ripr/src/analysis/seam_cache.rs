@@ -810,6 +810,12 @@ impl RepoFileFactCacheKey {
         }
     }
 
+    /// Digest of the bytes this key was built from, in the per-file form
+    /// [`FilesContentHashBuilder::push_digest`] folds (#4996).
+    pub(crate) fn content_hash(&self) -> &str {
+        &self.content_hash
+    }
+
     /// Model a prior analyzer build without changing path, content or schema.
     #[cfg(test)]
     pub(crate) fn with_test_analyzer_identity(&self, analyzer_version: String) -> Self {
@@ -927,10 +933,16 @@ impl FilesContentHashBuilder {
     }
 
     pub(crate) fn push(&mut self, path: &Path, content: &[u8]) {
+        self.push_digest(path, &hash_bytes(content));
+    }
+
+    /// Fold a per-file digest already computed from the file's bytes, such
+    /// as [`RepoFileFactCacheKey::content_hash`]. Same output as `push`.
+    pub(crate) fn push_digest(&mut self, path: &Path, content_hash: &str) {
         self.files_buf
             .push_str(&path.to_string_lossy().replace('\\', "/"));
         self.files_buf.push('\0');
-        self.files_buf.push_str(&hash_bytes(content));
+        self.files_buf.push_str(content_hash);
         self.files_buf.push('\n');
     }
 
@@ -2571,7 +2583,7 @@ mod codec {
     }
 }
 
-pub(crate) fn hash_str(s: &str) -> String {
+fn hash_str(s: &str) -> String {
     hash_bytes(s.as_bytes())
 }
 
@@ -3224,7 +3236,7 @@ fn canonical_toml_value(value: &toml::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
-pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
+fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
@@ -3525,6 +3537,42 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    #[test]
+    fn folding_file_fact_key_digests_matches_folding_bytes() {
+        // Includes a Windows separator and non-UTF-8 bytes, the two inputs
+        // `push` normalizes or hashes rather than copying.
+        let files: [(PathBuf, &[u8]); 3] = [
+            (PathBuf::from("src/a.rs"), b"pub fn a() {}\n"),
+            (PathBuf::from("src\\b.rs"), b"// \xff\xfe\n"),
+            (PathBuf::from("tests/c.rs"), b""),
+        ];
+        let mut from_bytes = FilesContentHashBuilder::new();
+        let mut from_keys = FilesContentHashBuilder::new();
+        for (path, bytes) in &files {
+            from_bytes.push(path, bytes);
+            from_keys.push_digest(path, RepoFileFactCacheKey::new(path, bytes).content_hash());
+        }
+        let expected = from_bytes.finish();
+        assert_eq!(from_keys.finish(), expected);
+        let loaded: Vec<(PathBuf, Vec<u8>)> = files
+            .iter()
+            .map(|(path, bytes)| (path.clone(), bytes.to_vec()))
+            .collect();
+        assert_eq!(files_content_hash(&loaded), expected);
+
+        // A different byte in one file must change the folded digest.
+        let mut edited = FilesContentHashBuilder::new();
+        for (path, bytes) in &files {
+            let bytes: &[u8] = if path.ends_with("a.rs") {
+                b"pub fn a() { }\n"
+            } else {
+                bytes
+            };
+            edited.push_digest(path, RepoFileFactCacheKey::new(path, bytes).content_hash());
+        }
+        assert_ne!(edited.finish(), expected);
+    }
 
     #[test]
     fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {

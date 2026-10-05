@@ -7,7 +7,7 @@ use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSy
 use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation;
 use crate::analysis::seam_cache::{
-    CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
+    CacheLoad, FileFactCacheStats, FilesContentHashBuilder, RepoFileFactCache, RepoFileFactCacheKey,
 };
 use rayon::prelude::*;
 use std::collections::HashSet;
@@ -26,6 +26,12 @@ pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<RustIndex, String> 
 pub(crate) struct CachedRustIndex {
     pub(crate) index: RustIndex,
     pub(crate) file_fact_cache: FileFactCacheStats,
+    /// `(path, content digest)` of every file this build parsed or looked
+    /// up, folded in input order with [`FilesContentHashBuilder`]. For
+    /// path-sorted input it equals the workspace `files_content_hash` of
+    /// the same bytes, so a caller holding a key from an earlier read can
+    /// detect that a file changed before this build read it (#4996).
+    pub(crate) files_content_hash: String,
 }
 
 pub(crate) fn build_index_from_loaded_files_with_cache(
@@ -60,8 +66,9 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
 /// each chunk's raw bytes are released before the next chunk is read, so
 /// peak live source bytes scale with one batch plus the owned index facts,
 /// not the whole corpus. Cache lookup, parallel-parse batching, store, and
-/// insert ordering mirror the loaded-files path chunk-for-chunk, so stats,
-/// same-phase error precedence, and checkpoint granularity are identical.
+/// insert ordering are the loaded-files path's own batch loop, so stats and
+/// same-phase error precedence are identical; the reads add one
+/// cancellation checkpoint per file.
 ///
 /// One deliberate precedence delta: the loaded path reads every file before
 /// parsing any, so a later-file read error beats an earlier-file parse
@@ -90,17 +97,9 @@ fn build_index_from_paths_with_cache_and_adapters(
     let cache = RepoFileFactCache::at(root);
     // Each batch is read only when the shared loop asks for it, so the
     // previous batch's bytes are dropped before the next read.
-    let batches = paths.chunks(PARSE_BATCH_FILES).map(|chunk| {
-        chunk
-            .iter()
-            .map(|file| {
-                cancellation::checkpoint()?;
-                let bytes = std::fs::read(root.join(file))
-                    .map_err(|err| format!("read {} failed: {err}", file.display()))?;
-                Ok((file.clone(), bytes))
-            })
-            .collect::<Result<Vec<_>, String>>()
-    });
+    let batches = paths
+        .chunks(PARSE_BATCH_FILES)
+        .map(|chunk| StreamedBatch::read(root, chunk));
     build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
         cache.known_file_paths()
     })
@@ -122,6 +121,48 @@ fn build_index_with_file_fact_cache(
         cache,
         load_known_file_paths,
     )
+}
+
+/// One `PARSE_BATCH_FILES` slice of raw source read from disk. Test builds
+/// charge its bytes to the live-source probes until it drops.
+struct StreamedBatch {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    #[cfg(test)]
+    _live_bytes: streamed_source_bytes::Charge,
+    #[cfg(test)]
+    _source_lifetime: crate::analysis::seam_inventory::source_lifetime_probe::Lease,
+}
+
+impl StreamedBatch {
+    fn read(root: &Path, chunk: &[PathBuf]) -> Result<Self, String> {
+        let mut files = Vec::with_capacity(chunk.len());
+        #[cfg(test)]
+        let mut charge = streamed_source_bytes::Charge::default();
+        for file in chunk {
+            cancellation::checkpoint()?;
+            let bytes = std::fs::read(root.join(file))
+                .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            #[cfg(test)]
+            charge.add(bytes.len());
+            files.push((file.clone(), bytes));
+        }
+        Ok(Self {
+            #[cfg(test)]
+            _source_lifetime: crate::analysis::seam_inventory::source_lifetime_probe::constructed(
+                root,
+                charge.bytes(),
+            ),
+            #[cfg(test)]
+            _live_bytes: charge,
+            files,
+        })
+    }
+}
+
+impl AsRef<[(PathBuf, Vec<u8>)]> for StreamedBatch {
+    fn as_ref(&self) -> &[(PathBuf, Vec<u8>)] {
+        &self.files
+    }
 }
 
 /// Shared by the loaded-corpus and streaming paths (#4996): `batches`
@@ -155,7 +196,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     // reports the entries found in the batches it admitted: later batches
     // are never looked up, so their entries are not claimed either way.
     emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
-    let mut index = batched?;
+    let (mut index, files_content_hash) = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
     cancellation::checkpoint()?;
@@ -172,6 +213,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
+        files_content_hash,
     })
 }
 
@@ -195,6 +237,9 @@ struct CacheAccounting {
 /// Earlier batches' fresh facts may already be stored when a later batch
 /// fails. That matches the per-file, non-transactional cache contract: each
 /// entry is keyed by its own content and remains a valid future hit.
+///
+/// Also returns the input-order fold of each file's cache-key digest, so
+/// the index and that hash always describe the same bytes.
 fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     root: &Path,
     batches: impl Iterator<Item = Result<B, String>>,
@@ -203,7 +248,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     cache: &RepoFileFactCache,
     load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
     accounting: &mut CacheAccounting,
-) -> Result<RustIndex, String> {
+) -> Result<(RustIndex, String), String> {
     let CacheAccounting {
         stats,
         first_corrupt_reason,
@@ -218,6 +263,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     // Initialized once, at the first miss.
     let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
     let mut index = RustIndex::default();
+    let mut content_hash = FilesContentHashBuilder::new();
     let token = cancellation::current_token();
     for batch in batches {
         let batch = batch?;
@@ -227,6 +273,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         for (file, bytes) in batch {
             cancellation::checkpoint()?;
             let key = RepoFileFactCacheKey::new(file, bytes);
+            content_hash.push_digest(file, key.content_hash());
             match cache.load_file_facts(&key) {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
@@ -328,7 +375,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             cancellation::checkpoint()?;
         }
     }
-    Ok(index)
+    Ok((index, content_hash.finish()))
 }
 
 /// Test-only lifetime instrument for #5029: the most `FileFacts` held
@@ -352,6 +399,53 @@ pub(super) mod uninserted_facts {
     /// observed high-water mark.
     pub(in crate::analysis::facts) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
         HIGH_WATER.with(|high| high.set(0));
+        let result = work();
+        (result, HIGH_WATER.with(Cell::get))
+    }
+}
+
+/// Test-only live raw-source instrument for #4996: bytes held by
+/// [`StreamedBatch`]es that have been read and not yet dropped, with the
+/// high-water mark. Batches are read on the calling thread. A builder that
+/// reads the whole corpus before parsing reports the corpus size; the
+/// streaming builder reports at most one batch.
+#[cfg(test)]
+pub(crate) mod streamed_source_bytes {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LIVE: Cell<usize> = const { Cell::new(0) };
+        static HIGH_WATER: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Default)]
+    pub(in crate::analysis::facts) struct Charge(usize);
+
+    impl Charge {
+        pub(in crate::analysis::facts) fn add(&mut self, bytes: usize) {
+            self.0 += bytes;
+            let live = LIVE.with(|live| {
+                live.set(live.get() + bytes);
+                live.get()
+            });
+            HIGH_WATER.with(|high| high.set(high.get().max(live)));
+        }
+
+        pub(in crate::analysis::facts) fn bytes(&self) -> usize {
+            self.0
+        }
+    }
+
+    impl Drop for Charge {
+        fn drop(&mut self) {
+            LIVE.with(|live| live.set(live.get().saturating_sub(self.0)));
+        }
+    }
+
+    /// Reset, run `work` on this thread, and return its result with the
+    /// observed high-water mark of live streamed bytes.
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        HIGH_WATER.with(|high| high.set(LIVE.with(Cell::get)));
         let result = work();
         (result, HIGH_WATER.with(Cell::get))
     }
