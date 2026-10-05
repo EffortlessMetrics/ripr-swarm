@@ -417,7 +417,7 @@ impl OwnerReturnPin {
         };
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let field = initialized_field_name(&probe.expression)?;
-        if !clone_tail_literal_spans(&owner.body, type_name, changed_line)
+        if !clone_tail_literal_spans(&owner.body, type_name, changed_line, &probe.expression)
             || !field_compares_with_derived_equality(type_name, field, index)
             || workspace_declares_trait(index, "Clone")
             || other_definition_competes(owner, index, true)
@@ -483,7 +483,17 @@ impl OwnerReturnPin {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
             (ReturnPathGate::CloneReceiver, CallShape::Method(receiver)) => {
-                if expected.trim() != receiver || imports_foreign(&test.file, "Clone") {
+                let independent = match &self.call {
+                    PinCall::Method { receivers, .. } => receivers.iter().any(|receiver_type| {
+                        matches!(receiver_type, ReceiverType::Named(type_name)
+                            if clone_receiver_is_independent(test, receiver, type_name, index))
+                    }),
+                    PinCall::Bare => false,
+                };
+                if expected.trim() != receiver
+                    || imports_foreign(&test.file, "Clone")
+                    || !independent
+                {
                     return false;
                 }
             }
@@ -855,8 +865,16 @@ fn evaluates_conditionally(masked_tail: &str) -> bool {
 /// first line) lies in a struct literal of `type_name` (or `Self`) that is
 /// the whole tail of `body`, and that literal is the body's only exit: no
 /// `?`, no `return`, no macro that may hide an exit, and no part evaluated
-/// only on some inputs.
-fn clone_tail_literal_spans(body: &str, type_name: &str, changed_line: usize) -> bool {
+/// only on some inputs. The changed line must be one whole field
+/// initializer of that literal's own braces (depth 1): a field of a nested
+/// literal or an argument of a call inside a field is not the outer
+/// field's value.
+fn clone_tail_literal_spans(
+    body: &str,
+    type_name: &str,
+    changed_line: usize,
+    expression: &str,
+) -> bool {
     let masked = mask_comments_and_strings(body);
     let Some(open) = body_block_open(&masked) else {
         return false;
@@ -895,7 +913,32 @@ fn clone_tail_literal_spans(body: &str, type_name: &str, changed_line: usize) ->
     let line_of = |offset: usize| masked[..open + 1 + offset].matches('\n').count();
     let first = line_of(tail_start + literal_open);
     let last = line_of(tail_start + literal_close);
-    (first..=last).contains(&changed_line)
+    if !(first < changed_line && changed_line < last) {
+        return false;
+    }
+    let Some(line_start) = masked
+        .match_indices('\n')
+        .nth(changed_line - 1)
+        .map(|(position, _)| position + 1)
+    else {
+        return false;
+    };
+    let line_end = masked[line_start..]
+        .find('\n')
+        .map_or(masked.len(), |position| line_start + position);
+    let literal_start = open + 1 + tail_start + literal_open;
+    let depth = masked[literal_start..line_start]
+        .bytes()
+        .fold(0_isize, |depth, byte| match byte {
+            b'{' | b'(' | b'[' => depth + 1,
+            b'}' | b')' | b']' => depth - 1,
+            _ => depth,
+        });
+    let line = masked[line_start..line_end].trim();
+    let field_text = |text: &str| collapse_whitespace(text.trim().trim_end_matches(',').trim());
+    depth == 1
+        && !line.contains(['{', '}'])
+        && field_text(&body[line_start..line_end]) == field_text(expression)
 }
 
 /// The field a struct-literal initializer names: `start: self.start,` and
@@ -1087,15 +1130,44 @@ fn workspace_declares_trait(index: &RustIndex, name: &str) -> bool {
 /// completed operand: an identifier or number that is not a keyword, or a
 /// closing `)`/`]` or `?`. A closure's closing pipe may follow its
 /// parameter name, but its opening pipe never follows an operand, so every
-/// closure still fails here. Anything else fails closed.
+/// closure still fails here. A pipe inside a macro invocation's
+/// arguments (`matches!(k, A | B)`) or anywhere in a tail that binds with
+/// `let` may separate pattern alternatives, which short-circuit, so it is
+/// never read as binary. Anything else fails closed.
 fn has_non_bitwise_pipe(masked: &str) -> bool {
     const OPERAND_POSITION_KEYWORDS: &[&str] = &[
         "async", "break", "else", "in", "let", "move", "mut", "return", "static", "yield",
     ];
+    if !masked.contains('|') {
+        return false;
+    }
+    if contains_as_whole_word(masked, "let") {
+        return true;
+    }
     let bytes = masked.as_bytes();
+    // One entry per open delimiter: whether it opens a macro's arguments.
+    let mut delimiters: Vec<bool> = Vec::new();
     for (offset, byte) in bytes.iter().enumerate() {
-        if *byte != b'|' {
-            continue;
+        match byte {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..offset].trim_end();
+                let opens_macro = before.strip_suffix('!').is_some_and(|head| {
+                    head.ends_with(|character: char| {
+                        character.is_alphanumeric() || character == '_'
+                    })
+                });
+                delimiters.push(opens_macro);
+                continue;
+            }
+            b')' | b']' | b'}' => {
+                delimiters.pop();
+                continue;
+            }
+            b'|' => {}
+            _ => continue,
+        }
+        if delimiters.iter().any(|opens_macro| *opens_macro) {
+            return true;
         }
         if matches!(bytes.get(offset + 1), Some(b'|' | b'='))
             || (offset > 0 && bytes[offset - 1] == b'|')
@@ -1110,10 +1182,12 @@ fn has_non_bitwise_pipe(masked: &str) -> bool {
             b')' | b']' | b'?' => true,
             byte if byte.is_ascii_alphanumeric() || byte == b'_' => {
                 let start = before
-                    .rfind(|character: char| {
-                        !(character.is_ascii_alphanumeric() || character == '_')
+                    .char_indices()
+                    .rev()
+                    .find(|(_, character)| {
+                        !(character.is_ascii_alphanumeric() || *character == '_')
                     })
-                    .map_or(0, |position| position + 1);
+                    .map_or(0, |(position, character)| position + character.len_utf8());
                 !OPERAND_POSITION_KEYWORDS.contains(&&before[start..])
             }
             _ => false,
@@ -1555,11 +1629,27 @@ fn test_receiver_type(
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
 ) -> Option<ReceiverType> {
+    let mut bound: Option<ReceiverType> = None;
+    for binding in receiver_let_bindings(test, receiver)? {
+        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
+        match &bound {
+            None => bound = Some(receiver_type),
+            Some(existing) if *existing == receiver_type => {}
+            Some(_) => return None,
+        }
+    }
+    bound
+}
+
+/// The text after the name in every `let [mut] receiver [: T] = ..;` of the
+/// test body (the optional annotation and the initializer), or `None` when
+/// the name may be bound some other way ripr does not read.
+fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Vec<&'a str>> {
     let masked = mask_comments_and_strings(&test.body);
     if binds_outside_let(&masked, receiver) {
         return None;
     }
-    let mut bound: Option<ReceiverType> = None;
+    let mut bindings = Vec::new();
     for offset in whole_word_offsets(&masked, "let") {
         let pattern_start = offset + "let".len();
         let Some(relative_end) = top_level_semicolon(&masked[pattern_start..]) else {
@@ -1597,15 +1687,110 @@ fn test_receiver_type(
             return None;
         }
         let binding = &test.body[pattern_start..statement_end];
-        let binding = &binding[binding.find(receiver)? + receiver.len()..];
-        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
-        match &bound {
-            None => bound = Some(receiver_type),
-            Some(existing) if *existing == receiver_type => {}
-            Some(_) => return None,
-        }
+        bindings.push(&binding[binding.find(receiver)? + receiver.len()..]);
     }
-    bound
+    Some(bindings)
+}
+
+/// Methods that may run the `clone` under test.
+const CLONING_METHODS: &[&str] = &["clone", "clone_from", "cloned", "to_owned"];
+
+/// #6692: whether the clone's receiver was built without the clone under
+/// test, so a wrong `clone` cannot also have produced the value it is
+/// compared with (`let w: Window = base.clone(); assert_eq!(w.clone(), w)`
+/// passes for an idempotent wrong field). Every `let` of the receiver must
+/// initialize it with a `type_name { .. }` or `type_name(..)` literal, or a
+/// call to the type's one inherent constructor whose body clones nothing,
+/// and no part of an initializer may clone. The test may not reassign or
+/// mutably borrow the receiver. Anything else fails closed.
+fn clone_receiver_is_independent(
+    test: &TestSummary,
+    receiver: &str,
+    type_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    if receiver_is_reassigned(&masked, receiver) {
+        return false;
+    }
+    let Some(bindings) = receiver_let_bindings(test, receiver) else {
+        return false;
+    };
+    !bindings.is_empty()
+        && bindings
+            .into_iter()
+            .all(|binding| initializer_is_independent(binding, type_name, index))
+}
+
+/// Whether the test may change `receiver` after binding it: an assignment
+/// (`w = ..`, `w += ..`) or a `&mut w` borrow.
+fn receiver_is_reassigned(masked: &str, receiver: &str) -> bool {
+    const COMPOUND: &[&str] = &["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+    whole_word_offsets(masked, receiver)
+        .into_iter()
+        .any(|offset| {
+            let after = masked[offset + receiver.len()..].trim_start();
+            let assigns =
+                (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+                    || COMPOUND.iter().any(|operator| after.starts_with(operator));
+            let before = masked[..offset].trim_end();
+            let borrowed = before
+                .strip_suffix("mut")
+                .is_some_and(|rest| rest.trim_end().ends_with('&'));
+            let let_binding = before.ends_with("let") || before.ends_with("let mut");
+            (assigns && !let_binding) || borrowed
+        })
+}
+
+fn initializer_is_independent(binding: &str, type_name: &str, index: &RustIndex) -> bool {
+    let masked = mask_comments_and_strings(binding);
+    let Some(equals) = masked.find('=') else {
+        return false;
+    };
+    let initializer = masked[equals + 1..].trim();
+    if CLONING_METHODS
+        .iter()
+        .any(|method| contains_as_whole_word(initializer, method))
+    {
+        return false;
+    }
+    let Some(rest) = initializer.strip_prefix(type_name) else {
+        return false;
+    };
+    if let Some(call) = rest.strip_prefix("::") {
+        let call_end = call
+            .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .unwrap_or(call.len());
+        let constructor = &call[..call_end];
+        let arguments = call[call_end..].trim_start();
+        if !arguments.starts_with('(')
+            || matching_close(arguments, 0, b'(', b')') != Some(arguments.len() - 1)
+        {
+            return false;
+        }
+        let mut definitions = index.functions().iter().filter(|function| {
+            function.name == constructor
+                && !function.item.has_self_param
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::Inherent { self_ty } if path_base_name(self_ty) == Some(type_name)
+                )
+        });
+        let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+            return false;
+        };
+        let body = mask_comments_and_strings(&definition.body);
+        return !CLONING_METHODS
+            .iter()
+            .any(|method| contains_as_whole_word(&body, method));
+    }
+    let rest = rest.trim_start();
+    let (open, close) = match rest.as_bytes().first() {
+        Some(b'{') => (b'{', b'}'),
+        Some(b'(') => (b'(', b')'),
+        _ => return false,
+    };
+    matching_close(rest, 0, open, close) == Some(rest.len() - 1)
 }
 
 /// Whether `name` may be bound by a pattern that is not a `let`: a closure

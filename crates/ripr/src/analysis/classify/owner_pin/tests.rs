@@ -578,6 +578,25 @@ fn a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not() {
             "apply(x, move |v| v | 1)",
         ),
         ("fn f(x: u8) -> u8 {\n    run(x, || 1)\n}", "run(x, || 1)"),
+        // Pattern alternatives short-circuit: they are not a bitwise OR.
+        (
+            "fn open(&self) -> bool {\n    matches!(self.kind, Kind::Open | Kind::Pending)\n}",
+            "matches!(self.kind, Kind::Open | Kind::Pending)",
+        ),
+        (
+            "fn known(x: Option<u8>) -> bool {\n    matches!(x, Some(_) | None)\n}",
+            "matches!(x, Some(_) | None)",
+        ),
+        (
+            "fn small(x: u8) -> bool {\n    matches!(x, 1 | 2)\n}",
+            "matches!(x, 1 | 2)",
+        ),
+        // A closure in a struct literal or an array is still a closure.
+        (
+            "fn make() -> Foo {\n    Foo { f: |x| x }\n}",
+            "Foo { f: |x| x }",
+        ),
+        ("fn make() -> [F; 1] {\n    [|x| x]\n}", "[|x| x]"),
     ] {
         assert!(gate(body, changed).is_none(), "{body}");
     }
@@ -594,6 +613,14 @@ fn bitwise_pipe_reading_distinguishes_operand_position() {
     assert!(has_non_bitwise_pipe("a || b"));
     assert!(has_non_bitwise_pipe("a |= b"));
     assert!(has_non_bitwise_pipe("{ a } | b"));
+    assert!(has_non_bitwise_pipe("matches!(k, A | B)"));
+    assert!(has_non_bitwise_pipe("f(matches!(k, Some(_) | None))"));
+    assert!(has_non_bitwise_pipe("{ let (A(x) | B(x)) = v; x }"));
+    assert!(!has_non_bitwise_pipe("f(a) | g(b)"));
+    // A multibyte character before the operand must not split a slice.
+    assert!(!has_non_bitwise_pipe("é_flag | b"));
+    assert!(!has_non_bitwise_pipe("(\u{e9}) | b"));
+    assert!(has_non_bitwise_pipe("é in | b"));
 }
 
 const WEIGHT_LIB: &str = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
@@ -1038,18 +1065,30 @@ const WINDOW_TESTS: &str = "use demo::Window;\n\n#[test]\nfn a_clone_equals_its_
 
 /// A `field_construction` probe on `start: self.start,` in `Window::clone`.
 fn clone_field_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    clone_field_pin_at(lib, tests, "start: self.start,", "start: self.start,")
+}
+
+/// A `field_construction` probe with `expression` on the (first) line of
+/// `clone` whose trimmed text is `line_text`.
+fn clone_field_pin_at(
+    lib: &str,
+    tests: &str,
+    line_text: &str,
+    expression: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
     let index = index(&[(LIB, lib), (TESTS, tests)]);
     let pin = {
         let owner = owner(&index, "clone");
         let line = lib
             .lines()
-            .position(|line| line.trim() == "start: self.start,")
+            .enumerate()
+            .position(|(offset, line)| offset + 1 > owner.start_line && line.trim() == line_text)
             .map_or(0, |offset| offset + 1);
         assert!(
             line > owner.start_line,
             "fixture: the field line must parse"
         );
-        let mut probe = return_probe(owner, "start: self.start,");
+        let mut probe = return_probe(owner, expression);
         probe.family = ProbeFamily::FieldConstruction;
         probe.location = SourceLocation::new(owner.file.clone(), line, 1);
         OwnerReturnPin::establish(&probe, owner, &index)
@@ -1135,5 +1174,140 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+}
+
+/// #6692 review: the receiver must not itself come from the clone under
+/// test (an idempotent wrong field, `start: 0` or `start: self.end`, would
+/// then survive) or be changed after it is bound. A literal or the type's
+/// own non-cloning constructor credits.
+#[test]
+fn a_clone_field_pin_needs_a_receiver_built_without_the_clone() {
+    let lib = WINDOW_LIB.replace(
+        "impl Window {\n",
+        "impl Window {\n    pub fn copied(other: &Window) -> Self {\n        other.clone()\n    }\n",
+    ) + "impl Default for Window {\n    fn default() -> Self {\n        Window::new(0, 0)\n    }\n}\nimpl From<u32> for Window {\n    fn from(start: u32) -> Self {\n        Window::new(start, start)\n    }\n}\n";
+    let test = |body: &str| {
+        format!(
+            "use demo::Window;\n\n#[test]\nfn compares() {{\n{body}\n    assert_eq!(w.clone(), w);\n}}\n"
+        )
+    };
+    for (body, credits) in [
+        ("    let w = Window::new(3, 9);", true),
+        ("    let w: Window = Window::new(3, 9);", true),
+        ("    let w = Window { start: 3, end: 9 };", true),
+        (
+            "    let base = Window::new(3, 9);\n    let w: Window = base.clone();",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w: Window = base.to_owned();",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w = w.clone();",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    reset(&mut w);",
+            false,
+        ),
+        ("    let w = Window::default();", false),
+        ("    let w = Window::from(3);", false),
+        ("    let w = Window::copied(&Window::new(3, 9));", false),
+        ("    let w: Window = make_window();", false),
+    ] {
+        let (index, pin) = clone_field_pin(&lib, &test(body));
+        assert!(pin.is_some(), "the clone field pin must establish");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), credits, "{body}");
+    }
+}
+
+/// #6692 review: a changed line inside a nested literal or a call within
+/// the returned literal is not that literal's own field value.
+#[test]
+fn a_clone_field_pin_needs_the_changed_line_at_the_literals_own_depth() {
+    let tail = |fields: &str| {
+        WINDOW_LIB.replace(
+            "        Window {\n            start: self.start,\n            end: self.end,\n        }\n",
+            &format!("        Window {{\n{fields}            end: self.end,\n        }}\n"),
+        )
+    };
+    let nested = tail(
+        "            start: Raw {\n                start: self.start,\n            }\n            .start,\n",
+    );
+    let called = tail(
+        "            start: normalize(Raw {\n                start: self.start,\n            }),\n",
+    );
+    for lib in [nested, called] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let one_line = tail("            start: normalize(Raw { start: self.start }),\n");
+    let (_, pin) = clone_field_pin_at(
+        &one_line,
+        WINDOW_TESTS,
+        "start: normalize(Raw { start: self.start }),",
+        "start: self.start",
+    );
+    assert!(pin.is_none(), "{one_line}");
+    // The outer field itself, written over several lines, is at depth 1 only
+    // on its first line, and that line is not the whole initializer.
+    let (_, pin) = clone_field_pin_at(
+        &one_line,
+        WINDOW_TESTS,
+        "start: normalize(Raw { start: self.start }),",
+        "start: normalize(Raw { start: self.start }),",
+    );
+    assert!(
+        pin.is_none(),
+        "a nested literal on the changed line fails closed"
+    );
+}
+
+/// #6692 review negative controls: a competing `fn clone`, a foreign
+/// `Clone` import in the test's file, a `?` or an unbounded macro in the
+/// clone body, a second declaration of the type, and an equality-changing
+/// type attribute. `Self { .. }` is the returned literal too.
+#[test]
+fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
+    let self_literal = WINDOW_LIB.replace(
+        "        Window {\n            start: self.start,",
+        "        Self {\n            start: self.start,",
+    );
+    let (index, pin) = clone_field_pin(&self_literal, WINDOW_TESTS);
+    assert!(pin.is_some(), "a `Self {{ .. }}` tail establishes the pin");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 2);
+    }
+    let competitor = WINDOW_LIB.to_string()
+        + "pub struct Other;\nimpl Other {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
+    let tried = WINDOW_LIB.replace(
+        "            end: self.end,\n        }\n    }\n}\n",
+        "            end: check(self.end)?,\n        }\n    }\n}\n",
+    );
+    let macro_field = WINDOW_LIB.replace(
+        "            end: self.end,\n        }\n    }\n}\n",
+        "            end: pick!(self.end),\n        }\n    }\n}\n",
+    );
+    let duplicate = WINDOW_LIB.to_string()
+        + "pub mod other {\n    #[derive(Debug, PartialEq, Eq)]\n    pub struct Window {\n        start: u32,\n    }\n}\n";
+    let serde_attr = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]\npub struct Window",
+        "#[derive(Debug, PartialEq, Eq)]\n#[serde(rename_all = \"camelCase\")]\npub struct Window",
+    );
+    for lib in [competitor, tried, macro_field, duplicate, serde_attr] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let foreign_clone = WINDOW_TESTS.replace(
+        "use demo::Window;\n",
+        "use demo::Window;\nuse dupe::Clone;\n",
+    );
+    let (index, pin) = clone_field_pin(WINDOW_LIB, &foreign_clone);
+    assert!(pin.is_some());
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&index, &pin).is_empty(), "{foreign_clone}");
     }
 }
