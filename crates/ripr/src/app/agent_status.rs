@@ -1099,24 +1099,29 @@ fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
 }
 
 /// Whether the pilot run's repo exposure report says a seam limit cut the
-/// classified seams, so seams past the cut were never classified.
-fn pilot_seam_limit_applied(root: &Path) -> bool {
-    std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .is_some_and(|report| {
-            report.pointer("/run_status").and_then(Value::as_str) == Some("seam_limit_applied")
-        })
+/// classified seams, so seams past the cut were never classified. `None`
+/// when the report is missing or unreadable: status cannot tell.
+fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
+    let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
+    let report = serde_json::from_str::<Value>(&text).ok()?;
+    let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
+    Some(run_status == "seam_limit_applied")
 }
 
-fn pilot_withheld_message(withheld: u64, seam_limit_applied: bool) -> String {
+fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
     let seams = if withheld == 1 {
         "1 seam".to_string()
     } else {
         format!("{withheld} seams")
     };
     let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
-    if seam_limit_applied {
+    if seam_limit_applied.is_none() {
+        // Fail closed: without the report, status cannot rule out a cut.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a seam limit cut the run; rerun pilot, and if it reports a seam limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+        );
+    }
+    if seam_limit_applied == Some(true) {
         // A gap may sit past the cut, so "no repair applies" would claim an
         // absence the run did not establish; raising the limit is the step.
         return format!(
@@ -4231,6 +4236,10 @@ mod tests {
             &root.join(PILOT_SUMMARY_ARTIFACT),
             &summary("complete", "[]", "null", "138"),
         )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "complete"}"#,
+        )?;
         let report = build_agent_status_report(&root, Path::new("."));
         assert!(
             report.next_command.is_none(),
@@ -4278,6 +4287,26 @@ mod tests {
         );
         std::fs::remove_file(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
             .map_err(|err| format!("remove repo exposure: {err}"))?;
+
+        // Without the repo exposure report status cannot rule out a cut, so
+        // it fails closed: no "no repair applies", and the limit is named.
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "is missing or unreadable, so status cannot tell whether a seam limit cut the run",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
 
         // Controls: nothing withheld (the old empty ranking), a pre-0.3
         // summary without the field, a timed-out run, and a ranked seam all

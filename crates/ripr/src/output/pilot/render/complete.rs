@@ -144,8 +144,13 @@ pub(crate) fn render_pilot_summary_json(
     ));
     // An unanalyzed-only workspace has no seam to snapshot or measure, so
     // offering the follow-up commands would send the reader into a loop.
-    // A Rust exclusion likewise emptied the ranking (#5205).
-    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() {
+    // A Rust exclusion likewise emptied the ranking (#5205), and so did
+    // withholding every seam as a static limitation with no Python card to
+    // offer instead (#5497): there is no gap to snapshot or measure.
+    let withheld_only = top.is_empty()
+        && withheld_static_limitations(classified) > 0
+        && python_top_repair_card(context.python_first_use).is_none();
+    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
         out.push_str("    \"after_snapshot_command\": null,\n");
         out.push_str("    \"outcome_command\": null,\n");
     } else {

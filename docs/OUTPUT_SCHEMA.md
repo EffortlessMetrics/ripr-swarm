@@ -15477,9 +15477,13 @@ Field contract:
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, or when
-  `rust_excluded_from_scope` is present, `after_snapshot_command` and
-  `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, when
+  `rust_excluded_from_scope` is present, or when nothing ranked because every
+  seam was withheld (`withheld_static_limitations_total` > 0) and no Python
+  repair card applies, `after_snapshot_command` and `outcome_command` are
+  `null`: there is no seam to snapshot or measure. Agent status reads the
+  run's `repo-exposure.json` for the withheld warning; when that file is
+  missing or unreadable it cannot rule out a seam limit and names raising it.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,

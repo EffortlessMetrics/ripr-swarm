@@ -256,9 +256,12 @@ impl SeamGripClass {
 
     /// Whether the classifier stopped on a stage it could not establish
     /// (`opaque`, or an `*_unknown` class), so the class names a static
-    /// limitation rather than a gap. `classify_seam` owns this meaning:
-    /// every gap class (`weakly_gripped`, `ungripped`,
-    /// `reachable_unrevealed`) rests on stages it did establish (#5497).
+    /// limitation rather than a gap. `classify_seam` owns this meaning: a
+    /// gap class (`weakly_gripped`, `ungripped`, `reachable_unrevealed`) is
+    /// one it reached a verdict for, though later stages may still be
+    /// unknown (a `weakly_gripped` seam can carry unknown propagation or
+    /// observation); this predicate filters on the class, not the stages
+    /// (#5497).
     pub(crate) fn is_static_limitation(&self) -> bool {
         matches!(
             self,

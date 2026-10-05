@@ -576,6 +576,9 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{json}"
     );
     assert!(value["next"]["repair_command"].is_null(), "{json}");
+    // No gap to snapshot or measure, so the JSON offers no follow-up pair.
+    assert!(value["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(value["next"]["outcome_command"].is_null(), "{json}");
 
     let md = render_pilot_summary_md(&entries, context);
     assert!(
