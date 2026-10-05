@@ -26,8 +26,14 @@ mod implicit_git_root;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_recovery_root.rs"]
+mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[cfg(unix)]
+#[path = "cli_smoke/workflow_directory.rs"]
+mod workflow_directory;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
@@ -12130,11 +12136,11 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
-    assert!(stdout.contains("target/ripr/agent"));
-    assert!(stdout.contains("target/ripr/workflow"));
-    assert!(stdout.contains("target/ripr/review"));
+    // #5409: one upload path covers every RIPR report directory.
+    assert!(stdout.contains("            target/ripr\n            target/ci\n"));
+    assert!(stdout.contains("target/ripr/review/publish/requests.tsv"));
     assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/existing-comments.json"));
+    assert!(stdout.contains("ripr pr-comments existing --root . --raw -"));
     // #4696: the analysis steps run inside one packet command.
     assert!(stdout.contains("run: ripr reports ci-packet --root ."));
     // #3906: CI writes only the before side of the repair loop.
@@ -12941,7 +12947,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     init_producer_fixture_repo(&root)?;
     let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
     lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
 
@@ -12984,6 +12990,39 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert!(
         before.get("artifact").is_none(),
         "a budget-truncated pilot snapshot must not carry the comparable identity"
+    );
+    // #6602: the summary says the budget cut the ranked population, out of
+    // every seam the inventory found.
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    let full_total = count(&full);
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
+    );
+    // When the inventory limit also cuts, the disclosed total is still the
+    // inventory's, not the already-capped list the budget saw.
+    assert!(
+        full_total > 2,
+        "fixture must exceed the inventory limit: {full}"
+    );
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&pilot);
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())

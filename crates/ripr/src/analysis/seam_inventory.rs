@@ -337,7 +337,12 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
         &lexical_fallback_files,
         store_limit,
     ) {
-        Ok(status) => status.label,
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
         Err(reason) => {
             eprintln!("ripr: repo seam cache store ignored ({reason})");
             cache_store_status_label(&reason)
@@ -629,7 +634,12 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         &lexical_fallback_files,
         store_limit,
     ) {
-        Ok(status) => status.label,
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
         Err(reason) => {
             eprintln!("ripr: compact repo seam cache store ignored ({reason})");
             cache_store_status_label(&reason)
@@ -3484,7 +3494,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             file: path.clone(),
             start_line: 1,
             end_line: 5,
-            body: String::new(),
+            body: String::new().into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -3508,7 +3518,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_line: 2,
                     start_byte: 16,
                     kind: ProbeShapeKind::UnsafeBoundary,
-                    text: "owner_body".to_string(),
+                    text: "owner_body".into(),
                 }],
                 ..FileFacts::default()
             },
@@ -3536,7 +3546,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             file: path.clone(),
             start_line: 10,
             end_line: 14,
-            body: String::new(),
+            body: String::new().into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -3560,7 +3570,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_line: 11,
                     start_byte: 120,
                     kind: ProbeShapeKind::Predicate,
-                    text: "x >= 0".to_string(),
+                    text: "x >= 0".into(),
                 }],
                 ..FileFacts::default()
             },
