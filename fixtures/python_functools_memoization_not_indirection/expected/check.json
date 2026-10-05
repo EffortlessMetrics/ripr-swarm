@@ -6,7 +6,7 @@
   "summary": {"changed_rust_files":0,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:a23f9927a03c8c7a55ba42831a67c75d42fc392257f527da20873e0717a0b021","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":4,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:e74afdc4b72465d8d810c615e4c1d126fb658ac9984225e13045553b297f0022","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":4,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -31,7 +31,7 @@
         "family": "return_value",
         "delta": "value",
         "file": "src/memo.py",
-        "line": 10,
+        "line": 11,
         "expression": "    return year % 1000",
         "owner": "python:src/memo.py::century_index"
        },
@@ -42,9 +42,9 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `return value == <expected value>`."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `century_index`", "infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `return value == <expected value>`.", "local flow reaches returned value: return year % 1000 (line 10)", "related test tests/test_memo.py:8 test_century_index_smoke uses unknown unknown oracle", "missing discriminator return value == <expected value>: changed Python returned-value at line 10 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `century_index`", "infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `return value == <expected value>`.", "local flow reaches returned value: return year % 1000 (line 11)", "related test tests/test_memo.py:8 test_century_index_smoke uses unknown unknown oracle", "missing discriminator return value == <expected value>: changed Python returned-value at line 11 lacks a concrete repair discriminator"],
       "flow_sinks": [
-        {"kind":"return_value","text":"return year % 1000","line":10}
+        {"kind":"return_value","text":"return year % 1000","line":11}
       ],
       "evidence": ["owner: century_index", "owner_kind: function", "owner_decorators: lru_cache", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_memo.py", "suggested_test_name: test_century_index_smoke", "suggested_test_node_id: tests/test_memo.py::test_century_index_smoke", "suggested_verify_command: python -m pytest tests/test_memo.py::test_century_index_smoke", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_century_index_smoke)", "test_verify_command: python -m pytest tests/test_memo.py::test_century_index_smoke (test_century_index_smoke)", "related_test_relation: syntactic_call (test_century_index_smoke)", "test_oracle_shape: reach_only (test_century_index_smoke)"],
       "missing": ["Related Python test reaches `century_index` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value."],
@@ -56,8 +56,8 @@
         "missing_discriminators": [
           {
             "value": "return value == <expected value>",
-            "reason": "changed Python returned-value at line 10 lacks a concrete repair discriminator",
-            "flow_sink": {"kind":"return_value","text":"return year % 1000","line":10}
+            "reason": "changed Python returned-value at line 11 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"return_value","text":"return year % 1000","line":11}
           }
         ]
       },
@@ -66,8 +66,8 @@
       "missing_discriminators": [
         {
           "value": "return value == <expected value>",
-          "reason": "changed Python returned-value at line 10 lacks a concrete repair discriminator",
-          "flow_sink": {"kind":"return_value","text":"return year % 1000","line":10}
+          "reason": "changed Python returned-value at line 11 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"return_value","text":"return year % 1000","line":11}
         }
       ],
       "related_tests_total": 1,
@@ -97,7 +97,7 @@
         "authority_boundary": "preview_advisory_only",
         "repair_action": "strengthen_existing_test",
         "changed_owner": "century_index",
-        "changed_behavior": "return_value changed at src/memo.py:10: `return year % 1000`",
+        "changed_behavior": "return_value changed at src/memo.py:11: `return year % 1000`",
         "current_test_evidence": "tests/test_memo.py:8 test_century_index_smoke currently has oracle_strength=unknown, oracle_kind=unknown",
         "missing_discriminator": "return value == <expected value>",
         "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.",
@@ -154,7 +154,7 @@
         "family": "return_value",
         "delta": "value",
         "file": "src/memo.py",
-        "line": 5,
+        "line": 6,
         "expression": "    return \"%03d\" % (year % 100)",
         "owner": "python:src/memo.py::format_year"
        },
@@ -165,9 +165,9 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `format_year`", "infection yes: Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"%03d\" % (year % 100) (line 5)", "related test tests/test_memo.py:4 test_format_year_width uses strong exact value oracle: assert format_year(1999) == \"099\""],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `format_year`", "infection yes: Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"%03d\" % (year % 100) (line 6)", "related test tests/test_memo.py:4 test_format_year_width uses strong exact value oracle: assert format_year(1999) == \"099\""],
       "flow_sinks": [
-        {"kind":"return_value","text":"return \"%03d\" % (year % 100)","line":5}
+        {"kind":"return_value","text":"return \"%03d\" % (year % 100)","line":6}
       ],
       "evidence": ["owner: format_year", "owner_kind: function", "owner_decorators: lru_cache", "test_framework: pytest (test_format_year_width)", "test_verify_command: python -m pytest tests/test_memo.py::test_format_year_width (test_format_year_width)", "related_test_relation: syntactic_call (test_format_year_width)", "test_oracle: exact_value strong (test_format_year_width)"],
       "missing": ["Related Python test reaches `format_year` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],

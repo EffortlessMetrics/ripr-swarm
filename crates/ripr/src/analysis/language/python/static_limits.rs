@@ -266,7 +266,6 @@ pub(super) fn is_transparent_owner_decorator(decorator: &str) -> bool {
         || decorator == "async_def"
         || is_static_route_decorator(decorator)
         || is_static_cli_decorator(decorator)
-        || is_qualified_functools_memoization_decorator(decorator)
 }
 
 pub(super) fn is_transparent_owner_decorator_for_owner(
@@ -286,25 +285,31 @@ fn is_functools_memoization_name(name: &str) -> bool {
     matches!(name, "lru_cache" | "cache" | "cached_property")
 }
 
-/// `@functools.lru_cache`, `@functools.cache`, `@functools.cached_property`
-/// (bare or with call args; `expr_full_name` already drops the call).
-fn is_qualified_functools_memoization_decorator(decorator: &str) -> bool {
-    decorator
-        .strip_prefix("functools.")
-        .is_some_and(is_functools_memoization_name)
+fn functools_alias_is_imported_from_elsewhere(imports: &[PythonImport]) -> bool {
+    imports
+        .iter()
+        .any(|import| import.alias == "functools" && !import.source_module.is_empty())
 }
 
 /// Bare `@lru_cache` / `@cache` / `@cached_property` only when the name is
 /// bound from `functools`. A same-named local decorator stays limited.
-/// `import functools as ft` then `@ft.lru_cache` is the same binding.
+/// `@functools.lru_cache` is the stdlib qualified spelling unless `functools`
+/// is imported from another module. `import functools as ft` then
+/// `@ft.lru_cache` is the same binding. Call arguments are already dropped
+/// by `expr_full_name`.
 fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
     if let Some((receiver, method)) = decorator.rsplit_once('.') {
-        return is_functools_memoization_name(method)
-            && imports.iter().any(|import| {
-                import.imported == "functools"
-                    && import.alias == receiver
-                    && import.source_module.is_empty()
-            });
+        if !is_functools_memoization_name(method) {
+            return false;
+        }
+        if receiver == "functools" {
+            return !functools_alias_is_imported_from_elsewhere(imports);
+        }
+        return imports.iter().any(|import| {
+            import.imported == "functools"
+                && import.alias == receiver
+                && import.source_module.is_empty()
+        });
     }
     imports.iter().any(|import| {
         import.source_module == "functools"
@@ -660,8 +665,8 @@ mod tests {
         for name in ["lru_cache", "cache", "cached_property"] {
             let qualified = format!("functools.{name}");
             assert!(
-                is_transparent_owner_decorator(&qualified),
-                "expected `{qualified}` to be transparent without import context"
+                !is_transparent_owner_decorator(&qualified),
+                "qualified `{qualified}` needs owner import context"
             );
             let owner = owner_with(&[name], vec![from_functools(name)]);
             assert!(
@@ -676,9 +681,30 @@ mod tests {
             assert_eq!(
                 decorator_limit(&owner_with(&[qualified.as_str()], vec![import_functools()])),
                 None,
-                "`{qualified}` must not emit decorator_indirection"
+                "`{qualified}` with `import functools` must not emit decorator_indirection"
+            );
+            assert_eq!(
+                decorator_limit(&owner_with(&[qualified.as_str()], Vec::new())),
+                None,
+                "`{qualified}` with no competing import is the stdlib spelling"
             );
         }
+    }
+
+    #[test]
+    fn functools_imported_from_another_module_stays_limited() {
+        let owner = owner_with(
+            &["functools.lru_cache"],
+            vec![PythonImport {
+                imported: "functools".to_string(),
+                alias: "functools".to_string(),
+                source_module: "helpers".to_string(),
+            }],
+        );
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
     }
 
     #[test]

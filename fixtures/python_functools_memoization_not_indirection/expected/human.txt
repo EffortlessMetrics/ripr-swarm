@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: preview language, advisory only (preview_limited)
   Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.
-  File: src/memo.py:10
+  File: src/memo.py:11
   Language: python
   Language status: preview
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
@@ -37,7 +37,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - src/memo.py:5 (exposed)
+    - src/memo.py:6 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

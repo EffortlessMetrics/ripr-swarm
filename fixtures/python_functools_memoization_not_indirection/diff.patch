@@ -2,7 +2,7 @@ diff --git a/src/memo.py b/src/memo.py
 index 0000000..1111111 100644
 --- a/src/memo.py
 +++ b/src/memo.py
-@@ -3,8 +3,8 @@ from functools import lru_cache
+@@ -4,8 +4,8 @@
  @lru_cache
  def format_year(year):
 -    return "%02d" % (year % 100)

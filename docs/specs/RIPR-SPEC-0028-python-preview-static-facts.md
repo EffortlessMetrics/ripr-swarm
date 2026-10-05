@@ -339,9 +339,10 @@ values defined in RIPR-SPEC-0026:
   way the syntax-first adapter cannot follow; simple route decorators such as
   `@app.get(...)`, `@api.post(...)`, or `@router.api_route(...)` may be treated
   as static route metadata when the changed behavior itself is a supported
-  repair shape; `functools.lru_cache`, `functools.cache`, and
-  `functools.cached_property` — bare or `functools`-qualified, with or without
-  call arguments — are not this limit when they bind from `functools`)
+  repair shape; `functools.lru_cache` (bare or called with arguments), and
+  bare `functools.cache` / `functools.cached_property`, including the same
+  names qualified as `functools.*`, are not this limit when they bind from
+  `functools`)
 - `mocked_module` (e.g., `@patch(...)`, `patch.object(...)` (#4565) or `monkeypatch.setattr(...)`
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
