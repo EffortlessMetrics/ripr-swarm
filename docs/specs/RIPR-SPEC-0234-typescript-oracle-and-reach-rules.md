@@ -234,7 +234,18 @@ reading only when the class is part of the change: the payload's last
 segment must be a changed token of the changed line. On a change that
 leaves the thrown class alone, such as a message-only change, a class
 payload reads `broad_error` / weak, because it passes on both versions.
-A string or object payload is unaffected.
+A string payload is a substring match in Jest and Vitest, so it reads
+`exact_error_variant` only when it is not a substring of a string
+literal on the old side of the changed line; `toThrow("blank")` after
+`"not blank"` changed to `"blank"` reads `broad_error` / weak. An object
+payload is unaffected.
+
+**Rule 9. Self-comparing matchers are not exact.** A `toBe`, `toEqual`
+or `toStrictEqual` whose `expect` argument and matcher argument are the
+same token sequence, ignoring whitespace outside string literals
+(`expect(price(150)).toBe(price(150))`), reads `relational_check` /
+weak. Both sides run the same code, so no change to it can fail the
+assertion. This mirrors RIPR-SPEC-0233 rule 1.
 
 ### Other assertion tables
 
@@ -506,7 +517,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 1. `expect(price(150)).toBe(130)`: `exact_value` / strong,
    `direct_owner_call`, `exposed` (unchanged).
 2. `expect(price(150)).toBeGreaterThan(100)`: `relational_check` / weak,
-   `weakly_exposed` (unchanged).
+   `weakly_exposed` (unchanged). `expect(price(150)).toBe(price(150))`:
+   `relational_check` / weak, `weakly_exposed` (today `exact_value` /
+   strong, `exposed`, inferred; rule 9).
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
@@ -536,7 +549,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, changed to `"blank"`;
     test `expect(() => parse("")).toThrow("blank")`:
-    `exact_error_variant` / strong, `exposed` (unchanged).
+    `exact_error_variant` / strong, `exposed` (unchanged). With the old
+    message `"not blank"` instead of `"empty"`: `broad_error` / weak,
+    `weakly_exposed` (today `exposed`, inferred; rule 4: `"blank"` matches
+    both messages).
 13. Same change; `expect(() => parse("")).toThrow(Error)`: `broad_error` /
     weak, `weakly_exposed` (today `exact_error_variant` / strong,
     `exposed`). `toThrow(globalThis.Error)`: `broad_error` / weak
@@ -647,7 +663,7 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
-- `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4 and 9
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
   `oracle_for_matcher`, `safe_error_class_payload_text`).
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 1

@@ -225,7 +225,12 @@ table.
    highest strength. The class never depends on assertion order or test
    names. This adds credit where an owner assertion was hidden by a later
    one, and removes it where today's gates were met by two different
-   assertions.
+   assertions. An assertion's text for every gate is its compared
+   operands only: for `assert`, the expression before any `, message`;
+   for `assertEqual`, `assertDictEqual`, `assertAlmostEqual` and the
+   other table calls, the positional arguments the call compares, not a
+   `msg` argument or keyword. An owner call that appears only in a
+   failure message observes nothing.
 
 ### Error-path gate
 
@@ -578,7 +583,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `weakly_exposed` (unchanged). `assert int('1') == 1 < parse('1')`:
    `relational_check` / weak, `weakly_exposed` (today `exact_value` /
    strong, `exposed`, inferred; rule 1).
-6. `assert parse('1') == parse('1')`: `relational_check` / weak,
+6. `self.assertEqual(1 + 1, 2, parse('x'))`: `weakly_exposed` (today
+   `exposed`, inferred; rule 4: the owner call is the failure message).
+   `assert 1 + 1 == 2, parse('x')`: the same.
+   `assert parse('1') == parse('1')`: `relational_check` / weak,
    `weakly_exposed` (today `exact_value` / strong, `exposed`). The same for
    `self.assertEqual(parse('1'), parse('1'))`. `assert norm('a b') ==
    norm('ab')` is not a tautology: whitespace inside a string literal is
