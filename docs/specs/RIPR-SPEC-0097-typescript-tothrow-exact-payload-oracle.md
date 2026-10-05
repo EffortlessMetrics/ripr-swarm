@@ -200,11 +200,17 @@ After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
 
 ## Later Amendment
 
-RIPR-SPEC-0234 rule 4 (2026-10-04) adds one exception to the PascalCase
-gate: a payload whose whole text is `Error` stays BroadError / Weak,
-because every thrown error is an `Error`. `globalThis.Error` already stays
-BroadError under the uppercase-first gate, and other PascalCase class
-paths keep this spec's reading.
+RIPR-SPEC-0234 rule 4 (2026-10-04) adds two exceptions to this spec's
+reading. A payload whose whole text is `Error` stays BroadError / Weak,
+because every thrown error is an `Error` (`globalThis.Error` already stays
+BroadError under the uppercase-first gate). On a message-only change,
+where every differing token of the changed line lies inside a string
+literal, a PascalCase class payload reads BroadError / Weak, and a string
+payload reads ExactErrorVariant only when it is not a substring of a
+string literal on the old side; both otherwise pass on the old and new
+versions. On any other change, including this spec's fixture
+`typescript_tothrow_exact_oracle` (a condition change), every payload
+keeps this spec's reading.
 
 ## Metrics
 

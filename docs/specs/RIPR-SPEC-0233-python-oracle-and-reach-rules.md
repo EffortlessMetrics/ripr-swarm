@@ -199,7 +199,11 @@ table.
    `|` outside a character class (`[...]`) also assigns `broad_error` /
    weak, because an alternation can admit
    both the old and the new message (`'empty|blank'`). A pattern that is
-   not a literal keeps `exact_error_variant` / strong.
+   a bare name bound by exactly one assignment of a string literal, in
+   the test body before the assertion or at the test module's top level,
+   is read as that literal (`pattern = '.*'` then `match=pattern` is
+   `broad_error`). Any other non-literal pattern keeps
+   `exact_error_variant` / strong (Decision 5).
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -225,11 +229,15 @@ table.
    highest strength. The class never depends on assertion order or test
    names. This adds credit where an owner assertion was hidden by a later
    one, and removes it where today's gates were met by two different
-   assertions. An assertion's text for every gate is its compared
-   operands only: for `assert`, the expression before any `, message`;
-   for `assertEqual`, `assertDictEqual`, `assertAlmostEqual` and the
-   other table calls, the positional arguments the call compares, not a
-   `msg` argument or keyword. An owner call that appears only in a
+   assertions. An assertion's text for every gate excludes its failure
+   message. For `assert` it is the expression before any `, message`.
+   For `assertEqual`, `assertDictEqual`, `assertAlmostEqual` and the
+   other comparison calls it is the compared operands, positional or
+   named (`first=`, `second=`), not a `msg` argument or keyword. An
+   exception assertion compares no operand, so its text is the whole
+   call (and, for a `with` item, its body) less any `msg`: the callable
+   of rule 13 and its arguments count, and a rule 14 promotion uses the
+   joined text that rule defines. An owner call that appears only in a
    failure message observes nothing.
 
 ### Error-path gate
@@ -237,8 +245,11 @@ table.
 5. **Python error-path family.** A changed line is in the error-path
    family when it is `raise` or starts with `raise `, `try:`,
    `except ` (with a space), `except* ` or `finally:`, or is a `with`
-   line containing `raises(` (`probe_shape.rs`). A bare `except:` is not
-   in the family. This is the existing classifier and is normative.
+   line containing `raises(` (`probe_shape.rs`). This is the existing
+   classifier and is normative, with one addition: a bare `except:` line
+   is also in the family. Today it is not, so broadening
+   `except ValueError:` to `except:` can be credited by a normal-path
+   value assertion that never runs the handler.
 6. **The error-path gate reads one assertion.** For an error-path change,
    `exposed` needs one assertion of kind `exact_error_variant` in an
    oracle-eligible related test that itself satisfies a credit branch
@@ -396,20 +407,23 @@ shape fails on a non-equivalent mutant of its owner (corpus cases
 `py-spec0233-ex21-exc-value` in #6597). The runtime outcome calibrates
 the rule; ripr still reports only what the static shape shows.
 
-12. **`assertAlmostEqual` pins a value.** A call statement whose last
-    segment is `assertAlmostEqual` assigns `exact_value` / strong, as
+12. **`assertAlmostEqual` pins a value.** A call statement
+    `self.assertAlmostEqual(...)` assigns `exact_value` / strong, as
     `pytest.approx` does (Decision 6). At its default seven places it
     fails for any change of at least `1e-7` in the observed value. That
     holds only for the default tolerance: with an explicit `places=` or
     `delta=` (by keyword, or positionally as the third argument for
-    `places` or the fifth for `delta`; the fourth is `msg`), the call is `relational_check` /
-    weak, because static evidence cannot tell whether the band excludes
+    `places` or the fifth for `delta`; the fourth is `msg`), the call is
+    `relational_check` / weak, because static evidence cannot tell whether the band excludes
     the pre-change value. The corpus evidence covers the default form
     only. A change smaller than the tolerance is not discriminated, and
     ripr does not compute the size of a change; that is the same limit
     Decision 6 accepts for `pytest.approx`, whose default relative
-    tolerance of `1e-6` is coarser. `assertNotAlmostEqual` stays
-    unrecorded.
+    tolerance of `1e-6` is coarser. A literal `None` in either position
+    counts as absent, since `unittest` then uses the default. The
+    receiver must be `self`: `checks.assertAlmostEqual(...)` may be a
+    project helper with its own tolerance, so it stays unrecorded, and
+    `assertNotAlmostEqual` stays unrecorded.
 13. **The callable of an exception assertion is called.** In a call
     statement whose last segment is `assertRaises` or `assertRaisesRegex`,
     or `raises` read as `pytest.raises`, the positional argument right
@@ -431,8 +445,10 @@ the rule; ripr still reports only what the static shape shows.
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
     or as its `.args` or a literal index of `.args`. A coarser read such
-    as `len(str(N.value))` or `type(N.value)` does not promote, and `N`
-    must not be assigned again in between. A comparison inside the `with` body
+    as `len(str(N.value))` or `type(N.value)` does not promote. No
+    statement in between may assign `N`, or an attribute or subscript
+    reached through it (`N.value.args = ('blank',)`), or call a method
+    on `N` or on such an attribute. A comparison inside the `with` body
     does not count: it runs only when nothing is raised. Rule 1 applies
     to that comparison first: a tautology does not promote. The value
     assertion keeps its own table row. The promoted item, its `with`
@@ -501,9 +517,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    actionable verdict. The binding proof is the rule's name and
    no-reassignment check. Rejected: any use of `exc.value`, because
    `assert exc.value is not None` pins nothing.
-5. **Non-literal `match=`.** Adopted: stays strong, because a variable
-   usually holds a real message. Rejected: weaken every non-literal
-   pattern.
+5. **Non-literal `match=`.** Adopted: a name bound once to a string
+   literal is read as that literal (rule 2, amended after review); any
+   other non-literal pattern stays strong, because it usually holds a
+   real message (`re.escape(expected)`) and weakening it would turn those
+   findings into false actionable verdicts. Rejected: weaken every
+   non-literal pattern.
 6. **`pytest.approx` and `len(x) == n`.** Adopted: unchanged,
    `exact_value` / strong; both pin a value, and the f-string gate covers
    the length case it cannot see. Rejected: weaken them. Known limit: an
@@ -546,7 +565,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Golden drift lists every Python finding whose class, relation or
   `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
   13, 14) and
-  credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11, 13).
+  credit removed (rules 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
 
@@ -588,7 +607,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
    `assert 1 + 1 == 2, parse('x')`: the same.
    `assert parse('1') == parse('1')`: `relational_check` / weak,
    `weakly_exposed` (today `exact_value` / strong, `exposed`). The same for
-   `self.assertEqual(parse('1'), parse('1'))`. `assert norm('a b') ==
+   `self.assertEqual(parse('1'), parse('1'))`.
+   `self.assertEqual(first=parse('1'), second=2)`: `exact_value` /
+   strong, `exposed` (unchanged; named operands are compared). `assert norm('a b') ==
    norm('ab')` is not a tautology: whitespace inside a string literal is
    part of the value, so it keeps `exact_value` / strong.
 7. `assert parse('1') == pytest.approx(2.0)`: `exact_value` / strong,
@@ -596,7 +617,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
 8. `self.assertAlmostEqual(parse('1'), 2.0)` only: `exact_value` /
    strong, `exposed` (today no assertion, reported `unknown`,
    `weakly_exposed`; rule 12, #6603). With `delta=100` or `places=0`:
-   `relational_check` / weak, `weakly_exposed` (class unchanged).
+   `relational_check` / weak, `weakly_exposed` (class unchanged). With
+   `places=None`: as the default form. `checks.assertAlmostEqual(parse('1'),
+   2.0)` only, through a project helper: no assertion, `weakly_exposed`
+   (unchanged).
 9. `m = parse('1')` then `m.assert_called_once_with(1)`:
    `mock_expectation` / medium, `weakly_exposed` (unchanged).
 10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
@@ -631,7 +655,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `match='empty|blank'` and the raise line changed only in its
     message, from `'empty'` to `'blank'`: `broad_error` / weak,
     `weakly_exposed` (today `exact_error_variant` / strong, `exposed`,
-    inferred; rule 2).
+    inferred; rule 2). With `pattern = '.*'` in the test body and
+    `match=pattern`, and the same message-only change: `broad_error` /
+    weak, `weakly_exposed` (today `exact_error_variant` / strong; class
+    unchanged, since neither `perr` nor `blank` is in the item; rule 2).
 20. Error owner, `self.assertRaisesRegex(KeyError, 'empty', perr, '')` in
     a `unittest.TestCase`: relation `syntactic_call`,
     `exact_error_variant` / strong, `exposed` (today `same_stem`, oracle
@@ -715,7 +742,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
     rule 4 (today `relational_check`, the last weak assertion). With
     `exc = other` between the block and
     `assert str(exc.value) == "'empty'"`: `weakly_exposed` (unchanged;
-    `exc` was assigned again). With
+    `exc` was assigned again). The same with `exc.value.args = ('empty',)`
+    in place of `exc = other`: `weakly_exposed` (unchanged). With
     `assert str(exc.value) == "'empty'"` inside the `with` body after
     `perr('')`: `weakly_exposed` (unchanged; the comparison never runs
     when the call raises). With `assert len(str(exc.value)) == 7` after
@@ -725,7 +753,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `pytest.raises(KeyError, perr, '', match='empty')`, the callable
     form: `syntactic_call`, `broad_error` / weak, `weakly_exposed`
     (rule 13; `match=` goes to `perr`; today `same_stem`, class
-    unchanged).
+    unchanged). With `def handle(x):` whose `except ValueError:` line is
+    changed to `except:`, and only `assert handle(1) == 1`: error-path
+    family, `weakly_exposed` (today `exposed`, inferred; rule 5).
 
 ## Test Mapping
 

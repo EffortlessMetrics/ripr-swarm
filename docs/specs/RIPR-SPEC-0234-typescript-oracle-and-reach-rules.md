@@ -225,27 +225,33 @@ whose first segment starts with an ASCII uppercase letter, and for
 `.rejects.toMatchObject` with an all-literal object. A regex, a lowercase
 identifier and a template literal stay `broad_error` / weak.
 
-**Rule 4. The base `Error` class is not an exact payload.** A payload whose
-whole text is `Error` reads `broad_error` / weak, because every thrown
-error is an `Error`. Only bare `Error` changes: `globalThis.Error` already
-reads `broad_error` under the uppercase-first gate, and other PascalCase
-class paths (`TypeError`, `Errors.ParseError`) keep RIPR-SPEC-0097's
-reading only when the class is part of the change: the payload's last
-segment must be a changed token of the changed line. On a change that
-leaves the thrown class alone, such as a message-only change, a class
-payload reads `broad_error` / weak, because it passes on both versions.
-A string payload is a substring match in Jest and Vitest, so it reads
-`exact_error_variant` only when it is not a substring of a string
-literal on the old side of the changed line; `toThrow("blank")` after
-`"not blank"` changed to `"blank"` reads `broad_error` / weak. An object
-payload is unaffected.
+**Rule 4. A payload that passes on both versions is not exact.** A
+payload whose whole text is `Error` reads `broad_error` / weak, because
+every thrown error is an `Error`; `globalThis.Error` already reads
+`broad_error` under the uppercase-first gate. A second exception
+covers a message-only change, one where every token that differs between
+the old and new changed line lies inside a string literal. The literal
+text of a template literal counts; a `${...}` interpolation does not, so
+a changed interpolation is not message-only. On such a
+change a payload credits only if it excludes the old message. A class
+payload (`TypeError`, `Errors.ParseError`) reads `broad_error` / weak,
+because the same class is thrown on both versions. A string payload is a
+substring match in Jest and Vitest, so it reads `exact_error_variant`
+only when it is not a substring of a string literal on the old side;
+`toThrow("blank")` after `"not blank"` changed to `"blank"` reads
+`broad_error` / weak. On any other change, class and string payloads keep
+RIPR-SPEC-0097's reading: a class swap, or a changed condition that
+decides whether the throw runs, can fail a class check (the seam family
+filter still decides the class; see example 13). An object payload is
+unaffected.
 
 **Rule 9. Self-comparing matchers are not exact.** A `toBe`, `toEqual`
 or `toStrictEqual` whose `expect` argument and matcher argument are the
 same token sequence, ignoring whitespace outside string literals
 (`expect(price(150)).toBe(price(150))`), reads `relational_check` /
-weak. Both sides run the same code, so no change to it can fail the
-assertion. This mirrors RIPR-SPEC-0233 rule 1.
+weak. The matcher supplies no independent expected value: both sides
+run the code under test, so a change that alters both alike passes. This
+mirrors RIPR-SPEC-0233 rule 1.
 
 ### Other assertion tables
 
@@ -454,10 +460,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 6. **`toThrow(Error)` (D5).** Adopted: rule 4. RIPR-SPEC-0097 is amended.
    Rejected: drop class payloads entirely, because a specific class does
    pin the thrown type. Rule 4 also closes the class-only payload on a
-   change that leaves the class alone: the class must be a changed token,
-   so a message-only change no longer credits `toThrow(TypeError)`.
-   Rejected: keep it strong, which credits a payload that passes on both
-   versions.
+   message-only change, which passes on both versions, so
+   `toThrow(TypeError)` no longer credits one. Rejected: keep it strong,
+   which credits that payload. Also rejected: require the class to be a
+   changed token, which would demote class payloads on every change that
+   is not message-only, such as the condition change in RIPR-SPEC-0097's
+   fixture, beyond the over-credit measured here.
 7. **Jest `.not`.** Adopted: rule 2, mirroring chai `.not` and AVA `t.not`.
    Rejected: keep `.not` unrecognised, which mislabels `expect` as a
    helper.
@@ -481,7 +489,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Each Problem table row reads as the acceptance examples state, in JSON
   `class`, `related_tests[]` and `evidence`.
 - Rules 2 to 6 and rule 8 move no finding to a stronger class. Golden
-  drift lists every finding that moved and why.
+  drift lists every finding that moved and why. The RIPR-SPEC-0097
+  fixture `typescript_tothrow_exact_oracle` does not move: its change
+  (`input === ""` to `input.trim() === ""`) is not message-only, so its
+  class, string and object payloads all stay `exact_error_variant`.
 - Rules 1 and 7 move a finding to a stronger class only for an awaited
   root (rule 1) or an alias-rename local (rule 7).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
@@ -557,10 +568,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
     weak, `weakly_exposed` (today `exact_error_variant` / strong,
     `exposed`). `toThrow(globalThis.Error)`: `broad_error` / weak
     (unchanged). `toThrow(TypeError)`: `broad_error` / weak (today
-    `exact_error_variant` / strong): `TypeError` is not a changed token.
-    With the change instead from `throw new Error("empty")` to
+    `exact_error_variant` / strong): the change is message-only. With the
+    change instead from `throw new Error("empty")` to
     `throw new TypeError("empty")`, `toThrow(TypeError)`:
-    `exact_error_variant` / strong, `exposed` (unchanged).
+    `exact_error_variant` / strong, `exposed` (unchanged). With
+    `if (s === "") { throw new TypeError("empty"); }` changed to
+    `if (s !== "") { throw new TypeError("empty"); }`,
+    `toThrow(TypeError)` and `toThrow("empty")`: `exact_error_variant` /
+    strong (unchanged): the change is not message-only. The class stays
+    `weakly_exposed` (unchanged), because the changed line is a predicate
+    and the seam family filter admits no error oracle for a predicate.
 14. Same change; `expect(() => parse("")).to.throw("blank")` with chai
     `expect`: `broad_error` / weak, `weakly_exposed` (unchanged).
 15. Base change; only `expect(() => price(150)).toThrow("bad")`: class

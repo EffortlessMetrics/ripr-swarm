@@ -321,8 +321,16 @@ rejected alternative. Any can be reversed later without touching the rest.
    (rule 10), already pinned in
    `fixtures/perl_packet_contract_migration/expected/consumer-dispositions.v1.json`.
    Missing facts can only add relations or limits; the alignment present
-   is a positive fact. Rejected: cap partial packets at
-   `weakly_exposed`.
+   is a positive fact. Known limit: a partial packet can omit a limit,
+   such as a `dynamic_dispatch` boundary, that a complete run would
+   report, and the completed packet would then read `static_unknown`.
+   The real producer marks every packet `partial`, so capping on that
+   flag would remove `exposed` from every real Perl finding, and a
+   `weakly_exposed` cap would put a false repair signal on each
+   sink-aligned one. Closing the limit needs the producer to say which
+   limit families it scanned, which is a producer change tracked on
+   #6606. Rejected: cap partial packets at `weakly_exposed` or
+   `static_unknown`.
 9. **Fingerprint.** Adopted: state the scope (rule 14) and file the
    recipe extension as a cross-repo issue. Rejected: change the recipe
    here, because the real producer computes the same recipe and a
