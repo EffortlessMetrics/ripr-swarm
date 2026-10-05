@@ -8323,6 +8323,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
   "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_rebases_crate_paths_and_keeps_a_public_constant",
   "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_leaves_a_nested_module_public_constant_as_a_fill_in",
+  "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_leaves_a_cfg_test_public_constant_as_a_fill_in",
   "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_ignores_nested_const_after_a_brace_in_a_string",
   "crates/ripr/src/analysis/test_stub/tests.rs::integration_stub_refuses_self_and_super_parameter_paths",
   "crates/ripr/tests/agent_stub_compiles.rs::written_integration_stub_compiles_under_cargo_test_and_stops_at_its_own_todo",

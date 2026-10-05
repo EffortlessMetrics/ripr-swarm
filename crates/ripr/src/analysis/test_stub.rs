@@ -16,6 +16,7 @@
 //! repair-cage authorization; edit admission stays with `edit_cage`.
 
 use super::ClassifiedSeam;
+use super::facts::cfg_predicates::attributes_require_test;
 use super::new_test_target::{NewTestKind, NewTestTargetProposal};
 use super::repair_route::{
     RepairTargetSelection, cross_language_test_target_unresolved, repair_packet_eligibility,
@@ -531,8 +532,9 @@ fn stub_body(
     let mut boundary = boundary_inputs(seam, signature);
     if matches!(path_scope, PathScope::Integration(_)) {
         // A `tests/` file sees crate-root `pub const` items through
-        // `use crate_name::*;`. Private and `pub(crate)` constants stay
-        // fill-ins; numeric literals always remain.
+        // `use crate_name::*;`. Private, `pub(crate)`, nested-module, and
+        // `#[cfg(test)]` constants stay fill-ins; numeric literals always
+        // remain.
         boundary.retain(|(_, value)| {
             let ident = value.trim_start_matches('-');
             ident.starts_with(|c: char| c.is_ascii_digit())
@@ -746,7 +748,8 @@ fn boundary_inputs(seam: &RepoSeam, signature: &OwnerSignature) -> Vec<(String, 
 }
 
 /// True when `name` is a crate-root `pub const` in `source`. Nested-module,
-/// `pub(crate)`, and private constants are not visible from a `tests/` file.
+/// `pub(crate)`, private, and `#[cfg(test)]` constants are not visible from
+/// a `tests/` file (integration tests compile the library without `cfg(test)`).
 /// Parse-backed: braces inside strings and comments cannot promote a nested
 /// item. An unparseable file fails closed (fill-in).
 fn crate_public_const_declared(source: &str, name: &str) -> bool {
@@ -768,6 +771,9 @@ fn crate_public_const_declared(source: &str, name: &str) -> bool {
         .filter_map(ast::Const::cast)
         .any(|constant| {
             crate_root_pub_visibility(constant.syntax())
+                && !attributes_require_test(
+                    ast::HasAttrs::attrs(&constant).map(|attr| attr.syntax().text().to_string()),
+                )
                 && constant.name().is_some_and(|bound| bound.text() == name)
         })
 }

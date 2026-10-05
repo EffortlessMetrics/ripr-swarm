@@ -469,9 +469,9 @@ are scoped or reviewed.
   `cargo test --manifest-path … --test <stem>` command until they stop at
   the labelled `ripr:` todo. Crate-root `pub const` items are matched from
   the clean parse, not brace counting, so nested-module constants stay
-  fill-ins even when a string or comment holds `}`. Private and
-  `pub(crate)` constants stay fill-ins; `self::` and `super::` parameter
-  paths still refuse (#5453).
+  fill-ins even when a string or comment holds `}`. Private, `pub(crate)`,
+  and `#[cfg(test)]` constants stay fill-ins; `self::` and `super::`
+  parameter paths still refuse (#5453).
 
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
