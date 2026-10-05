@@ -4,20 +4,20 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 71/203 | 0.3498 |
-| False actionable (of discriminated) | 65/106 | 0.6132 |
+| False verdicts (all cases) | 68/203 | 0.3350 |
+| False actionable (of discriminated) | 62/106 | 0.5849 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 74/203 | 0.3645 |
-| Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
+| Ideal verdict | 73/203 | 0.3596 |
+| Abstained (limited or silent where acceptable) | 62/203 | 0.3054 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 61/169 | 55/86 | 6/83 | 0/83 | 69/169 | 39/169 |
-| upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
+| authored | 169 | 59/169 | 53/86 | 6/83 | 0/83 | 68/169 | 42/169 |
+| upstream | 34 | 9/34 | 9/20 | 0/14 | 0/14 | 5/34 | 20/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -40,7 +40,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `serde-derive-rename-variant-lower` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `serde-derive-rename-field-upper` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `semver-leading-zero` | upstream | discriminated | credited | limited | no_static_path | abstained | no | none |
-| `semver-op-greater-eq` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `semver-op-greater-eq` | upstream | discriminated | credited | limited | propagation_unknown | abstained | yes | none |
 | `itoa-four-digit-loop` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `semver-digit-upper-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | no | none |
 | `bytesize-format-unit-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | no | none |
@@ -57,7 +57,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | no | none |
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `pricing-free-shipping-boundary` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
-| `pricing-gold-discount-rate` | authored | discriminated | credited | credited | exposed | ideal | yes | none |
+| `pricing-gold-discount-rate` | authored | discriminated | credited | limited | propagation_unknown | abstained | yes | none |
 | `pricing-flat-shipping-fee` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `pricing-quote-total-field` | authored | partially_discriminated | gap | credited | exposed | false_exposed | no | none |
@@ -97,12 +97,12 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-bulk-custom-assert-macro` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `checkout-region-literal-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `checkout-region-literal-match-helper` | authored | discriminated | credited | limited | propagation_unknown | abstained | yes | none |
 | `checkout-announce-stdout-sink` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | no | none |
 | `checkout-record-discarded-result` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `checkout-persist-swallowed-ok` | authored | discriminated | credited | limited | propagation_unknown | abstained | no | none |
 | `tokens-scanner-state-arm` | authored | discriminated | credited | credited | exposed | ideal | no | none |
-| `tokens-recursive-label-arm` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `tokens-recursive-label-arm` | authored | discriminated | credited | limited | propagation_unknown | abstained | yes | none |
 | `tokens-word-start-helper` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `tokens-normalize-helper-chain` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | no | none |
 | `tokens-base-six-hop-chain` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |

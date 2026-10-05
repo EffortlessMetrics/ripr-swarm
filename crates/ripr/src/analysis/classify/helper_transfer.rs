@@ -516,6 +516,28 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Stop token named when the owner is reached only through a chain whose
+/// hops do not hand the owner's result to the entry's return (#6780).
+pub(crate) const HELPER_RESULT_NOT_FORWARDED: &str = "helper_result_not_forwarded";
+
+/// True when some related test reaches the owner through the helper chain
+/// and none calls it directly: every oracle then observes a hop caller's
+/// result, never the owner's own.
+pub(crate) fn helper_only_reach(
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use crate::domain::RelationReason;
+    related_tests
+        .iter()
+        .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+        && !related_tests
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+}
+
 /// Whether every hop of `chain` hands the result of its call straight to
 /// its caller's return (#6694, #6672), so an exact oracle on the entry's
 /// result can stand for an oracle on the owner's result.
@@ -539,6 +561,10 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
                 },
             };
             caller_tail_forwards_call(&hop.caller.body, callee)
+                && hop.arguments.iter().all(|argument| {
+                    !is_identifier(argument.trim())
+                        || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
+                })
         })
 }
 
@@ -622,9 +648,108 @@ fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
         raw_tail.get(then_open + 1..then_close),
         raw_tail.get(else_open + 1..else_close),
     ) {
-        (Some(then_raw), Some(else_raw)) => then_raw.trim() != else_raw.trim(),
+        // Both branches must be distinct literals (#6780 review B3): a
+        // computed branch (`qty / 2`) can equal the other at the boundary.
+        (Some(then_raw), Some(else_raw)) => {
+            match (strict_literal(then_raw), strict_literal(else_raw)) {
+                (Some(then_value), Some(else_value)) => then_value != else_value,
+                _ => false,
+            }
+        }
         _ => false,
     }
+}
+
+/// Whether `body` (a caller's full text) rebinds or assigns `parameter`
+/// after its signature (#6780 review B1): a `let` pattern, a closure
+/// parameter list, a `for` pattern, a match-arm or `@` pattern, or a plain
+/// or compound assignment naming it. A rebound parameter no longer holds
+/// the caller's input, so the test's argument cannot bind through it.
+pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    let inner = &masked[open + 1..];
+    let word_at = |text: &str, at: usize| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + parameter.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    let mentions = |segment: &str| {
+        segment
+            .match_indices(parameter)
+            .any(|(at, _)| word_at(segment, at))
+    };
+    for (at, _) in inner.match_indices(parameter) {
+        if !word_at(inner, at) {
+            continue;
+        }
+        let after = inner[at + parameter.len()..].trim_start();
+        let assigns =
+            (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+                || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+                    .iter()
+                    .any(|op| after.starts_with(op))
+                || after.starts_with('@');
+        if assigns {
+            return true;
+        }
+    }
+    // `let` patterns: the text between `let` and its `=` or `;`.
+    for (at, _) in inner.match_indices("let") {
+        if !inner[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        {
+            continue;
+        }
+        let rest = &inner[at + 3..];
+        let end = rest.find(['=', ';']).unwrap_or(rest.len());
+        if mentions(&rest[..end]) {
+            return true;
+        }
+    }
+    // `for <pattern> in`.
+    for (at, _) in inner.match_indices("for ") {
+        let rest = &inner[at + 4..];
+        if let Some(end) = rest.find(" in ")
+            && mentions(&rest[..end])
+        {
+            return true;
+        }
+    }
+    // Match-arm patterns: the text before each `=>` back to the previous
+    // `{`, `,` or `}`.
+    for (at, _) in inner.match_indices("=>") {
+        let start = inner[..at]
+            .rfind(['{', ',', '}'])
+            .map_or(0, |index| index + 1);
+        if mentions(&inner[start..at]) {
+            return true;
+        }
+    }
+    // Closure parameter lists `|..|` on one line (`||` is not one).
+    for line in inner.lines() {
+        let pipes: Vec<usize> = line
+            .match_indices('|')
+            .map(|(index, _)| index)
+            .filter(|index| {
+                line[..*index].chars().next_back() != Some('|')
+                    && line[index + 1..].chars().next() != Some('|')
+            })
+            .collect();
+        for pair in pipes.chunks(2) {
+            if let [left, right] = pair
+                && mentions(&line[left + 1..*right])
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// `text` is exactly one direct call of `callee` (nothing before or after).
@@ -651,6 +776,15 @@ fn matching_close(text: &str, open: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn is_identifier(text: &str) -> bool {
+    text.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
@@ -883,6 +1017,59 @@ mod tests {
                 stop_above: None,
             }
         ));
+    }
+
+    // #6780 review B1 / B3: rebinding the forwarded parameter or a computed
+    // branch value refuses forwarding.
+    #[test]
+    fn chain_forwards_owner_result_refuses_rebinding_and_computed_branches() {
+        let chain_with_args = |body: &str| {
+            let mut chain = one_hop_chain(body);
+            if let Some(hop) = chain.hops.first_mut() {
+                hop.arguments = vec!["qty".to_string()];
+            }
+            chain
+        };
+        assert!(chain_forwards_owner_result(
+            "is_bulk",
+            &chain_with_args(
+                "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 0 }\n}"
+            )
+        ));
+        for body in [
+            "pub fn w(qty: u32) -> u32 {\n    let qty = qty * 2;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(mut qty: u32) -> u32 {\n    qty = qty + 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(mut qty: u32) -> u32 {\n    qty <<= 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { qty / 2 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { FIVE } else { 0 }\n}",
+        ] {
+            assert!(
+                !chain_forwards_owner_result("is_bulk", &chain_with_args(body)),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_rebinds_parameter_finds_patterns_and_assignments() {
+        for body in [
+            "fn w(qty: u32) -> u32 { let qty = 2; qty }",
+            "fn w(qty: u32) -> u32 { let (a, qty) = (1, 2); qty }",
+            "fn w(mut qty: u32) -> u32 { qty -= 1; qty }",
+            "fn w(qty: u32) -> u32 { for qty in 0..3 {} 1 }",
+            "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) => qty, None => 0 } }",
+            "fn w(qty: u32) -> u32 { [1].iter().map(|qty| qty + 1).sum() }",
+            "fn w(qty: u32) -> u32 { match qty { n @ 1..=3 => n, qty @ _ => qty } }",
+        ] {
+            assert!(caller_rebinds_parameter(body, "qty"), "{body}");
+        }
+        for body in [
+            "fn w(qty: u32) -> u32 { if is_bulk(qty) { 5 } else { 0 } }",
+            "fn w(qty: u32) -> bool { qty <= 3 || qty == 9 || qty >= 7 }",
+            "fn w(qty: u32) -> u32 { let other = qty + 1; other }",
+        ] {
+            assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
+        }
     }
 
     #[test]

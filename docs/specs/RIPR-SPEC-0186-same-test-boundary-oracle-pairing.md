@@ -83,10 +83,14 @@ assertion whose subject is one call of the chain's entry, that names no
 second entry call and no owner call, pairs when activation recorded a
 boundary `==` row bound down the chain from that assertion's line. This
 holds only when every hop hands its call's result to its caller's return:
-the caller body has no `return` or `?`, and its tail is the hop call
-itself or `if <call> { A } else { B }` (or `if !<call>`) with distinct
-branches. A discarded, let-bound, transformed, or branch-guarded result
-keeps the pairing missing. A computed hop argument already stops the row
+the caller body has no `return` or `?`, it does not rebind or assign a
+parameter it forwards to the hop, and its tail is the hop call itself or
+`if <call> { A } else { B }` (or `if !<call>`) where `A` and `B` are
+distinct literals. A discarded, let-bound, transformed, branch-guarded or
+computed-branch result, or a rebound forwarded parameter, keeps the
+pairing missing (and RIPR-SPEC-0159 makes propagation unknown). The row
+must come from the entry call on the assertion's own line: that line
+holds one entry call and no direct owner call. A computed hop argument already stops the row
 transfer (RIPR-SPEC-0159), so no `==` row exists to pair.
 
 Proximity-only oracle credit and bare-name method relation are out of
@@ -138,10 +142,13 @@ scope.
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
+- `crates/ripr/tests/helper_wrapper_reach.rs`
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority.
+- `crates/ripr/src/analysis/classify/helper_transfer.rs`: the hop forwarding
+  and parameter-rebinding checks the wrapper-entry pairing uses.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the

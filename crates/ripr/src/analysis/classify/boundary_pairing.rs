@@ -101,14 +101,18 @@ fn assertion_observes_boundary_entry_call(
     owner_call_count(&subject, entry) == 1
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
-        && activation_marks_boundary_call(
-            activation,
-            &CallFact {
-                line: assertion.line,
-                name: entry.to_string(),
-                text: assertion.text.clone(),
-            },
-        )
+        && activation.observed_values.iter().any(|fact| {
+            // The transferred row's provenance starts with the entry call's
+            // line text. That line must hold this assertion, exactly one
+            // entry call, and no direct owner call (#6780 review N1): a
+            // same-line `is_bulk(10)` row must not pair a far wrapper pin.
+            let call_line = fact.text.split(" | ").next().unwrap_or_default();
+            fact.line == assertion.line
+                && fact.value.contains(" == ")
+                && call_line.contains(&assertion.text)
+                && owner_call_count(call_line, entry) == 1
+                && owner_call_count(call_line, &owner.name) == 0
+        })
 }
 
 fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
@@ -897,6 +901,98 @@ mod tests {
             Some(&wrapper_chain(FORWARDING_WRAPPER)),
             &|_, _| true,
         ));
+    }
+
+    fn pairs_through_forwarding_wrapper(
+        assertion: &str,
+        activation: &ActivationEvidence,
+        wrapper_body: &str,
+    ) -> bool {
+        let test = test_summary(
+            "wrapper_pin",
+            assertion,
+            vec![call("order_discount", assertion)],
+            vec![exact(assertion)],
+            &["10"],
+        );
+        has_same_test_boundary_oracle_pairing(
+            &predicate_probe("10 <= qty"),
+            Some(&bulk_owner()),
+            &[&test],
+            activation,
+            Some(&wrapper_chain(wrapper_body)),
+            &|_, _| true,
+        )
+    }
+
+    // #6780 review N1: a same-line direct owner call at the boundary must
+    // not pair a far wrapper pin through the line-level row.
+    #[test]
+    fn same_line_owner_row_does_not_pair_a_far_wrapper_pin() {
+        let line = "let ok = is_bulk(10); assert_eq!(order_discount(3), 0);";
+        let mut oracle = exact("assert_eq!(order_discount(3), 0);");
+        oracle.line = 1;
+        let test = test_summary(
+            "same_line",
+            line,
+            vec![call("is_bulk", line), call("order_discount", line)],
+            vec![oracle],
+            &["10", "3", "0"],
+        );
+        assert!(!has_same_test_boundary_oracle_pairing(
+            &predicate_probe("10 <= qty"),
+            Some(&bulk_owner()),
+            &[&test],
+            &transferred_boundary_row(1, line),
+            Some(&wrapper_chain(FORWARDING_WRAPPER)),
+            &|_, _| true,
+        ));
+    }
+
+    // #6780 review N2: the entry guard refuses a second entry call and an
+    // assertion that also names the owner.
+    #[test]
+    fn entry_guard_refuses_repeated_entry_calls_and_owner_mentions() {
+        let repeated = "assert_eq!(order_discount(10), order_discount(10));";
+        assert!(!pairs_through_forwarding_wrapper(
+            repeated,
+            &transferred_boundary_row(1, repeated),
+            FORWARDING_WRAPPER,
+        ));
+        // Two owner calls keep the owner-call fallback out of the way, so
+        // only the entry path could pair here.
+        let names_owner =
+            "assert_eq!(order_discount(10), u32::from(is_bulk(1)) * 5 + u32::from(is_bulk(2)));";
+        assert!(!pairs_through_forwarding_wrapper(
+            names_owner,
+            &transferred_boundary_row(1, names_owner),
+            FORWARDING_WRAPPER,
+        ));
+        // Control: the plain pin pairs.
+        let plain = "assert_eq!(order_discount(10), 5);";
+        assert!(pairs_through_forwarding_wrapper(
+            plain,
+            &transferred_boundary_row(1, plain),
+            FORWARDING_WRAPPER,
+        ));
+    }
+
+    // #6780 review B1 / B3: a wrapper that rebinds the forwarded parameter,
+    // or branches into a computed value, does not pair.
+    #[test]
+    fn rebinding_or_computed_branch_wrappers_do_not_pair() {
+        let plain = "assert_eq!(order_discount(10), 5);";
+        let row = transferred_boundary_row(1, plain);
+        for body in [
+            "pub fn order_discount(qty: u32) -> u32 {\n    let qty = qty * 2;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn order_discount(mut qty: u32) -> u32 {\n    qty += 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) { qty / 2 } else { 5 }\n}",
+        ] {
+            assert!(
+                !pairs_through_forwarding_wrapper(plain, &row, body),
+                "{body}"
+            );
+        }
     }
 
     fn predicate_probe(expression: &str) -> Probe {

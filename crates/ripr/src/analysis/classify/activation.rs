@@ -1242,6 +1242,18 @@ fn helper_transferred_rows(
         // M3 — the previous off-by-one silently dropped every row when
         // parameter names differed between hops).
         let caller_parameters = function_parameters(&hop.caller);
+        // #6780 review B1: a parameter the caller rebinds or assigns before
+        // the hop (`let qty = qty * 2;`) no longer holds the test's input,
+        // so the row stops instead of binding the stale value.
+        if hop.arguments.iter().any(|argument| {
+            let argument = argument.trim();
+            caller_parameters
+                .iter()
+                .any(|parameter| parameter == argument)
+                && super::helper_transfer::caller_rebinds_parameter(&hop.caller.body, argument)
+        }) {
+            return Vec::new();
+        }
         let mut bound_rows = Vec::new();
         for row in &rows {
             let mut bound = Vec::new();

@@ -1,8 +1,9 @@
 use crate::analysis::classify::{
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    PropagationWitnessV1, ReturnOracleAdmission, activation_evidence_with_value_facts,
+    chain_forwards_owner_result, classify, confidence_score, contains_as_whole_word,
+    current_path_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
     same_test_pairing_missing_summary,
 };
@@ -69,6 +70,30 @@ impl ClassifiedProbeEvidence {
             });
         let propagate =
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
+        // #6780 review B2: when the owner is reached only through the
+        // RIPR-SPEC-0159 chain (no related test calls it directly), the
+        // tests observe the entry's result, not the owner's. Unless every
+        // hop hands the call's result to its caller's return, the owner's
+        // change is not shown to reach that result: propagation is unknown
+        // (an abstention), never credit or an actionable gap.
+        let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
+            // An already-unknown stage keeps its own reason.
+            (Some(owner), Some(chain))
+                if matches!(propagate.state, StageState::Yes | StageState::Weak)
+                    && helper_only_reach(&context.related_tests)
+                    && !chain_forwards_owner_result(&owner.name, chain) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: the related tests reach `{}` only through a caller that does not return its result directly ({HELPER_RESULT_NOT_FORWARDED})",
+                        owner.name
+                    ),
+                )
+            }
+            _ => propagate,
+        };
         // #3731 review (G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeat below compares each
         // related test's package against it.

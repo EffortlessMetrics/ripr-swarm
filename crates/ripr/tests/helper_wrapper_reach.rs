@@ -46,6 +46,10 @@ const BOUNDARY_TESTS: &str =
     "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 0);";
 
 fn predicate_finding(source: &str, diff: &str) -> Result<Value, String> {
+    family_finding(source, diff, "predicate")
+}
+
+fn family_finding(source: &str, diff: &str, family: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
@@ -65,9 +69,9 @@ fn predicate_finding(source: &str, diff: &str) -> Result<Value, String> {
         .as_array()
         .ok_or("missing findings")?
         .iter()
-        .find(|finding| finding["probe"]["family"] == "predicate")
+        .find(|finding| finding["probe"]["family"] == family)
         .cloned()
-        .ok_or_else(|| format!("no predicate finding: {json}"))
+        .ok_or_else(|| format!("no {family} finding: {json}"))
 }
 
 fn relation_of<'a>(finding: &'a Value, test: &str) -> Option<&'a str> {
@@ -132,11 +136,112 @@ fn wrapper_tests_that_miss_the_boundary_still_report_the_gap() -> Result<(), Str
 fn wrapper_that_drops_the_helper_result_keeps_pairing_missing() -> Result<(), String> {
     let dropping = "    let _ = is_bulk(qty);\n    if qty > 0 { 5 } else { 0 }";
     let finding = predicate_finding(&bulk_source(dropping, BOUNDARY_TESTS), BULK_DIFF)?;
+    // Reach and the bound boundary row are both present, so the dropped
+    // result is the only reason the pin does not count.
+    assert_eq!(
+        relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert!(has_boundary_row(&finding, "qty == 10"), "{finding}");
     assert_ne!(finding["classification"], "exposed", "{finding}");
     assert!(
         discriminate_summary(&finding).contains("same_test_pairing_missing"),
         "{finding}"
     );
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+fn has_boundary_row(finding: &Value, value: &str) -> bool {
+    finding["activation"]["observed_values"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().any(|row| row["value"].as_str() == Some(value)))
+}
+
+/// Abstains (never credit, never an actionable gap) and names the stop.
+fn assert_not_forwarded(finding: &Value) {
+    assert_eq!(
+        finding["classification"], "propagation_unknown",
+        "{finding}"
+    );
+    assert!(
+        finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("helper_result_not_forwarded"),
+        "{finding}"
+    );
+}
+
+// #6780 review B1: a wrapper that rebinds the forwarded parameter
+// (`let qty = qty * 2;`) must not bind the test's `10` to the helper.
+#[test]
+fn wrapper_that_rebinds_the_parameter_does_not_credit_the_boundary() -> Result<(), String> {
+    let rebinding =
+        "    let qty = qty * 2;\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }";
+    let tests =
+        "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(3), 0);";
+    let finding = predicate_finding(&bulk_source(rebinding, tests), BULK_DIFF)?;
+    assert!(!has_boundary_row(&finding, "qty == 10"), "{finding}");
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+// #6780 review B3: a computed branch (`qty / 2`) equals the other branch at
+// the boundary, so the wrapper's pin cannot discriminate the helper.
+#[test]
+fn wrapper_with_a_computed_branch_does_not_pair() -> Result<(), String> {
+    let computed_branch = "    if is_bulk(qty) {\n        qty / 2\n    } else {\n        5\n    }";
+    let tests =
+        "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(3), 5);";
+    let finding = predicate_finding(&bulk_source(computed_branch, tests), BULK_DIFF)?;
+    assert!(has_boundary_row(&finding, "qty == 10"), "{finding}");
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+const TIER_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -8,3 +8,3 @@\n     match t {\n-        Tier::Gold => 10,\n+        Tier::Gold => 15,\n         _ => 0,\n";
+
+fn tier_source(wrapper_body: &str, tests: &str) -> String {
+    format!(
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum Tier {{\n    Standard,\n    Gold,\n}}\n\nfn discount_percent(t: Tier) -> u64 {{\n    match t {{\n        Tier::Gold => 15,\n        _ => 0,\n    }}\n}}\n\npub fn discounted_cents(p: u64, t: Tier) -> u64 {{\n{wrapper_body}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn gold_discount_applies() {{\n{tests}\n    }}\n}}\n"
+    )
+}
+
+// #6780 review B2: a match arm in a helper whose wrapper drops the helper's
+// result must not be credited through the wrapper's exact pin.
+#[test]
+fn match_arm_behind_a_dropping_wrapper_is_not_credited() -> Result<(), String> {
+    let dropping = "    let _ = discount_percent(t);\n    p";
+    let tests = "        assert_eq!(discounted_cents(10_000, Tier::Gold), 10_000);";
+    let finding = family_finding(&tier_source(dropping, tests), TIER_DIFF, "match_arm")?;
+    assert_eq!(finding["probe"]["line"], 9, "{finding}");
+    assert_eq!(
+        relation_of(&finding, "gold_discount_applies"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+// Control for the dropping wrapper: the same arm behind a wrapper that
+// returns the helper's result keeps its ordinary verdict path (not the
+// hop stop).
+#[test]
+fn match_arm_behind_a_forwarding_wrapper_keeps_its_verdict_path() -> Result<(), String> {
+    let forwarding = "    let _ = p;\n    discount_percent(t)";
+    let tests = "        assert_eq!(discounted_cents(10_000, Tier::Gold), 15);";
+    let finding = family_finding(&tier_source(forwarding, tests), TIER_DIFF, "match_arm")?;
+    assert!(
+        !finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("helper_result_not_forwarded"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
 

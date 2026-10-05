@@ -1,9 +1,16 @@
-- A test in a private helper's own file that calls the helper's public
-  wrapper now relates to the helper as `helper_owner_call` instead of
-  `same_test_file` or `owner_named_test`, so reach no longer reads as
-  file-level proximity (#6672).
-- A predicate in a private helper reached only through a wrapper now pairs
-  with the wrapper's exact assertion at the boundary input when the wrapper
-  returns the helper's result directly or branches on it; a wrapper that
-  drops, binds, or transforms the result keeps `same_test_pairing_missing`
+<!-- section: Fixed -->
+- A test that calls a public wrapper of a changed helper now relates to the
+  helper as `helper_owner_call` even when it also shares the helper's file,
+  path or name tokens (unit tests beside a private helper, integration tests
+  of a `pub` helper); it no longer reads as `same_test_file`,
+  `owner_named_test` or `weak_token_substring` proximity (#6672).
+- A predicate in a helper reached only through a wrapper now pairs with the
+  wrapper's exact assertion at the boundary input when the wrapper returns
+  the helper's result directly or branches on it into distinct literals
   (#6694).
+- When tests reach a changed helper only through a wrapper that drops,
+  binds, transforms or branches past its result, or that rebinds the
+  forwarded parameter, the finding reads `propagation_unknown`
+  (`helper_result_not_forwarded`) instead of crediting the wrapper's
+  assertion or reporting a gap; such a parameter also no longer carries the
+  test's input into the helper's activation rows.

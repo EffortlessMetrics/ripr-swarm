@@ -295,7 +295,7 @@ Updated:
 ## Pending — rust_constructor_field_observation (12)
 
 Reason:
-#6694/#6672: a same-file test that calls the lower_ast entry now relates to private lower_statement through the RIPR-SPEC-0159 chain (helper_owner_call, reach yes) instead of weak_token_substring; class unchanged
+RIPR-SPEC-0159 (#6694/#6672): the tests/lower.rs test that calls the lower_ast entry now relates to private lower_statement through the chain (helper_owner_call, reach yes) instead of weak_token_substring, because the chain relation now outranks token proximity; class unchanged
 
 Command:
 `cargo xtask goldens bless rust_constructor_field_observation --reason "..."`

@@ -32,11 +32,24 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
-- The chain relation outranks file proximity and test-name affinity
-  (#6694, #6672): a test in the helper's own file, or one whose name
-  contains the helper's name, that calls a resolved hop's caller relates
-  as `HelperOwnerCall`, not `same_test_file` / `owner_named_test`. A
-  same-file test that calls no hop caller keeps its proximity reason.
+- The chain relation outranks any file-path, test-name or token
+  proximity reason (#6694, #6672): a test that calls a resolved hop's
+  caller relates as `HelperOwnerCall`, not `same_test_file`,
+  `owner_named_test` or `weak_token_substring`. A test that calls no hop
+  caller keeps its proximity reason.
+- Hop propagation (#6780): when the related tests reach the owner only
+  through the chain (some `HelperOwnerCall`, no `DirectOwnerCall`), the
+  owner's result must reach the entry's return through every hop: the
+  caller has no `return` or `?`, does not rebind or assign a parameter it
+  forwards, and its tail is the hop call itself or `if <call> { L1 } else
+  { L2 }` / `if !<call> ..` with distinct literals `L1`, `L2`. Otherwise
+  the propagation stage is `unknown` (`helper_result_not_forwarded`), so
+  the finding abstains instead of crediting the entry's oracle or
+  reporting a gap. Arithmetic or let-bound use of the result is not
+  followed in V1.
+- A hop argument that is a caller parameter the caller rebinds or assigns
+  (`let qty = qty * 2;`, `qty += 1`, a `let`/`for`/closure/match pattern
+  naming it) stops the row transfer like a computed argument.
 - A comparison operand that is a **direct call to a unique helper**
   (`is_word_start(input, 0) == want`) evaluates through the helper's
   return when the body is simple single-line `let` statements plus a
@@ -113,7 +126,9 @@ limitation unchanged.
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
-call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
+call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
+`crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
+propagation stop, rebinding stop).
 
 ## Non-Goals
 
@@ -132,6 +147,8 @@ call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
 - `analysis/classify/related_tests.rs` — the relation branch.
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
+- `analysis/classifier/evidence.rs` — the hop-propagation stop
+  (`helper_result_not_forwarded`).
 
 ## Metrics
 
