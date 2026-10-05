@@ -19,6 +19,7 @@ Linked issues:
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
+- #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
 
 Linked PRs:
 
@@ -154,11 +155,17 @@ rule only for an assertion whose context was admitted.
      lexical-fallback file always counts.
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
-   every input: no closure or `|` operator, no `&&`/`||`, no `if`, `match`,
+   every input: no closure, `|=` or non-binary `|`, no `&&`/`||`, no `if`, `match`,
    loop or `break`, and no combinator that skips its argument on some
    inputs (`map_or`, `unwrap_or`, `and_then`, `then`, ...). With
    `x.map_or(0, |v| v * 3)` changed, `assert_eq!(f(None), 0)` never runs
-   the changed closure. When the owner has no `?` and no other
+   the changed closure. A binary bitwise `|` (#6675) evaluates both
+   operands on every input, like `&`, `^`, `<<`, `>>`, `+` and `*`, so
+   `u16::from(lo) | (u16::from(hi) << 8)` is unconditional. A `|` counts
+   as binary only when it directly follows a completed operand (a
+   non-keyword identifier or number, `)`, `]` or `?`); a closure's opening
+   pipe never does (`f(|x| ..)`, `move |x| ..`), so every closure still
+   fails closed. When the owner has no `?` and no other
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),

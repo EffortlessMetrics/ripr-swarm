@@ -531,6 +531,74 @@ fn a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established() {
     ));
 }
 
+/// #6675: a binary bitwise `|` evaluates both operands on every input, like
+/// `+`/`*`, so a bitwise tail establishes the pin path. Every other pipe
+/// (lazy `||`, a closure's parameter list, `|=`) stays conditional.
+#[test]
+fn a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not() {
+    for (body, changed) in [
+        (
+            "fn pack(hi: u8, lo: u8) -> u16 {\n    u16::from(lo) | (u16::from(hi) << 8)\n}",
+            "u16::from(lo) | (u16::from(hi) << 8)",
+        ),
+        (
+            "fn pack(hi: u8, lo: u8) -> u16 {\n    (u16::from(hi) << 8) | u16::from(lo)\n}",
+            "(u16::from(hi) << 8) | u16::from(lo)",
+        ),
+        (
+            "fn flag(base: u8) -> u8 {\n    0x80 | base\n}",
+            "0x80 | base",
+        ),
+        (
+            "fn mix(a: u8, b: u8) -> u8 {\n    (a & 0x0f) ^ (b >> 4) | a\n}",
+            "(a & 0x0f) ^ (b >> 4) | a",
+        ),
+        (
+            "fn bits(xs: &[u8]) -> u8 {\n    xs[0] | first(xs)\n}",
+            "xs[0] | first(xs)",
+        ),
+    ] {
+        assert!(gate(body, changed).is_some(), "{body}");
+    }
+    for (body, changed) in [
+        (
+            "fn f(a: bool, b: u8) -> bool {\n    a || check(b)\n}",
+            "a || check(b)",
+        ),
+        (
+            "fn f(x: Option<u8>) -> u8 {\n    x.map_or(0, |v| v | 1)\n}",
+            "x.map_or(0, |v| v | 1)",
+        ),
+        (
+            "fn f(x: u8) -> u8 {\n    apply(x, |v| v | 1)\n}",
+            "apply(x, |v| v | 1)",
+        ),
+        (
+            "fn f(x: u8) -> u8 {\n    apply(x, move |v| v | 1)\n}",
+            "apply(x, move |v| v | 1)",
+        ),
+        (
+            "fn f(x: u8) -> u8 {\n    run(x, || 1)\n}",
+            "run(x, || 1)",
+        ),
+    ] {
+        assert!(gate(body, changed).is_none(), "{body}");
+    }
+}
+
+#[test]
+fn bitwise_pipe_reading_distinguishes_operand_position() {
+    assert!(!has_non_bitwise_pipe("a | b"));
+    assert!(!has_non_bitwise_pipe("f(x) | g[0] | h()?"));
+    assert!(has_non_bitwise_pipe("|x| x + 1"));
+    assert!(has_non_bitwise_pipe("f(|x| x)"));
+    assert!(has_non_bitwise_pipe("move |x| x"));
+    assert!(has_non_bitwise_pipe("return |x| x"));
+    assert!(has_non_bitwise_pipe("a || b"));
+    assert!(has_non_bitwise_pipe("a |= b"));
+    assert!(has_non_bitwise_pipe("{ a } | b"));
+}
+
 const WEIGHT_LIB: &str = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
 
 fn weight_admitted(tests: &str) -> Vec<String> {

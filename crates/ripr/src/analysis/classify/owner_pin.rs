@@ -741,8 +741,12 @@ const NEGATING_KEYWORDS: &[&str] = &[
 /// combinator that skips its argument (`map_or(0, ..)` on `None`). A pin on
 /// such an input never evaluates the changed part, so the tail's value is
 /// not established to come through it.
+///
+/// A binary bitwise `|` evaluates both operands on every input, so it is
+/// not conditional (#6675); every other pipe (`||`, `|=`, a closure's
+/// parameter list) still is. See [`has_non_bitwise_pipe`].
 fn evaluates_conditionally(masked_tail: &str) -> bool {
-    if masked_tail.contains('|') || masked_tail.contains("&&") {
+    if has_non_bitwise_pipe(masked_tail) || masked_tail.contains("&&") {
         return true;
     }
     if [
@@ -764,6 +768,51 @@ fn evaluates_conditionally(masked_tail: &str) -> bool {
                         .starts_with(['(', ':'])
             })
     })
+}
+
+/// Whether masked text holds a `|` that is not a binary bitwise OR (#6675):
+/// a `||` (lazy OR, or an empty closure), a `|=`, or a pipe in operand
+/// position, which opens a closure parameter list (`map(|x| ..)`,
+/// `move |x| ..`). A pipe is read as binary only when it directly follows a
+/// completed operand: an identifier or number that is not a keyword, or a
+/// closing `)`/`]` or `?`. A closure's closing pipe may follow its
+/// parameter name, but its opening pipe never follows an operand, so every
+/// closure still fails here. Anything else fails closed.
+fn has_non_bitwise_pipe(masked: &str) -> bool {
+    const OPERAND_POSITION_KEYWORDS: &[&str] = &[
+        "async", "break", "else", "in", "let", "move", "mut", "return", "static", "yield",
+    ];
+    let bytes = masked.as_bytes();
+    for (offset, byte) in bytes.iter().enumerate() {
+        if *byte != b'|' {
+            continue;
+        }
+        if matches!(bytes.get(offset + 1), Some(b'|' | b'='))
+            || (offset > 0 && bytes[offset - 1] == b'|')
+        {
+            return true;
+        }
+        let before = masked[..offset].trim_end();
+        let Some(previous) = before.bytes().last() else {
+            return true;
+        };
+        let binary = match previous {
+            b')' | b']' | b'?' => true,
+            byte if byte.is_ascii_alphanumeric() || byte == b'_' => {
+                let start = before
+                    .rfind(|character: char| {
+                        !(character.is_ascii_alphanumeric() || character == '_')
+                    })
+                    .map_or(0, |position| position + 1);
+                !OPERAND_POSITION_KEYWORDS.contains(&&before[start..])
+            }
+            _ => false,
+        };
+        if !binary {
+            return true;
+        }
+    }
+    false
 }
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only

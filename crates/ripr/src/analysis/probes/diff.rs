@@ -763,6 +763,11 @@ fn has_matching_added_line(
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
 ) -> bool {
+    if *removed_family == ProbeFamily::StaticUnknown
+        && has_adjacent_reordered_added_line(removed_line, changed)
+    {
+        return true;
+    }
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().any(|line| {
@@ -781,6 +786,34 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// #6675: a removed line whose adjacent added replacement holds exactly the
+/// same non-whitespace characters only reorders them (an operand swap such
+/// as `(hi << 8) | lo` -> `lo | (hi << 8)`). The added line's own probe
+/// already carries the change, with this removed text as its `before`, so
+/// the removed side's catch-all `static_unknown` adds nothing. Only the
+/// static-unknown catch-all is suppressed this way; a removed line with a
+/// concrete family keeps the existing family-and-token pairing.
+fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
+    let removed = sorted_code_characters(&removed_line.text);
+    !removed.is_empty()
+        && changed.added_lines.iter().any(|line| {
+            let run_start = added_run_start(line.new_side_line, changed);
+            (lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
+                || lines_are_adjacent(removed_line.new_side_line, run_start))
+                && sorted_code_characters(&line.text) == removed
+        })
+}
+
+/// The non-whitespace characters of a line in sorted order.
+fn sorted_code_characters(text: &str) -> Vec<char> {
+    let mut characters = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<Vec<_>>();
+    characters.sort_unstable();
+    characters
 }
 
 fn nearby_removed_line(
@@ -1815,6 +1848,59 @@ mod tests {
         if let Some(inserted) = inserted {
             assert_eq!(inserted.before, Some("if legacy_flag {".to_string()));
         }
+    }
+
+    /// #6675: an operand-swap rewrite keeps one probe on the added line,
+    /// whose `before` is the removed text; the removed side adds no second
+    /// static-unknown catch-all. A rewrite that changes characters
+    /// (`|` -> `&`) still keeps the removed side's static-unknown probe.
+    #[test]
+    fn reordered_replacement_does_not_repeat_the_removed_static_unknown() {
+        let swap = |removed: &str, added: &str| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 36,
+                new_side_line: 36,
+                text: added.to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 36,
+                new_side_line: 36,
+                text: removed.to_string(),
+            }],
+        };
+        let removed = "(u16::from(hi) << 8) | u16::from(lo)";
+        assert_eq!(
+            classify_changed_line(removed),
+            vec![ProbeFamily::StaticUnknown],
+            "fixture: the removed line must reach the static-unknown catch-all"
+        );
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &swap(removed, "u16::from(lo) | (u16::from(hi) << 8)"),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != removed),
+            "the reordered removed line must not get its own probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.before.as_deref() == Some(removed)),
+            "the added line's probe must keep the removed text as before: {probes:?}"
+        );
+
+        let changed_operator = probes_for_file(
+            Path::new("workspace"),
+            &swap(removed, "u16::from(lo) & (u16::from(hi) << 8)"),
+            &RustIndex::default(),
+        );
+        assert!(
+            changed_operator.iter().any(|probe| probe.expression == removed
+                && probe.family == ProbeFamily::StaticUnknown),
+            "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
+        );
     }
 
     // Regression: in a multi-line replacement block (`-a -b -c +x +y +z`),
