@@ -181,6 +181,40 @@ fn classify_run_separates_test_failures_from_build_failures() {
             error: "error: unresolved import `x::gone`".to_string()
         }
     );
+    // A binary that exits nonzero after passing results is a test failure,
+    // and so is a FAILED result line with no failed count.
+    assert_eq!(
+        classify_run(
+            false,
+            false,
+            passed_then_rustdoc,
+            "error: test failed, to rerun pass `--lib`\n"
+        ),
+        failing(&[])
+    );
+    assert_eq!(
+        classify_run(
+            false,
+            false,
+            "running 0 tests\ntest result: FAILED. 0 passed; 0 failed\n",
+            ""
+        ),
+        failing(&[])
+    );
+    // A test's own `running ...` output is not a binary header, so it
+    // cannot turn a rustdoc failure into a test failure.
+    let printed = "running 1 test\nrunning the migration\ntest a ... ok\n\ntest result: ok. 1 passed; 0 failed\n";
+    assert_eq!(
+        classify_run(
+            false,
+            false,
+            printed,
+            "error: unresolved import `x::gone`\n"
+        ),
+        RunOutcome::BuildFailed {
+            error: "error: unresolved import `x::gone`".to_string()
+        }
+    );
     // A doctest that fails to compile is a named failing test, as libtest
     // reports it.
     let doctest = "running 1 test\ntest src/lib.rs - f (line 3) ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed\n";

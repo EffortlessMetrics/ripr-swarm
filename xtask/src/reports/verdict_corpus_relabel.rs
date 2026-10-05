@@ -257,15 +257,28 @@ pub(crate) fn classify_run(
     // Otherwise every binary that ran passed, and the failure came after
     // them: rustdoc failing before any doctest ran, say. That is a build
     // failure, even though earlier binaries printed passing results.
+    // Only libtest's exact `running N test(s)` header counts, so a test
+    // that prints a line beginning `running ` cannot fake a started binary.
     let started = stdout
         .lines()
-        .filter(|line| line.starts_with("running "))
+        .filter(|line| is_running_header(line))
         .count();
     let finished = stdout
         .lines()
         .filter(|line| line.starts_with("test result:"))
         .count();
-    let failed_in_a_test = started > finished || failed_tests(stdout) > 0;
+    // cargo names a test binary that exited nonzero after its results (a
+    // panic in a destructor, say) this way; a rustdoc failure reads
+    // `error: doctest failed` or a compile error instead.
+    let binary_failed = stderr
+        .lines()
+        .any(|line| line.starts_with("error: test failed, to rerun pass"));
+    let failed_in_a_test = started > finished
+        || failed_tests(stdout) > 0
+        || binary_failed
+        || stdout
+            .lines()
+            .any(|line| line.starts_with("test result: FAILED"));
     if failing_tests.is_empty() && !failed_in_a_test {
         let error = stderr
             .lines()
@@ -277,6 +290,16 @@ pub(crate) fn classify_run(
     } else {
         RunOutcome::TestsFailed { failing_tests }
     }
+}
+
+/// libtest's per-binary header: `running 1 test` or `running N tests`.
+fn is_running_header(line: &str) -> bool {
+    line.strip_prefix("running ")
+        .and_then(|rest| {
+            rest.strip_suffix(" tests")
+                .or_else(|| rest.strip_suffix(" test"))
+        })
+        .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Tests executed across every `test result:` line (passed plus failed;

@@ -172,9 +172,10 @@ differs from `expected/report.md`. It refuses an
   compile, times out, or equals the edited line, when repeated runs disagree,
   when `rustc --version` differs from the labeled toolchain, and when a
   run that exits zero executed no test. A failed run counts as a test
-  failure only when a test failed or a test binary stopped without its
-  result; a failure after every binary passed (rustdoc failing before any
-  doctest ran) is a build failure. Upstream excerpts replay only from a
+  failure only when a test failed, a test binary stopped without its
+  result, or cargo reports a test binary exiting nonzero; any other failure
+  after every binary passed (rustdoc failing before any doctest ran) is a
+  build failure. Upstream excerpts replay only from a
   full checkout at the pinned commit, with no local changes or untracked
   files, under `--checkouts <dir>/<subject_id>`; without one they are listed
   as not replayed, never counted as passing. Only the checkout's tracked
