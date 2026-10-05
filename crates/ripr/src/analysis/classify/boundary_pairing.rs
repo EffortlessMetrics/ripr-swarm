@@ -823,7 +823,7 @@ mod tests {
             end_line: 6,
             body:
                 "pub fn bulk_rate(items: u32) -> u32 { if items >= BULK_ITEMS { 90 } else { 100 } }"
-                    .to_string(),
+                    .into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
@@ -879,7 +879,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 3,
-            body: "pub fn gate(input: u32, context: u32) -> bool { input >= 10 }".to_string(),
+            body: "pub fn gate(input: u32, context: u32) -> bool { input >= 10 }".into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
@@ -934,7 +934,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 3,
-            body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".to_string(),
+            body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
@@ -984,7 +984,7 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
-                .to_string(),
+                .into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
@@ -1034,7 +1034,7 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
-                .to_string(),
+                .into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
