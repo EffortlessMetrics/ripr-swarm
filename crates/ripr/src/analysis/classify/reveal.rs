@@ -433,7 +433,7 @@ fn analyze_related_assertions(
                     assertion.kind,
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 )
-                && assertion.strength == OracleStrength::Strong
+                && pin_strength_admits(assertion)
                 && (return_admission.owner_return_pin)(test, assertion);
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
@@ -2427,6 +2427,16 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     }
 }
 
+/// RIPR-SPEC-0231 decision 3: an exact owner pin (`assert_eq!`) needs the
+/// classifier's strong reading. The one exception is RIPR-SPEC-0197's
+/// bool-owner pin: `assert!(owner(..))` / `assert!(!owner(..))` stays the
+/// classifier's weak `relational_check`, but on a `-> bool` owner it fixes
+/// the whole two-valued result, and `owner_pin` alone admits that shape.
+fn pin_strength_admits(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::RelationalCheck)
+        || assertion.strength == OracleStrength::Strong
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4085,6 +4095,33 @@ return Err(\"typed pin\".into());
                 OracleStrength::Strong
             )
         ));
+    }
+
+    #[test]
+    fn pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin() {
+        // RIPR-SPEC-0231 decision 3: a weak exact oracle never pins.
+        assert!(!pin_strength_admits(&oracle(
+            "assert_ne!(f(), Foo { a: 1 })",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Weak,
+        )));
+        assert!(!pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Medium,
+        )));
+        assert!(pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )));
+        // RIPR-SPEC-0197: the bool-owner `assert!` pin keeps its weak
+        // relational kind; `owner_pin` decides whether it pins.
+        assert!(pin_strength_admits(&oracle(
+            "assert!(!gate(9))",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        )));
     }
 
     #[test]

@@ -258,8 +258,17 @@ rejected alternative. Any can be reversed later without touching the rest.
    and the gate change nothing until rule 1 emits a weak exact kind; they
    are what keeps rule 1's weakening from being undone downstream. This
    narrows the owner-pin Non-Goal below: the pin's confirmation is
-   unchanged, but it no longer accepts a weak oracle. Rejected: a new kind
-   for weak whole-object inequality (decision 1).
+   unchanged, but it no longer accepts a weak exact oracle. The strength
+   gate does not apply to a `relational_check`: RIPR-SPEC-0197's bool-owner
+   pin (`assert!(owner(..))` or `assert!(!owner(..))` on a `-> bool` owner)
+   keeps this spec's weak `relational_check` kind while the pin raises only
+   its probe-relative strength, because the assert fixes the owner's whole
+   two-valued result. `owner_pin` is the authority for that shape and its
+   runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
+   back it. Rejected: requiring the classifier to read that shape as
+   `exact_value` / strong, which would duplicate the owner-identity gates
+   in the oracle extractor. Rejected: a new kind for weak whole-object
+   inequality (decision 1).
 4. **Asserted subject for observer words.** Adopted: rule 5's subject is
    every identifier except the name of a free function call (`is_present()`);
    a method or getter name (`store.saved()`) still counts. Rejected: parsing
@@ -302,8 +311,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No new oracle kind or strength value.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
-- No change to reveal's token or owner-pin confirmation, except that the
-  owner pin needs a strong oracle (decision 3).
+- No change to reveal's token or owner-pin confirmation, except that an
+  exact owner pin needs a strong oracle (decision 3).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -389,6 +398,8 @@ rejected alternative. Any can be reversed later without touching the rest.
   (examples 8, 9, 10, 12, 15, 16 and the `is_ok() || is_err()` form of 26).
 - Existing: `reveal.rs::tests::probe_relative_oracle_strength_preserves_family_overrides`
   (a family override never raises a weakened strength).
+- Existing: `reveal.rs::tests::pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`
+  (decision 3's owner-pin gate and its RIPR-SPEC-0197 bool-owner exception).
 - Pending: the `spec0231-*` verdict-corpus cases (#6638) carry each
   example's runtime truth once they land.
 - Planned: a fixture for example 1 showing the related test's reported kind
@@ -405,7 +416,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   pattern reading for rules 2 and 3.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
   override is a cap that never raises a classifier-weakened strength, and an
-  owner pin needs a strong oracle (decision 3).
+  exact owner pin needs a strong oracle (decision 3; `pin_strength_admits`).
 
 ## Metrics
 
