@@ -1,17 +1,32 @@
 use super::super::rust_index::{TestSummary, extract_literals};
 use super::activation::{
-    boundary_constant_operand_name, has_observed_boundary_equality, owner_input_values,
+    boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
+    is_computed_value_expression, owner_input_values,
 };
 use crate::domain::*;
 
+#[cfg(test)]
 pub(in crate::analysis) fn infection_evidence(
     probe: &Probe,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
 ) -> StageEvidence {
+    infection_evidence_with_boundary_input(probe, related_tests, activation, None)
+}
+
+/// `infection_evidence` given the activation authority's reason, if any,
+/// why the changed boundary's inputs cannot be read (#6674, #6693,
+/// #6672). Such a boundary is unknown, not a missing input: it never
+/// reads `weak` from a literal mismatch it cannot interpret.
+pub(in crate::analysis) fn infection_evidence_with_boundary_input(
+    probe: &Probe,
+    related_tests: &[&TestSummary],
+    activation: &ActivationEvidence,
+    unresolved_boundary: Option<&str>,
+) -> StageEvidence {
     match probe.family {
         ProbeFamily::Predicate => {
-            let probe_literals = extract_literals(&probe.expression);
+            let probe_literals = boundary_literals(&probe.expression);
             let test_literals = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
@@ -65,7 +80,10 @@ pub(in crate::analysis) fn infection_evidence(
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    no_literal_boundary_summary(&probe.expression),
+                    unresolved_boundary.map_or_else(
+                        || no_literal_boundary_summary(&probe.expression),
+                        unresolved_boundary_summary,
+                    ),
                 )
             } else if !boundary_input_literals.is_empty() {
                 StageEvidence::new(
@@ -75,6 +93,12 @@ pub(in crate::analysis) fn infection_evidence(
                         "Detected test input literal matching changed boundary: {}",
                         boundary_input_literals.join(", ")
                     ),
+                )
+            } else if let Some(reason) = unresolved_boundary {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    unresolved_boundary_summary(reason),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
                 StageEvidence::new(
@@ -130,6 +154,36 @@ pub(in crate::analysis) fn infection_evidence(
             }
         }
     }
+}
+
+/// The literals that can be the changed predicate's boundary value. A
+/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
+/// does not compare against the literal it contains, so its literals are
+/// not the boundary: `CURRENT - 2 > version` never compares against `2`
+/// (#6671). Such an operand contributes nothing and the boundary stays
+/// unknown unless another operand spells it. A predicate that is not one
+/// comparison keeps every literal it contains.
+fn boundary_literals(expression: &str) -> Vec<String> {
+    let Some((left, right)) = comparison_operands(expression)
+        .filter(|_| !expression.contains("&&") && !expression.contains("||"))
+    else {
+        return extract_literals(expression);
+    };
+    if !is_computed_value_expression(&left) && !is_computed_value_expression(&right) {
+        return extract_literals(expression);
+    }
+    let mut literals = [left, right]
+        .iter()
+        .filter(|operand| !is_computed_value_expression(operand))
+        .flat_map(|operand| extract_literals(operand))
+        .collect::<Vec<_>>();
+    literals.sort();
+    literals.dedup();
+    literals
+}
+
+fn unresolved_boundary_summary(reason: &str) -> String {
+    format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown")
 }
 
 /// Why a changed predicate with no literal boundary stays unknown. A
@@ -411,5 +465,40 @@ mod tests {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn unresolved_boundary_input_is_unknown_not_weak() {
+        // #6674/#6693: the boundary literal 16 appears in the test only as
+        // an array length; with the activation authority's unresolved
+        // reason the stage abstains instead of asking for input 16.
+        let probe = probe(ProbeFamily::Predicate, "16 < count");
+        let test = test_with_literals(&["16", "17"]);
+        let unresolved = infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &ActivationEvidence::default(),
+            Some("boundary operand `count` is a local or computed value"),
+        );
+        assert_eq!(unresolved.state, StageState::Unknown);
+        assert!(unresolved.summary.contains("boundary operand `count`"));
+
+        // Negative control: without the reason the literal path still
+        // reads weak.
+        let weak = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        assert_eq!(weak.state, StageState::Weak);
+    }
+
+    #[test]
+    fn computed_comparison_operand_is_not_its_contained_literal() {
+        // #6671: `CURRENT - 2 > version` never compares against `2`.
+        assert!(boundary_literals("CURRENT - 2 > manifest.version").is_empty());
+        assert!(boundary_literals("s.len() < 2 + 2").is_empty());
+        assert_eq!(boundary_literals("amount * 2 > 100"), vec!["100"]);
+        assert_eq!(boundary_literals("amount > 10"), vec!["10"]);
+        let probe = probe(ProbeFamily::Predicate, "CURRENT - 2 > manifest.version");
+        let test = test_with_literals(&["2", "4", "5"]);
+        let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
     }
 }

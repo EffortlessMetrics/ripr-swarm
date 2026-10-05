@@ -754,6 +754,27 @@ pub(crate) fn constant_operand_name(operand: &str) -> Option<&str> {
     .then_some(name)
 }
 
+/// A boundary operand that offsets a constant by an integer literal
+/// (`CURRENT - 2`, `LIMIT + 1`, `Self::MAX - 1`): the constant's name and
+/// the signed offset. Anything else (two constants, a suffixed or
+/// non-integer literal, a nested expression) is `None` (#6671).
+pub(crate) fn constant_offset_operand(operand: &str) -> Option<(&str, i128)> {
+    let operand = operand.trim();
+    let split = operand.find(['+', '-'])?;
+    let (name, rest) = operand.split_at(split);
+    let sign = if rest.starts_with('-') { -1 } else { 1 };
+    let literal = rest.get(1..)?.trim();
+    if literal.is_empty()
+        || !literal.starts_with(|ch: char| ch.is_ascii_digit())
+        || !literal.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    {
+        return None;
+    }
+    let magnitude = literal.replace('_', "").parse::<i128>().ok()?;
+    let name = constant_operand_name(name.trim())?;
+    Some((name, sign * magnitude))
+}
+
 /// True when one call argument names the constant `name` itself, bare or
 /// through a plain path (`DISCOUNT_THRESHOLD`, `&DISCOUNT_THRESHOLD`,
 /// `pricing::DISCOUNT_THRESHOLD`).

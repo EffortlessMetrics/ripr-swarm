@@ -204,6 +204,34 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+A computed argument or operand is not the literal it contains. An owner-call
+argument that applies a binary arithmetic or bitwise operator
+(`order_discount(base + 1)`) or repeats an array element (`&[b'f'; 16]`, whose
+`16` is a length) yields no input value, and a comparison operand that does so
+(`CURRENT - 2 > version`, `s.len() < 2 + 2`) contributes no boundary literal,
+so `CURRENT - 2` is never read as the boundary `2`.
+
+Unresolved boundary input example:
+
+```rust
+let mut count = 0;
+for _ in hex {
+    count += 1;
+    if 16 < count { return Err(TooLong); }
+}
+```
+
+An input RIPR cannot read is not a missing input. When a changed comparison's
+operand is neither a parameter, a value the bounded evaluator folds from a
+related test's exact inputs, a literal, nor a named constant (a local
+accumulator such as `count`, `s.len()`, `name.split_whitespace().count()`), or
+when a related test feeds the compared parameter a computed argument, no input
+row says which side of the boundary a test reaches. RIPR does not name a
+missing equality discriminator for it; `ripr check` reports `infection
+unknown` with `Changed boundary input is unresolved` and the operand or
+parameter it could not read. Exact inputs that all sit off the boundary keep
+the missing equality discriminator.
+
 Named-constant boundary example:
 
 ```rust
@@ -230,6 +258,11 @@ owner's own source file through the shared named-constant lookup in
 - declarations are counted after any same-line `#[...]` attributes, so
   `#[cfg(a)] const LIMIT: u32 = 10;` beside a second `LIMIT` makes the lookup
   ambiguous rather than resolving to the unattributed one;
+- a constant offset by an integer literal (`CURRENT - 2`, `LIMIT + 1`)
+  resolves to the constant's value plus the offset when the constant itself
+  resolves (`const CURRENT: u32 = 7;` makes `CURRENT - 2` the boundary `5`);
+  the offset literal alone is never the boundary, and a test argument naming
+  the constant is not the offset boundary by identity;
 - a constant declared once with a computed or suffixed initializer keeps the
   missing equality-boundary discriminator, and its reason says RIPR cannot see
   the constant's value and that passing the constant itself is recognized;
@@ -254,6 +287,16 @@ Fixture coverage:
 - `let_bound_owner_argument_is_an_owner_input`
 - `let_bound_owner_argument_fails_closed_on_mut_shadowed_or_computed_bindings`
 - `owner_input_values_exclude_assertion_expected_values`
+- `computed_value_expressions_are_told_apart_from_spelled_values`
+- `computed_owner_argument_yields_no_exact_input_value`
+- `given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing`
+- `given_literal_inputs_off_the_boundary_then_missing_boundary_is_still_reported`
+- `given_local_accumulator_boundary_then_boundary_is_unresolved_not_missing`
+- `given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing`
+- `unresolved_boundary_input_is_unknown_not_weak`
+- `computed_comparison_operand_is_not_its_contained_literal`
+- `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
+- `constant_offset_operands_name_the_constant_and_signed_offset`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`

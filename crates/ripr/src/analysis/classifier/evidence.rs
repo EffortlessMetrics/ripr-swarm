@@ -1,10 +1,10 @@
 use crate::analysis::classify::{
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    activation_and_boundary_input, classify, confidence_score, contains_as_whole_word,
+    current_path_witness, has_same_test_boundary_oracle_pairing,
+    infection_evidence_with_boundary_input, local_flow_sinks, owner_may_be_reached_unseen,
+    package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -50,7 +50,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -60,7 +60,13 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let activation = gathered.activation;
+        let infect = infection_evidence_with_boundary_input(
+            context.probe,
+            &test_summaries,
+            &activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {

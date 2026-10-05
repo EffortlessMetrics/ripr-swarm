@@ -18,7 +18,7 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, literal_operand_value,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, literal_operand_value,
     local_boundary,
 };
 pub(in crate::analysis) use boundary_pairing::{
@@ -31,7 +31,7 @@ pub(in crate::analysis) use decision::{
 };
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use helper_transfer::resolve_chain;
-pub(in crate::analysis) use infection::infection_evidence;
+pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
     trait_impl_self_type_names,

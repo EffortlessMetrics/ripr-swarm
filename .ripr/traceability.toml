@@ -88,7 +88,17 @@ tests = [
   "crates/ripr/src/output/observed_values.rs::tests::over_the_cap_input_values_outrank_assertion_arguments_and_keep_order",
   "crates/ripr/src/output/json/mod.rs::tests::json_caps_observed_values_on_distinct_lines_and_discloses_the_total",
   "crates/ripr/src/output/json/mod.rs::tests::json_omits_observed_values_total_when_nothing_is_dropped",
-  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_reports_no_value_delta_across_a_capped_value_list"
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_reports_no_value_delta_across_a_capped_value_list",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::computed_value_expressions_are_told_apart_from_spelled_values",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::computed_owner_argument_yields_no_exact_input_value",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_literal_inputs_off_the_boundary_then_missing_boundary_is_still_reported",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_local_accumulator_boundary_then_boundary_is_unresolved_not_missing",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::unresolved_boundary_input_is_unknown_not_weak",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::computed_comparison_operand_is_not_its_contained_literal",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::constant_offset_operands_name_the_constant_and_signed_offset"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
