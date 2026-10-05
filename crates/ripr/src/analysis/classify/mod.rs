@@ -20,7 +20,7 @@ mod value_transfer;
 
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, literal_operand_value,
-    local_boundary,
+    local_boundary, unresolved_call_boundary_inputs,
 };
 pub(in crate::analysis) use boundary_pairing::{
     has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,

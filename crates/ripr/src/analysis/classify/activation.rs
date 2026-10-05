@@ -1691,6 +1691,83 @@ pub(in crate::analysis) fn owner_argument_values(
         .collect()
 }
 
+/// Owner-call arguments, at the changed predicate's compared parameter,
+/// that are call expressions with no statically visible value
+/// (`surcharge(big_order())`, RIPR-SPEC-0032 / #6615).
+///
+/// Such an argument may or may not sit on the boundary: ripr does not
+/// evaluate the callee, so activation is unknown rather than missing. Only
+/// a direct owner call whose argument at the compared parameter is a
+/// function or method call yielding no literal through
+/// [`owner_argument_values`] counts; a literal, let-bound, rstest-case or
+/// literal-carrying call argument (`Order::new(5000)`) is not unresolved.
+pub(in crate::analysis) fn unresolved_call_boundary_inputs(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+) -> Vec<String> {
+    if !matches!(probe.family, ProbeFamily::Predicate) {
+        return Vec::new();
+    }
+    let Some(owner) = owner_fn else {
+        return Vec::new();
+    };
+    let parameters = function_parameters(owner);
+    let Some((left, _)) =
+        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)
+    else {
+        return Vec::new();
+    };
+    let Some(parameter) = boundary_operand_parameter(owner, &parameters, &left) else {
+        return Vec::new();
+    };
+    let Some(position) = parameters.iter().position(|name| *name == parameter) else {
+        return Vec::new();
+    };
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        for call in test.body_calls() {
+            if call.name != owner.name {
+                continue;
+            }
+            let Some(arguments) = call_arguments(&call.text, &call.name) else {
+                continue;
+            };
+            let Some(argument) = arguments.get(position) else {
+                continue;
+            };
+            if is_call_expression(argument) && owner_argument_values(test, argument).is_empty() {
+                inputs.push(format!("{parameter} = {}", argument.trim()));
+            }
+        }
+    }
+    inputs.sort();
+    inputs.dedup();
+    inputs
+}
+
+/// A function or method call (`big_order()`, `fixtures::order()`,
+/// `order.amount()`): a callee path immediately followed by one balanced
+/// argument list that closes the expression. Macros, tuples, closures and
+/// parenthesized expressions are not call expressions here.
+fn is_call_expression(argument: &str) -> bool {
+    let argument = argument.trim();
+    let Some(open) = argument.find('(') else {
+        return false;
+    };
+    let callee = argument.get(..open).unwrap_or_default();
+    if callee.is_empty()
+        || !callee
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'))
+        || callee.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.' || ch == ':')
+    {
+        return false;
+    }
+    delimited_contents_at(argument, open)
+        .is_some_and(|contents| argument.len() == open + contents.len() + 2)
+}
+
 fn is_plain_identifier(text: &str) -> bool {
     !text.is_empty()
         && !text.starts_with(|ch: char| ch.is_ascii_digit())
@@ -1995,6 +2072,75 @@ mod tests {
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "amount == threshold"
         }));
+    }
+
+    #[test]
+    fn unresolved_call_boundary_inputs_names_call_expression_owner_arguments() {
+        // #6615 / RIPR-SPEC-0032: `score(big_order())` feeds the compared
+        // parameter through a call ripr does not evaluate.
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "amount > 999");
+        let helper = test_with_call("big", "assert_eq!(score(big_order()), 25);");
+        let path = test_with_call("path", "assert_eq!(score(fixtures::order()), 25);");
+        let method = test_with_call("method", "assert_eq!(score(order.amount()), 25);");
+
+        assert_eq!(
+            unresolved_call_boundary_inputs(&probe, Some(&owner), &[&helper, &path, &method]),
+            vec![
+                "amount = big_order()".to_string(),
+                "amount = fixtures::order()".to_string(),
+                "amount = order.amount()".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unresolved_call_boundary_inputs_ignores_visible_and_non_call_arguments() {
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        // A literal, a literal-carrying call, a macro, a tuple-ish
+        // parenthesized expression and an arithmetic expression over a call
+        // are not unresolved call inputs.
+        let literal = test_with_call("literal", "assert_eq!(score(5000), 25);");
+        let carrying = test_with_call("carrying", "assert_eq!(score(order(5000)), 25);");
+        let mac = test_with_call("mac", "assert_eq!(score(amount!()), 25);");
+        let paren = test_with_call("paren", "assert_eq!(score((base)), 25);");
+        let arith = test_with_call("arith", "assert_eq!(score(base() + 1), 25);");
+        let tests = [&literal, &carrying, &mac, &paren, &arith];
+
+        assert!(unresolved_call_boundary_inputs(&predicate, Some(&owner), &tests).is_empty());
+        // Non-predicate probes and an ownerless probe never abstain here.
+        let helper = test_with_call("big", "assert_eq!(score(big_order()), 25);");
+        assert!(
+            unresolved_call_boundary_inputs(
+                &probe(ProbeFamily::ReturnValue, "amount > 999"),
+                Some(&owner),
+                &[&helper]
+            )
+            .is_empty()
+        );
+        assert!(unresolved_call_boundary_inputs(&predicate, None, &[&helper]).is_empty());
+    }
+
+    #[test]
+    fn unresolved_call_boundary_inputs_reads_only_the_compared_parameter() {
+        let owner = function(
+            "pub fn score(amount: u64, rate: u64) -> u64 {\n    if amount > 999 { rate } else { 0 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "amount > 999");
+        // The call expression feeds `rate`, not the compared `amount`.
+        let other = test_with_call("other", "assert_eq!(score(5000, rate()), 25);");
+        let compared = test_with_call("compared", "assert_eq!(score(big(), 3), 3);");
+
+        assert!(unresolved_call_boundary_inputs(&probe, Some(&owner), &[&other]).is_empty());
+        assert_eq!(
+            unresolved_call_boundary_inputs(&probe, Some(&owner), &[&compared]),
+            vec!["amount = big()".to_string()]
+        );
     }
 
     #[test]

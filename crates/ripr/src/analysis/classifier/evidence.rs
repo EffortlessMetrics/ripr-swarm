@@ -4,7 +4,7 @@ use crate::analysis::classify::{
     current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
     local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    same_test_pairing_missing_summary, unresolved_call_boundary_inputs,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -62,7 +62,14 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let unresolved_call_inputs =
+            unresolved_call_boundary_inputs(context.probe, context.owner_fn, &test_summaries);
+        let infect = infection_evidence(
+            context.probe,
+            &test_summaries,
+            &activation,
+            &unresolved_call_inputs,
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
