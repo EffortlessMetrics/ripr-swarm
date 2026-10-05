@@ -241,3 +241,64 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (18)
+
+Reason:
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (19)
+
+Reason:
+RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending - #5713 reviewed discarded-matcher calibration
+
+Reason:
+Remove duplicate bare matcher facts while retaining the typed boxed-wrapper binding limitation and fail-closed observation state. No exposed credit is introduced.
+
+Producer:
+Hosted required run37242804945 at613e800282fbf542435831660e4d23a8fa3a4b5a; immutable artifact11318434713, ZIP SHA2562353af6f2a55a514024683d93fb53d474228bd537e71a77bcd57898400b7b4a7.
+
+Transfer:
+Exact guarded producer-byte replacement after complete semantic review. No local build, rerun, normalization, or blanket blessing.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## #5713 incoming-main observation wording
+
+Reason:
+The existing observation_unconfirmed renderer (#5508) discloses an unknown
+observation rather than an established miss. Only explanation wording changes;
+classes, oracle kinds/strengths and other JSON values remain unchanged.
+SPEC0094 singleton weak/unconfirmed policy and optional wrapper details remain.
+
+Producer custody:
+Exact b5af748229100b48bb327bcca813af963d6861c9 actual output from
+run37252849648, artifact11322143395 (wildcard-calibration-1), ZIP SHA256
+b59ea1caa1d210a1c667b7e9fc34011943e169ef35358575ae5ef206645d47d9.
+Guarded producer-byte transfer after semantic review; no local cargo bless ran.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -502,6 +502,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
         })
@@ -526,6 +527,7 @@ mod tests {
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
         })
     }
 
@@ -546,6 +548,7 @@ mod tests {
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
         })
     }
 

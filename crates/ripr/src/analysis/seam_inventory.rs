@@ -18,11 +18,7 @@
 
 use super::classify::exact_error_variant;
 use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
-use super::rust_index::{
-    self, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
-    PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
-    PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, RustIndex,
-};
+use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
 use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 #[cfg(test)]
@@ -341,7 +337,12 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
         &lexical_fallback_files,
         store_limit,
     ) {
-        Ok(status) => status.label,
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
         Err(reason) => {
             eprintln!("ripr: repo seam cache store ignored ({reason})");
             cache_store_status_label(&reason)
@@ -633,7 +634,12 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         &lexical_fallback_files,
         store_limit,
     ) {
-        Ok(status) => status.label,
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
         Err(reason) => {
             eprintln!("ripr: compact repo seam cache store ignored ({reason})");
             cache_store_status_label(&reason)
@@ -1818,22 +1824,41 @@ fn apply_repo_exposure_seam_limit_for_test(
 /// 1. `RIPR_PILOT_SEAM_BUDGET=0` → unbounded (operator opt-out).
 /// 2. `RIPR_PILOT_SEAM_BUDGET=N` (N > 0) → configured cap N.
 /// 3. Env var unset → `DEFAULT_PILOT_SEAM_BUDGET` (always-on default).
+///
+/// Seams for which `keep` returns true (pilot passes "on a line of the
+/// current change") survive the cut ahead of the inventory-order prefix, so
+/// a changed seam past the budget can still be ranked change-first. The
+/// retained set keeps inventory order and the budget's size.
 pub(crate) fn apply_pilot_seam_budget(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
+    keep: impl Fn(&super::seam_classification::ClassifiedSeam) -> bool,
 ) -> Result<Option<SeamLimitInfo>, String> {
     Ok(pilot_seam_budget()?
-        .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source)))
+        .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source, keep)))
 }
 
 fn apply_pilot_seam_budget_inner(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
     limit: usize,
     source: SeamLimitSource,
+    keep: impl Fn(&super::seam_classification::ClassifiedSeam) -> bool,
 ) -> Option<SeamLimitInfo> {
     let total = classified.len();
     if total <= limit {
         return None;
     }
+    let kept: Vec<bool> = classified.iter().map(&keep).collect();
+    let mut slots = limit.saturating_sub(kept.iter().filter(|kept| **kept).count());
+    let mut index = 0;
+    classified.retain(|_| {
+        let retain = kept[index]
+            || (slots > 0 && {
+                slots -= 1;
+                true
+            });
+        index += 1;
+        retain
+    });
     classified.truncate(limit);
     Some(SeamLimitInfo {
         analyzed: classified.len(),
@@ -2262,7 +2287,7 @@ fn build_seam_from_shape(
     shape: &ProbeShapeFact,
     owners: &rust_index::FileOwnerLookup<'_>,
 ) -> Option<RepoSeam> {
-    let kind = seam_kind_from_probe_shape(&shape.kind)?;
+    let kind = seam_kind_from_probe_shape(shape.kind)?;
     let owner_fact = owners.owner(shape.start_line)?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
@@ -2290,20 +2315,21 @@ fn build_seam_from_shape(
     ))
 }
 
-fn seam_kind_from_probe_shape(kind: &str) -> Option<SeamKind> {
+fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
     match kind {
-        PROBE_SHAPE_PREDICATE => Some(SeamKind::PredicateBoundary),
-        PROBE_SHAPE_RETURN_VALUE => Some(SeamKind::ReturnValue),
-        PROBE_SHAPE_ERROR_PATH => Some(SeamKind::ErrorVariant),
-        PROBE_SHAPE_FIELD_CONSTRUCTION => Some(SeamKind::FieldConstruction),
-        PROBE_SHAPE_SIDE_EFFECT => Some(SeamKind::SideEffect),
-        PROBE_SHAPE_MATCH_ARM => Some(SeamKind::MatchArm),
+        ProbeShapeKind::Predicate => Some(SeamKind::PredicateBoundary),
+        ProbeShapeKind::ReturnValue => Some(SeamKind::ReturnValue),
+        ProbeShapeKind::ErrorPath => Some(SeamKind::ErrorVariant),
+        ProbeShapeKind::FieldConstruction => Some(SeamKind::FieldConstruction),
+        ProbeShapeKind::SideEffect => Some(SeamKind::SideEffect),
+        ProbeShapeKind::MatchArm => Some(SeamKind::MatchArm),
         // The diff-scoped probe shape "call_deletion" represents the
         // syntax of a call site. In repo scope the same shape is the
         // seam asking "are tests verifying this call happens at all?"
         // — i.e. `SeamKind::CallPresence`.
-        PROBE_SHAPE_CALL_DELETION => Some(SeamKind::CallPresence),
-        _ => None,
+        ProbeShapeKind::CallDeletion => Some(SeamKind::CallPresence),
+        // Unsafe boundaries never become seams; the caller skips them.
+        ProbeShapeKind::UnsafeBoundary => None,
     }
 }
 
@@ -3474,11 +3500,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
-    fn seam_walker_skips_shapes_with_unrecognized_probe_kind() {
-        // `seam_kind_from_probe_shape` is the single place where new
-        // probe-shape strings become first-class seam kinds. Until a
-        // string is mapped explicitly, the walker must drop the shape
-        // rather than inventing a fallback seam kind.
+    fn seam_walker_skips_unsafe_boundary_shapes() {
+        // `seam_kind_from_probe_shape` maps every known kind explicitly;
+        // unsafe boundaries are dropped rather than given a fallback seam
+        // kind. Unrecognized wire strings cannot reach the walker: they
+        // fail at the decode boundary (see
+        // probe_shape_kind_rejects_unknown_wire_strings_at_decode).
         let path = PathBuf::from("src/lib.rs");
         let owner = FunctionFact {
             id: SymbolId(format!("{}::owner", path.display())),
@@ -3486,7 +3513,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             file: path.clone(),
             start_line: 1,
             end_line: 5,
-            body: String::new(),
+            body: String::new().into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -3509,8 +3536,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 2,
                     end_line: 2,
                     start_byte: 16,
-                    kind: "shape_kind_that_is_not_recognized".to_string(),
-                    text: "owner_body".to_string(),
+                    kind: ProbeShapeKind::UnsafeBoundary,
+                    text: "owner_body".into(),
                 }],
                 ..FileFacts::default()
             },
@@ -3520,7 +3547,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         let kinds = seams.iter().map(|s| s.kind().as_str()).collect::<Vec<_>>();
         assert!(
             seams.is_empty(),
-            "expected no seams for unrecognized probe-shape kind, got kinds {kinds:?}"
+            "expected no seams for unsafe-boundary shapes, got kinds {kinds:?}"
         );
     }
 
@@ -3538,7 +3565,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             file: path.clone(),
             start_line: 10,
             end_line: 14,
-            body: String::new(),
+            body: String::new().into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -3561,8 +3588,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 11,
                     end_line: 11,
                     start_byte: 120,
-                    kind: PROBE_SHAPE_PREDICATE.to_string(),
-                    text: "x >= 0".to_string(),
+                    kind: ProbeShapeKind::Predicate,
+                    text: "x >= 0".into(),
                 }],
                 ..FileFacts::default()
             },
@@ -5642,7 +5669,8 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         };
 
         let mut classified = vec![make_classified(0), make_classified(10), make_classified(20)];
-        let info = apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default);
+        let info =
+            apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default, |_| false);
         let info = info.ok_or("should truncate and return Some when limit < total")?;
         if classified.len() != 2 {
             return Err(format!(
@@ -5661,6 +5689,21 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                 "expected SeamLimitSource::Default, got {:?}",
                 info.source
             ));
+        }
+
+        // A kept seam past the cut survives in place of the last prefix
+        // seam; the retained set stays in inventory order at the budget size.
+        let mut classified = vec![make_classified(0), make_classified(10), make_classified(20)];
+        let changed = make_classified(20).seam.id().clone();
+        apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default, |entry| {
+            entry.seam.id() == &changed
+        });
+        let offsets: Vec<usize> = classified
+            .iter()
+            .map(|entry| entry.seam.byte_offset())
+            .collect();
+        if offsets != [0, 20] {
+            return Err(format!("expected the kept seam to survive: {offsets:?}"));
         }
         Ok(())
     }
@@ -5710,7 +5753,8 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         };
 
         let mut classified = vec![make_classified(0), make_classified(10)];
-        let info = apply_pilot_seam_budget_inner(&mut classified, 5, SeamLimitSource::Default);
+        let info =
+            apply_pilot_seam_budget_inner(&mut classified, 5, SeamLimitSource::Default, |_| false);
         assert!(
             info.is_none(),
             "slice smaller than budget must return None, got {info:?}"
