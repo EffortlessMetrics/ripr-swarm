@@ -266,9 +266,12 @@ when the written state is statically bounded:
   with no return type and no `&mut` parameter, and no trait, unparsed or
   other-type method shares its name;
 - the callee and every `self.method(..)` it calls transitively touch state
-  only through `self.<field>`: no bare `self`, free function call, non-pure
-  macro, interior mutability marker or `unsafe`, and every transitive self
-  call resolves the same way.
+  only through `self.<field>`: no bare `self`, no free function call, no
+  path-qualified call (`Audit::record(..)`, `crate::audit::record(..)`)
+  outside `Self`, the self type and std roots (`std`, `core`, `alloc` and the
+  primitive types), no non-pure macro, no `ref mut` pattern, no interior
+  mutability marker or `unsafe`, and every transitive self call resolves the
+  same way.
 
 A field counts as written for an assignment, a compound assignment, a
 `&mut self.field` borrow, an index, or a method call on it outside a fixed
@@ -286,6 +289,18 @@ the test is itself non-carrying, for example a value returned by a resolved,
 non-reading method of the self type (`let receipt = inv.ship(..).unwrap();`).
 A binding with no `let`, several `let`s, or an unresolved method call on it
 (`inv.clone()`) is followed to its initializer or treated as a carrier.
+A call through a std or primitive path (`u32::from(..)`, `String::from(..)`)
+is decided by its arguments; any other free or module-path call
+(`setup()`, `fixtures::stocked()`) may return the receiver and carries.
+
+State can also reach a non-reading observer through a later test action. When
+the test calls a `&mut self` method of the self type, other than the owner,
+that reads a written field (`inv.reorder()` turning `low_stock` into log
+entries, or `Inventory::reorder(&mut inv)`), every whole-object equality in
+that test is admitted, because the observed field may now depend on the
+written one. Call order is not established, since the owner may be reached
+indirectly. A `&mut self` method that reads no written field (`inv.ship(..)`
+in the corpus case) does not admit: it cannot move the written state.
 
 When any owner-side gate fails, the Part C reading stands: any whole-object
 equality confirms. Refusing the confirmation would turn `exposed` into an
@@ -301,7 +316,10 @@ interior-mutability marker in the scanned bodies is not detected.
 Proof: `crates/ripr/src/analysis/classify/effect_carrier/tests.rs`
 (`ledger_carrier_bounds_written_fields_and_readers`,
 `whole_object_equality_confirms_only_when_it_can_hold_the_written_field`,
-`unbounded_effects_keep_the_part_c_reading`) and the verdict-corpus row
+`unbounded_effects_keep_the_part_c_reading`,
+`a_mutating_reader_called_by_the_test_carries_the_written_state`,
+`path_calls_and_ref_mut_patterns_keep_the_part_c_reading`,
+`primitive_and_std_path_calls_do_not_count_as_fixture_helpers`) and the verdict-corpus row
 `ledger-receive-refresh-low-stock`, which moves from `false_exposed` to
 `ideal` (`weakly_exposed`, `observation_unverified`).
 

@@ -6754,7 +6754,10 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::ledger_carrier_bounds_written_fields_and_readers",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_equality_confirms_only_when_it_can_hold_the_written_field",
-  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::unbounded_effects_keep_the_part_c_reading"
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::unbounded_effects_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::a_mutating_reader_called_by_the_test_carries_the_written_state",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::path_calls_and_ref_mut_patterns_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::primitive_and_std_path_calls_do_not_count_as_fixture_helpers"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

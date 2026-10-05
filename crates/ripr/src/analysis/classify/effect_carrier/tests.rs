@@ -335,3 +335,117 @@ fn unbounded_effects_keep_the_part_c_reading() {
         );
     }
 }
+
+#[test]
+fn a_mutating_reader_called_by_the_test_carries_the_written_state() {
+    // `reorder` reads `low_stock` and writes `log`: after it runs, the log
+    // depends on the deleted call, so `inv.history()` discriminates it.
+    let lib = LEDGER.replace(
+        "    pub fn on_hand(&self, sku: &str) -> u32 {",
+        "    pub fn reorder(&mut self) {\n        for sku in self.low_stock.clone() {\n            self.log.push(Event::Shipped { sku, qty: 0 });\n        }\n    }\n\n    pub fn on_hand(&self, sku: &str) -> u32 {",
+    );
+    assert!(
+        lib.contains("pub fn reorder(&mut self)"),
+        "fixture must gain `reorder`"
+    );
+    let assertion = r#"assert_eq!(inv.history(), &[Event::Received { sku: "A".to_string(), qty: 2 }, Event::Shipped { sku: "A".to_string(), qty: 0 }]);"#;
+    let test_with = |call: &str| {
+        format!(
+            "use demo::*;\n\n#[test]\nfn reorder_after_receive() {{\n    let mut inv = Inventory::new(5);\n    inv.receive(\"A\", 2);\n    {call}\n    {assertion}\n}}\n"
+        )
+    };
+    for (call, expected) in [
+        ("inv.reorder();", true),
+        ("Inventory::reorder(&mut inv);", true),
+        // `ship` writes but reads no written field: it cannot carry it.
+        ("inv.ship(\"A\", 1).unwrap();", false),
+        // `is_low` reads `low_stock` but cannot move it into the log.
+        ("let _ = inv.is_low(\"A\");", false),
+    ] {
+        let tests = test_with(call);
+        let idx = index(&[(LIB, &lib), ("tests/ledger.rs", &tests)]);
+        let carrier = establish(&idx, "self.refresh_low_stock(sku);");
+        assert!(
+            carrier.is_some(),
+            "the ledger shape must establish a carrier"
+        );
+        let Some(carrier) = carrier else { return };
+        assert_eq!(
+            carrier.mutating_readers,
+            BTreeSet::from(["reorder".to_string()])
+        );
+        assert_eq!(
+            carrier.admits(the_test(&idx), &whole_object(assertion)),
+            expected,
+            "admission after `{call}`"
+        );
+    }
+}
+
+#[test]
+fn path_calls_and_ref_mut_patterns_keep_the_part_c_reading() {
+    let variant = |from: &str, to: &str| {
+        assert!(LEDGER.contains(from), "fixture must contain `{from}`");
+        LEDGER.replace(from, to)
+    };
+    let remove = "self.low_stock.remove(sku);";
+    for added in [
+        // Path-qualified calls can reach global state like a free call.
+        "Audit::record(sku);",
+        "crate::audit::record(sku);",
+        "audit::record(sku);",
+        // A `ref mut` binding writes a place the field scan does not see.
+        "match self.low_threshold { ref mut t => *t += 1 }",
+    ] {
+        let source = variant(remove, &format!("{remove}\n            {added}"));
+        let idx = index(&[(LIB, &source)]);
+        assert!(
+            establish(&idx, "self.refresh_low_stock(sku)").is_none(),
+            "`{added}` must keep the Part C reading"
+        );
+    }
+    // `Self`, the self type and std roots stay bounded.
+    for added in [
+        "let _ = Self::threshold_floor();",
+        "let _ = Inventory::threshold_floor();",
+        "let _ = std::cmp::max(1, 2);",
+        "let _ = u32::from(1u8);",
+        "let _ = String::from(sku);",
+    ] {
+        let source = variant(remove, &format!("{remove}\n            {added}"));
+        let idx = index(&[(LIB, &source)]);
+        assert!(
+            establish(&idx, "self.refresh_low_stock(sku)").is_some(),
+            "`{added}` must keep the carrier bounded"
+        );
+    }
+}
+
+#[test]
+fn primitive_and_std_path_calls_do_not_count_as_fixture_helpers() {
+    let idx = index(&[(LIB, LEDGER), ("tests/ledger.rs", LEDGER_TESTS)]);
+    let test = the_test(&idx);
+    let carrier = establish(&idx, "self.refresh_low_stock(sku);");
+    assert!(
+        carrier.is_some(),
+        "the ledger shape must establish a carrier"
+    );
+    let Some(carrier) = carrier else { return };
+    for text in [
+        "assert_eq!(receipt.remaining, u32::from(7u8));",
+        "assert_eq!(receipt.qty, usize::try_from(3u64).unwrap_or(0));",
+        "assert_eq!(receipt.sku, str::to_owned(\"A\"));",
+        "assert_eq!(receipt.sku, String::from(\"A\"));",
+        "assert_eq!(receipt.remaining, std::cmp::max(7, 0));",
+    ] {
+        assert!(
+            !carrier.admits(test, &whole_object(text)),
+            "`{text}` cannot carry"
+        );
+    }
+    // A lowercase module helper is still a possible fixture.
+    assert!(carrier.admits(
+        test,
+        &whole_object("assert_eq!(receipt, fixtures::receipt());")
+    ));
+}
