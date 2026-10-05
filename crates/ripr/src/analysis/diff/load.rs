@@ -399,7 +399,7 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 ///
 /// Every base failure above reads as a ref problem and sends the user to
 /// `git fetch` or to a different `--base`. Outside a repository neither repair
-/// applies: no ref can resolve there, so `git fetch origin` fails for the same
+/// applies: no ref can resolve there, so `git fetch` fails for the same
 /// reason the base did. Only this probe tells the two apart, and it runs on the
 /// failure path alone, so the ordinary run still costs one `rev-parse`.
 ///
@@ -729,7 +729,7 @@ fn verify_head_revision(
     }
 }
 
-/// The repair for a revision that does not resolve. `git fetch origin` never
+/// The repair for a revision that does not resolve. `git fetch` never
 /// deepens a shallow clone, so an ancestor such as `HEAD~5` needs the
 /// unshallow repair there.
 fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static str {
@@ -737,7 +737,9 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
         "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
     } else {
-        "Fetch the ref (for example `git fetch origin`)"
+        // #5252 item 8: plain `git fetch` follows the repo's own default
+        // remote; naming `origin` prescribed a remote the repo may lack.
+        "Fetch the ref (for example `git fetch`)"
     }
 }
 
@@ -2170,7 +2172,7 @@ mod tests {
     #[test]
     fn outside_a_work_tree_names_the_missing_repository_not_a_missing_ref() -> std::io::Result<()> {
         // A root that is not a usable work tree fails every base, and the ref
-        // messages send the user to `git fetch origin` or to a different
+        // messages send the user to `git fetch` or to a different
         // `--base`. Neither repair applies there: `git fetch` fails for the
         // same reason the base did. Reported against a plain directory, where
         // `--base origin/main` printed git's whole `--no-index` usage — 129

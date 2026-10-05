@@ -23635,3 +23635,43 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
+
+/// #5252 item 8: missing-base advice must not assume an `origin` remote.
+/// In a remote-less repo the repair names plain `git fetch`, which follows
+/// the repo's own default remote instead of prescribing one it lacks.
+#[test]
+fn check_missing_base_advice_does_not_assume_origin_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-no-origin");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let remotes = run_command("git", Some(&root), &["remote"])?;
+    assert!(
+        remotes.status.success() && String::from_utf8_lossy(&remotes.stdout).trim().is_empty(),
+        "fixture must carry no remotes: {remotes:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-ref-5252"),
+        "the failure must name the ref: {stderr}"
+    );
+    assert!(
+        stderr.contains("git fetch") && !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
