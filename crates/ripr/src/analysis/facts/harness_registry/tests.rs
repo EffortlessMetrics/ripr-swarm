@@ -111,6 +111,7 @@ fn registered_matcher_control_source(statement: &str, helper_callback: bool) -> 
 
 fn check_registered_terminal_matcher_guard_twins(
     helper_callback: bool,
+    multiline: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (pattern, kind, strength) in [
         ("2", OracleKind::ExactValue, OracleStrength::Strong),
@@ -128,6 +129,9 @@ fn check_registered_terminal_matcher_guard_twins(
             ),
             (format!("assert!(matches!(\nvalue,\n{pattern}\n));"), 10),
         ] {
+            if statement.contains('\n') != multiline {
+                continue;
+            }
             let root = temp_dir("terminal-matcher-twin")?;
             let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
             let source = registered_matcher_control_source(&statement, helper_callback);
@@ -185,15 +189,65 @@ fn check_registered_terminal_matcher_guard_twins(
 }
 
 #[test]
+fn inline_trial_terminal_matcher_guard_twins_preserve_single_line_and_sibling_coordinates()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_terminal_matcher_guard_twins(false, false)
+}
+
+#[test]
 fn inline_trial_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
 -> Result<(), Box<dyn std::error::Error>> {
-    check_registered_terminal_matcher_guard_twins(false)
+    check_registered_terminal_matcher_guard_twins(false, true)
 }
 
 #[test]
 fn helper_trial_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
 -> Result<(), Box<dyn std::error::Error>> {
-    check_registered_terminal_matcher_guard_twins(true)
+    check_registered_terminal_matcher_guard_twins(true, false)?;
+    check_registered_terminal_matcher_guard_twins(true, true)
+}
+
+#[test]
+fn inline_trial_skips_multiline_inert_terminal_matcher_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A blind line-based pass over the whole invocation would incorrectly
+    // credit this guard at line 7. SPEC0173 skips nonassertion macro input.
+    let root = temp_dir("terminal-matcher-inert-multiline")?;
+    let source = registered_matcher_control_source(
+        "inert! {\nif !matches!(value, 2) {\nreturn Err(\"bad\".into());\n}\n}\nassert_eq!(sibling(), 7);",
+        false,
+    );
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let [subject] = index.harness_subjects.as_slice() else {
+        return Err("multiline inert control subject missing".into());
+    };
+    assert_eq!(subject.registration_id, "mimic-suite");
+    assert_eq!(subject.name, "observes_score");
+    assert!(
+        subject
+            .calls
+            .iter()
+            .any(|call| call.name == "score" && call.line == 5)
+    );
+    let tests = index.tests();
+    assert_eq!(tests.len(), 1);
+    let test = tests
+        .first()
+        .ok_or("multiline inert control TestFact missing")?;
+    for facts in [&subject.assertions, &test.assertions] {
+        let [sibling] = facts.as_slice() else {
+            return Err(format!("inert multiline guard received credit: {facts:?}").into());
+        };
+        assert_eq!(sibling.line, 11);
+        assert!(sibling.text.starts_with("assert_eq!(sibling()"));
+        assert_eq!(sibling.kind, OracleKind::ExactValue);
+        assert_eq!(sibling.strength, OracleStrength::Strong);
+    }
+    Ok(())
 }
 
 #[test]
