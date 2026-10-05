@@ -2092,7 +2092,41 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     if let Some(colon) = pattern.find(':') {
         return type_head(&pattern[colon + 1..]).map(|(segments, _)| segments.last().copied())?;
     }
-    initializer_type_head(&stmt[eq + 1..])
+    let init = &stmt[eq + 1..];
+    initializer_is_one_head_expr(init)
+        .then(|| initializer_type_head(init))
+        .flatten()
+}
+
+/// Whether an initializer is a single path, call or struct literal with
+/// nothing after it: `Site::new().cache()` or `Site::new()?` may have another
+/// type, so they do not type the binding from their head.
+fn initializer_is_one_head_expr(init: &str) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    let init = init.strip_prefix('&').map_or(init, str::trim_start);
+    let init = init.strip_prefix("mut ").map_or(init, str::trim_start);
+    let bytes = init.as_bytes();
+    let Some(&last) = bytes.last() else {
+        return false;
+    };
+    let path_end = match last {
+        b')' | b'}' => {
+            let open_byte = if last == b')' { b'(' } else { b'{' };
+            let Some(open) = matching_open(bytes, bytes.len() - 1, open_byte, last) else {
+                return false;
+            };
+            let mut end = open;
+            if open_byte == b'{' {
+                while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+                    end -= 1;
+                }
+            }
+            end
+        }
+        _ => bytes.len(),
+    };
+    path_start(bytes, path_end) == 0
 }
 
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
@@ -2217,8 +2251,13 @@ fn text_resolves_method_to_type(
         // A binding is read only from `let`s before this call, so a later
         // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
         // line has no position in the body, so it does not consult `let`s.
+        // Only `let`s finished (`;`) before the call count, so the statement
+        // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
         let body_for_lets = if whole_body {
-            body_for_lets.get(..at).unwrap_or("")
+            body_for_lets
+                .get(..at)
+                .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
+                .unwrap_or("")
         } else {
             ""
         };
@@ -5481,6 +5520,15 @@ let r = try_parse_summary(\"x\");",
             ("m::Site(1).build();", true),
             ("crate::m::Site(1).build();", true),
             ("m::Cache(1).build();", false),
+            (
+                "let s = Cache::new(); let s = Site { x: s.build() };",
+                false,
+            ),
+            ("let s = Cache::new(); let s = Site::new(s.build());", false),
+            ("let c = Site::new().cache(); c.build();", false),
+            ("let c = Site::new()?; c.build();", false),
+            ("let s = m::Site(1); s.build();", true),
+            ("let s = Site { langs: 1 }; s.build();", true),
             ("$ /* c */ return (Site::new()).build();", false),
             ("loop { break $ break (Site::new()).build(); }", false),
             ("'outer: loop { break 'outer (Site::new()).build(); }", true),
@@ -5580,6 +5628,9 @@ let r = try_parse_summary(\"x\");",
             ("let x = Site::with_cache()", Some("Site")),
             ("let x = Site::FACTORY()", None),
             ("let x = |s: Site| s", None),
+            ("let x = Site::new().cache()", None),
+            ("let x = Site::new()?", None),
+            ("let x = &mut Site::new()", Some("Site")),
         ];
         for (stmt, expected) in cases {
             assert_eq!(let_statement_type_head(stmt), expected, "{stmt}");
