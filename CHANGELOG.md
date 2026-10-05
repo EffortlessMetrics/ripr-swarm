@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- CI: ub-review selects RIPR's companion configuration and Rust repository
+  identity, and requests resolved-candidate receipts under the same PR-specific
+  artifact name used for upload. Review remains advisory; artifact retrieval
+  requires the existing token's Actions access and exact-revision reuse checks
+  still apply (#6337).
+
 - MCP wire names unified on `canonical_id` (same spelling the evidence
   documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
   `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
@@ -54,6 +60,12 @@ are scoped or reviewed.
   A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
   is no longer read as all-unknown (#5374).
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
 - Repair attempts preserve literal Unix backslashes in the canonical root
   stored by the before producer. Newly published manifests reopen in the
   selected repository while authentic copies in another root remain refused
