@@ -1836,7 +1836,9 @@ pub(crate) fn compile_work_portfolio(
                     .to_string(),
         });
         for claim in &colliding {
-            if let Some(issue) = claim.issue && portfolio_issue_numbers.contains(&issue) {
+            if let Some(issue) = claim.issue
+                && portfolio_issue_numbers.contains(&issue)
+            {
                 candidate_edge_membership
                     .entry(format!("candidate:issue:{issue}"))
                     .or_default()
@@ -3835,7 +3837,11 @@ mod tests {
             (Some("campaign-rust-repair"), None, 9_u64),
             (Some("campaign-editor-ux"), None, 2_u64),
             (None, Some("surface-rust-cli"), 9_u64),
-            (Some("campaign-rust-repair"), Some("surface-rust-cli"), 9_u64),
+            (
+                Some("campaign-rust-repair"),
+                Some("surface-rust-cli"),
+                9_u64,
+            ),
             (Some("campaign-infra-hardening"), None, 0_u64),
         ] {
             let view = build_candidates_view(&snapshot, campaign, surface, full.len(), None)?;
