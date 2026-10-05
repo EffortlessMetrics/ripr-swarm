@@ -1391,8 +1391,8 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
 
 /// Whether a gap-ledger document discloses a blocked producer run: the
 /// producer's own `status: "blocked"` verdict carrying failure warnings.
-/// `build_gap_decision_ledger_report` sets `blocked` whenever no records
-/// survived, which also covers a genuinely empty zero-gap ledger — those
+/// `build_gap_decision_ledger_report` sets `blocked` whenever the record set
+/// is empty, which also covers a genuinely empty zero-gap ledger — those
 /// carry no warnings and stay a complete zero denominator. A blocked ledger
 /// WITH warnings is a failed producer, never a denominator (#6095 review).
 pub(crate) fn discloses_blocked_producer_outcome(value: &Value) -> bool {
