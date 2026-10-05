@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index 9145dfd..1a50107 100644
+index f0ab98d..386c4f5 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -9,7 +9,7 @@ pub struct Manifest {

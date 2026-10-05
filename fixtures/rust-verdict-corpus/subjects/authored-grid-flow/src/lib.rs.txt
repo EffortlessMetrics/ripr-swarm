@@ -1,5 +1,5 @@
 //! Control-flow shapes other RIPR specs define: a structural `} else {` line,
-//! field-assignment activation, and an opaque guard used as a test oracle.
+//! field-assignment activation, and a test-body Err-return guard used as an oracle.
 
 #[derive(Debug, Default)]
 pub struct Manifest {

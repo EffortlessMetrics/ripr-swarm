@@ -228,7 +228,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-flow-else-untested` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `grid-flow-field-direct` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
 | `grid-flow-field-opaque` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
-| `grid-flow-opaque-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-flow-err-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-bindings-shadowed` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `grid-bindings-reassigned` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `grid-bindings-computed-arg` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
