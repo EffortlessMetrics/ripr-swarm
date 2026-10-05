@@ -7,4 +7,4 @@
   against `Err(E::X)`), and custom helpers with a `ne`, `not` or `neq` name
   segment such as `assert_not_equal`. A seam whose only test was
   `assert_ne!(score(2), 0)` counted as strongly gripped in the repo audit;
-  it is now weakly gripped.
+  it is now weakly gripped (#6670).
