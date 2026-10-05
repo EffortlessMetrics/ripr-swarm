@@ -94,14 +94,19 @@ impl GapRecordSourceCurrentness {
     }
 
     /// Typed refresh authority (#5985): `true` only when `refresh_commands`
-    /// reproduce the ledger's own recorded source route — the
-    /// producer-validated repo-exposure route. A check-output source records
-    /// no `--diff` scope, so its route cannot be replayed faithfully;
-    /// `refresh_commands` stays empty and the blocked reason names the
-    /// manual rerun-with-same-`--diff` route instead. A records or
-    /// unidentified source receives the repo-exposure regeneration commands
-    /// as its recovery path, which replace rather than replay the recorded
-    /// input, so it also reports `false`.
+    /// reproduce the ledger's own recorded source route — the repo-exposure
+    /// producer route. That is a property of the route, not of the current
+    /// artifact state: whatever a repo-exposure ledger's present validation
+    /// outcome (current, stale, or not_evaluated), its two commands
+    /// regenerate the same repo-exposure source and rebuild the ledger the
+    /// same way, which is exactly why a blocked repo-exposure source refreshes
+    /// through them. A check-output source records no `--diff` scope, so its
+    /// route cannot be replayed faithfully; `refresh_commands` stays empty
+    /// and the blocked reason names the manual rerun-with-same-`--diff`
+    /// route instead. A records or unidentified source receives the
+    /// repo-exposure regeneration commands as its recovery path, which
+    /// replace rather than replay the recorded input, so it also reports
+    /// `false`.
     pub(crate) fn refresh_replayable(&self) -> bool {
         self.source_kind.as_deref() == Some(REPO_EXPOSURE_SOURCE_KIND)
     }
