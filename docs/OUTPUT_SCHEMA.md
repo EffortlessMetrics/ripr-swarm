@@ -12752,6 +12752,22 @@ Field contract:
   `defaulted`, or `will_create`. Checks with `next_command` provide the next
   safe setup or recovery command; they must not imply mutation, coverage,
   runtime proof, merge approval, or gate pass/fail.
+- Git recovery checks can also carry `recovery_commands[]`: ordered, standalone
+  Bash display commands produced separately from the legacy `next_command`
+  instruction. `preflight.recovery_commands` carries the commands for the first
+  check with a recovery instruction. The missing-base fetch uses `git -C` to
+  bind the selected root and precedes the rerun. Human Markdown pairs each step
+  through the shared PowerShell renderer; unavailable forms are disclosed.
+  The legacy `next_command` stays prose. Every missing-base fetch, in
+  `recovery_commands` and in `next_command`, names its destination
+  (`+refs/heads/<branch>:refs/remotes/origin/<branch>`), so it also works in a
+  single-branch or shallow checkout. When both refs are
+  missing, only the base recovery is surfaced; the rerun reveals the head.
+  These display strings are advisory, not typed execution authority. Existing
+  packets without this optional field retain their legacy presentation.
+  Optional `recovery_guidance` at the same check and preflight levels keeps
+  prerequisite instructions separate from the commands (for example, commit
+  PR work or select a head with changes before rerunning an empty diff).
 - `commands.regenerate_gap_ledger` is always present so missing, stale,
   wrong-root, malformed, and timeout states can point to a known refresh path.
 - `artifacts[]` records artifact id, label, path, `present` or `missing`
@@ -15395,7 +15411,11 @@ Field contract:
   before any function's second, so adjacent seams of one function cannot fill
   the list; a function already ranked in a higher class counts as having its
   first. `pilot-summary.md` names how many actionable seams each listed
-  function has beyond the ones shown, among the seams pilot analyzed.
+  function has beyond the ones shown, among the seams pilot analyzed. When a
+  seam limit cut the classified seams before ranking, the summary adds a
+  "Seam limit reached" line naming the outermost seam total (the inventory
+  total when both the inventory limit and the pilot budget cut), the
+  "Actionable seams" line reads "at least N", and these counts read "at least N".
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.
