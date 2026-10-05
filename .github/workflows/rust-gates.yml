@@ -277,9 +277,9 @@ jobs:
 
       # Scores ripr's verdicts on every labeled verdict corpus
       # (fixtures/<language>-verdict-corpus) against their stored
-      # runtime-mutant labels (RIPR-SPEC-0219). It reuses the debug ripr
-      # build the fixture step made, runs cases in parallel, and runs no
-      # mutation testing. Required runs happen at Draft -> Ready and on main
+      # runtime-mutant labels (RIPR-SPEC-0219). Its `cargo build` of ripr
+      # finds the fixture step's artifacts current, so it compiles nothing
+      # new; it runs cases in parallel and runs no mutation testing. Required runs happen at Draft -> Ready and on main
       # pushes, so a verdict move is caught on the PR that makes it.
       - name: Verdict corpora
         id: verdict_corpus

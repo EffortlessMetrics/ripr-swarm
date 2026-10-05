@@ -2177,31 +2177,40 @@ const CORPUS_SUFFIX: &str = "-verdict-corpus";
 
 /// The language prefix of a corpus directory: `rust` for
 /// `fixtures/rust-verdict-corpus`.
-fn corpus_language(dir: &Path) -> String {
+/// The language a corpus directory names. It becomes a path component of
+/// the run workspace, which `materialize` deletes and recreates per case, so
+/// a name such as `..` or `.cache` that would leave that workspace is refused.
+fn corpus_language(dir: &Path) -> Result<String, String> {
     let name = dir
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    name.strip_suffix(CORPUS_SUFFIX)
-        .unwrap_or(&name)
-        .to_string()
+    let language = name.strip_suffix(CORPUS_SUFFIX).unwrap_or(&name);
+    if safe_id(language) {
+        Ok(language.to_string())
+    } else {
+        Err(format!(
+            "{} names no usable language; use `<language>{CORPUS_SUFFIX}`",
+            normalize_path(dir)
+        ))
+    }
 }
 
 /// Run-owned workspaces live under one directory per language, so corpora
 /// for other languages never share a case work or cache directory.
-pub(crate) fn work_root(dir: &Path) -> PathBuf {
-    Path::new(WORK_ROOT).join(corpus_language(dir))
+pub(crate) fn work_root(dir: &Path) -> Result<PathBuf, String> {
+    Ok(Path::new(WORK_ROOT).join(corpus_language(dir)?))
 }
 
 /// Rust keeps the report path it always had; other languages nest under
 /// their name.
-pub(crate) fn default_out(dir: &Path) -> PathBuf {
-    let language = corpus_language(dir);
-    if language == "rust" {
+pub(crate) fn default_out(dir: &Path) -> Result<PathBuf, String> {
+    let language = corpus_language(dir)?;
+    Ok(if language == "rust" {
         PathBuf::from(DEFAULT_OUT)
     } else {
         Path::new(DEFAULT_OUT).join(language)
-    }
+    })
 }
 
 /// Every `<language>-verdict-corpus` entry under `fixtures`, sorted. An
@@ -2221,9 +2230,9 @@ pub(crate) fn corpus_dirs(fixtures: &Path) -> Result<Vec<Result<PathBuf, String>
         };
         let shown = normalize_path(&path);
         let is_symlink = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink());
-        let problem = if language.is_empty() {
+        let problem = if !safe_id(language) {
             Some(format!(
-                "{shown} names no language; use `<language>{CORPUS_SUFFIX}`"
+                "{shown} names no usable language; use `<language>{CORPUS_SUFFIX}`"
             ))
         } else if is_symlink {
             Some(format!(
@@ -2289,9 +2298,12 @@ fn score_corpus(
     if let Some(ids) = cases {
         select_cases(&mut corpus, ids)?;
     }
-    let out = out.unwrap_or_else(|| default_out(dir));
+    let out = match out {
+        Some(out) => out,
+        None => default_out(dir)?,
+    };
     refuse_expected_out(&out, &expected_dir)?;
-    let report = run_corpus(dir, &corpus, &work_root(dir))?;
+    let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     write_report(&out, &report)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -2370,7 +2382,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "split" => split(dir),
         "bless" => {
             let corpus = validated_corpus(dir)?;
-            let report = run_corpus(dir, &corpus, &work_root(dir))?;
+            let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
             bless(&expected_dir, &report)?;
             println!(
                 "verdict-corpus: blessed {} rows and the summary into {}; state why each moved row changed in the PR",

@@ -958,21 +958,33 @@ fn check_all_finds_every_language_corpus_and_refuses_one_without_a_header() -> R
         .collect();
     assert_eq!(names, ["perl-verdict-corpus", "rust-verdict-corpus"]);
     // Rust keeps its report path; every language owns its run directory.
-    assert_eq!(default_out(&ok[1]), PathBuf::from(DEFAULT_OUT));
-    assert_eq!(default_out(&ok[0]), Path::new(DEFAULT_OUT).join("perl"));
-    assert_eq!(work_root(&ok[0]), Path::new(WORK_ROOT).join("perl"));
-    assert_eq!(work_root(&ok[1]), Path::new(WORK_ROOT).join("rust"));
+    assert_eq!(default_out(&ok[1])?, PathBuf::from(DEFAULT_OUT));
+    assert_eq!(default_out(&ok[0])?, Path::new(DEFAULT_OUT).join("perl"));
+    assert_eq!(work_root(&ok[0])?, Path::new(WORK_ROOT).join("perl"));
+    assert_eq!(work_root(&ok[1])?, Path::new(WORK_ROOT).join("rust"));
+    // A language that would leave the run workspace is refused, so a case
+    // directory can never be deleted outside it.
+    for escaping in [
+        "fixtures/..-verdict-corpus",
+        "fixtures/.cache-verdict-corpus",
+        ".",
+    ] {
+        assert!(work_root(Path::new(escaping)).is_err(), "{escaping}");
+        assert!(default_out(Path::new(escaping)).is_err(), "{escaping}");
+    }
 
     // Entries that cannot be a corpus fail in place instead of dropping out.
     fs::create_dir_all(fixtures.join("python-verdict-corpus")).map_err(|err| err.to_string())?;
     crate::tests::write(&fixtures.join("notes-verdict-corpus"), "a file\n");
     crate::tests::write(&fixtures.join("-verdict-corpus/corpus.json"), "{}\n");
+    crate::tests::write(&fixtures.join("..-verdict-corpus/corpus.json"), "{}\n");
     let entries = corpus_dirs(&fixtures)?;
     let errors: Vec<String> = entries.iter().filter_map(|e| e.clone().err()).collect();
     for expected in [
         "python-verdict-corpus has no corpus.json",
         "notes-verdict-corpus is not a directory",
-        "-verdict-corpus names no language",
+        "/-verdict-corpus names no usable language",
+        "/..-verdict-corpus names no usable language",
     ] {
         assert!(
             errors.iter().any(|e| e.contains(expected)),
