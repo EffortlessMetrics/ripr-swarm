@@ -736,6 +736,62 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
+    let config = parse_config(&MINIMAL.replace(
+        "[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    ))?;
+    let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
+        let mut receipt = first_run_receipt(true);
+        let steps = receipt["setup"]
+            .as_array_mut()
+            .ok_or("receipt setup missing")?;
+        for step in steps.iter_mut() {
+            if step["step"].as_str() == Some("install_published") {
+                step["secs"] = json!(secs);
+            }
+        }
+        parse_ingest(&receipt, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &with_install(128.0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &all_boards(),
+            &with_install(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    // 128 s allows the larger of 25% (32 s) and the 30 s floor: 160 s passes.
+    assert_eq!(
+        gate(158.0, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(170.0, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(170.0, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,

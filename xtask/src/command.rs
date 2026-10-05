@@ -1838,7 +1838,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "external_state_read",
             "target/ripr/first-run/first-run.{json,md} plus per-case clones under the same directory",
             false,
-            false,
+            true,
             "Replays a new developer's first run (doctor, check, pilot, the printed explain command, init --ci github) on pinned third-party crates fetched through cargo, times each step and records friction; observes only and asserts no verdict.",
         ),
         command_entry(
