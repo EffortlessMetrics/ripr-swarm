@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (3)
+
+Reason:
+RIPR-SPEC-0108: re-bless operand-lexeme twin to the #5578 unconfirmed-observation wording inherited from main; classification unchanged (weakly_exposed / observation_unverified), formatting-only wording drift
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
