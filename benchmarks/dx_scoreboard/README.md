@@ -199,6 +199,15 @@ commit a newer report after reviewing why the numbers changed. A baseline
 recorded on one runner class leaves speed metrics uncompared on another; the
 report says so instead of passing them.
 
+The committed baselines are reports from hosted runs on
+`github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, the model
+most hosted runs drew. Two runs of identical code on that model stayed within
+5% on every speed and memory sample (margins are 15% for memory and 25% for
+time), and corpus check times moved at most 11 ms. A nightly that
+lands on another model still gates counts and completion; its wall-time and
+memory rows read "runner class differs". To re-record, take the
+`dx-scoreboard.json` printed in the lane's log group or uploaded artifact.
+
 The nightly `.github/workflows/dx-scoreboard.yml` runs the full corpus with
 the gate and uploads the report as an artifact.
 
