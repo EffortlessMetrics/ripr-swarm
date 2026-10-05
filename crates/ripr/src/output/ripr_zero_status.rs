@@ -1531,13 +1531,6 @@ fn compare_review_deadline(review_after: &str, generated_at: &str) -> Option<boo
     }
 }
 
-fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
-    if let Some(ms) = unix_ms(value) {
-        return Some(ReviewInstant::UnixMs(ms));
-    }
-    iso_day(value).map(|day| ReviewInstant::IsoDay(day.to_string()))
-}
-
 fn iso_day_of(instant: &ReviewInstant) -> Option<String> {
     match instant {
         ReviewInstant::IsoDay(day) => Some(day.clone()),
@@ -1548,13 +1541,16 @@ fn iso_day_of(instant: &ReviewInstant) -> Option<String> {
 fn unix_ms_to_iso_day(ms: i128) -> Option<String> {
     const MILLIS_PER_DAY: i128 = 86_400_000;
     let days = i64::try_from(ms.div_euclid(MILLIS_PER_DAY)).ok()?;
-    let (year, month, day) = days_to_civil_date(days);
-    Some(format!("{year:04}-{month:02}-{day:02}"))
+    format_civil_day(days_to_civil_date(days)?)
 }
 
 /// Converts days since 1970-01-01 UTC to a civil `(year, month, day)` using the
-/// Howard Hinnant algorithm.
-fn days_to_civil_date(days_since_epoch: i64) -> (i64, i64, i64) {
+/// Howard Hinnant algorithm. Returns `None` when the day is outside the
+/// Gregorian years this classifier will format (`1..=9999`).
+fn days_to_civil_date(days_since_epoch: i64) -> Option<(i64, i64, i64)> {
+    if !(MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days_since_epoch) {
+        return None;
+    }
     let z = days_since_epoch + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -1565,7 +1561,173 @@ fn days_to_civil_date(days_since_epoch: i64) -> (i64, i64, i64) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+    Some((y, m, d))
+}
+
+fn civil_date_to_days(year: i64, month: i64, day: i64) -> Option<i64> {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era
+        .checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)?;
+    if (MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days) {
+        Some(days)
+    } else {
+        None
+    }
+}
+
+const MIN_CIVIL_YEAR: i64 = 1;
+const MAX_CIVIL_YEAR: i64 = 9999;
+/// Unix days for `0001-01-01` and `9999-12-31` UTC, the range `days_to_civil_date`
+/// will format without overflowing Hinnant intermediates.
+const MIN_UNIX_DAY: i64 = -719_162;
+const MAX_UNIX_DAY: i64 = 2_932_896;
+
+fn format_civil_day(parts: (i64, i64, i64)) -> Option<String> {
+    let (year, month, day) = parts;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year) {
+        return None;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
+    if let Some(ms) = unix_ms(value) {
+        return Some(ReviewInstant::UnixMs(ms));
+    }
+    parse_utc_calendar_day(value).map(ReviewInstant::IsoDay)
+}
+
+fn parse_utc_calendar_day(value: &str) -> Option<String> {
+    match value.as_bytes().get(10) {
+        None => format_civil_day(parse_gregorian_date(value)?),
+        Some(b'T') => parse_rfc3339_utc_day(value),
+        _ => None,
+    }
+}
+
+fn parse_gregorian_date(value: &str) -> Option<(i64, i64, i64)> {
+    if value.len() != 10 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
+        return None;
+    }
+    if !bytes.get(..4)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(5..7)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(8..10)?.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let year = value.get(..4)?.parse::<i64>().ok()?;
+    let month = value.get(5..7)?.parse::<i64>().ok()?;
+    let day = value.get(8..10)?.parse::<i64>().ok()?;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year)
+        || !(1..=12).contains(&month)
+        || day < 1
+        || day > i64::from(days_in_month(year, month)?)
+    {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn days_in_month(year: i64, month: i64) -> Option<u8> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_gregorian_leap(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn is_gregorian_leap(year: i64) -> bool {
+    year.rem_euclid(4) == 0 && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0)
+}
+
+fn parse_rfc3339_utc_day(value: &str) -> Option<String> {
+    let date = value.get(..10)?;
+    let (year, month, day) = parse_gregorian_date(date)?;
+    if value.as_bytes().get(10).copied() != Some(b'T') {
+        return None;
+    }
+    let time = value.get(11..)?;
+    let hour = parse_two_digits(time.get(..2)?)?;
+    if time.as_bytes().get(2).copied() != Some(b':') {
+        return None;
+    }
+    let minute = parse_two_digits(time.get(3..5)?)?;
+    if time.as_bytes().get(5).copied() != Some(b':') {
+        return None;
+    }
+    let second = parse_two_digits(time.get(6..8)?)?;
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let offset_seconds = parse_rfc3339_offset(skip_rfc3339_fraction(time.get(8..)?)?)?;
+    let local_days = civil_date_to_days(year, month, day)?;
+    let local_seconds = local_days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3_600)?
+        .checked_add(i64::from(minute) * 60)?
+        .checked_add(i64::from(second))?;
+    let utc_seconds = local_seconds.checked_sub(offset_seconds)?;
+    let utc_days = utc_seconds.div_euclid(86_400);
+    format_civil_day(days_to_civil_date(utc_days)?)
+}
+
+fn skip_rfc3339_fraction(value: &str) -> Option<&str> {
+    let Some(rest) = value.strip_prefix('.') else {
+        return Some(value);
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    rest.get(digits..)
+}
+
+fn parse_rfc3339_offset(value: &str) -> Option<i64> {
+    match value.as_bytes().first().copied() {
+        Some(b'Z' | b'z') if value.len() == 1 => Some(0),
+        Some(sign @ (b'+' | b'-')) => {
+            if value.len() != 6 || value.as_bytes().get(3).copied() != Some(b':') {
+                return None;
+            }
+            let hours = i64::from(parse_two_digits(value.get(1..3)?)?);
+            let minutes = i64::from(parse_two_digits(value.get(4..6)?)?);
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let magnitude = hours.checked_mul(3_600)?.checked_add(minutes * 60)?;
+            if sign == b'-' {
+                Some(-magnitude)
+            } else {
+                Some(magnitude)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_two_digits(value: &str) -> Option<u8> {
+    if value.len() != 2 || !value.as_bytes().iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
@@ -1581,29 +1743,6 @@ fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
 
 fn unix_ms(value: &str) -> Option<i128> {
     value.strip_prefix("unix_ms:")?.parse().ok()
-}
-
-fn iso_day(value: &str) -> Option<&str> {
-    let day = value.get(..10)?;
-    let bytes = day.as_bytes();
-    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
-        return None;
-    }
-    if !bytes.get(..4)?.iter().all(u8::is_ascii_digit)
-        || !bytes.get(5..7)?.iter().all(u8::is_ascii_digit)
-        || !bytes.get(8..10)?.iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    let month = day.get(5..7)?.parse::<u8>().ok()?;
-    let date = day.get(8..10)?.parse::<u8>().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&date) {
-        return None;
-    }
-    match value.as_bytes().get(10) {
-        None | Some(b'T') => Some(day),
-        _ => None,
-    }
 }
 
 fn baseline_path_for_summary(input_path: Option<&str>, delta_path: Option<&str>) -> Option<String> {
@@ -1796,6 +1935,8 @@ mod tests {
     /// 2026-10-05 12:00:00 UTC — noon so same-day ISO deadlines compare on the
     /// UTC calendar date, not on a midnight edge.
     const RUN_AT_2026_10_05_NOON: &str = "unix_ms:1791201600000";
+    /// 2026-10-06 12:00:00 UTC — used to pin offset RFC3339 midnight crossings.
+    const RUN_AT_2026_10_06_NOON: &str = "unix_ms:1791288000000";
     const PAST_UNIX_MS_2026_01_01: &str = "unix_ms:1767225600000";
     const FUTURE_UNIX_MS_2026_12_31: &str = "unix_ms:1798675200000";
 
@@ -1865,9 +2006,52 @@ mod tests {
             "impossible calendar dates are incomparable, not current"
         );
         assert_eq!(
+            classify_review(Some(complete_review("2026-02-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "February 31 is not a Gregorian date and must not classify stale"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "29 February on a non-leap year is incomparable"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-12-01Tnot-a-time")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "a T suffix that is not RFC3339 must not classify current"
+        );
+        assert_eq!(
             classify_review(Some(complete_review("2026-01-01")), "not-a-timestamp"),
             MetadataState::Unknown,
             "a valid deadline against an unparseable generated_at is unknown"
+        );
+    }
+
+    #[test]
+    fn classify_review_normalizes_rfc3339_offsets_to_utc_day() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:30:00-02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Current,
+            "written 2026-10-05 with -02:00 is 2026-10-06 UTC, same as the run day"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-06T00:30:00+02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Stale,
+            "written 2026-10-06 with +02:00 is 2026-10-05 UTC, the prior run day"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2024-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "a real leap-day calendar deadline still compares"
         );
     }
 
@@ -1901,6 +2085,11 @@ mod tests {
         assert_eq!(
             unix_ms_to_iso_day(1_791_201_600_000).as_deref(),
             Some("2026-10-05")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(i128::from(i64::MAX).saturating_mul(86_400_000)).as_deref(),
+            None,
+            "day counts near i64 limits must fail closed, not overflow civil-date math"
         );
     }
 
