@@ -149,9 +149,9 @@ Choose one actionable item. Prefer a gap that names a concrete repair:
 
 Skip report-only static limitations for the first PR unless the task is to
 inspect an opaque helper, fixture, macro, or dynamic boundary. In particular,
-an `opaque` seam is not a missing test: ripr saw a test that may reach it
-through a path it does not trace, so read the test its limitation names before
-writing anything. An `activation_unknown` seam asks you first to check that the related test
+an `opaque` seam is not a missing test: ripr saw a candidate path to it
+that it does not trace, so read the test or function its limitation names, and
+check whether a test really runs the seam, before writing anything. An `activation_unknown` seam asks you first to check that the related test
 calls the owner and then to look at the input it passes; it may still need a
 call or a test. Both readings are explained in
 [Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).

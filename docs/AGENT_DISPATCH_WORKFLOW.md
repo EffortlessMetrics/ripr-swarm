@@ -531,16 +531,16 @@ diagnostic task: inspect_static_limitation
 limitation: Reach unresolved (...): `total_sums` (tests/it.rs:5) calls `total`,
   which may lead to `clamp_total` through a call path ripr does not fully trace
 agent action:
-  do not add a test. Open the test the limitation names and check whether it
-  exercises this seam. Identify the helper, macro, or trait impl that hides
+  do not add a test yet. Open the test the limitation names and check whether it
+  exercises this seam and asserts on the changed value. Identify the helper, macro, or trait impl that hides
   the path. Decide whether to inline / refactor for visibility, or accept
   the opacity and document the intent.
 ```
 
-The limitation names the test and the call path ripr could not trace. Trait-dispatch
-evidence can name a production function that tests may call instead of a test;
-then find the tests that call it. When the
-named test exercises the seam and asserts on the changed value, the seam needs
+The limitation names the test or production function and the path ripr could not
+trace; no related test is established. When it names a production function
+instead of a test, as trait-dispatch evidence can, find the tests that call it.
+When a test exists, exercises the seam and asserts on the changed value, the seam needs
 no new test; a test that only runs the code is not enough. See
 [Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).
 
