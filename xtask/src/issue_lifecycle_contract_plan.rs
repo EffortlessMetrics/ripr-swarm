@@ -2775,7 +2775,8 @@ mod tests {
             .contract
             .as_mut()
             .ok_or_else(|| "the contract case must carry contract evidence".to_string())?
-            .spec_required_rationale = "unrelated text".to_string();
+            .spec_required_rationale
+            .clear();
         let failures = assess_contract_plan_row(&drifted);
         if !failures
             .iter()
