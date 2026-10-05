@@ -197,33 +197,53 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
                 .ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
             output.push_str(&format!(
-                "{}:{}:{:?};",
+                "{}:{}:{:?}",
                 path.display(),
                 metadata.len(),
                 modified.map(|time| (time.as_secs(), time.subsec_nanos()))
             ));
+            // The followed file's identity: two files that exist at once
+            // never share it, whatever size and mtime they were given.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                output.push_str(&format!(":{}:{}", metadata.dev(), metadata.ino()));
+            }
+            output.push(';');
         }
         Err(error) => output.push_str(&format!("{}:{:?};", path.display(), error.kind())),
     }
 }
 
-/// The directory entry itself, not what it points at: whether it is a symlink
-/// and, on Unix, its device and inode. `metadata` follows links, so swapping a
-/// file or directory for a symlink to same-sized bytes written within one
-/// mtime tick left the followed fingerprint unchanged and the cache kept
-/// admitting a target that now resolves outside the root (#5478).
+/// The directory entry itself, not what it points at: whether it is a symlink,
+/// where a symlink points, and on Unix its device, inode and ctime. `metadata`
+/// follows links, so swapping a file or directory for a symlink to same-sized
+/// bytes written within one mtime tick left the followed fingerprint unchanged
+/// and the cache kept admitting a target that now resolves outside the root
+/// (#5478). The link target covers a symlink retargeted to another symlink
+/// where no file identity is available (Windows); ctime cannot be set by a
+/// user and changes when a freed inode number is reused.
 fn append_entry_fingerprint(output: &mut String, path: &Path) {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
-            output.push_str(&format!(
-                "{}:link={}",
-                path.display(),
-                metadata.file_type().is_symlink()
-            ));
+            let is_symlink = metadata.file_type().is_symlink();
+            output.push_str(&format!("{}:link={is_symlink}", path.display()));
+            if is_symlink {
+                match std::fs::read_link(path) {
+                    Ok(target) => output.push_str(&format!(":->{}", target.display())),
+                    Err(error) => output.push_str(&format!(":->{:?}", error.kind())),
+                }
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
-                output.push_str(&format!(":{}:{}", metadata.dev(), metadata.ino()));
+                output.push_str(&format!(
+                    ":{}:{}:{}.{}",
+                    metadata.dev(),
+                    metadata.ino(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec()
+                ));
             }
             output.push(';');
         }
@@ -1355,6 +1375,86 @@ mod tests {
         assert_eq!(followed.len(), sources[1].1.len() as u64);
 
         assert!(!authority.validates_target(test, source, sources[1].1));
+        Ok(())
+    }
+
+    /// #5478 review: a test file that is already a symlink inside the root,
+    /// retargeted to an outside copy with the same size and mtime. Its
+    /// `link` flag never changes, so the link target and identity must.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_retarget_with_same_size_and_mtime_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-authority-symlink-retarget-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        let _cleanup = FixtureCleanup(base.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::create_dir_all(&outside)?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let test_source = "#[test]\nfn source_test() { assert_eq!(1, 1); }\n";
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (PathBuf::from("pkg/tests/lib.rs"), test_source),
+        ];
+        std::fs::write(root.join(&sources[0].0), sources[0].1)?;
+        let inside = root.join("pkg/tests/real.rs");
+        std::fs::write(&inside, test_source)?;
+        let link = root.join(&sources[1].0);
+        std::os::unix::fs::symlink("real.rs", &link)?;
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, test_source));
+
+        let modified = std::fs::metadata(&inside)?.modified()?;
+        let escaped = outside.join("lib.rs");
+        std::fs::write(&escaped, test_source)?;
+        std::fs::File::options()
+            .write(true)
+            .open(&escaped)?
+            .set_modified(modified)?;
+        std::fs::remove_file(&link)?;
+        std::os::unix::fs::symlink(&escaped, &link)?;
+        let followed = std::fs::metadata(&link)?;
+        assert_eq!(
+            followed.modified()?,
+            modified,
+            "fixture must keep the mtime"
+        );
+        assert_eq!(followed.len(), test_source.len() as u64);
+
+        assert!(!authority.validates_target(test, source, test_source));
         Ok(())
     }
 }
