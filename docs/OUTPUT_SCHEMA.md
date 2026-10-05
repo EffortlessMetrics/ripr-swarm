@@ -2378,12 +2378,15 @@ Field contract:
   unresolved actionable canonical repair items; seam-native inventory scope:
   configured-visible headline-eligible seam classes.
 - `counts.unknowns` — diff scope: candidate-actionable static unknown Finding
-  classes, including enabled preview evidence. The RIPR 0 / `include_unknowns`
-  headline omits preview unknowns; a zero headline with nonzero `unknowns`
-  means those unknowns are preview-status, not absent. Seam-native inventory
-  scope: configured-visible `opaque` seams. Canonical-actionable public badge
-  projection does not count unknown-only or limitation-only states in the
-  headline.
+  classes, including enabled preview evidence. Default policy omits unknowns
+  from the RIPR 0 headline (`include_unknowns` is false), so a zero headline
+  with nonzero `unknowns` is not a preview inference: it is also the ordinary
+  Rust-unknown case. When `include_unknowns` is true, preview unknowns still
+  do not move the headline. Consumers must read Finding `language_status`
+  rather than inferring preview from `message` and `counts.unknowns` alone.
+  Seam-native inventory scope: configured-visible `opaque` seams.
+  Canonical-actionable public badge projection does not count unknown-only or
+  limitation-only states in the headline.
 - `counts.analyzed_findings` — number of Findings considered by the
   finding-exposure basis; `0` for canonical-actionable and seam-native repo
   badges.

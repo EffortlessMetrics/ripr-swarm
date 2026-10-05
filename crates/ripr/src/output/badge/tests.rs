@@ -291,6 +291,28 @@ fn preview_unknown_remains_visible_in_native_badge_json_with_zero_headline() {
     assert!(json.contains("\"status\": \"pass\""), "{json}");
 }
 
+/// Default policy (`include_unknowns = false`) leaves a candidate-current
+/// Rust unknown in `counts.unknowns` and out of the headline. A zero
+/// headline with nonzero unknowns is therefore not a preview inference.
+#[test]
+fn default_policy_rust_unknown_is_visible_but_not_headline() {
+    let summary = ripr_badge_summary(
+        &check_output(vec![finding(ExposureClass::InfectionUnknown, vec![])]),
+        BadgePolicy::default(),
+    );
+
+    assert!(!summary.policy.include_unknowns);
+    assert_eq!(summary.counts.unknowns, 1);
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(summary.message, "0");
+    assert_eq!(summary.status, BadgeStatus::Pass);
+
+    let json = render_native_json(&summary);
+    assert!(json.contains("\"include_unknowns\": false"), "{json}");
+    assert!(json.contains("\"unknowns\": 1"), "{json}");
+    assert!(json.contains("\"message\": \"0\""), "{json}");
+}
+
 /// Language name without `language_status = preview` is not the badge
 /// authority. A Python-tagged finding that omitted preview status still
 /// counts, so a later producer bug cannot be papered over by a language
