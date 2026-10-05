@@ -32,8 +32,9 @@ may also change.
 `cargo xtask verdict-corpus check` applies each edit to a run-owned copy of
 its subject, runs `ripr check --json` on every case in parallel, and
 projects the anchored findings to one verdict. `--cases a,b` runs only the
-named cases and compares only their rows. The required Rust gate runs the
-whole corpus at Draft -> Ready and on main pushes.
+named cases and compares only their rows. The required Rust gate runs
+`cargo xtask verdict-corpus check-all`, which checks every
+`fixtures/<language>-verdict-corpus`, at Draft -> Ready and on main pushes.
 
 ## Then
 

@@ -943,6 +943,38 @@ fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(
 }
 
 #[test]
+fn check_all_finds_every_language_corpus_and_refuses_one_without_a_header() -> Result<(), String> {
+    let fixtures = crate::tests::temp_dir("verdict-dirs");
+    for name in ["rust-verdict-corpus", "perl-verdict-corpus"] {
+        crate::tests::write(&fixtures.join(name).join("corpus.json"), "{}\n");
+    }
+    crate::tests::write(&fixtures.join("other-corpus/corpus.json"), "{}\n");
+    crate::tests::write(&fixtures.join("notes-verdict-corpus"), "a file\n");
+    let dirs = corpus_dirs(&fixtures)?;
+    let names: Vec<String> = dirs
+        .iter()
+        .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    assert_eq!(names, ["perl-verdict-corpus", "rust-verdict-corpus"]);
+    // Rust keeps its report path; every language owns its run directory.
+    assert_eq!(default_out(&dirs[1]), PathBuf::from(DEFAULT_OUT));
+    assert_eq!(default_out(&dirs[0]), Path::new(DEFAULT_OUT).join("perl"));
+    assert_eq!(work_root(&dirs[0]), Path::new(WORK_ROOT).join("perl"));
+    assert_eq!(work_root(&dirs[1]), Path::new(WORK_ROOT).join("rust"));
+    // A corpus directory that lost its header fails instead of dropping out.
+    fs::create_dir_all(fixtures.join("python-verdict-corpus")).map_err(|err| err.to_string())?;
+    let err = corpus_dirs(&fixtures).err().unwrap_or_default();
+    assert!(
+        err.contains("python-verdict-corpus has no corpus.json"),
+        "{err}"
+    );
+    let empty = crate::tests::temp_dir("verdict-no-dirs");
+    let none = corpus_dirs(&empty).err().unwrap_or_default();
+    assert!(none.contains("no *-verdict-corpus directory"), "{none}");
+    Ok(())
+}
+
+#[test]
 fn split_moves_the_one_file_layout_into_records_without_loss() -> Result<(), String> {
     // The whole committed corpus, upstream and authored subjects alike, as a
     // pre-split branch would carry it in one corpus.json.

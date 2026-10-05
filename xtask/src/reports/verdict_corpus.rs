@@ -2172,14 +2172,117 @@ fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
 
 const DRIFT_SHOWN: usize = 20;
 
-/// Run-owned workspaces live under one directory per corpus, so corpora for
-/// other languages (`fixtures/<language>-verdict-corpus`) never share a case
-/// work or cache directory.
-fn work_root(dir: &Path) -> PathBuf {
+const FIXTURES_DIR: &str = "fixtures";
+const CORPUS_SUFFIX: &str = "-verdict-corpus";
+
+/// The language prefix of a corpus directory: `rust` for
+/// `fixtures/rust-verdict-corpus`.
+fn corpus_language(dir: &Path) -> String {
     let name = dir
         .file_name()
-        .map_or_else(|| "corpus".into(), |name| name.to_string_lossy());
-    Path::new(WORK_ROOT).join(name.as_ref())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.strip_suffix(CORPUS_SUFFIX)
+        .unwrap_or(&name)
+        .to_string()
+}
+
+/// Run-owned workspaces live under one directory per language, so corpora
+/// for other languages never share a case work or cache directory.
+pub(crate) fn work_root(dir: &Path) -> PathBuf {
+    Path::new(WORK_ROOT).join(corpus_language(dir))
+}
+
+/// Rust keeps the report path it always had; other languages nest under
+/// their name.
+pub(crate) fn default_out(dir: &Path) -> PathBuf {
+    let language = corpus_language(dir);
+    if language == "rust" {
+        PathBuf::from(DEFAULT_OUT)
+    } else {
+        Path::new(DEFAULT_OUT).join(language)
+    }
+}
+
+/// Every `<language>-verdict-corpus` directory under `fixtures`, sorted. A
+/// directory with that name but no `corpus.json` is refused rather than
+/// skipped, so a corpus cannot drop out of the gate by losing its header.
+pub(crate) fn corpus_dirs(fixtures: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(fixtures)
+        .map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?;
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?
+            .path();
+        let named = path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(CORPUS_SUFFIX));
+        if !named || !path.is_dir() {
+            continue;
+        }
+        if !path.join("corpus.json").is_file() {
+            return Err(format!(
+                "{} has no corpus.json; restore it or rename the directory",
+                normalize_path(&path)
+            ));
+        }
+        dirs.push(path);
+    }
+    dirs.sort();
+    if dirs.is_empty() {
+        return Err(format!(
+            "no *{CORPUS_SUFFIX} directory under {}",
+            normalize_path(fixtures)
+        ));
+    }
+    Ok(dirs)
+}
+
+/// `report`, or with `check` also the comparison with the expected state.
+fn score_corpus(
+    dir: &Path,
+    check: bool,
+    cases: Option<&[String]>,
+    out: Option<PathBuf>,
+) -> Result<(), String> {
+    let expected_dir = dir.join("expected");
+    let mut corpus = validated_corpus(dir)?;
+    if let Some(ids) = cases {
+        select_cases(&mut corpus, ids)?;
+    }
+    let out = out.unwrap_or_else(|| default_out(dir));
+    refuse_expected_out(&out, &expected_dir)?;
+    let report = run_corpus(dir, &corpus, &work_root(dir))?;
+    write_report(&out, &report)?;
+    println!(
+        "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
+        report.cases_total,
+        report.false_verdict_rate.rate,
+        report.false_verdict_rate.numerator,
+        report.false_verdict_rate.denominator,
+        report.contradiction_rate.rate,
+        report.contradiction_rate.numerator,
+        report.contradiction_rate.denominator,
+        normalize_path(&out)
+    );
+    if !check {
+        return Ok(());
+    }
+    let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
+    if drift.is_empty() {
+        return Ok(());
+    }
+    let mut shown: Vec<String> = drift.iter().take(DRIFT_SHOWN).cloned().collect();
+    if drift.len() > DRIFT_SHOWN {
+        shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
+    }
+    Err(format!(
+        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, run `cargo xtask verdict-corpus bless` and state why each moved row changed in the PR.",
+        normalize_path(&expected_dir),
+        shown.join("\n- "),
+        normalize_path(&out.join("report.md"))
+    ))
 }
 
 pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
@@ -2237,47 +2340,27 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
-        "report" | "check" => {
-            let mut corpus = validated_corpus(dir)?;
-            let whole_corpus = cases.is_none();
-            if let Some(ids) = &cases {
-                select_cases(&mut corpus, ids)?;
+        "report" | "check" => score_corpus(dir, sub == "check", cases.as_deref(), out),
+        "check-all" => {
+            // Every language's corpus gates the same way, found by name so a
+            // new corpus is checked without a workflow change.
+            let dirs = corpus_dirs(Path::new(FIXTURES_DIR))?;
+            let mut failures = Vec::new();
+            for corpus_dir in &dirs {
+                println!("verdict-corpus: checking {}", normalize_path(corpus_dir));
+                if let Err(err) = score_corpus(corpus_dir, true, None, None) {
+                    failures.push(err);
+                }
             }
-            let out = out.unwrap_or_else(|| PathBuf::from(DEFAULT_OUT));
-            refuse_expected_out(&out, &expected_dir)?;
-            let report = run_corpus(dir, &corpus, &work_root(dir))?;
-            write_report(&out, &report)?;
-            println!(
-                "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
-                report.cases_total,
-                report.false_verdict_rate.rate,
-                report.false_verdict_rate.numerator,
-                report.false_verdict_rate.denominator,
-                report.contradiction_rate.rate,
-                report.contradiction_rate.numerator,
-                report.contradiction_rate.denominator,
-                normalize_path(&out)
-            );
-            if sub == "report" {
-                return Ok(());
+            if failures.is_empty() {
+                println!("verdict-corpus: {} corpora checked", dirs.len());
+                Ok(())
+            } else {
+                Err(failures.join("\n\n"))
             }
-            let drift = expected_drift(&expected_dir, &report, whole_corpus)?;
-            if drift.is_empty() {
-                return Ok(());
-            }
-            let mut shown: Vec<String> = drift.iter().take(DRIFT_SHOWN).cloned().collect();
-            if drift.len() > DRIFT_SHOWN {
-                shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
-            }
-            Err(format!(
-                "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, run `cargo xtask verdict-corpus bless` and state why each moved row changed in the PR.",
-                normalize_path(&expected_dir),
-                shown.join("\n- "),
-                normalize_path(&out.join("report.md"))
-            ))
         }
         other => Err(format!(
-            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, report, bless, or split)"
+            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, report, bless, or split)"
         )),
     }
 }

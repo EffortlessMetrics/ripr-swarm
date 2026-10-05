@@ -441,6 +441,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "python-repair-trust check-verification [--manifest <path>] --receipts <dir-or-file>",
         "verdict-corpus validate",
         "verdict-corpus check [--cases <id,...>] [--out <dir>]",
+        "verdict-corpus check-all",
         "verdict-corpus report [--cases <id,...>] [--out <dir>]",
         "verdict-corpus bless",
         "verdict-corpus split",
@@ -1011,10 +1012,18 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "verdict-corpus check [--cases <id,...>] [--out <dir>]",
             "report_only",
-            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/<corpus>/",
+            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/rust/",
+            false,
+            false,
+            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus summary.json and stale rows on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
+        ),
+        command_entry(
+            "verdict-corpus check-all",
+            "report_only",
+            "target/ripr/reports/verdict-corpus/[<language>/]report.{json,md}; target/ripr/verdict-corpus/<language>/",
             false,
             true,
-            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus summary.json and stale rows on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
+            "Runs verdict-corpus check on every fixtures/<language>-verdict-corpus directory, found by name so a new language's corpus is gated without a workflow change, and fails if any corpus drifts or a corpus directory has no corpus.json. The required Rust gate runs this.",
         ),
         command_entry(
             "verdict-corpus report [--cases <id,...>] [--out <dir>]",

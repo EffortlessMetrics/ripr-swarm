@@ -275,14 +275,15 @@ jobs:
         id: fixtures
         run: cargo xtask fixtures
 
-      # Scores ripr's verdicts on the labeled Rust verdict corpus against
-      # their stored runtime-mutant labels (RIPR-SPEC-0219). It reuses the
-      # debug ripr build the fixture step made, runs cases in parallel, and
-      # runs no mutation testing. Required runs happen at Draft -> Ready and
-      # on main pushes, so a verdict move is caught on the PR that makes it.
-      - name: Verdict corpus
+      # Scores ripr's verdicts on every labeled verdict corpus
+      # (fixtures/<language>-verdict-corpus) against their stored
+      # runtime-mutant labels (RIPR-SPEC-0219). It reuses the debug ripr
+      # build the fixture step made, runs cases in parallel, and runs no
+      # mutation testing. Required runs happen at Draft -> Ready and on main
+      # pushes, so a verdict move is caught on the PR that makes it.
+      - name: Verdict corpora
         id: verdict_corpus
-        run: cargo xtask verdict-corpus check
+        run: cargo xtask verdict-corpus check-all
 
       - name: PR evidence
         id: pr_evidence

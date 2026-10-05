@@ -147,13 +147,13 @@ Contradictions are internal to ripr's output and need no label:
 `exposed_without_discriminator`, `related_tests_listed_exceed_total`, and
 summary counts that disagree with the findings list.
 
-`cargo xtask verdict-corpus` has five subcommands:
+`cargo xtask verdict-corpus` has six subcommands:
 
 - `validate` checks the corpus offline: schema, record file names, subject
   digests and unlisted files, diff anchors, truth derived from mutant
   outcomes, and the label table.
 - `report [--cases <id,...>] [--out <dir>]` copies each subject to a
-  run-owned workspace under `target/ripr/verdict-corpus/<corpus directory>/`, applies the case
+  run-owned workspace under `target/ripr/verdict-corpus/<language>/`, applies the case
   diff with a strict patch reader that refuses drifted context, runs
   `ripr check --json` on the cases in parallel, and writes `report.json` and
   `report.md`. It refuses an `--out` inside the expected directory.
@@ -164,14 +164,18 @@ summary counts that disagree with the findings list.
   `expected/summary.json`, a row file is missing, or `expected/` holds any
   other file. `--cases` compares only the named rows, for the inner loop
   while writing a case.
+- `check-all` runs `check` on every `fixtures/<language>-verdict-corpus`
+  directory, found by name, and fails if any drifts or a corpus directory
+  has no `corpus.json`. Reports for languages other than Rust nest under
+  `target/ripr/reports/verdict-corpus/<language>/`.
 - `bless` runs the whole corpus and replaces `expected/` with the summary and
   one row file per case.
 - `split` moves a one-file `corpus.json`'s subjects and cases into record
   files and drops its `corpus_version`, skipping records that already exist
   with the same content and naming any that differ.
 
-The required Rust gate runs `check` on the whole corpus at Draft -> Ready and
-on main pushes. Truth labels are stored with each case, so no CI job reruns
+The required Rust gate runs `check-all` at Draft -> Ready and on main
+pushes, so every language's corpus gates without a workflow change. Truth labels are stored with each case, so no CI job reruns
 mutants.
 
 The report states false-verdict, false-actionable (over discriminated
@@ -286,6 +290,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `validator_rejects_a_case_that_borrows_another_cases_diff`
+- `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
 - `stored_paths_keep_vendored_rust_out_of_the_workspace`
 - `validator_holds_each_subject_origin_to_its_own_provenance`
