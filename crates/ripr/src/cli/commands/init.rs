@@ -629,18 +629,10 @@ mod tests {
     #[test]
     fn non_git_root_warning_stays_quiet_inside_a_work_tree() -> Result<(), String> {
         let root = temp_root("git-quiet")?;
-        let init = std::process::Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .current_dir(&root)
-            .output()
+        // The shared git runner, not a raw `Command`: the process policy
+        // counts spawns per file, test code included.
+        crate::git::run_git(&root, &["init", "-q"])
             .map_err(|err| format!("git init failed: {err}"))?;
-        if !init.status.success() {
-            return Err(format!(
-                "git init failed: {}",
-                String::from_utf8_lossy(&init.stderr)
-            ));
-        }
         assert_eq!(non_git_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
