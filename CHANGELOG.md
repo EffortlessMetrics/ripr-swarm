@@ -57,6 +57,12 @@ are scoped or reviewed.
   or a backtick pastes as one argument in Bash and PowerShell. The
   missing-base fetch names the repository with `git -C` and runs before the
   rerun. Older packets keep their `next_command` presentation.
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
 - Repair attempts preserve literal Unix backslashes in the canonical root
   stored by the before producer. Newly published manifests reopen in the
   selected repository while authentic copies in another root remain refused
