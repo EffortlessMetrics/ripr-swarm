@@ -302,8 +302,14 @@ fn a_mock_call_assertion_with_arguments_pins_the_changed_call() -> Result<(), St
             ),
         )
     };
-    assert_eq!(
+    // `assert_any_call` and `assert_called_with` can be met by another call the
+    // owner makes on the same method.
+    assert_ne!(
         notify_test("assert_any_call(\"u\", \"welcome\")")?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        notify_test("assert_called_with(\"u\", \"welcome\")")?,
         ExposureClass::Exposed
     );
     // `ANY` and a starred argument accept whatever the changed call passes.
@@ -408,6 +414,201 @@ fn a_given_test_without_assertions_reads_as_a_gap_not_a_limit() -> Result<(), St
     assert_eq!(
         passed_class("@given(st.integers(0, 100))\ndef test_passed(score):\n    passed(score)\n")?,
         ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_weak_conjunct_on_the_owner_does_not_borrow_a_strong_conjunct() -> Result<(), String> {
+    // Rule 15: only the strongest conjuncts are read, and `other == 5` does
+    // not name the owner.
+    assert_ne!(
+        fee_class("def test_fee():\n    other = 5\n    assert fee(10) > 0 and other == 5\n")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn non_ascii_identifiers_in_an_assertion_classify() -> Result<(), String> {
+    // A byte-wise split must not slice inside a multi-byte character.
+    assert_eq!(
+        fee_class("def test_fee():\n    größe = 30\n    assert fee(10) == größe\n")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const AUDIT: &str =
+    "def notify(client, audit, user):\n    audit.send(user)\n    client.send(user, \"welcome\")\n";
+const AUDIT_OLD: &str = "    client.send(user, \"hi\")";
+
+#[test]
+fn a_mock_assertion_must_read_the_collaborator_the_changed_line_calls() -> Result<(), String> {
+    let imports = "from unittest.mock import Mock\n\nfrom src.shop import notify";
+    let class = |assertion: &str| {
+        classify(
+            AUDIT,
+            3,
+            AUDIT_OLD,
+            &test_module(
+                imports,
+                &format!(
+                    "def test_notify():\n    client = Mock()\n    audit = Mock()\n    notify(client, audit, \"u\")\n    {assertion}\n"
+                ),
+            ),
+        )
+    };
+    assert_eq!(
+        class("client.send.assert_called_once_with(\"u\", \"welcome\")")?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        class("audit.send.assert_called_once_with(\"u\")")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_capture_taken_before_the_owner_runs_does_not_observe_it() -> Result<(), String> {
+    let imports = "from src.shop import greet";
+    assert_ne!(
+        classify(
+            GREET,
+            2,
+            GREET_OLD,
+            &test_module(
+                imports,
+                "def test_greet(capsys):\n    captured = capsys.readouterr()\n    greet(\"a\")\n    assert captured.out == \"\"\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        classify(
+            GREET,
+            2,
+            GREET_OLD,
+            &test_module(
+                imports,
+                "def test_greet(capsys):\n    greet(\"a\")\n    captured = capsys.readouterr()\n    assert captured.out == \"hello a\\n\"\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const PRINTER: &str = "class Printer:\n    def show(self, n):\n        print(n * 2)\n";
+const PRINTER_OLD: &str = "        print(n * 3)";
+
+#[test]
+fn an_effect_of_a_method_owner_needs_a_receiver_bound_to_its_class() -> Result<(), String> {
+    let imports = "from src.shop import Printer";
+    let class = |body: &str| classify(PRINTER, 3, PRINTER_OLD, &test_module(imports, body));
+    assert_eq!(
+        class(
+            "def test_show(capsys):\n    printer = Printer()\n    printer.show(2)\n    assert capsys.readouterr().out == \"4\\n\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        class(
+            "class Fake:\n    def show(self, n):\n        print(n)\n\n\ndef test_show(capsys):\n    Fake().show(4)\n    assert capsys.readouterr().out == \"4\\n\"\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_match_pattern_bound_to_a_name_or_keyword_is_read() -> Result<(), String> {
+    assert_ne!(
+        parse_class(
+            "def test_parse():\n    pattern = \".*\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        parse_class(
+            "def test_parse():\n    pattern = \"empty\"\n    with pytest.raises(ValueError, match=pattern):\n        parse(\"\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    let unittest = |pattern: &str| {
+        classify(
+            PARSE,
+            3,
+            PARSE_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import parse",
+                &format!(
+                    "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(ValueError, expected_regex={pattern}):\n            parse(\"\")\n"
+                ),
+            ),
+        )
+    };
+    assert_ne!(unittest("\".*\"")?, ExposureClass::Exposed);
+    assert_eq!(unittest("\"empty\"")?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String> {
+    assert_eq!(
+        passed_class(
+            "import pytest\n\n\n@pytest.mark.parametrize(\"bonus\", [0])\n@given(st.integers(0, 100))\ndef test_passed(bonus, score):\n    assert passed(score + bonus) == (score >= 50)\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn an_effect_observation_reports_its_own_alignment_reason() -> Result<(), String> {
+    // Acceptance example 36: the expected `'4\n'` holds no changed-line
+    // token, so only the effect branch credits.
+    let owner = "def show(n):\n    print(n * 2)\n";
+    let owners = extract_owners(Path::new(OWNER_FILE), owner);
+    let tests = extract_tests(
+        Path::new(TEST_FILE),
+        &test_module(
+            "from src.shop import show",
+            "def test_show(capsys):\n    show(2)\n    assert capsys.readouterr().out == \"4\\n\"\n",
+        ),
+    );
+    let finding = classify_change_with_old(
+        Path::new(OWNER_FILE),
+        2,
+        "    print(n * 2)",
+        Some("    print(n * 3)"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed print should classify".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_changed_effect_channel")
+    );
+    Ok(())
+}
+
+#[test]
+fn an_effect_needs_the_owner_from_its_own_module() -> Result<(), String> {
+    // A same-named `greet` imported from another module prints its own text.
+    assert_ne!(
+        classify(
+            GREET,
+            2,
+            GREET_OLD,
+            &test_module(
+                "from src.other import greet",
+                "def test_greet(capsys):\n    greet(\"a\")\n    assert capsys.readouterr().out == \"hello a\\n\"\n"
+            )
+        )?,
+        ExposureClass::Exposed
     );
     Ok(())
 }

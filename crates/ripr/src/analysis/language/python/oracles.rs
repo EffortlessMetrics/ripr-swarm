@@ -122,13 +122,40 @@ fn assertion_from_assert(
         // The failure message observes nothing (RIPR-SPEC-0233 rule 4).
         gate_text: format!(
             "assert {}",
-            text_for_range(source, assert_stmt.test.range()).trim()
+            assert_gate_expr(assert_stmt.test.as_ref(), source)
         ),
         line: line_for_range_start(source, assert_stmt.range),
         oracle_kind,
         oracle_strength,
         oracle_shape,
     }
+}
+
+/// The text of an `assert` expression the gates read. An `and` chain is
+/// credited by its strongest conjunct (rule 15), so only the conjuncts of that
+/// strength are kept: an owner named only in a weaker conjunct
+/// (`fee(10) > 0 and other == 5`) is not observed by the strong one.
+fn assert_gate_expr(expr: &Expr, source: &SourceText<'_>) -> String {
+    let Expr::BoolOp(bool_op) = expr else {
+        return text_for_range(source, expr.range()).trim().to_string();
+    };
+    if bool_op.op != ast::BoolOp::And {
+        return text_for_range(source, expr.range()).trim().to_string();
+    }
+    let strength = |value: &Expr| oracle_for_assert_expr(value, source).1.rank();
+    let strongest = bool_op
+        .values
+        .iter()
+        .map(strength)
+        .max()
+        .unwrap_or_default();
+    bool_op
+        .values
+        .iter()
+        .filter(|value| strength(value) == strongest)
+        .map(|value| assert_gate_expr(value, source))
+        .collect::<Vec<_>>()
+        .join(" and ")
 }
 
 fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAssertion> {
@@ -349,11 +376,19 @@ fn oracle_for_call(
             OracleStrength::Smoke,
             PythonOracleShape::BroadSmokeAssertion,
         )),
-        "assertRaisesRegex" if call.args.get(1).is_some_and(is_trivial_message_pattern) => Some((
-            OracleKind::BroadError,
-            OracleStrength::Weak,
-            PythonOracleShape::ExceptionAssertion,
-        )),
+        "assertRaisesRegex"
+            if call
+                .args
+                .get(1)
+                .or_else(|| keyword_value(call, "expected_regex"))
+                .is_some_and(|pattern| is_trivial_message_pattern(pattern, source)) =>
+        {
+            Some((
+                OracleKind::BroadError,
+                OracleStrength::Weak,
+                PythonOracleShape::ExceptionAssertion,
+            ))
+        }
         "assertRaisesRegex" => Some((
             OracleKind::ExactErrorVariant,
             OracleStrength::Strong,
@@ -365,17 +400,8 @@ fn oracle_for_call(
             PythonOracleShape::ExceptionAssertion,
         )),
         "raises" if name == "pytest.raises" || name == "raises" => {
-            let pattern = call
-                .keywords
-                .iter()
-                .find(|keyword| {
-                    keyword
-                        .arg
-                        .as_ref()
-                        .is_some_and(|arg| arg.as_str() == "match")
-                })
-                .map(|keyword| &keyword.value);
-            if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern)) {
+            let pattern = keyword_value(call, "match");
+            if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern, source)) {
                 Some((
                     OracleKind::ExactErrorVariant,
                     OracleStrength::Strong,
@@ -472,11 +498,19 @@ fn code_without_spacing(text: &str) -> String {
     out
 }
 
+fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
+    call.keywords
+        .iter()
+        .find(|keyword| keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == name))
+        .map(|keyword| &keyword.value)
+}
+
 /// RIPR-SPEC-0233 rule 2: a literal message pattern that admits any message
 /// (`''`, `.*`, `.+`, `^`, `$`, `^.*$`, `(?s).*`), or an alternation that can
 /// admit both the old and the new message (`'empty|blank'`), pins only the
-/// exception class.
-fn is_trivial_message_pattern(pattern: &Expr) -> bool {
+/// exception class. A bare name reads as the string literal it is bound to
+/// when the file assigns that name exactly once, to a literal (Decision 5).
+fn is_trivial_message_pattern(pattern: &Expr, source: &str) -> bool {
     let text = match pattern {
         Expr::Constant(ast::ExprConstant {
             value: ast::Constant::Str(text),
@@ -486,9 +520,31 @@ fn is_trivial_message_pattern(pattern: &Expr) -> bool {
             value: ast::Constant::Bytes(bytes),
             ..
         }) => return std::str::from_utf8(bytes).is_ok_and(pattern_admits_any_message),
+        Expr::Name(name) => {
+            return name_bound_once_to_literal(source, name.id.as_str())
+                .is_some_and(|text| pattern_admits_any_message(&text));
+        }
         _ => return false,
     };
     pattern_admits_any_message(text)
+}
+
+/// The string literal `name` is bound to when the file has exactly one
+/// assignment to it (`name = '.*'`) and that assignment is a plain literal.
+fn name_bound_once_to_literal(source: &str, name: &str) -> Option<String> {
+    let mut assignments = source.lines().filter_map(|line| {
+        let (target, value) = line.split_once('=')?;
+        let value = value.strip_prefix('=').map_or(Some(value), |_| None)?;
+        (target.trim() == name).then(|| value.trim())
+    });
+    let value = assignments.next()?;
+    if assignments.next().is_some() {
+        return None;
+    }
+    let value = value.strip_prefix('r').unwrap_or(value);
+    let quote = value.chars().next().filter(|ch| matches!(ch, '\'' | '"'))?;
+    let inner = value.strip_prefix(quote)?.strip_suffix(quote)?;
+    (!inner.contains(quote)).then(|| inner.to_string())
 }
 
 fn pattern_admits_any_message(text: &str) -> bool {

@@ -189,8 +189,9 @@ code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3,
-12 and 14 below as the only changes. Rule 13 changes relations, not the
-table.
+12, 14 and 15 below as the only changes (rule 15 changes row 5 for `and`).
+Rule 13 changes relations, not the table. Rule 17 reads a mock assertion
+as strong for one credit branch only; its table row is unchanged.
 
 ### Oracle admission rules
 
@@ -211,11 +212,12 @@ table.
    without the pattern does. A literal pattern containing an unescaped
    `|` outside a character class (`[...]`) also assigns `broad_error` /
    weak, because an alternation can admit
-   both the old and the new message (`'empty|blank'`). A pattern that is
-   a bare name bound by exactly one assignment of a string literal, in
-   the test body before the assertion or at the test module's top level,
-   is read as that literal (`pattern = '.*'` then `match=pattern` is
-   `broad_error`). Any other non-literal pattern keeps
+   both the old and the new message (`'empty|blank'`). The
+   expected-regex argument is read positionally or as the
+   `expected_regex=` keyword. A pattern that is a bare name the test file
+   assigns exactly once, to a plain string literal, is read as that
+   literal (`pattern = '.*'` then `match=pattern` is `broad_error`); a
+   name assigned more than once in the file is not resolved. Any other non-literal pattern keeps
    `exact_error_variant` / strong (Decision 5).
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
@@ -237,9 +239,10 @@ table.
    f-string length gate (rule 11) and, for an attribute write, the
    co-observation check. No gate may be satisfied by a different
    assertion or test. The reported `oracle` text, kind and
-   `observed_sink` come from the first crediting assertion in related-test
-   order, then source order. When none credits, they come from the first assertion of the
-   highest strength. The class never depends on assertion order or test
+   `observed_sink` come from the first crediting assertion, branches in
+   order, then related-test order, then source order. When none credits,
+   they come from the strongest related oracle (the last of equal
+   strength in related-test order, as before this rule). The class never depends on assertion order or test
    names. This adds credit where an owner assertion was hidden by a later
    one, and removes it where today's gates were met by two different
    assertions. An assertion's text for every gate excludes its failure
@@ -380,8 +383,9 @@ The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
 (RIPR-SPEC-0028, #4567); `changed_sink_token` from the changed-line token
-delta; else `orthogonal`. A free-function owner's identity and delta-token
-credit need module identity. A `<module>` owner with no usable token
+delta; `direct` through the channel a changed write reaches (rule 17);
+else `orthogonal`. A free-function owner's identity, delta-token and
+effect-channel credit need module identity. A `<module>` owner with no usable token
 counts as observing. This is the existing behavior and is normative, with
 rule 4 and the rules below.
 
@@ -389,8 +393,11 @@ rule 4 and the rules below.
    or class-method owner, the class name in the assertion does not
    credit the identity branch. Such an owner credits `direct` only
    through the bound-receiver branch (`Cls.m(`, `Cls(...).m(`, or
-   `v = Cls(...)` then `v.m(`), or through `alias` or
-   `changed_sink_token` as today.
+   `v = Cls(...)` then `v.m(`), through `changed_sink_token` as today, or
+   through rule 17 when the test calls the method on a local bound to its
+   class. A method owner has no `alias` tokens: a class import alias is
+   the class token again, so that branch no longer credits it (credit
+   removed only).
 10. **Changed elements match whole literals.** For a dict or list literal
     change, a changed value is observed only when it appears in the
     assertion as a whole literal token: a number not adjacent to a digit,
@@ -480,14 +487,17 @@ mutant calibrates the rule; ripr reports only the static shape.
 15. **An `and` chain asserts each conjunct.** `assert A and B` fails when
     either conjunct is false, so it is read as the strongest of its
     conjuncts under the table, rule 1 applying to each. The assertion
-    text for rule 4 is the whole `assert`, so an exact conjunct on
-    something else does not credit a weak conjunct on the owner. `or`,
+    text the rule 4 gates read holds only the conjuncts of that strongest
+    strength, so an exact conjunct on something else does not credit a
+    weak conjunct on the owner (`fee(10) > 0 and other == 5` does not
+    observe `fee`). `or`,
     `not` and any other boolean form stay `smoke_only` / smoke.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
     the boundary value `C - k` or `C + k` for boundary activation, as a
-    plain constant is today. A `return` of a comparison still reads as a
+    plain constant is today. The same shift applies to a name bound by a
+    literal `parametrize` or `@example` row (`threshold - 1`). A `return` of a comparison still reads as a
     return value unless both operands are plain names or literals, so
     `return total + 1 > limit` keeps its return-value probe.
 17. **An assertion on the written channel observes a changed effect.**
@@ -495,22 +505,27 @@ mutant calibrates the rule; ripr reports only the static shape.
     than a value, a strong assertion in a related test that calls the
     owner credits `direct` with reason
     `strong_oracle_observes_changed_effect_channel` when it compares, with
-    `==`, the channel that line writes:
+    `==`, the channel that line writes. The test must call the owner by a
+    module-identified name (a free function), or a method owner on a
+    local bound to its class (rule 9). The channels:
     - `print(...)` or `sys.stdout.write(...)`: `capsys`, `capfd` or their
       binary forms' `readouterr().out`, inline or through a local the
-      test binds once to `readouterr()`; `print(..., file=sys.stderr)` or
-      `sys.stderr.write(...)`: the same with `.err`. The capture must be
-      a test parameter.
+      test binds once to `readouterr()` after an owner call;
+      `print(..., file=sys.stderr)` or `sys.stderr.write(...)`: the same
+      with `.err`. The capture must be a test parameter. A capture taken
+      before the owner runs holds none of its output.
     - `p.write_text(...)` or `p.write_bytes(...)` on an owner parameter
-      `p`: `L.read_text()` or `L.read_bytes()` of a local `L` the test
-      passes whole to an owner call.
-    - `p.m(...)` on another owner parameter: `L.m.assert_called_once_with(`,
-      `L.m.assert_called_with(` or `L.m.assert_any_call(` for a local `L`
-      passed whole to an owner call, with at least one argument and every
-      argument pinned. That mock assertion is read as strong for this
-      credit only. An argument-free `assert_called_once()`, an `ANY`
+      `p`: `L.read_text()` or `L.read_bytes()` of the local `L` the test
+      passes as `p`, by position or keyword. A local passed for another
+      parameter is another file.
+    - `p.m(...)` on another owner parameter: `L.m.assert_called_once_with(`
+      for the local `L` passed as `p`, with at least one argument and
+      every argument pinned. That mock assertion is read as strong for
+      this credit only. An argument-free `assert_called_once()`, an `ANY`
       matcher or a starred argument accepts whatever the changed call
-      passes, so it does not credit.
+      passes, and `assert_called_with` (last call only) or
+      `assert_any_call` can be met by another call the owner makes on
+      the same method, so none of them credits.
     - `self.a = ...` or an augmented assignment in a method owner:
       `L.a`, where `L` is a local bound to the owner's class whose
       method the test calls (rule 9's bound receiver).
@@ -527,11 +542,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     rightmost positional parameters, keyword strategies the named ones;
     an unpairable `@given` supplies them all) are not pytest fixtures, so
     they never produce `unresolved_pytest_fixture`. `@example(...)` rows
-    bind those parameters like literal `parametrize` cases; a chained
+    bind parameters like literal `parametrize` cases (positional values
+    fill the rightmost parameters, as many as there are values; keyword
+    values the named ones); a chained
     `@example(...).xfail()` or `.via(...)` row is skipped. A `@given`
     test gives `static_unknown`, `property_based_test`, only when it has
     assertions and either none is strong, or it has no `@example` row and
-    its body reads a generated parameter. A `@given` test with no
+    its body reads a generated parameter. A `parametrize` mark binds
+    other parameters, so it does not stand in for an `@example` row. A `@given` test with no
     assertion reads reach-only like any other test, because it has no
     oracle for the generated inputs to hide.
 
@@ -860,18 +878,26 @@ and the test is `tests/test_subject.py`, which imports each owner from
     test `assert fee(4999) == 499`: `exposed` (today `weakly_exposed`;
     rule 16). Test `assert fee(6000) == 0` only: `weakly_exposed`
     (unchanged; the boundary is not activated).
-36. Owner `def greet(n): print(f'hello {n}')`, changed from `'hi {n}'`;
-    test `def test_g(capsys):` / `greet('a')` /
-    `assert capsys.readouterr().out == 'hello a\n'`: `exposed`, `direct`,
+36. Owner `def show(n): print(n * 2)`, changed from `print(n * 3)`;
+    test `def test_s(capsys):` / `show(2)` /
+    `assert capsys.readouterr().out == '4\n'`: `exposed`, `direct`,
     `strong_oracle_observes_changed_effect_channel` (today
-    `weakly_exposed`, `orthogonal`; rule 17). Test
-    `assert greet('a') is None` only: `weakly_exposed` (unchanged).
+    `weakly_exposed`, `orthogonal`; rule 17). The same test with
+    `captured = capsys.readouterr()` taken before `show(2)` and
+    `assert captured.out == ''`: `weakly_exposed`. Test
+    `assert show(2) is None` only: `weakly_exposed` (unchanged). For a
+    method owner `Printer.show` with the same body, a test calling
+    `Fake().show(4)` on another class: `weakly_exposed`.
 37. Owner `def notify(c, u): c.send(u, 'welcome')`, changed from
     `'hi'`; test `c = Mock()` / `notify(c, 'u')` /
     `c.send.assert_called_once_with('u', 'welcome')`: `exposed` (today
-    `weakly_exposed`; rule 17). With `c.send.assert_called_once()` or
-    `c.send.assert_called_once_with('u', ANY)`: `weakly_exposed`
-    (unchanged). Owner
+    `weakly_exposed`; rule 17). With `c.send.assert_called_once()`,
+    `c.send.assert_called_once_with('u', ANY)`,
+    `c.send.assert_called_with('u', 'welcome')` or
+    `c.send.assert_any_call('u', 'welcome')`: `weakly_exposed`
+    (unchanged). With `def notify(c, a, u):` whose unchanged line calls
+    `a.send(u)`, the assertion `a.send.assert_called_once_with('u')`:
+    `weakly_exposed` (`a` is not the changed collaborator). Owner
     `def save(p, t): p.write_text(t.lower())` and a test that passes `f`
     and asserts `f.read_text() == 'a'`: `exposed` (rule 17). Owner method
     `def bump(self): self.count = self.count + 2` and a test

@@ -446,11 +446,19 @@ fn property_inputs_hide_the_discriminator(test: &PythonTest) -> bool {
         .iter()
         .any(|assertion| assertion.oracle_strength.rank() >= OracleStrength::Strong.rank());
     !strong
-        || (test.parametrize.is_none()
+        || (!has_example_rows(test)
             && test
                 .generated_inputs
                 .iter()
                 .any(|input| body_uses_identifier(&test.body_text, input)))
+}
+
+/// Whether the test carries a Hypothesis `@example(...)` row. A
+/// `parametrize` mark binds other parameters, not the generated ones.
+fn has_example_rows(test: &PythonTest) -> bool {
+    test.decorators
+        .iter()
+        .any(|decorator| decorator == "example" || decorator.ends_with(".example"))
 }
 
 fn test_uses_property_based_inputs(test: &PythonTest) -> bool {

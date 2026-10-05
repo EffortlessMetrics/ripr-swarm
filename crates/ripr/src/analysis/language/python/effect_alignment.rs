@@ -89,37 +89,60 @@ impl ChangedEffect {
     }
 }
 
-/// Whether one assertion of `test` observes `effect` written by `owner`.
-pub(super) fn assertion_observes_effect(
-    effect: &ChangedEffect,
-    assertion: &str,
-    test: &PythonTest,
-    owner: &PythonOwner,
-) -> bool {
-    match effect {
-        ChangedEffect::Stdout => {
-            calls_owner(test, owner) && reads_captured_stream(assertion, test, "out")
+/// What one test can read of a changed effect: the compared operands that
+/// reach its channel and the mock methods it may pin. Built once per related
+/// test, so each of its assertions is checked against it cheaply.
+#[derive(Debug, Default)]
+pub(super) struct EffectReads {
+    operands: Vec<String>,
+    mocked_calls: Vec<String>,
+}
+
+impl EffectReads {
+    pub(super) fn of(effect: &ChangedEffect, test: &PythonTest, owner: &PythonOwner) -> Self {
+        let mut reads = Self::default();
+        match effect {
+            ChangedEffect::Stdout => reads.operands = captured_stream_operands(test, owner, "out"),
+            ChangedEffect::Stderr => reads.operands = captured_stream_operands(test, owner, "err"),
+            ChangedEffect::FileWrite { receiver } => {
+                for local in owner_call_argument_locals(test, owner, receiver) {
+                    reads.operands.push(format!("{local}.read_text()"));
+                    reads.operands.push(format!("{local}.read_bytes()"));
+                }
+            }
+            ChangedEffect::CallOnParameter { receiver, method } => {
+                reads.mocked_calls = owner_call_argument_locals(test, owner, receiver)
+                    .into_iter()
+                    .map(|local| format!("{local}.{method}"))
+                    .collect();
+            }
+            ChangedEffect::SelfField { attr } => {
+                if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
+                    reads.operands = owner_method_bound_locals(test, owner, class, &owner.name)
+                        .into_iter()
+                        .map(|local| format!("{local}.{attr}"))
+                        .collect();
+                }
+            }
         }
-        ChangedEffect::Stderr => {
-            calls_owner(test, owner) && reads_captured_stream(assertion, test, "err")
-        }
-        ChangedEffect::FileWrite { .. } => {
-            owner_call_argument_locals(test, owner).iter().any(|local| {
-                compared_operand_is(assertion, &format!("{local}.read_text()"))
-                    || compared_operand_is(assertion, &format!("{local}.read_bytes()"))
-            })
-        }
-        ChangedEffect::CallOnParameter { method, .. } => owner_call_argument_locals(test, owner)
-            .iter()
-            .any(|local| pins_mock_call(assertion, &format!("{local}.{method}"))),
-        ChangedEffect::SelfField { attr } => {
-            let Some((class, _)) = owner.qualified_name.rsplit_once('.') else {
-                return false;
-            };
-            owner_method_bound_locals(test, owner, class, &owner.name)
+        reads
+    }
+
+    /// Whether one assertion (its gate text) observes the effect.
+    pub(super) fn observed_by(&self, assertion: &str) -> bool {
+        if !self.operands.is_empty() {
+            let compared = compared_operands(assertion);
+            if self
+                .operands
                 .iter()
-                .any(|local| compared_operand_is(assertion, &format!("{local}.{attr}")))
+                .any(|operand| compared.contains(&operand.as_str()))
+            {
+                return true;
+            }
         }
+        self.mocked_calls
+            .iter()
+            .any(|mocked| pins_mock_call(assertion, mocked))
     }
 }
 
@@ -165,15 +188,22 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
         .then(|| (callee, &line[open + 1..close]))
 }
 
-/// The names the test calls the owner by: its own name, an import alias, or a
-/// module-qualified spelling; a method only through its attribute name.
-fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<&'a str> {
-    let method_call = matches!(
-        owner.owner_kind,
-        Some(OwnerKind::Method | OwnerKind::ClassMethod)
-    );
-    let mut names = vec![owner.name.clone()];
-    if !method_call {
+/// The owner calls the test makes, as (offset in the body, argument text): by
+/// its own name, an import alias, or a module-qualified spelling. A method is
+/// called only on a local bound to its class (rule 9), so a same-named method
+/// of another class does not count.
+fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+    let mut names = Vec::new();
+    if is_method_owner(owner) {
+        if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
+            names.extend(
+                owner_method_bound_locals(test, owner, class, &owner.name)
+                    .into_iter()
+                    .map(|local| format!("{local}.{}", owner.name)),
+            );
+        }
+    } else {
+        names.push(owner.name.clone());
         names.extend(
             test.imports
                 .iter()
@@ -184,29 +214,81 @@ fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<&'a str> {
     }
     names.sort();
     names.dedup();
-    names
+    let mut calls: Vec<(usize, &str)> = names
         .iter()
-        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, method_call))
-        .map(|(_, arglist)| arglist)
-        .collect()
+        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, false))
+        .collect();
+    calls.sort_unstable();
+    calls
 }
 
-fn calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    !owner_calls(test, owner).is_empty()
+/// Whether the test calls a free-function owner through a module-identified
+/// spelling (`pricing.print_receipt(...)`), which names the owner's module
+/// as an import of it would.
+pub(super) fn calls_owner_through_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    !is_method_owner(owner)
+        && owner_module_callees(test, owner)
+            .iter()
+            .any(|name| !call_arglists_with_offsets(&test.body_text, name, false).is_empty())
 }
 
-/// Bare local names the test passes as a whole argument to an owner call.
-fn owner_call_argument_locals(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+fn is_method_owner(owner: &PythonOwner) -> bool {
+    matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    )
+}
+
+/// Bare locals the test passes, in owner calls, as the owner parameter
+/// `parameter`: by position after any implicit receiver, or by keyword. A
+/// local passed for another parameter is a different collaborator.
+fn owner_call_argument_locals(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    parameter: &str,
+) -> Vec<String> {
+    let skip = usize::from(
+        is_method_owner(owner)
+            && owner
+                .parameters
+                .first()
+                .is_some_and(|first| matches!(first.name.as_str(), "self" | "cls")),
+    );
+    let position = owner
+        .parameters
+        .iter()
+        .filter(|candidate| !candidate.keyword_only)
+        .skip(skip)
+        .position(|candidate| candidate.name == parameter && !candidate.keyword_only);
     let mut locals: Vec<String> = owner_calls(test, owner)
         .into_iter()
-        .flat_map(split_top_level_args)
-        .map(|arg| {
-            arg.split_once('=')
-                .filter(|(name, _)| super::static_limits::is_simple_python_identifier(name.trim()))
-                .map_or(arg, |(_, value)| value)
-                .trim()
+        .filter_map(|(_, arglist)| {
+            let mut positional = 0usize;
+            for argument in split_top_level_args(arglist) {
+                let argument = argument.trim();
+                if argument.starts_with('*') {
+                    return None;
+                }
+                match argument.split_once('=').filter(|(name, value)| {
+                    super::static_limits::is_simple_python_identifier(name.trim())
+                        && !value.starts_with('=')
+                }) {
+                    Some((name, value)) => {
+                        if name.trim() == parameter {
+                            return Some(value.trim());
+                        }
+                    }
+                    None => {
+                        if Some(positional) == position {
+                            return Some(argument);
+                        }
+                        positional += 1;
+                    }
+                }
+            }
+            None
         })
-        .filter(|arg| super::static_limits::is_simple_python_identifier(arg))
+        .filter(|local| super::static_limits::is_simple_python_identifier(local))
         .map(str::to_string)
         .collect();
     locals.sort();
@@ -214,38 +296,45 @@ fn owner_call_argument_locals(test: &PythonTest, owner: &PythonOwner) -> Vec<Str
     locals
 }
 
-/// Whether an assertion compares the captured `stream` (`out` or `err`) of
-/// `capsys`/`capfd`: inline (`capsys.readouterr().out == ...`) or through a
-/// local the test binds once (`captured = capsys.readouterr()`).
-fn reads_captured_stream(assertion: &str, test: &PythonTest, stream: &str) -> bool {
-    let captures = ["capsys", "capfd", "capsysbinary", "capfdbinary"];
-    if captures.iter().any(|capture| {
-        test.fixtures.iter().any(|fixture| fixture == capture)
-            && compared_operand_is(assertion, &format!("{capture}.readouterr().{stream}"))
-    }) {
-        return true;
+/// The compared operands that read the captured `stream` (`out` or `err`)
+/// of `capsys`/`capfd` after the test calls the owner: inline
+/// (`capsys.readouterr().out`) or through a local the test binds once to
+/// `readouterr()` after an owner call. A capture taken before the owner runs
+/// holds none of its output.
+fn captured_stream_operands(test: &PythonTest, owner: &PythonOwner, stream: &str) -> Vec<String> {
+    let captures: Vec<&str> = ["capsys", "capfd", "capsysbinary", "capfdbinary"]
+        .into_iter()
+        .filter(|capture| test.fixtures.iter().any(|fixture| fixture == capture))
+        .collect();
+    if captures.is_empty() {
+        return Vec::new();
     }
-    test.body_text.lines().any(|line| {
+    let Some(first_call) = owner_calls(test, owner).first().map(|(offset, _)| *offset) else {
+        return Vec::new();
+    };
+    let mut operands: Vec<String> = captures
+        .iter()
+        .map(|capture| format!("{capture}.readouterr().{stream}"))
+        .collect();
+    let mut offset = 0usize;
+    for line in test.body_text.split_inclusive('\n') {
+        let line_start = offset;
+        offset += line.len();
         let Some((target, value)) = line.split_once('=') else {
-            return false;
+            continue;
         };
         let target = target.trim();
-        super::static_limits::is_simple_python_identifier(target)
-            && captures.iter().any(|capture| {
-                test.fixtures.iter().any(|fixture| fixture == capture)
-                    && value.trim() == format!("{capture}.readouterr()")
-            })
+        if line_start > first_call
+            && super::static_limits::is_simple_python_identifier(target)
+            && captures
+                .iter()
+                .any(|capture| value.trim() == format!("{capture}.readouterr()"))
             && test.body_text.matches(&format!("{target} =")).count() == 1
-            && compared_operand_is(assertion, &format!("{target}.{stream}"))
-    })
-}
-
-/// Whether `operand` is a whole compared operand of the assertion's `==`
-/// (`assert OPERAND == x`, `assert x == OPERAND`, one conjunct of an `and`,
-/// or `assertEqual(OPERAND, x)`). Reads the assertion's gate text, whose shape
-/// is `assert <expr>` or `callee(first, second)`.
-fn compared_operand_is(assertion: &str, operand: &str) -> bool {
-    compared_operands(assertion).contains(&operand)
+        {
+            operands.push(format!("{target}.{stream}"));
+        }
+    }
+    operands
 }
 
 pub(super) fn compared_operands(assertion: &str) -> Vec<&str> {
@@ -302,7 +391,7 @@ fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
                 b'\'' | b'"' => quote = Some(byte),
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-                _ if depth == 0 && text[idx..].starts_with(separator) => {
+                _ if depth == 0 && bytes[idx..].starts_with(separator.as_bytes()) => {
                     parts.push(&text[start..idx]);
                     idx += separator.len();
                     start = idx;
@@ -333,25 +422,19 @@ fn operand_occurrences<'a>(
 }
 
 /// Whether a mock assertion pins the arguments of `mocked.method`:
-/// `mocked.method.assert_called_once_with(...)`, `.assert_called_with(...)` or
-/// `.assert_any_call(...)` with at least one argument, every one pinned. An
-/// `ANY` matcher or a starred argument accepts whatever the changed call
-/// passes, so it pins nothing.
+/// `mocked.method.assert_called_once_with(...)` with at least one argument,
+/// every one pinned. An `ANY` matcher or a starred argument accepts whatever
+/// the changed call passes, so it pins nothing. `assert_called_with` reads only
+/// the last call and `assert_any_call` any call, so either can be satisfied by
+/// another call the owner makes on the same method; `assert_called_once_with`
+/// also fails when the owner makes a second call.
 fn pins_mock_call(assertion: &str, mocked: &str) -> bool {
-    [
-        "assert_called_once_with",
-        "assert_called_with",
-        "assert_any_call",
-    ]
-    .iter()
-    .any(|check| {
-        let call = format!("{mocked}.{check}(");
-        operand_occurrences(assertion, &call).any(|(before, after)| {
-            let reopened = format!("({after}");
-            before.trim().is_empty()
-                && super::no_behavior::matching_call_paren(&reopened, 0)
-                    .is_some_and(|close| all_arguments_pinned(&reopened[1..close]))
-        })
+    let call = format!("{mocked}.assert_called_once_with(");
+    operand_occurrences(assertion, &call).any(|(before, after)| {
+        let reopened = format!("({after}");
+        before.trim().is_empty()
+            && super::no_behavior::matching_call_paren(&reopened, 0)
+                .is_some_and(|close| all_arguments_pinned(&reopened[1..close]))
     })
 }
 

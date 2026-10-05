@@ -1,5 +1,5 @@
 use super::effect_alignment::{
-    ChangedEffect, assertion_observes_effect, expected_computed_through_owner,
+    ChangedEffect, EffectReads, calls_owner_through_module, expected_computed_through_owner,
 };
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
@@ -13,6 +13,9 @@ use super::{
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
 use crate::domain::{OracleKind, OracleStrength, OwnerKind, ProbeFamily, RelatedTest};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
 /// coverage is that a strong oracle credits `exposed` only when it *observes the
 /// changed sink*, not merely reaches the owner. This carries which token
@@ -680,7 +683,7 @@ pub(super) fn classify_sink_alignment_with_old(
     // mentioned — is not identity-bearing, because the asserted `.method(` may
     // run on an unrelated receiver while the class is referenced (or merely
     // named) elsewhere. This is the false-`exposed` guard at the relation layer.
-    let binds_method_receiver = |unit: &AlignmentUnit<'_>| {
+    let binds_method_receiver = per_related_test(|unit: &AlignmentUnit<'_>| {
         strong_test_calls_owner_method_on_bound_receiver(
             owner,
             owner_class_token.as_ref(),
@@ -688,21 +691,21 @@ pub(super) fn classify_sink_alignment_with_old(
             &[unit.related],
             all_tests,
         )
-    };
+    });
     // Free-function module identity: a non-method owner's bare function-name token
     // credits `direct` only when the test holding the assertion imports it from
     // the owner's module. A same-named free function imported from a different
     // module (`from src.checker import validate` for owner `src.handler.validate`)
     // is not identity-bearing — the false-`exposed` guard for free functions.
-    let free_fn_module_identity = |unit: &AlignmentUnit<'_>| {
+    let free_fn_module_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         !is_method_owner && strong_test_imports_owner_from_module(&[unit.related], all_tests, owner)
-    };
+    });
     // Method-owner identity is class and method name; a test whose imports
     // name a same-named module of another project uses that project's class.
-    let method_owner_identity = |unit: &AlignmentUnit<'_>| {
+    let method_owner_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         is_method_owner
             && !strong_tests_import_only_rival_modules(owner, &[unit.related], all_tests)
-    };
+    });
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
@@ -807,13 +810,22 @@ pub(super) fn classify_sink_alignment_with_old(
     // A mock assertion credits only through the effect branch, where it pins
     // the arguments of the very call the changed line makes.
     let gates_ok = |unit: &AlignmentUnit<'_>| !unit.effect_only && gates_ok(unit);
+    // What each related test can read of the changed effect, with its owner
+    // identity, is a per-test fact: built once, then checked per assertion.
+    let effect_reads = per_related_test(|unit: &AlignmentUnit<'_>| {
+        Rc::new(effect.as_ref().zip(unit.test).and_then(|(effect, test)| {
+            (method_owner_identity(unit)
+                || free_fn_module_identity(unit)
+                || calls_owner_through_module(test, owner))
+            .then(|| EffectReads::of(effect, test, owner))
+        }))
+    });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
-        effect.as_ref().is_some_and(|effect| {
-            unit.test.is_some_and(|test| {
-                assertion_observes_effect(effect, &unit.text, test, owner)
-                    && (!is_method_owner || method_owner_identity(unit))
-            })
-        }) && field_construction_credit_ok(unit)
+        effect_reads(unit)
+            .as_ref()
+            .as_ref()
+            .is_some_and(|reads| reads.observed_by(&unit.text))
+            && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
     };
     let branches: [CreditBranch<'_, '_>; 6] = [
@@ -894,6 +906,24 @@ pub(super) fn classify_sink_alignment_with_old(
         oracle_alignment: oracle_alignment.to_string(),
         alignment_reason: alignment_reason.to_string(),
         credited,
+    }
+}
+
+/// Memoize a fact that depends only on the related test holding an
+/// assertion, so a test with many assertions computes it once per finding
+/// rather than once per assertion and branch.
+fn per_related_test<T: Clone>(
+    fact: impl Fn(&AlignmentUnit<'_>) -> T,
+) -> impl Fn(&AlignmentUnit<'_>) -> T {
+    let cache: RefCell<HashMap<*const RelatedTest, T>> = RefCell::new(HashMap::new());
+    move |unit| {
+        let key = std::ptr::from_ref(unit.related);
+        if let Some(found) = cache.borrow().get(&key) {
+            return found.clone();
+        }
+        let found = fact(unit);
+        cache.borrow_mut().insert(key, found.clone());
+        found
     }
 }
 

@@ -7,8 +7,10 @@
 //! positional parameters; keyword strategies fill the parameters they name.
 //!
 //! `@example(...)` rows always run, with literal values, so they bind owner
-//! inputs the way literal `parametrize` cases do (`parametrize.rs`). They are
-//! passed the same way as `@given`'s strategies. A chained example
+//! inputs the way literal `parametrize` cases do (`parametrize.rs`). Positional
+//! values fill the rightmost parameters, as many as there are values (as
+//! Hypothesis zips them with the tail of the signature); keyword values fill
+//! the parameters they name. A chained example
 //! (`@example(1).xfail()`, `.via(...)`) is skipped: it may be expected to
 //! fail, and any example that is skipped only removes a row.
 
@@ -94,8 +96,8 @@ pub(super) fn example_cases(
     args: &ast::Arguments,
     decorators: &[Expr],
 ) -> Option<PythonParametrizeCases> {
-    let given = given_call(decorators)?;
-    let positional = given_positional_names(args, given)?;
+    given_call(decorators)?;
+    let positional = positional_parameters(args);
     let cases: Vec<BTreeMap<String, String>> = decorators
         .iter()
         .filter_map(|decorator| match decorator {
@@ -123,7 +125,7 @@ fn example_row(
         return None;
     }
     let value = |expr: &Expr| text_for_range(source, expr.range()).trim().to_string();
-    let mut row: BTreeMap<String, String> = positional
+    let mut row: BTreeMap<String, String> = positional[positional.len() - call.args.len()..]
         .iter()
         .cloned()
         .zip(call.args.iter().map(value))
@@ -221,6 +223,18 @@ mod tests {
         assert_eq!(
             examples("@given(st.integers())\n@example(1, 2)\ndef test_a(x):\n    pass\n"),
             None
+        );
+    }
+
+    #[test]
+    fn positional_example_values_fill_the_rightmost_parameters() {
+        // Hypothesis zips `@example(5)` with the last parameter, whatever
+        // `@given` supplies.
+        assert_eq!(
+            examples(
+                "@given(st.integers(), st.integers())\n@example(5)\ndef test_a(lo, hi):\n    pass\n"
+            ),
+            Some(vec![vec![("hi".to_string(), "5".to_string())]])
         );
     }
 }
