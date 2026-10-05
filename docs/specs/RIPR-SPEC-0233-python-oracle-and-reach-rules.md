@@ -540,7 +540,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Golden drift lists every Python finding whose class, relation or
   `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
   13, 14) and
-  credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11).
+  credit removed (rules 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
 
@@ -712,9 +712,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
     when the call raises). With `assert len(str(exc.value)) == 7` after
     the block: `weakly_exposed` (unchanged; a length read does not pin
     the message, and `'empty'` and `'blank'` have equal length).
+    With an owner `def perr(text, **kwargs):` (same body),
     `pytest.raises(KeyError, perr, '', match='empty')`, the callable
     form: `syntactic_call`, `broad_error` / weak, `weakly_exposed`
-    (rule 13; `match=` goes to `perr`).
+    (rule 13; `match=` goes to `perr`; today `same_stem`, class
+    unchanged).
 
 ## Test Mapping
 
