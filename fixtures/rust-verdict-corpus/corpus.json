@@ -8639,12 +8639,6 @@
             "outcome": "tests_failed",
             "failing_test": "parse::tests::four_digits_parse_to_their_value",
             "equivalence_review": "not equivalent: a pinned value changes"
-          },
-          {
-            "replacement": "if s.len() < 5 {",
-            "outcome": "tests_failed",
-            "failing_test": "parse::tests::a_letter_is_not_a_digit",
-            "equivalence_review": "not equivalent: a pinned value changes"
           }
         ]
       },
@@ -8656,7 +8650,7 @@
           "silent"
         ]
       },
-      "reasoning": "Each test pins parse_code's exact Result, so moving the length boundary either way changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:85 and date.rs:89 (s.len(), ends_with), bytesize display.rs:242 (powi), rust-hex lib.rs:225 (hex.len()), semver identifier.rs is_empty/as_str branch calls.",
+      "reasoning": "Each test pins parse_code's exact Result, so moving the length boundary either way, or swapping the comparison for equality, changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:85 and date.rs:89 (s.len(), ends_with), bytesize display.rs:242 (powi), rust-hex lib.rs:225 (hex.len()), semver identifier.rs is_empty/as_str branch calls.",
       "labeling_observation": {
         "ripr_commit": "b2f2a21",
         "full_checkout_verdict": "gap",
