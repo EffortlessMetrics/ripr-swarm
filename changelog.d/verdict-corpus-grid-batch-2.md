@@ -8,4 +8,4 @@
   (RIPR-SPEC-0175) and one whose Err arm assert_eqs the variant, a boundary
   on a counter of input bytes, and bitwise `|` and `<<`. ripr reads 3 ideal,
   5 abstained and 6 false actionable, with no false exposed or false silent
-  verdict.
+  verdict ([#6715](https://github.com/EffortlessMetrics/ripr-swarm/pull/6715)).
