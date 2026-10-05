@@ -6027,7 +6027,22 @@ fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
         );
     }
     for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
-        if routed_rust_job_block_any(workflow, job, |line| line.contains("always()")) {
+        let mut in_job_condition = false;
+        if routed_rust_job_block_any(workflow, job, |line| {
+            // Only the job's own `if:` (and its folded continuation lines)
+            // decides cancellation; step-level `if: always()` cleanup is fine.
+            if line.starts_with("    ") && !line.starts_with("     ") {
+                in_job_condition = line.trim_start().starts_with("if:");
+            } else if !line.starts_with("      ") && !line.trim().is_empty() {
+                in_job_condition = false;
+            }
+            let normalized: String = line
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            in_job_condition && normalized.contains("always()")
+        }) {
             violations.push(format!(
                 ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so a second Ready transition queues behind the obsolete head's full gate. Use `!cancelled()` (#6729)"
             ));
