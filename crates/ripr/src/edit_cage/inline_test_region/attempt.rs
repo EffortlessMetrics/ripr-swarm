@@ -60,14 +60,37 @@ pub(crate) struct InlineTargetCopies<'a> {
 /// Capture the one governed inline cfg-test module of `relative_file` under
 /// the canonical repository `root`. Refuses, with the next step named, when
 /// the file has no inline governed test module, more than one candidate, an
-/// out-of-line `mod tests;`, or is a test surface, generated, unreadable,
-/// or unparseable.
+/// out-of-line `mod tests;`, or is a test surface, generated (built-in naming
+/// or the repository's configured `generated_file_patterns`), unreadable, or
+/// unparseable.
 pub(crate) fn capture_attempt_inline_region(
     root: &Path,
     relative_file: &str,
 ) -> Result<InlineTestRegionBaseline, String> {
     let source = read_contained_regular_file(root, relative_file)
         .map_err(|error| refusal(relative_file, &describe_error(&error)))?;
+    // The repository's configured generated-file patterns apply here as they
+    // do in the seam inventory, so a packet that names a configured-generated
+    // file still gets no edit region.
+    let generated_file_patterns = crate::config::load_for_root(root)
+        .map_err(|error| {
+            refusal(
+                relative_file,
+                &format!("its repository configuration could not be read ({error})"),
+            )
+        })?
+        .languages
+        .rust
+        .generated_file_patterns;
+    if crate::analysis::is_generated_rust_file_with_patterns(
+        Path::new(relative_file),
+        &generated_file_patterns,
+    ) {
+        return Err(refusal(
+            relative_file,
+            "it is a generated file (built-in naming or `languages.rust.generated_file_patterns`)",
+        ));
+    }
     let module_name =
         unique_governed_inline_module(&source).map_err(|reason| refusal(relative_file, reason))?;
     let package_identity = nearest_package_identity(root, relative_file);
@@ -76,7 +99,7 @@ pub(crate) fn capture_attempt_inline_region(
         &source,
         &module_name,
         package_identity.clone(),
-        &[],
+        &generated_file_patterns,
     )
     .map_err(|error| refusal(relative_file, &describe_error(&error)))?;
     Ok(InlineTestRegionBaseline {
@@ -102,6 +125,9 @@ pub(crate) fn observe_attempt_inline_region(
         Ok(after) => after,
         Err(reason) => return observation(false, Some(format!("target_unreadable: {reason}"))),
     };
+    // Generated status was settled at capture against the configured
+    // patterns. `ripr.toml` is an analysis input, and the after phase refuses
+    // an attempt whose analysis inputs changed between the phases.
     let authority = match authority_from_source(
         &baseline.path,
         &baseline.source,

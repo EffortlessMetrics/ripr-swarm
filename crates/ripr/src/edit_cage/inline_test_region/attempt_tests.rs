@@ -20,6 +20,8 @@ const LIB: &str = r#"pub fn price(cents: i32) -> i32 {
 mod tests {
     use super::*;
 
+    // Price boundary notes.
+
     #[test]
     fn existing() {
         let _ = price(150);
@@ -298,5 +300,107 @@ fn a_confined_target_change_without_an_observation_fails_closed() -> Result<(), 
     );
     assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
     assert!(inline_violation_reason(&verdict).is_some(), "{verdict:?}");
+    Ok(())
+}
+
+/// Devin 4179587099: a helper alone adds no test, so the attempt is not a
+/// completed repair even though the helper sits inside the governed module.
+#[test]
+fn inserting_only_a_helper_function_is_violated() -> Result<(), String> {
+    let fixture = fixture("helper", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    write_lib(
+        &fixture,
+        &LIB.replace(
+            "        let _ = price(150);\n    }\n",
+            "        let _ = price(150);\n    }\n\n    fn helper() -> i32 {\n        price(100)\n    }\n",
+        ),
+    )?;
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Violated,
+        "{verdict:?}"
+    );
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("no_test_function_added"), "{reason}");
+    Ok(())
+}
+
+/// Devin 4179587144: a comment between existing items is existing bytes, so
+/// rewriting it beside an inserted test is not a pure insertion.
+#[test]
+fn rewriting_an_existing_comment_beside_an_inserted_test_is_violated() -> Result<(), String> {
+    let fixture = fixture("comment", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    let after = with_new_test(LIB).replace("// Price boundary notes.", "// Rewritten notes.");
+    assert_ne!(after, with_new_test(LIB));
+    write_lib(&fixture, &after)?;
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Violated,
+        "{verdict:?}"
+    );
+    let reason = inline_violation_reason(&verdict).ok_or("expected an inline-region violation")?;
+    assert!(reason.contains("not_pure_insertion"), "{reason}");
+    Ok(())
+}
+
+/// Positive control for the byte-preservation law: a new test may bring a
+/// doc comment, a new comment, and blank lines.
+#[test]
+fn a_new_test_with_comments_and_blank_lines_is_compliant() -> Result<(), String> {
+    let fixture = fixture("doc-comment", LIB)?;
+    let baseline = capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
+    write_lib(
+        &fixture,
+        &LIB.replace(
+            "        let _ = price(150);\n    }\n",
+            "        let _ = price(150);\n    }\n\n\n    // Equality boundary.\n\n    /// A discount applies at exactly 100.\n    #[test]\n    fn boundary() {\n        assert_eq!(price(100), 90);\n    }\n\n",
+        ),
+    )?;
+    let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+        &baseline,
+        HeadMovement::RequireBaselineHead,
+    )?;
+    assert_eq!(
+        verdict.status,
+        EditCageVerdictStatus::Compliant,
+        "{verdict:?}"
+    );
+    Ok(())
+}
+
+/// Devin 4179587290: a file the repository configures as generated is not an
+/// inline edit region, even when a packet names it.
+#[test]
+fn a_configured_generated_target_cannot_be_captured() -> Result<(), String> {
+    let fixture = fixture("generated", LIB)?;
+    fs::write(
+        fixture.root.join("ripr.toml"),
+        "[languages.rust]\ngenerated_file_patterns = [\"src/lib.rs\"]\n",
+    )
+    .map_err(|e| format!("write config: {e}"))?;
+    git_ok(&fixture.root, &["add", "ripr.toml"])?;
+    git_ok(&fixture.root, &["commit", "-qm", "configure generated"])?;
+    let error = match capture_attempt_baseline(&fixture.root, &inline_policy()?) {
+        Ok(_) => {
+            return Err("a configured-generated file must not become an edit region".to_string());
+        }
+        Err(error) => error,
+    };
+    assert!(error.contains("generated_file_patterns"), "{error}");
+    assert!(error.contains("No attempt was created"), "{error}");
+
+    // Control: the same file without the pattern is captured.
+    fs::write(fixture.root.join("ripr.toml"), "").map_err(|e| format!("clear config: {e}"))?;
+    capture_attempt_baseline(&fixture.root, &inline_policy()?)?;
     Ok(())
 }

@@ -282,10 +282,13 @@ Repair attempts fail closed:
   role in the repair is its inline test module: the attempt is created only
   when that file has exactly one governed inline `#[cfg(test)]` module (no
   second candidate, no out-of-line `mod tests;`), and the after phase is
-  compliant only when the edit inserts new test functions (and optional `use`
-  items) into that module's body, with production code, the module
-  declaration, existing tests, and every staged or committed copy of the file
-  unchanged or equal to the validated bytes. Any other change to that file
+  compliant only when the edit inserts at least one new function with a
+  recognised test attribute (plus optional helper `fn` and `use` items,
+  comments, and blank lines) into that module's body, with production code,
+  the module declaration, every existing body byte (tests, comments, blank
+  lines), and every staged or committed copy of the file unchanged or equal
+  to the validated bytes. A generated file (built-in naming or
+  `languages.rust.generated_file_patterns`) is refused at the before phase. Any other change to that file
   fails the attempt as `outside_inline_test_region` (#5210);
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;

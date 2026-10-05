@@ -10235,6 +10235,10 @@ tests = [
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::inner_cfg_not_test_plus_a_function_is_rejected",
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::configured_generated_pattern_rejects_a_non_conventional_path",
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::fifo_at_the_captured_path_is_rejected_without_blocking",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_only_insertion_is_not_a_completed_repair",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_beside_a_new_test_function_is_admitted",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::rewriting_an_existing_comment_while_adding_a_test_is_rejected",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::new_test_with_comments_and_blank_lines_is_admitted",
 ]
 fixtures = [
 ]

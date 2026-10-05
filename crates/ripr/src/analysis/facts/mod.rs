@@ -122,6 +122,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
+pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;

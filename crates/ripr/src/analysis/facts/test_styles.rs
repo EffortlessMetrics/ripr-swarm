@@ -153,7 +153,11 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
     }
 }
 
-fn attributes_define_test<'attribute>(
+/// Whether any attribute is a recognised test attribute (`#[test]`,
+/// `#[tokio::test]`, `#[rstest]`, ...). The one authority for which functions
+/// are tests; the inline test-region cage consumes it to decide whether an
+/// inserted function is a new test.
+pub(crate) fn attributes_define_test<'attribute>(
     attributes: impl IntoIterator<Item = &'attribute str>,
 ) -> bool {
     attributes.into_iter().any(|attribute| {
