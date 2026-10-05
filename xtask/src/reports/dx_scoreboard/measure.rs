@@ -1345,9 +1345,36 @@ pub(crate) fn runner_class() -> String {
     } else {
         "local".to_string()
     };
-    format!(
+    let class = format!(
         "{host}-{}-{}-{cpus}cpu",
         std::env::consts::OS,
         std::env::consts::ARCH
-    )
+    );
+    // Hosted runners with the same vCPU count run on more than one CPU
+    // model, and wall time moved ~1.7x between them on identical code
+    // (#6726). Keying on the model leaves those pairs uncompared instead
+    // of failing the gate on hardware.
+    match fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|cpuinfo| cpu_model_slug(&cpuinfo))
+    {
+        Some(model) => format!("{class}-{model}"),
+        None => class,
+    }
+}
+
+/// The first `model name` in `/proc/cpuinfo` as a lowercase dash-separated
+/// slug, or `None` when the field is absent or empty.
+pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
+    let model = cpuinfo.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        (key.trim() == "model name").then(|| value.trim())
+    })?;
+    let slug = model
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-");
+    (!slug.is_empty()).then_some(slug)
 }

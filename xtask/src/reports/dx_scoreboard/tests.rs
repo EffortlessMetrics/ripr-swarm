@@ -1993,3 +1993,21 @@ fn the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard() -> Result<(),
     assert_eq!(text, "earlier step\n# DX scoreboard\n");
     Ok(())
 }
+
+#[test]
+fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
+    let cpuinfo = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD EPYC 7763 64-Core Processor\n\nprocessor\t: 1\nmodel name\t: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\n";
+    assert_eq!(
+        super::measure::cpu_model_slug(cpuinfo).as_deref(),
+        Some("amd-epyc-7763-64-core-processor")
+    );
+    assert_eq!(
+        super::measure::cpu_model_slug(
+            "model name\t: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\n"
+        )
+        .as_deref(),
+        Some("intel-r-xeon-r-platinum-8370c-cpu-2-80ghz")
+    );
+    assert_eq!(super::measure::cpu_model_slug("processor\t: 0\n"), None);
+    assert_eq!(super::measure::cpu_model_slug("model name\t:  \n"), None);
+}

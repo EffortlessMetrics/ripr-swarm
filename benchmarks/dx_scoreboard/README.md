@@ -186,8 +186,13 @@ compared worst.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. Wall-time and memory
 metrics compare only against a baseline from the
-same runner class (`local-linux-x86_64-4cpu`, `github-hosted-linux-x86_64-4cpu`,
-or `RIPR_DX_RUNNER_CLASS`). Counts and line totals compare across runners.
+same runner class: host, OS, architecture, CPU count and, on Linux, the CPU
+model from `/proc/cpuinfo` (for example
+`github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`), or
+`RIPR_DX_RUNNER_CLASS` when set. Hosted runners with the same CPU count use
+more than one CPU model, and wall time on identical code differed by about
+1.7x between runs, so the model is part of the key. Counts and line totals
+compare across runners.
 
 `metrics/dx-scoreboard/baseline.json` is the committed baseline. To move it,
 commit a newer report after reviewing why the numbers changed. A baseline
