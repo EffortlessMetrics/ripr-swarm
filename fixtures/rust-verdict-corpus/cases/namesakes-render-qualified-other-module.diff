@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ 
+ pub mod a {
+     pub fn render(x: i32) -> i32 {
+-        x + 1
++        1 + x
+     }
+ }
+ 

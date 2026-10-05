@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-05.1. Cases: 207.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 72/203 | 0.3547 |
-| False actionable (of discriminated) | 66/106 | 0.6226 |
-| False exposed (of not fully discriminated) | 6/97 | 0.0619 |
-| False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 73/203 | 0.3596 |
-| Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
-| Findings with a contradiction | 2/278 | 0.0072 |
+| False verdicts (all cases) | 72/207 | 0.3478 |
+| False actionable (of discriminated) | 66/107 | 0.6168 |
+| False exposed (of not fully discriminated) | 6/100 | 0.0600 |
+| False silent (of not fully discriminated) | 0/100 | 0.0000 |
+| Ideal verdict | 77/207 | 0.3720 |
+| Abstained (limited or silent where acceptable) | 58/207 | 0.2802 |
+| Findings with a contradiction | 2/282 | 0.0071 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 62/169 | 56/86 | 6/83 | 0/83 | 68/169 | 39/169 |
+| authored | 173 | 62/173 | 56/87 | 6/86 | 0/86 | 72/173 | 39/173 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -224,6 +224,10 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `namesakes-render-qualified-other-module` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `namesakes-delay-sibling-file-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `namesakes-snap-use-imported-owner` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `namesakes-round-use-imported-rival` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 

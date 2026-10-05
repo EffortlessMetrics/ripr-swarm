@@ -3546,6 +3546,91 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_same_name_sibling_file_test",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/same_name_sibling_file_test",
+      "vector": "sibling_module_same_named_function_test_cannot_lend_reach_or_tokens",
+      "probe_family": "match_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_same_name_qualified_other_module",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/same_name_qualified_other_module",
+      "vector": "qualified_call_to_other_modules_same_named_function_is_not_owner_reach",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_same_name_use_imported_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/same_name_use_imported_owner",
+      "vector": "use_import_settles_owner_return_pin_among_same_named_functions",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "snap_seventeen_to_twenty",
+          "file": "src/lib.rs",
+          "line": 18,
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
     }
   ]
 }

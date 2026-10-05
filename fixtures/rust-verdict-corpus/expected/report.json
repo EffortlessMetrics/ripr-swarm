@@ -1,101 +1,101 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.8",
-  "cases_total": 203,
+  "corpus_version": "2026-10-05.1",
+  "cases_total": 207,
   "by_truth": {
-    "discriminated": 106,
-    "not_discriminated": 63,
+    "discriminated": 107,
+    "not_discriminated": 66,
     "partially_discriminated": 34
   },
   "by_outcome": {
     "abstained": 58,
     "false_actionable": 66,
     "false_exposed": 6,
-    "ideal": 73
+    "ideal": 77
   },
   "by_observed_verdict": {
-    "credited": 17,
-    "gap": 128,
+    "credited": 18,
+    "gap": 131,
     "limited": 57,
     "silent": 1
   },
   "false_verdict_rate": {
     "numerator": 72,
-    "denominator": 203,
-    "rate": "0.3547"
+    "denominator": 207,
+    "rate": "0.3478"
   },
   "false_actionable_rate": {
     "numerator": 66,
-    "denominator": 106,
-    "rate": "0.6226"
+    "denominator": 107,
+    "rate": "0.6168"
   },
   "false_exposed_rate": {
     "numerator": 6,
-    "denominator": 97,
-    "rate": "0.0619"
+    "denominator": 100,
+    "rate": "0.0600"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 97,
+    "denominator": 100,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 73,
-    "denominator": 203,
-    "rate": "0.3596"
+    "numerator": 77,
+    "denominator": 207,
+    "rate": "0.3720"
   },
   "abstention_rate": {
     "numerator": 58,
-    "denominator": 203,
-    "rate": "0.2857"
+    "denominator": 207,
+    "rate": "0.2802"
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 278,
-    "rate": "0.0072"
+    "denominator": 282,
+    "rate": "0.0071"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "by_origin": {
     "authored": {
-      "cases_total": 169,
+      "cases_total": 173,
       "by_observed_verdict": {
-        "credited": 17,
-        "gap": 113,
+        "credited": 18,
+        "gap": 116,
         "limited": 38,
         "silent": 1
       },
       "false_verdict_rate": {
         "numerator": 62,
-        "denominator": 169,
-        "rate": "0.3669"
+        "denominator": 173,
+        "rate": "0.3584"
       },
       "false_actionable_rate": {
         "numerator": 56,
-        "denominator": 86,
-        "rate": "0.6512"
+        "denominator": 87,
+        "rate": "0.6437"
       },
       "false_exposed_rate": {
         "numerator": 6,
-        "denominator": 83,
-        "rate": "0.0723"
+        "denominator": 86,
+        "rate": "0.0698"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 83,
+        "denominator": 86,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 68,
-        "denominator": 169,
-        "rate": "0.4024"
+        "numerator": 72,
+        "denominator": 173,
+        "rate": "0.4162"
       },
       "abstention_rate": {
         "numerator": 39,
-        "denominator": 169,
-        "rate": "0.2308"
+        "denominator": 173,
+        "rate": "0.2254"
       }
     },
     "upstream": {
@@ -4013,6 +4013,82 @@
       "anchor": "src/lib.rs:20",
       "behavior_family": "closure_in_iterator_adaptor",
       "test_shape": "smoke_call_no_assert",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "namesakes-render-qualified-other-module",
+      "subject_id": "authored-namesakes",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "qualified_call_to_same_named_function_in_other_module",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "namesakes-delay-sibling-file-test",
+      "subject_id": "authored-namesakes",
+      "origin": "authored",
+      "anchor": "src/heaters.rs:9",
+      "behavior_family": "match_arm",
+      "test_shape": "same_named_function_tested_in_sibling_file",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "namesakes-snap-use-imported-owner",
+      "subject_id": "authored-namesakes",
+      "origin": "authored",
+      "anchor": "src/lib.rs:18",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "use_import_selects_one_of_same_named_functions",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "namesakes-round-use-imported-rival",
+      "subject_id": "authored-namesakes",
+      "origin": "authored",
+      "anchor": "src/lib.rs:30",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "use_import_selects_the_other_same_named_function",
       "hard_case": false,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",

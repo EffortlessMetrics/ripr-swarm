@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/same_name_sibling_file_test/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f4b867164d9e3b4142adb6b8694da70ae247dda5b4416a09c36beac3eee2a9ff","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_heaters.rs:match_arm:fad9d7d9",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_heaters.rs:match_arm:fad9d7d9",
+        "family": "match_arm",
+        "delta": "control",
+        "file": "fixtures/same_name_sibling_file_test/input/src/heaters.rs",
+        "line": 9,
+        "expression": "Mode::Warm =>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach delay: cold_delay"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Mode::Warm =>"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach delay: cold_delay", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Mode::Warm =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Mode::Warm => (line 9)", "related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50);", "source assertion argument value 50 at line 20", "source enum variant value Mode::Cold at line 20"],
+      "flow_sinks": [
+        {"kind":"match_arm","text":"Mode::Warm =>","line":9}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Mode::Warm =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach delay: cold_delay"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "20": "assert_eq!(delay(Mode::Cold), 50);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 20,
+            "value": "50",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 20,
+            "value": "Mode::Cold",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 20,
+          "value": "50",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 20,
+          "value": "Mode::Cold",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "cold_delay",
+          "file": "src/heaters.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(delay(Mode::Cold), 50);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

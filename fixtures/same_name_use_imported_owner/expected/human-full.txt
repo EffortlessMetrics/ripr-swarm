@@ -1,0 +1,77 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/same_name_use_imported_owner/input
+
+Summary: 2 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
+
+INFO fixtures/same_name_use_imported_owner/input/src/lib.rs:3
+  id: probe:src_lib.rs:return_value:7408a668
+
+Changed
+  before: (v + 5) / 10 * 10
+  after:  (5 + v) / 10 * 10
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::celsius::snap
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach snap: snap_seventeen_to_twenty
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: (5 + v) / 10 * 10
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: (5 + v) / 10 * 10 (line 3)
+  - related test src/lib.rs:18 snap_seventeen_to_twenty uses strong exact value oracle: assert_eq!(snap(17), 20);
+  - source assertion argument value 20 at line 19
+  - source function argument value v = 17 at line 19
+Drill in:
+  ripr explain --root fixtures/same_name_use_imported_owner/input --diff fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:return_value:7408a668
+  ripr context --root fixtures/same_name_use_imported_owner/input --diff fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:return_value:7408a668
+
+NOTE fixtures/same_name_use_imported_owner/input/src/lib.rs:3
+  id: probe:src_lib.rs:static_unknown:82fe085a
+
+Changed
+  before: (v + 5) / 10 * 10
+  expr:   (v + 5) / 10 * 10
+  source:  base_deleted — base-side evidence, not a candidate edit target
+
+Probe
+  family: static_unknown
+  delta:  unknown
+  owner:  src/lib.rs::celsius::snap
+
+Static exposure
+  static_unknown (note, confidence 0.50)
+
+Evidence
+  - reach yes: Related tests appear to reach snap: snap_seventeen_to_twenty
+  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator unknown: Assertions exist, but oracle strength is unknown
+  - local flow reaches unknown sink: unknown sink (line 3)
+  - related test src/lib.rs:18 snap_seventeen_to_twenty uses unknown exact value oracle: assert_eq!(snap(17), 20);
+  - source assertion argument value 20 at line 19
+  - source function argument value v = 17 at line 19
+
+Weakness
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; use deep mode or real mutation
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+
+Next step
+  Escalate to real mutation testing or deep static analysis for this probe.
+Drill in:
+  ripr explain --root fixtures/same_name_use_imported_owner/input --diff fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:static_unknown:82fe085a
+  ripr context --root fixtures/same_name_use_imported_owner/input --diff fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:82fe085a

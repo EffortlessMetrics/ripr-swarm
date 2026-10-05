@@ -128,6 +128,32 @@ rules above:
 Everything else about relation reporting — the reason/confidence tags,
 ordering, and the shared rendering surfaces — is unchanged.
 
+### Same-package call identity (#6292, #6537, #6544)
+
+The rules above separate same-named functions in different crates. Inside
+one package, a module-level `fn` can share its name with other module-level
+`fn`s in other modules (`a::render` and `b::render`, or `heaters::delay` and
+`coolers::delay`). A call is then told apart by the path it spells. Diff-mode
+related tests, repo-mode test grip and the owner-return pin (RIPR-SPEC-0197)
+share one rule in `analysis/classify/call_identity.rs`:
+
+- a qualified call (`b::render(..)`, `crate::a::render(..)`,
+  `super::a::render(..)`, `my_crate::a::render(..)`) names the definitions
+  whose module path the qualifier spells;
+- a bare call is bound by the innermost scope that binds the name: a `use`
+  in the test body, then each enclosing module's own `use` items and item
+  definitions, following `use super::*` outward and reading other globs;
+- a test whose every call of the name settles on another definition is not
+  related to the owner through any signal (direct call, file, module or
+  name affinity), so it supplies neither reach nor confirming tokens;
+- a call settles on the owner only when its path matches the owner and
+  nothing else. A renamed import, a re-export path, an unparseable file or
+  a definition ripr could not place stays unsettled. An unsettled call keeps
+  the earlier behavior and never adds credit.
+
+This is bounded syntax, not name resolution. `#[path]` remaps and
+macro-generated items are residuals that read unsettled.
+
 ## Non-Goals
 
 No transitive reach: a dependency-of-a-dependency never admits. No
