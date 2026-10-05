@@ -2163,6 +2163,31 @@ pub(crate) fn finish_repair_attempt(
     finish_repair_attempt_from(root, None, attempt_id, packet_path, movement)
 }
 
+/// After-phase currentness for an evaluation window bracketed by
+/// `before` (#5930): the window is current only when HEAD did not move
+/// during evaluation (identity comparison, so an A-B-A swap still shows)
+/// and the bracketing head is admitted against the manifest head. It
+/// returns the verdict with the head to record. `finish_repair_attempt_from`
+/// is the only caller; the signature keeps the decision testable without
+/// injecting movement mid-evaluation.
+fn after_phase_window_is_current(
+    root: &Path,
+    before: &crate::agent::artifact::HeadIdentity,
+    manifest_head: &str,
+    movement: HeadMovement,
+) -> Result<(bool, String), String> {
+    let current_head = before.head.clone();
+    let current = *before == crate::agent::artifact::current_git_head_identity(root)?
+        && (current_head == manifest_head
+            || (movement == HeadMovement::AdmitDescendantCommits
+                && crate::agent::artifact::git_merge_base_is_ancestor(
+                    root,
+                    manifest_head,
+                    &current_head,
+                )?));
+    Ok((current, current_head))
+}
+
 pub(crate) fn finish_repair_attempt_from(
     root: &Path,
     store: Option<&Path>,
@@ -2221,17 +2246,14 @@ pub(crate) fn finish_repair_attempt_from(
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
-    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    // Head identity (not just HEAD) brackets the evaluation: an A-B-A
+    // swap inside the window is undetectable by commit comparison alone,
+    // so the reflog fingerprint makes `current` robust to it (#5930).
+    let before = crate::agent::artifact::current_git_head_identity(&root)?;
     let (delta, mut verdict) =
         evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
-    let current = current_head == crate::agent::artifact::current_git_head(&root)?
-        && (current_head == manifest.repository_head
-            || (movement == HeadMovement::AdmitDescendantCommits
-                && crate::agent::artifact::git_merge_base_is_ancestor(
-                    &root,
-                    &manifest.repository_head,
-                    &current_head,
-                )?));
+    let (current, current_head) =
+        after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -5164,6 +5186,62 @@ mod tests {
             AfterPhaseHeadAdmission::RefusedDiverged { current_head }
                 if current_head == rewritten => {}
             other => return Err(format!("rewritten history must refuse: {other:?}")),
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// The after-phase window decision observes the production currentness
+    /// predicate `finish_repair_attempt_from` calls, not just helper
+    /// equality (#5930, #6827 review): a `before` identity that predates an
+    /// A-B-A swap decides `current=false` even though the commit comparison
+    /// alone would pass. Movement cannot be injected mid-evaluation
+    /// deterministically, so the test brackets the decision with a stale
+    /// `before`, which is exactly what the call site passes after a
+    /// mid-window swap.
+    #[test]
+    fn after_phase_window_reports_an_a_b_a_swap_as_not_current() -> Result<(), String> {
+        let root = test_repo_root("window-aba")?;
+        let head = crate::agent::artifact::current_git_head(&root)?;
+        let before = crate::agent::artifact::current_git_head_identity(&root)?;
+        let (current, recorded) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if !current {
+            return Err("a quiet window at the manifest head must be current".to_string());
+        }
+        if recorded != head {
+            return Err(format!(
+                "the window must record the bracketing head, got {recorded}"
+            ));
+        }
+        // A -> B -> A between the bracketing reads.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let (moved, _) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if moved {
+            return Err("an A-B-A swap inside the window must not be current".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
