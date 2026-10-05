@@ -626,8 +626,8 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         assert_found_change(&ran, &format!("git config {key}={value}"))?;
     }
     // #5325, live half: an orderfile that exists must also leave the
-    // result alone. (This single-file diff cannot observe reordering; the
-    // row locks the no-abort contract for ambient orderfiles.)
+    // result alone on the standard single-file fixture; the reorder half
+    // below covers multi-file patch reordering.
     let order_path = scratch.path.join("orderfile");
     fs::write(&order_path, "tests/t.rs\nsrc/lib.rs\n")
         .map_err(|e| format!("write orderfile failed: {e}"))?;
@@ -645,7 +645,66 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ],
     )?;
     assert_found_change(&ran, "git config diff.orderFile=<live>")?;
+    // #5325, reorder half: with two changed files and a live orderfile,
+    // ripr's output must be byte-identical with and without the ambient
+    // setting. Setup asserts git really reorders the stimulus diff, so the
+    // comparison cannot pass vacuously.
+    let root2 = scratch.path.join("r2");
+    repo(&root2, |r| {
+        change_lib(r)?;
+        fs::write(
+            r.join("tests/t.rs"),
+            "use hx::total;\n#[test]\nfn t() { assert_eq!(total(1), 2); }\n",
+        )
+        .map_err(|e| format!("write failed: {e}"))
+    })?;
+    let order_env = [
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+        ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+    ];
+    let diff_args = ["diff", "--name-only", "main", "--"];
+    let default_order = git_stdout(&root2, &diff_args, &[])?;
+    let reordered = git_stdout(&root2, &diff_args, &order_env)?;
+    if default_order == reordered {
+        return Err(format!(
+            "orderfile did not reorder the stimulus diff:\n{default_order}"
+        ));
+    }
+    let plain_run = ripr(&root2, &["check"], &[])?;
+    assert_sane(&plain_run, "two-file baseline")?;
+    let ordered_run = ripr(&root2, &["check"], &order_env)?;
+    assert_sane(&ordered_run, "two-file live orderfile")?;
+    if plain_run.code != ordered_run.code || plain_run.stdout != ordered_run.stdout {
+        return Err(format!(
+            "live orderfile changed the result: {:?} vs {:?}\n--- baseline ---\n{}\n--- ordered ---\n{}",
+            plain_run.code, ordered_run.code, plain_run.stdout, ordered_run.stdout
+        ));
+    }
     Ok(())
+}
+
+fn git_stdout(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String, String> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("spawn git failed: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[test]
