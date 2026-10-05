@@ -964,7 +964,7 @@ fn run_pipeline_for_diff_text(
         let (recovery, detail) = if has_only_non_text_changes(diff_text) {
             (
                 "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
-                "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+                NON_TEXT_ONLY_DETAIL,
             )
         } else {
             (
@@ -1769,6 +1769,10 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
+/// Limitation detail for a well-formed diff with only binary or file-mode
+/// changes; `ripr check --diff` keys its stderr hedge on it.
+pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
 /// analyzes. Any other section (a bare or truncated header, a lone mode line,
@@ -1807,8 +1811,10 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
     sections > 0 && all_ok
 }
 
-/// `Binary files a/x and b/x differ`, where each side is a `a/`, `b/` path or
-/// `/dev/null` (added or deleted file). Anything else is not a sentinel.
+/// `Binary files <old> and <new> differ` with a non-empty path on each side.
+/// Paths may be quoted, carry a custom prefix (`--no-prefix`, mnemonic
+/// prefixes) or contain ` and `, so any split point that leaves both sides
+/// non-empty qualifies; `Binary files nonsense differ` has none.
 fn is_binary_sentinel(line: &str) -> bool {
     let Some(rest) = line
         .strip_prefix("Binary files ")
@@ -1816,9 +1822,8 @@ fn is_binary_sentinel(line: &str) -> bool {
     else {
         return false;
     };
-    let side = |path: &str| path == "/dev/null" || path.starts_with("a/") || path.starts_with("b/");
-    rest.split_once(" and ")
-        .is_some_and(|(old, new)| side(old) && side(new))
+    rest.match_indices(" and ")
+        .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -2941,6 +2946,21 @@ mod tests {
             "diff --git a/x b/x\nold mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-a\n+b\n"
         ));
         assert!(!has_only_non_text_changes("Binary files a and b differ\n"));
+        // Real git output the strict a/ b/ check would have rejected.
+        for sentinel in [
+            "Binary files \"a/caf\\303\\251.bin\" and \"b/caf\\303\\251.bin\" differ",
+            "Binary files a/x and y.bin and b/x and y.bin differ",
+            "Binary files x and y differ",
+            "Binary files i/x.bin and w/x.bin differ",
+        ] {
+            assert!(
+                has_only_non_text_changes(&format!("diff --git a/x b/x\n{sentinel}\n")),
+                "{sentinel}"
+            );
+        }
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+        ));
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"
