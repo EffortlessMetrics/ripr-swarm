@@ -932,19 +932,7 @@ fn run_pipeline_for_diff_text(
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
     {
-        if has_only_non_text_changes(diff_text) {
-            eprintln!(
-                "ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. \
-                 This empty result reflects an empty analysis scope, not sufficient tests. \
-                 Run ripr on a diff that includes the source changes."
-            );
-        } else {
-            eprintln!(
-                "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
-                 If this is unexpected, verify the --diff path points to a valid unified diff. \
-                 The empty result may not reflect sufficient tests — it reflects an empty analysis scope."
-            );
-        }
+        eprintln!("{}", zero_file_diff_disclosure(diff_text));
     }
 
     // Disclose a truncated diff stream (#4375): at least one file section
@@ -1781,22 +1769,56 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// True when the diff has git file headers and binary or file-mode markers
-/// but no `@@` hunk at all: a valid diff that carries nothing ripr analyzes.
+/// True when every git file section is a complete binary or mode-change
+/// section and no `@@` hunk exists: a valid diff that carries nothing ripr
+/// analyzes. Any other section (a bare or truncated header, a lone mode line,
+/// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
-    let mut has_header = false;
-    let mut has_marker = false;
+    let mut sections = 0usize;
+    let mut binary = false;
+    let (mut old_mode, mut new_mode) = (false, false);
+    let mut all_ok = true;
+    let mut in_section = false;
     for line in diff_text.lines() {
         if line.starts_with("@@") {
             return false;
         }
-        has_header |= line.starts_with("diff --git ");
-        has_marker |= line.starts_with("Binary files ")
-            || line.starts_with("GIT binary patch")
-            || line.starts_with("old mode ")
-            || line.starts_with("new mode ");
+        if line.starts_with("diff --git ") {
+            if in_section {
+                all_ok &= binary || (old_mode && new_mode);
+            }
+            in_section = true;
+            sections += 1;
+            binary = false;
+            old_mode = false;
+            new_mode = false;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        binary |= (line.starts_with("Binary files ") && line.ends_with(" differ"))
+            || line == "GIT binary patch";
+        old_mode |= line.starts_with("old mode ");
+        new_mode |= line.starts_with("new mode ");
     }
-    has_header && has_marker
+    if in_section {
+        all_ok &= binary || (old_mode && new_mode);
+    }
+    sections > 0 && all_ok
+}
+
+/// Stderr note for a non-empty diff that parsed to zero changed files.
+fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
+    if has_only_non_text_changes(diff_text) {
+        "ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. \
+         This empty result reflects an empty analysis scope, not sufficient tests. \
+         Run ripr on a diff that includes the source changes."
+    } else {
+        "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
+         If this is unexpected, verify the --diff path points to a valid unified diff. \
+         The empty result may not reflect sufficient tests \u{2014} it reflects an empty analysis scope."
+    }
 }
 
 #[cfg(test)]
@@ -2906,6 +2928,28 @@ mod tests {
             "diff --git a/x b/x\nold mode 100644\nnew mode 100755\n@@ -1 +1 @@\n-a\n+b\n"
         ));
         assert!(!has_only_non_text_changes("Binary files a and b differ\n"));
+        // Incomplete or mixed sections keep the generic wording.
+        assert!(!has_only_non_text_changes(
+            "diff --git a/x b/x\nold mode 100644\n"
+        ));
+        assert!(!has_only_non_text_changes(
+            "diff --git a/x b/x\nBinary files nonsense\n"
+        ));
+        assert!(!has_only_non_text_changes(
+            "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\ndiff --git a/y b/y\nold mode 100644\nnew mode 100755\n"
+        ));
+    }
+
+    #[test]
+    fn zero_file_disclosure_names_non_text_diffs_and_keeps_generic_wording() {
+        let binary = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
+        assert!(zero_file_diff_disclosure(binary).contains("no text hunks to analyze"));
+        let garbage = zero_file_diff_disclosure("not a diff\n");
+        assert!(garbage.contains("valid unified diff"));
+        assert!(!garbage.contains("no text hunks"));
     }
 
     #[test]
