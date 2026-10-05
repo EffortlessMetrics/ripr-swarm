@@ -1,7 +1,7 @@
-use crate::agent::loop_commands::needs_terminal_escape;
 use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
+pub(crate) use crate::terminal_text::terminal_safe;
 use std::collections::BTreeSet;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
@@ -483,29 +483,6 @@ fn escape_terminal_display(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch.is_control() {
-            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-/// Make a finished human report safe to print to a terminal. Repository text
-/// (assertion source, test names, observed values) reaches the report verbatim,
-/// so a hostile repository could otherwise carry ESC/CSI/OSC sequences (clear
-/// the screen, retitle the window), BEL, a bare CR that overwrites a line, or a
-/// bidi override that reorders what the reader sees. Every control character
-/// except `\n` and `\t`, and the bidi/invisible formatting characters, renders
-/// as `\u{XX}`. Machine formats (JSON, SARIF) keep the raw value, escaped by
-/// their own encoders.
-pub(crate) fn terminal_safe(text: String) -> String {
-    if !text.chars().any(needs_terminal_escape) {
-        return text;
-    }
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if needs_terminal_escape(ch) {
             out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
         } else {
             out.push(ch);

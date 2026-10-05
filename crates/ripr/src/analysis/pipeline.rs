@@ -22,7 +22,7 @@ use crate::analysis_outcome::{
 use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::Finding;
-use crate::output::human::terminal_safe;
+use crate::terminal_text::terminal_safe;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
