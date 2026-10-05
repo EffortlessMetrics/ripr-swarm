@@ -120,15 +120,21 @@ otherwise indexes nothing for it:
 
 - the definition is the only `macro_rules!` of that name in the file, sits
   directly in the file or an inline module, and precedes the invocation, which
-  sits at item position in the same scope or a nested one;
+  sits at item position in the same scope or a nested one; neither the
+  definition nor the invocation carries an attribute or sits under a cfg'd
+  module or file;
 - every arm up to the selected one has a matcher of comma-separated
   `$name:fragment` metavariables only; the selected arm is the first whose
   metavariable count matches the invocation's top-level arguments, and an
   `ident`, `literal`, `block` or `tt` argument must have that shape;
-- the selected transcriber contains `#[test]` and no repetition.
+- the selected transcriber contains `#[test]`, no repetition and no call to
+  another macro defined in the file, and no argument invokes one.
 
-Each metavariable is replaced by its argument's source text; an `expr`
-argument of more than one element is wrapped in parentheses. The expansion is
+Each metavariable is replaced by its argument's source text and `$crate` by
+`crate`; an `expr` or `literal` argument of more than one element (`-1`) is
+wrapped in parentheses. Substitution is textual and ignores hygiene, so a
+block or expression argument can name a binding the transcriber declares;
+such a test reads as its unhygienic text does. The expansion is
 parsed by the ordinary file-fact producer, and each `#[test]` function becomes
 a test of the invoking file with every line pinned to the invocation.
 Assertion admission (RIPR-SPEC-0197 owner pins and equality admission) runs
@@ -136,9 +142,11 @@ over the expansion text with the same rules as a hand-written test, so a
 deferred or escaping assertion inside the transcriber is refused exactly as it
 would be written by hand.
 
-This is not macro expansion in general. Repetition, `$crate`-relative helper
-macros defined in another file, `#[macro_use]` imports and procedural macros
-stay unindexed, and reach through them keeps the limitations above.
+This is not macro expansion in general. Generators defined in another file,
+`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
+reach through them keeps the limitations above. A generated test whose
+transcriber calls a helper macro from another file is indexed for reach, but
+an assertion inside that helper is refused like any untrusted macro.
 
 ## Wire Format
 
