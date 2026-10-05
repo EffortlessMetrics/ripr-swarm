@@ -260,7 +260,9 @@ identity_unnameable    budget_overflow
 Before the first successful refresh the evidence tools fail with
 `no_snapshot` and the repair-attempt / receipt reads fail with
 `attempt_not_found`; `superseded` is reachable for a session transaction
-bound to a snapshot that is no longer current; `attempt_invalid` reports a
+bound to a snapshot that is no longer current, while superseded tombstones
+older than the 64-entry session bound read `attempt_not_found` instead
+(oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
 `identity_unnameable`, and `budget_overflow` are reachable on the repair-card
 read (an item no seam owner-discriminated binds, an unnameable portable
@@ -303,13 +305,17 @@ what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
 official Rust SDK owns negotiation, dispatch, correlation and cancellation.
 Syntax-invalid JSON is ignored; well-formed messages with invalid typed
 shapes receive Invalid Request and the transport can read the next frame.
-Unknown request IDs are omitted in SDK error responses; readable IDs remain
-correlated. Messages are capped at 256 KiB and responses, including their
-delimiter, at 128 KiB; the bound is enforced on the final serialized
-envelope — the document is measured again after the tool or resource wrapper
-adds its text and structured-content representations — so an over-bound
-response fails closed with `result_too_large` before the wire cap is
-reached. If even a
+Unknown request IDs are omitted in SDK-dispatched error responses, while
+transport-level protocol errors (well-formed messages with invalid typed
+shapes) carry an explicit null id per JSON-RPC; readable IDs remain
+correlated. Messages are capped at 256 KiB and response envelopes at
+128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
+wire frame is at most 128 KiB+1 (pinned by
+`exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
+enforced on the final serialized envelope — the document is measured again
+after the tool or resource wrapper adds its text and structured-content
+representations — so an over-bound response fails closed with
+`result_too_large` before the wire cap is reached. If even a
 correlated fallback cannot fit its readable ID, the service terminates with
 the bounded stderr reason `MCP output limit`, without substituting an ID.
 Partial reads and writes retain their state across cancellation. EOF closes

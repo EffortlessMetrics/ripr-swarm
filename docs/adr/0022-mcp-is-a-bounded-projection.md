@@ -149,7 +149,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Fragmented message | Retained FrameReader and split public initialize controls |
 | Oversize discard/recovery | Retained bounded FrameReader cap/recovery control |
 | Over-cap response keeps known ID | Typed bounded writer fallback control |
-| Unreadable ID becomes null | SDK typed unknown-ID omission control; no arbitrary Value ID in production |
+| Unreadable ID becomes null | Transport null-id Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3); SDK omission retained for dispatched errors, no arbitrary Value ID in production |
 
 All three original public stdio controls remain: legacy status/tool-resource
 equality, rejection arms, and discovery metadata/ping/unavailable recovery.
@@ -217,7 +217,9 @@ transport. The server remains a bounded adapter over shared RIPR authority:
   no receipt, and never upgrades a transaction it did not verify.
 - The wire vocabulary gains `attempt_not_found` and `attempt_invalid`; the
   reserved `superseded` code is reachable for session transactions bound to
-  a non-current snapshot.
+  a non-current snapshot, while superseded tombstones older than the
+  64-entry session bound read `attempt_not_found` instead (oldest-first
+  eviction, #5254 item 7).
 - Authority declarations are unchanged: source-edit, verification
   execution, mutation execution, and model provider remain none; the
   adapter edits nothing, launches nothing, and executes nothing a returned
