@@ -3,7 +3,8 @@
   `Display`, comparison, `Hash`, `Clone`, `Default`, `FromStr`, serde or
   `Arbitrary` impl just because a test builds the type. The trait's own
   syntax (`{:?}`, `to_string`, `<`, `HashMap`, a serde format crate, a fuzz
-  harness) must appear in a test, or in test-reached code that names the
+  harness, a snapshot macro) must appear in a test, a test file's imports,
+  a generic function a test reaches, or test-reached code that names the
   type. A format string in an assertion message does not count, since it runs
   only on failure. On semver, 31 seams in `Debug` and serde impls return to
   `ungripped`, and on bytesize 2 in an `Arbitrary` impl; cargo-mutants missed

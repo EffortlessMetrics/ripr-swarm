@@ -71,11 +71,12 @@ pub(in crate::analysis::test_grip_evidence) struct TypeMentionIndex {
     /// Owner id to the trait method it may run from.
     dispatch_reached: BTreeMap<String, DispatchRoot>,
     /// First use of each gated trait's call syntax. The key's type is
-    /// `None` for a test or a test-file helper, whose use may run the trait
-    /// for any type it builds. Test-reached production code counts only for
-    /// a type the same body names: a `Display` impl writing a `char` with
-    /// `{:?}` runs `char`'s `Debug`, not every type's. A gated trait with no
-    /// matching entry never dispatches.
+    /// `None` for a test, a test-file helper or a generic function
+    /// (`fn render<T: Display>`), whose use may run the trait for any type.
+    /// Other test-reached production code counts only for a type the same
+    /// body names: a `Display` impl writing a `char` with `{:?}` runs
+    /// `char`'s `Debug`, not every type's. A gated trait with no matching
+    /// entry never dispatches.
     trait_uses: BTreeMap<(GatedTrait, Option<String>), TraitUse>,
 }
 
@@ -95,9 +96,19 @@ impl TypeMentionIndex {
         tests.sort_by(|a, b| {
             (&a.file, a.start_line, &a.name).cmp(&(&b.file, b.start_line, &b.name))
         });
+        let mut test_files: BTreeSet<&std::path::Path> = BTreeSet::new();
         for test in tests {
             index.add_test_mentions(test);
             index.add_trait_uses(&test.body, &test.name, &test.file, test.start_line, true);
+            test_files.insert(test.file.as_path());
+        }
+        // A test file's imports (`use serde_json::to_string;`) say what its
+        // bare calls run.
+        for file in test_files {
+            if let Some(facts) = context.index.files().get(file) {
+                let imports = use_items(&facts.data().source);
+                index.add_trait_uses(&imports, "use", file, 1, true);
+            }
         }
         let reach = &context.transitive_reach;
         let mut reached: BTreeSet<&str> = BTreeSet::new();
@@ -117,8 +128,19 @@ impl TypeMentionIndex {
             .filter(|function| is_trait_impl_method(function))
             .collect();
         sort_functions(&mut trait_methods);
+        // Gated callees a root reached before their trait's syntax was seen;
+        // retried each round, since later roots may add that syntax.
+        let mut deferred: Vec<(&FunctionSummary, DispatchRoot)> = Vec::new();
         for _ in 0..MAX_TRANSITIVE_DEPTH {
             let mut grew = false;
+            for (callee, root) in std::mem::take(&mut deferred) {
+                if !index.may_dispatch(&callee.id.0) {
+                    deferred.push((callee, root));
+                } else if reached.insert(callee.id.0.as_str()) {
+                    index.add_dispatch_reached(callee, root);
+                    grew = true;
+                }
+            }
             for &method in &trait_methods {
                 if reached.contains(method.id.0.as_str()) {
                     continue;
@@ -139,7 +161,7 @@ impl TypeMentionIndex {
                 reached.insert(method.id.0.as_str());
                 index.add_function_mentions(method, true);
                 index.add_function_trait_uses(method);
-                let calls = calls_after_definition(&method.name, &method.calls);
+                let calls = calls_after_definition(&method.name, method.start_line, &method.calls);
                 let mut callees = reach.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH);
                 sort_functions(&mut callees);
                 for callee in callees {
@@ -147,14 +169,13 @@ impl TypeMentionIndex {
                     // trait's method still needs its syntax (`Display::fmt`
                     // calling `.fmt(f)` must not reach an unused `Debug::fmt`).
                     if is_trait_impl_method(callee) && !index.may_dispatch(&callee.id.0) {
+                        if !reached.contains(callee.id.0.as_str()) {
+                            deferred.push((callee, root.clone()));
+                        }
                         continue;
                     }
                     if reached.insert(callee.id.0.as_str()) {
-                        index
-                            .dispatch_reached
-                            .insert(callee.id.0.clone(), root.clone());
-                        index.add_function_mentions(callee, true);
-                        index.add_function_trait_uses(callee);
+                        index.add_dispatch_reached(callee, root.clone());
                     }
                 }
                 grew = true;
@@ -164,6 +185,12 @@ impl TypeMentionIndex {
             }
         }
         index
+    }
+
+    fn add_dispatch_reached(&mut self, callee: &FunctionSummary, root: DispatchRoot) {
+        self.dispatch_reached.insert(callee.id.0.clone(), root);
+        self.add_function_mentions(callee, true);
+        self.add_function_trait_uses(callee);
     }
 
     fn add_function_mentions(&mut self, function: &FunctionSummary, via_dispatch: bool) {
@@ -205,7 +232,7 @@ impl TypeMentionIndex {
             &function.name,
             &function.file,
             function.start_line,
-            is_test_file(&function.file),
+            is_test_file(&function.file) || is_generic_signature(&function.body),
         );
     }
 
@@ -492,10 +519,10 @@ impl GatedTrait {
     /// Identifiers (outside comments and strings) whose use runs the trait.
     fn identifiers(self) -> &'static [&'static str] {
         match self {
-            Self::Display => &["to_string"],
+            Self::Display => &["to_string", "assert_display_snapshot", "assert_snapshot"],
             // `assert_eq!` and `unwrap` format `Debug` only when they fail,
             // so a passing test never runs `Debug::fmt` through them.
-            Self::Debug => &["dbg"],
+            Self::Debug => &["dbg", "assert_debug_snapshot", "assert_debug_eq"],
             Self::PartialEq => &[
                 "assert_eq",
                 "assert_ne",
@@ -505,6 +532,7 @@ impl GatedTrait {
                 "ne",
                 "contains",
                 "dedup",
+                "dedup_by_key",
                 "position",
             ],
             Self::Ord => &[
@@ -519,6 +547,10 @@ impl GatedTrait {
                 "clamp",
                 "sort",
                 "sort_unstable",
+                "sort_by_key",
+                "sort_unstable_by_key",
+                "max_by_key",
+                "min_by_key",
                 "binary_search",
                 "is_sorted",
                 "BTreeMap",
@@ -535,8 +567,22 @@ impl GatedTrait {
                 "IndexMap",
                 "IndexSet",
             ],
-            Self::Clone => &["clone", "cloned", "clone_from", "to_owned", "to_vec"],
-            Self::Default => &["default", "unwrap_or_default", "or_default", "Default"],
+            Self::Clone => &[
+                "clone",
+                "cloned",
+                "clone_from",
+                "to_owned",
+                "to_vec",
+                "resize",
+                "extend_from_slice",
+            ],
+            Self::Default => &[
+                "default",
+                "unwrap_or_default",
+                "or_default",
+                "Default",
+                "take",
+            ],
             Self::FromStr => &["parse", "from_str", "FromStr"],
             // A format crate or serde itself; a crate whose tests never
             // serialize (serde behind a feature, say) never runs its impls.
@@ -553,6 +599,15 @@ impl GatedTrait {
                 "ciborium",
                 "Serializer",
                 "Deserializer",
+                "assert_tokens",
+                "assert_ser_tokens",
+                "assert_de_tokens",
+                "assert_json_snapshot",
+                "assert_yaml_snapshot",
+                "assert_ron_snapshot",
+                "assert_toml_snapshot",
+                "assert_csv_snapshot",
+                "assert_compact_json_snapshot",
             ],
             Self::Arbitrary => &[
                 "arbitrary",
@@ -566,13 +621,15 @@ impl GatedTrait {
         }
     }
 
-    /// Operators (outside comments and strings) whose use runs the trait.
-    /// `<` and `>` count only with a space on each side, so generics and
-    /// `->` do not.
+    /// Operators and macro syntax (outside comments and strings) whose use
+    /// runs the trait. `<` and `>` count only with a space on each side, so
+    /// generics and `->` do not. Any `vec![` counts for `Clone`, since
+    /// `vec![x; n]` clones `x`.
     fn operators(self) -> &'static [&'static str] {
         match self {
             Self::PartialEq => &["==", "!="],
             Self::Ord => &[" < ", " > ", "<=", ">="],
+            Self::Clone => &["vec!["],
             _ => &[],
         }
     }
@@ -658,8 +715,8 @@ fn format_placeholders(body: &str) -> (bool, bool) {
     (display, debug)
 }
 
-/// Each `"..."` literal's start offset and contents, skipping `//` comments
-/// and char literals.
+/// Each `"..."` literal's start offset and contents, skipping `//` and
+/// `/* */` comments and char literals.
 fn string_literals(body: &str) -> Vec<(usize, &str)> {
     let bytes = body.as_bytes();
     let mut out = Vec::new();
@@ -671,10 +728,42 @@ fn string_literals(body: &str) -> Vec<(usize, &str)> {
                     i += 1;
                 }
             }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    i += 1;
+                }
+                i += 2;
+            }
             // A char literal such as '"' must not open a string.
             b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 3,
             b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => {
                 i += 4;
+            }
+            // A raw string (`r"…"`, `r#"…"#`, `br"…"`) has no escapes and
+            // ends at a quote followed by as many `#` as it opened with.
+            b'r' if raw_string_open(bytes, i).is_some() => {
+                let Some((hashes, quote)) = raw_string_open(bytes, i) else {
+                    i += 1;
+                    continue;
+                };
+                let start = quote;
+                let mut end = quote + 1;
+                while end < bytes.len()
+                    && !(bytes[end] == b'"'
+                        && bytes[end + 1..]
+                            .iter()
+                            .take(hashes)
+                            .filter(|b| **b == b'#')
+                            .count()
+                            == hashes)
+                {
+                    end += 1;
+                }
+                if let Some(literal) = body.get(start + 1..end.min(bytes.len())) {
+                    out.push((start, literal));
+                }
+                i = end + 1 + hashes;
             }
             b'"' => {
                 let start = i;
@@ -692,6 +781,21 @@ fn string_literals(body: &str) -> Vec<(usize, &str)> {
         }
     }
     out
+}
+
+/// The `#` count and opening-quote offset of a raw string starting at the
+/// `r` at `at`, if one does: `r` must not end an identifier (`br` may).
+fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    if at > 0 && is_ident(bytes[at - 1]) {
+        let byte_prefix = bytes[at - 1] == b'b' && (at < 2 || !is_ident(bytes[at - 2]));
+        if !byte_prefix {
+            return None;
+        }
+    }
+    let hashes = bytes[at + 1..].iter().take_while(|b| **b == b'#').count();
+    let quote = at + 1 + hashes;
+    (bytes.get(quote) == Some(&b'"')).then_some((hashes, quote))
 }
 
 /// Whether the call that encloses the end of `before` formats its message
@@ -731,6 +835,43 @@ fn is_failure_message(before: &str) -> bool {
         }
     }
     false
+}
+
+/// The `use` items of a file, one per line.
+fn use_items(source: &str) -> String {
+    source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether a function's signature takes a type parameter or an `impl` /
+/// `dyn` argument, so a trait it uses may run for whatever type a caller
+/// passes. Lifetime-only generics (`fn f<'a>`) do not count.
+fn is_generic_signature(body: &str) -> bool {
+    let signature = body.split('{').next().unwrap_or(body);
+    let Some(after_fn) = signature.split_once("fn ").map(|(_, rest)| rest) else {
+        return false;
+    };
+    let name_end = after_fn
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(after_fn.len());
+    let rest = &after_fn[name_end..];
+    if let Some(params) = rest.strip_prefix('<') {
+        let params = params.split('>').next().unwrap_or(params);
+        if params
+            .split(',')
+            .map(str::trim)
+            .any(|param| !param.is_empty() && !param.starts_with('\''))
+        {
+            return true;
+        }
+    }
+    let arguments = rest.split_once('(').map_or("", |(_, args)| args);
+    let words = words(arguments);
+    words.contains("impl") || words.contains("dyn")
 }
 
 /// The trait of a trait-impl owner id: `Display` from
@@ -912,6 +1053,48 @@ mod tests {
             format_placeholders("let q = '\"'; let s = \"{{x}}\";"),
             (false, false)
         );
+    }
+
+    #[test]
+    fn raw_strings_are_read_whole() {
+        // The inner quote does not end `r#"…"#`, so the later `{:?}` is
+        // still read as its own literal.
+        assert_eq!(
+            format_placeholders("let a = r#\"say \"x\" {}\"#; let b = format!(\"{:?}\", a);"),
+            (true, true)
+        );
+        assert_eq!(
+            format_placeholders("let p = r\"C:\\\"; let s = format!(\"{:?}\", p);"),
+            (false, true)
+        );
+        assert_eq!(format_placeholders("let b = br\"{x}\";"), (true, false));
+    }
+
+    #[test]
+    fn block_comments_hold_no_format_strings() {
+        assert_eq!(
+            format_placeholders("let a = 1; /* \"{:?}\" */ let b = 2;"),
+            (false, false)
+        );
+        assert_eq!(
+            format_placeholders("/* x */ let s = format!(\"{}\", a);"),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn generic_signatures_take_type_parameters_or_impl_arguments() {
+        assert!(is_generic_signature(
+            "fn render<T: Display>(t: &T) -> String { t.to_string() }"
+        ));
+        assert!(is_generic_signature("pub fn show(t: &impl Debug) { }"));
+        assert!(is_generic_signature("fn show(t: &dyn Debug) { }"));
+        assert!(!is_generic_signature(
+            "fn fmt<'a>(&self, f: &mut Formatter<'a>) -> Result { }"
+        ));
+        assert!(!is_generic_signature(
+            "fn fmt(&self, f: &mut Formatter<'_>) -> Result { }"
+        ));
     }
 
     #[test]

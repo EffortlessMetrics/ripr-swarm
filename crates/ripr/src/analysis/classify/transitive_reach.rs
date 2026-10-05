@@ -1041,11 +1041,11 @@ fn is_ascii_ident_byte(byte: u8) -> bool {
 }
 
 fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
-    calls_after_definition(&f.name, &f.calls)
+    calls_after_definition(&f.name, f.start_line, &f.calls)
 }
 
 fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
-    calls_after_definition(&test.name, &test.calls)
+    calls_after_definition(&test.name, test.start_line, &test.calls)
 }
 
 /// `calls` without the function's own declaration (`fn build(&self)`), which
@@ -1055,15 +1055,54 @@ fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
 /// and a trait method's walk reaches every method sharing its name, so
 /// `Display::fmt` reached each `Debug::fmt` (#5577). A real call to a
 /// same-named function on another type (`self.queue.build()`) still counts.
+///
+/// Call facts keep one fact per name and line, so on a one-line function
+/// (`fn parse() { assert!(parse("1").is_ok()) }`) the fact stands for both
+/// the declaration and the call; it is dropped only when every `name(` on
+/// the declaration line is a declaration.
 pub(in crate::analysis) fn calls_after_definition<'c>(
     name: &'c str,
+    start_line: usize,
     calls: &'c [CallFact],
 ) -> impl Iterator<Item = &'c CallFact> + 'c {
     calls.iter().filter(move |call| {
-        !(call.name == name
-            && contains_identifier(&call.text, "fn")
-            && call.text.contains(&format!("fn {name}")))
+        !(call.line == start_line && call.name == name && only_declares(&call.text, name))
     })
+}
+
+/// Whether every call-shaped `name(` in `line` follows `fn`.
+fn only_declares(line: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let bytes = line.as_bytes();
+    let mut declarations = 0usize;
+    let mut calls = 0usize;
+    for (start, _) in line.match_indices(name) {
+        let end = start + name.len();
+        if (start > 0 && is_ident(bytes[start - 1])) || bytes.get(end).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let after = line[end..].trim_start();
+        if !(after.starts_with('(') || after.starts_with('<') || after.starts_with("::<")) {
+            continue;
+        }
+        if line[..start].trim_end().ends_with("fn")
+            && line[..start]
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|before| {
+                    before
+                        .chars()
+                        .last()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+                })
+        {
+            declarations += 1;
+        } else {
+            calls += 1;
+        }
+    }
+    declarations > 0 && calls == 0
 }
 
 /// Returns true when the callee name looks like a macro invocation - i.e. it
@@ -1109,6 +1148,48 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      stops at a macro invocation it does not expand. \
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    fn call(line: usize, name: &str, text: &str) -> CallFact {
+        CallFact {
+            line,
+            name: name.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_not_a_call_but_a_one_line_self_call_is() {
+        let calls = [
+            call(1, "parse", "fn parse() -> u32 {"),
+            call(2, "parse", "parse(1)"),
+        ];
+        let kept: Vec<_> = calls_after_definition("parse", 1, &calls)
+            .map(|c| c.line)
+            .collect();
+        assert_eq!(kept, vec![2]);
+        let one_line = [call(
+            1,
+            "parse",
+            "#[test] fn parse() { assert!(parse(\"1\").is_ok()); }",
+        )];
+        assert_eq!(calls_after_definition("parse", 1, &one_line).count(), 1);
+        let delegating = [call(
+            1,
+            "build",
+            "fn build(&self) -> X { self.inner.build() }",
+        )];
+        assert_eq!(calls_after_definition("build", 1, &delegating).count(), 1);
+        // `fn build_all(` is not `fn build(`, and a same-named call on a
+        // later line stays.
+        let other = [call(1, "build", "fn build_all() { build() }")];
+        assert_eq!(calls_after_definition("build", 1, &other).count(), 1);
+        assert_eq!(calls_after_definition("build", 3, &other).count(), 1);
+    }
+}
 
 #[cfg(test)]
 mod tests {

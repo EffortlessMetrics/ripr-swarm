@@ -17213,3 +17213,98 @@ mod tests {
     }
     Ok(())
 }
+
+#[test]
+fn display_impl_run_through_a_generic_helper_is_opaque() -> Result<(), String> {
+    // #6662 review: `render<T: Display>` names no `Amount`, but runs its
+    // `Display` for whatever type the test passes.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } }\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub fn render<T: std::fmt::Display>(value: &T) -> String { value.to_string() }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::{Amount, render};\n\
+             #[test] fn renders() { let value = Amount::new(150); assert_eq!(render(&value), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("`render` (src/lib.rs:9) uses `to_string`"),
+        "{}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_snapshot_macro_formats_is_opaque() -> Result<(), String> {
+    let (reach, class) = debug_impl_case("insta::assert_debug_snapshot!(Amount::new(150));")?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn serde_impl_a_test_file_imports_a_format_crate_for_is_opaque() -> Result<(), String> {
+    // The test body says only `to_string`; the file's `use` says serde.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } }\n\
+             impl serde::Serialize for Amount {\n\
+                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { s.serialize_str(\"large\") } else { s.serialize_str(\"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             use serde_json::to_string;\n\
+             #[test] fn encodes() { assert_eq!(to_string(&Amount::new(150)).ok(), Some(\"\\\"large\\\"\".into())); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn serde_impl_no_test_serializes_stays_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } pub fn get(&self) -> u32 { self.0 } }\n\
+             impl serde::Serialize for Amount {\n\
+                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { s.serialize_str(\"large\") } else { s.serialize_str(\"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn reads() { assert_eq!(Amount::new(150).get(), 150); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
