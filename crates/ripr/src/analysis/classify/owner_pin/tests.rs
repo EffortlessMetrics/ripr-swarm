@@ -577,10 +577,7 @@ fn a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not() {
             "fn f(x: u8) -> u8 {\n    apply(x, move |v| v | 1)\n}",
             "apply(x, move |v| v | 1)",
         ),
-        (
-            "fn f(x: u8) -> u8 {\n    run(x, || 1)\n}",
-            "run(x, || 1)",
-        ),
+        ("fn f(x: u8) -> u8 {\n    run(x, || 1)\n}", "run(x, || 1)"),
     ] {
         assert!(gate(body, changed).is_none(), "{body}");
     }
@@ -1033,4 +1030,110 @@ fn a_trait_receiver_pins_only_through_its_one_constructor() {
         BTreeSet::from(["Meter".to_string()])
     );
     assert!(trait_impl_self_type_names(other_meter, "Gauge").is_empty());
+}
+
+const WINDOW_LIB: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
+
+const WINDOW_TESTS: &str = "use demo::Window;\n\n#[test]\nfn a_clone_equals_its_original() {\n    let window = Window::new(3, 9);\n    let other = Window::new(3, 9);\n    assert_eq!(window.clone(), window);\n    assert_eq!(window, window.clone());\n    assert_ne!(window.clone(), Window::new(0, 0));\n    assert_eq!(window.clone(), other);\n    assert_eq!(window.clone(), Window::new(3, 9));\n}\n";
+
+/// A `field_construction` probe on `start: self.start,` in `Window::clone`.
+fn clone_field_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = {
+        let owner = owner(&index, "clone");
+        let line = lib
+            .lines()
+            .position(|line| line.trim() == "start: self.start,")
+            .map_or(0, |offset| offset + 1);
+        assert!(
+            line > owner.start_line,
+            "fixture: the field line must parse"
+        );
+        let mut probe = return_probe(owner, "start: self.start,");
+        probe.family = ProbeFamily::FieldConstruction;
+        probe.location = SourceLocation::new(owner.file.clone(), line, 1);
+        OwnerReturnPin::establish(&probe, owner, &index)
+    };
+    (index, pin)
+}
+
+/// #6692: `assert_eq!(recv.clone(), recv)` through a derived `PartialEq`
+/// compares every field of a hand-written clone with the original, so it
+/// pins a changed field of the returned literal. `assert_ne!` and a
+/// comparison with any other value do not.
+#[test]
+fn a_clone_compared_with_its_own_receiver_pins_its_fields() {
+    let (index, pin) = clone_field_pin(WINDOW_LIB, WINDOW_TESTS);
+    assert!(pin.is_some(), "the clone field pin must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(window.clone(), window);".to_string(),
+            "assert_eq!(window, window.clone());".to_string(),
+        ]
+    );
+}
+
+/// #6692 negative controls: no derived `PartialEq` (a hand-written one may
+/// ignore fields), a derive behind `cfg_attr`, a workspace `trait Clone`,
+/// another exit, or a field outside the returned literal leaves the pin
+/// unestablished.
+#[test]
+fn a_clone_field_pin_needs_derived_equality_and_the_returned_literal() {
+    let manual_eq = WINDOW_LIB.replace("PartialEq, Eq", "Eq")
+        + "impl PartialEq for Window {\n    fn eq(&self, other: &Self) -> bool { self.end == other.end }\n}\n";
+    let gated_derive = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[cfg_attr(test, derive(Debug, PartialEq, Eq))]",
+    );
+    let local_trait = WINDOW_LIB.to_string() + "pub trait Clone {}\n";
+    let early_exit = WINDOW_LIB.replace(
+        "        Window {\n            start",
+        "        if self.end == 0 {\n            return Window::new(0, 0);\n        }\n        Window {\n            start",
+    );
+    let bound_first = WINDOW_LIB.replace(
+        "        Window {\n            start: self.start,\n            end: self.end,\n        }\n",
+        "        let copy = Window {\n            start: self.start,\n            end: self.end,\n        };\n        Window::new(copy.end, copy.start)\n",
+    );
+    for lib in [
+        manual_eq,
+        gated_derive,
+        local_trait,
+        early_exit,
+        bound_first,
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+}
+
+/// #6692 (RIPR-SPEC-0225 rule 4): the changed field's own type must
+/// compare by value. A workspace field type with derived equality all the
+/// way down credits; one with a hand-written `PartialEq` (which may ignore
+/// the value), an attribute on the field, or an unknown type does not.
+#[test]
+fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
+    let with_start_type = |ty: &str, extra: &str| {
+        WINDOW_LIB.replace("    start: u32,\n", &format!("    start: {ty},\n")) + extra
+    };
+    let derived_point = "#[derive(Debug, PartialEq, Eq, Clone, Copy)]\npub struct Point {\n    x: u32,\n    tag: Option<Vec<String>>,\n}\n";
+    let manual_point = "#[derive(Debug, Eq, Clone, Copy)]\npub struct Point {\n    x: u32,\n}\nimpl PartialEq for Point {\n    fn eq(&self, _: &Self) -> bool { true }\n}\n";
+    for (lib, credits) in [
+        (with_start_type("Point", derived_point), true),
+        (with_start_type("Option<(u8, [u16; 2])>", ""), true),
+        (with_start_type("Point", manual_point), false),
+        (with_start_type("Unknown", ""), false),
+        (with_start_type("Vec<Unknown>", ""), false),
+        (
+            WINDOW_LIB.replace(
+                "    start: u32,\n",
+                "    #[derivative(PartialEq = \"ignore\")]\n    start: u32,\n",
+            ),
+            false,
+        ),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
 }

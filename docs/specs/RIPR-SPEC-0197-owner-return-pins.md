@@ -20,6 +20,7 @@ Linked issues:
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
+- #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
 
 Linked PRs:
 
@@ -193,6 +194,30 @@ rule only for an assertion whose context was admitted.
    import, a same-named function in the test's own package when the owner
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
+6. Clone field pins (#6692). A `field_construction` probe on field `f` of
+   a hand-written `impl Clone for T` is confirmed by
+   `assert_eq!(recv.clone(), recv)` (either operand order). The owner is
+   `clone` with a `self` receiver in an `impl Clone for T` block, and the
+   changed line lies in a `T { .. }` or `Self { .. }` literal that is the
+   body's whole tail and only exit: no `?`, no `return`, no macro outside
+   the non-returning set, and no part evaluated only on some inputs (rule
+   3's tail gate). `T` is declared once in the workspace with
+   `PartialEq` in a plain `#[derive(..)]` list (not behind `cfg_attr`),
+   carries no other attribute that may change equality, and has no
+   hand-written `impl PartialEq for T` in the workspace. `f` carries no
+   attribute, and its type compares by value as RIPR-SPEC-0225 rule 4
+   defines (a standard value type, a reference, tuple, array or standard
+   container of such types, or a workspace type that meets these equality
+   rules recursively). No workspace `trait Clone` may exist, the test's file
+   may not import a foreign `Clone`, and no other `fn clone` with a
+   receiver may compete. The test side reuses rules 1, 2 and 4 with one
+   change: the non-owner operand must be exactly the clone call's receiver.
+   `assert_ne!`, a comparison with any other value
+   (`assert_eq!(w.clone(), Window::new(3, 9))`) and a hand-written
+   `PartialEq` give no credit. A confirmed clone pin clears the
+   `FieldValue` missing discriminator for that probe, so the finding may
+   read `exposed`; no other family or oracle gains credit (the
+   #6579 whole-object effect-observer gap is unchanged).
 
 ## Required Evidence
 
@@ -483,6 +508,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
   `shared_return_admission_uses_the_outer_invocation_identity`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
+- Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
+  and `bitwise_pipe_reading_distinguishes_operand_position`.
+- Clone field pins (#6692): `a_clone_compared_with_its_own_receiver_pins_its_fields`,
+  `a_clone_field_pin_needs_derived_equality_and_the_returned_literal` and
+  `a_clone_field_pin_needs_a_field_type_that_compares_by_value` in the same
+  test module; the public-API controls in
+  `crates/ripr/tests/clone_field_whole_equality.rs`.
 - CFG authority (`analysis/facts/cfg_predicates/tests.rs`):
   `test_build_availability_preserves_unknown_and_boolean_identity` and
   `test_build_availability_refuses_raw_attribute_heads` distinguish

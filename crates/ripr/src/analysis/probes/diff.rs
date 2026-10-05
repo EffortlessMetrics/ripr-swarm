@@ -1897,8 +1897,10 @@ mod tests {
             &RustIndex::default(),
         );
         assert!(
-            changed_operator.iter().any(|probe| probe.expression == removed
-                && probe.family == ProbeFamily::StaticUnknown),
+            changed_operator
+                .iter()
+                .any(|probe| probe.expression == removed
+                    && probe.family == ProbeFamily::StaticUnknown),
             "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
         );
     }

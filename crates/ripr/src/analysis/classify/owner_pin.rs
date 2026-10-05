@@ -45,6 +45,7 @@ use crate::analysis::extract::{
     test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
+use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
     macro_binding_scan, owner_pin_assertions, trusted_macro_binding_ambiguities,
@@ -301,6 +302,12 @@ enum ReturnPathGate {
     Any,
     /// The pinned value must start with this constructor.
     Head(&'static str),
+    /// #6692: a field of a hand-written `Clone::clone`'s returned struct
+    /// literal. The pinned value must be the clone's own receiver
+    /// (`assert_eq!(w.clone(), w)`), compared through a derived
+    /// `PartialEq`, so every field of the clone is compared with the
+    /// original's.
+    CloneReceiver,
 }
 
 impl OwnerReturnPin {
@@ -312,6 +319,9 @@ impl OwnerReturnPin {
         owner: &FunctionSummary,
         index: &RustIndex,
     ) -> Option<Self> {
+        if matches!(probe.family, ProbeFamily::FieldConstruction) {
+            return Self::establish_clone_field(probe, owner, index);
+        }
         if !matches!(probe.family, ProbeFamily::ReturnValue) || !owner.item.has_body {
             return None;
         }
@@ -369,6 +379,64 @@ impl OwnerReturnPin {
         })
     }
 
+    /// #6692: the owner-side gates for a `field_construction` probe in a
+    /// hand-written `impl Clone for T`. Established only when the changed
+    /// line is a field of the struct literal that is `clone`'s only exit,
+    /// `T` is declared once in the workspace with `#[derive(PartialEq)]`
+    /// and has no hand-written `PartialEq` impl, no workspace trait is
+    /// named `Clone`, and no other `fn clone` with a receiver competes.
+    /// The test-side gate then requires `assert_eq!(recv.clone(), recv)`.
+    fn establish_clone_field(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<Self> {
+        if owner.name != "clone" || !owner.item.has_body || !owner.item.has_self_param {
+            return None;
+        }
+        let FunctionContainer::TraitImpl {
+            trait_path,
+            self_ty,
+        } = &owner.item.container
+        else {
+            return None;
+        };
+        if path_base_name(trait_path) != Some("Clone") {
+            return None;
+        }
+        let parser_backed = index
+            .files()
+            .get(&owner.file)
+            .is_some_and(|facts| !facts.used_lexical_fallback);
+        if !parser_backed {
+            return None;
+        }
+        let receiver = declared_receiver(self_ty, index)?;
+        let ReceiverType::Named(type_name) = &receiver else {
+            return None;
+        };
+        let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+        let field = initialized_field_name(&probe.expression)?;
+        if !clone_tail_literal_spans(&owner.body, type_name, changed_line)
+            || !field_compares_with_derived_equality(type_name, field, index)
+            || workspace_declares_trait(index, "Clone")
+            || other_definition_competes(owner, index, true)
+        {
+            return None;
+        }
+        Some(Self {
+            name: owner.name.clone(),
+            call: PinCall::Method {
+                receivers: vec![receiver],
+                // `Clone` is in the prelude; a workspace `trait Clone` is
+                // refused above and a foreign import in `admits`.
+                trait_scope: None,
+            },
+            path: ReturnPathGate::CloneReceiver,
+            trait_scope_by_file: RefCell::default(),
+        })
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     pub(in crate::analysis) fn admits(
@@ -411,8 +479,20 @@ impl OwnerReturnPin {
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name) {
             return false;
         }
-        if !self.path.admits(expected) {
-            return false;
+        match (&self.path, call) {
+            // #6692: the clone must be compared with its own receiver, and
+            // the test's file must not import some other `Clone`.
+            (ReturnPathGate::CloneReceiver, CallShape::Method(receiver)) => {
+                if expected.trim() != receiver || imports_foreign(&test.file, "Clone") {
+                    return false;
+                }
+            }
+            (ReturnPathGate::CloneReceiver, CallShape::Bare) => return false,
+            (path, _) => {
+                if !path.admits(expected) {
+                    return false;
+                }
+            }
         }
         let test_source = index
             .files()
@@ -485,6 +565,7 @@ impl ReturnPathGate {
         match self {
             Self::Any => true,
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::CloneReceiver => false,
         }
     }
 }
@@ -767,6 +848,235 @@ fn evaluates_conditionally(masked_tail: &str) -> bool {
                         .trim_start()
                         .starts_with(['(', ':'])
             })
+    })
+}
+
+/// #6692: whether the changed line (`changed_line`, offset from the body's
+/// first line) lies in a struct literal of `type_name` (or `Self`) that is
+/// the whole tail of `body`, and that literal is the body's only exit: no
+/// `?`, no `return`, no macro that may hide an exit, and no part evaluated
+/// only on some inputs.
+fn clone_tail_literal_spans(body: &str, type_name: &str, changed_line: usize) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let Some(open) = body_block_open(&masked) else {
+        return false;
+    };
+    let Some(close) = matching_close(&masked, open, b'{', b'}') else {
+        return false;
+    };
+    let inner = &masked[open + 1..close];
+    if has_unbounded_macro(inner)
+        || inner.contains('?')
+        || !whole_word_offsets(inner, "return").is_empty()
+    {
+        return false;
+    }
+    let (after_semicolon, _) = top_level_tail_starts(inner);
+    let tail = &inner[after_semicolon..];
+    let tail_start = after_semicolon + (tail.len() - tail.trim_start().len());
+    let tail = tail.trim();
+    let Some(after_type) = tail
+        .strip_prefix(type_name)
+        .or_else(|| tail.strip_prefix("Self"))
+    else {
+        return false;
+    };
+    let after_type = after_type.trim_start();
+    if !after_type.starts_with('{') {
+        return false;
+    }
+    let literal_open = tail.len() - after_type.len();
+    let Some(literal_close) = matching_close(tail, literal_open, b'{', b'}') else {
+        return false;
+    };
+    if literal_close + 1 != tail.len() || evaluates_conditionally(tail) {
+        return false;
+    }
+    let line_of = |offset: usize| masked[..open + 1 + offset].matches('\n').count();
+    let first = line_of(tail_start + literal_open);
+    let last = line_of(tail_start + literal_close);
+    (first..=last).contains(&changed_line)
+}
+
+/// The field a struct-literal initializer names: `start: self.start,` and
+/// the shorthand `start,` both name `start`.
+fn initialized_field_name(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches(',').trim();
+    let name = match trimmed.find(':') {
+        Some(colon) if trimmed[colon..].starts_with("::") => return None,
+        Some(colon) => trimmed[..colon].trim(),
+        None => trimmed,
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    (is_plain_identifier(name) && !name.starts_with(|ch: char| ch.is_ascii_digit())).then_some(name)
+}
+
+/// How deep [`type_compares_by_value`] follows workspace field types.
+const EQUALITY_DEPTH_LIMIT: usize = 4;
+
+/// #6692 (RIPR-SPEC-0225 rules 3-4): whether `==` on `type_name` compares
+/// its field `field` by value through the derived comparison. `type_name`
+/// must have derived equality ([`derived_equality`]); `field` must carry no
+/// attribute and its type must compare by value. Anything ripr cannot read
+/// fails closed.
+fn field_compares_with_derived_equality(type_name: &str, field: &str, index: &RustIndex) -> bool {
+    derived_equality(type_name, index).is_some_and(|facts| {
+        let mut named = facts
+            .fields
+            .iter()
+            .filter(|candidate| candidate.name.as_deref() == Some(field));
+        match (named.next(), named.next()) {
+            (Some(found), None) => {
+                !found.has_attributes && type_compares_by_value(&found.ty, index, 0)
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The equality facts of `type_name` when its `==` is the derived one: it
+/// is declared in exactly one parser-backed indexed file, as the one type
+/// of that name there, with `PartialEq` in its `#[derive(..)]` list, no
+/// other attribute that may change equality, and no indexed file holds an
+/// `impl .. PartialEq .. for <type_name>` (gated or not).
+fn derived_equality(type_name: &str, index: &RustIndex) -> Option<LocalTypeEquality> {
+    let mut declaring = index.files().values().filter(|facts| {
+        facts.source.contains(type_name)
+            && declares_type(&mask_comments_and_strings(&facts.source), type_name)
+    });
+    let declaring_file = declaring.next()?;
+    if declaring.next().is_some() || declaring_file.used_lexical_fallback {
+        return None;
+    }
+    let facts = local_type_equality(&declaring_file.source, type_name)?;
+    if !facts.derives.iter().any(|name| name == "PartialEq") || facts.other_attributes {
+        return None;
+    }
+    let manual = index.files().values().any(|file| {
+        trait_impl_self_types(&file.source, "PartialEq")
+            .iter()
+            .any(|self_ty| path_base_name(strip_type_arguments(self_ty)) == Some(type_name))
+    });
+    (!manual).then_some(facts)
+}
+
+/// Standard types whose `==` compares by value.
+const STD_VALUE_TYPES: &[&str] = &[
+    "bool", "char", "str", "String", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16",
+    "i32", "i64", "i128", "isize", "f32", "f64",
+];
+
+/// Standard containers whose `==` compares their type arguments by value.
+const STD_VALUE_CONTAINERS: &[&str] = &[
+    "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "BTreeMap", "BTreeSet", "HashMap",
+    "HashSet",
+];
+
+/// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
+/// standard value type, a reference, tuple, array or standard container of
+/// such types, or a workspace type with derived equality whose own fields
+/// do too, recursively. A workspace type of a standard name shadows it.
+fn type_compares_by_value(ty: &str, index: &RustIndex, depth: usize) -> bool {
+    if depth > EQUALITY_DEPTH_LIMIT {
+        return false;
+    }
+    let ty = ty.trim();
+    if let Some(referent) = ty.strip_prefix('&') {
+        let referent = referent.trim_start();
+        let referent = if referent.starts_with('\'') {
+            referent
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, rest)| rest)
+        } else {
+            referent
+        };
+        let referent = referent.strip_prefix("mut ").unwrap_or(referent);
+        return type_compares_by_value(referent, index, depth + 1);
+    }
+    if let Some(inner) = ty.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+        return top_level_arguments(inner)
+            .into_iter()
+            .all(|element| type_compares_by_value(element, index, depth + 1));
+    }
+    if let Some(inner) = ty.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        let element = inner.split(';').next().unwrap_or(inner);
+        return type_compares_by_value(element, index, depth + 1);
+    }
+    let (path, arguments) = match ty.split_once('<') {
+        Some((path, rest)) => match rest.strip_suffix('>') {
+            Some(arguments) => (path.trim(), Some(arguments)),
+            None => return false,
+        },
+        None => (ty, None),
+    };
+    let Some(base) = path_base_name(path) else {
+        return false;
+    };
+    if type_declared_in_workspace(base, index) {
+        return arguments.is_none()
+            && derived_equality(base, index).is_some_and(|facts| {
+                facts.fields.iter().all(|field| {
+                    !field.has_attributes && type_compares_by_value(&field.ty, index, depth + 1)
+                })
+            });
+    }
+    match arguments {
+        None => STD_VALUE_TYPES.contains(&base),
+        Some(arguments) => {
+            STD_VALUE_CONTAINERS.contains(&base)
+                && top_level_arguments(arguments)
+                    .into_iter()
+                    .all(|argument| type_compares_by_value(argument, index, depth + 1))
+        }
+    }
+}
+
+/// The comma-separated items of `text` at bracket depth zero.
+fn top_level_arguments(text: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (offset, byte) in text.bytes().enumerate() {
+        match byte {
+            b'<' | b'(' | b'[' => depth += 1,
+            b'>' | b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                items.push(text[start..offset].trim());
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = text[start..].trim();
+    if !last.is_empty() {
+        items.push(last);
+    }
+    items
+}
+
+/// `Window<T>` -> `Window`.
+fn strip_type_arguments(self_ty: &str) -> &str {
+    self_ty.split('<').next().unwrap_or(self_ty).trim()
+}
+
+/// Whether masked `text` declares a struct, enum or union named `name`.
+fn declares_type(text: &str, name: &str) -> bool {
+    ["struct", "enum", "union"].iter().any(|keyword| {
+        whole_word_offsets(text, keyword)
+            .into_iter()
+            .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
+    })
+}
+
+/// Whether any indexed file declares a trait named `name`.
+fn workspace_declares_trait(index: &RustIndex, name: &str) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains(name) && {
+            let masked = mask_comments_and_strings(&facts.source);
+            whole_word_offsets(&masked, "trait")
+                .into_iter()
+                .any(|offset| starts_with_word(masked[offset + "trait".len()..].trim_start(), name))
+        }
     })
 }
 

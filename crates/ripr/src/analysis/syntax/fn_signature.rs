@@ -94,6 +94,140 @@ pub(crate) fn owner_signature_at(source: &str, byte_offset: usize) -> Option<Own
 /// with that name, so callers cannot mistake an unknown type for one without
 /// the trait.
 pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>> {
+    let mut traits = local_type_derives(source, name)?;
+    traits.extend(local_impl_traits(source, name)?);
+    Some(traits)
+}
+
+/// One field of a local type, as written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LocalTypeField {
+    /// The field name; `None` for a tuple field.
+    pub(crate) name: Option<String>,
+    /// The field's type text.
+    pub(crate) ty: String,
+    /// Whether the field carries any attribute (one may change equality,
+    /// such as a `derivative` or `educe` ignore).
+    pub(crate) has_attributes: bool,
+}
+
+/// The parser facts that decide whether `==` on a local type is the
+/// derived field-by-field comparison (#6692, RIPR-SPEC-0225 rules 3-4).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LocalTypeEquality {
+    /// Traits in the type's `#[derive(..)]` lists.
+    pub(crate) derives: Vec<String>,
+    /// Whether the type carries an attribute other than `derive`, `doc`,
+    /// a lint level, `repr` or `non_exhaustive` (one may change equality).
+    pub(crate) other_attributes: bool,
+    /// Every field of the type, across all variants of an enum.
+    pub(crate) fields: Vec<LocalTypeField>,
+}
+
+/// Equality facts of the one non-test struct, enum or union named `name`
+/// in `source`. `None` when the file does not parse or does not define
+/// exactly one such type.
+pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeEquality> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let in_test_module = |node: &ra_ap_syntax::SyntaxNode| {
+        node.ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module_attributes_require_test(&module))
+    };
+    let mut definitions = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|adt| adt.name().is_some_and(|ident| ident.text() == name))
+        .filter(|adt| !in_test_module(adt.syntax()));
+    let adt = definitions.next()?;
+    if definitions.next().is_some() {
+        return None;
+    }
+    let derives = local_type_derives(source, name)?;
+    let other_attributes = ast::HasAttrs::attrs(&adt).any(|attr| {
+        let text = attr.syntax().text().to_string();
+        let head = text
+            .trim()
+            .trim_start_matches("#[")
+            .trim_start()
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .next()
+            .unwrap_or("")
+            .to_string();
+        !matches!(
+            head.as_str(),
+            "derive"
+                | "doc"
+                | "allow"
+                | "expect"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "repr"
+                | "non_exhaustive"
+                | "must_use"
+        )
+    });
+    let mut fields = Vec::new();
+    let mut push_list = |list: Option<ast::FieldList>| match list {
+        Some(ast::FieldList::RecordFieldList(list)) => {
+            for field in list.fields() {
+                fields.push(LocalTypeField {
+                    name: field.name().map(|name| name.text().to_string()),
+                    ty: field
+                        .ty()
+                        .map(|ty| ty.syntax().text().to_string())
+                        .unwrap_or_default(),
+                    has_attributes: ast::HasAttrs::attrs(&field).next().is_some(),
+                });
+            }
+        }
+        Some(ast::FieldList::TupleFieldList(list)) => {
+            for field in list.fields() {
+                fields.push(LocalTypeField {
+                    name: None,
+                    ty: field
+                        .ty()
+                        .map(|ty| ty.syntax().text().to_string())
+                        .unwrap_or_default(),
+                    has_attributes: ast::HasAttrs::attrs(&field).next().is_some(),
+                });
+            }
+        }
+        None => {}
+    };
+    match &adt {
+        ast::Adt::Struct(item) => push_list(item.field_list()),
+        ast::Adt::Union(item) => {
+            push_list(
+                item.record_field_list()
+                    .map(ast::FieldList::RecordFieldList),
+            );
+        }
+        ast::Adt::Enum(item) => {
+            for variant in item
+                .variant_list()
+                .into_iter()
+                .flat_map(|list| list.variants())
+            {
+                push_list(variant.field_list());
+            }
+        }
+    }
+    Some(LocalTypeEquality {
+        derives,
+        other_attributes,
+        fields,
+    })
+}
+
+/// The traits in the `#[derive(..)]` lists of the one non-test struct, enum
+/// or union named `name` in `source` (last path segment only). `None` when
+/// the file does not parse or does not define exactly one such type. A
+/// derive behind `cfg_attr` is not read, so it never counts.
+pub(crate) fn local_type_derives(source: &str, name: &str) -> Option<Vec<String>> {
     let parse = parse_clean_source_file(source)?;
     let tree = parse.tree();
     // A test-only definition does not stand in for the production type.
@@ -138,6 +272,22 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
                 .filter(|name| !name.is_empty()),
         );
     }
+    Some(traits)
+}
+
+/// Traits `source` implements for `name` in ungated `impl Trait for Name`
+/// blocks (last path segment; a trait parameterized by another type keeps
+/// its argument). `None` when the file does not parse.
+fn local_impl_traits(source: &str, name: &str) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let last_segment = |path: &str| {
+        path.rsplit("::")
+            .next()
+            .map(|segment| segment.trim().to_string())
+            .unwrap_or_default()
+    };
+    let mut traits = Vec::new();
     for item in tree.syntax().descendants().filter_map(ast::Impl::cast) {
         // A `cfg`-gated impl (or one in a gated module) may be compiled
         // out, so its trait is not counted.

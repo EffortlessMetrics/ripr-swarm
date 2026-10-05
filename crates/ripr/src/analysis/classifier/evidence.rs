@@ -50,7 +50,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let mut activation = activation_evidence_with_value_facts(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -97,6 +97,21 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let package_defeats_by_file = FileDefeatMemo::default();
         let owner_locals = context
             .owner_fn
@@ -144,28 +159,32 @@ impl ClassifiedProbeEvidence {
                 })
             },
             &ReturnOracleAdmission {
-                owner_return_pin: &|test, assertion| {
-                    owner_return_pin.as_ref().is_some_and(|pin| {
-                        pin.admits(
-                            test,
-                            assertion,
-                            context.index,
-                            &|file, name| {
-                                context.index.files().get(file).is_some_and(|facts| {
-                                    context.test_file_imports_foreign_callee_name(
-                                        file,
-                                        &facts.source,
-                                        name,
-                                    )
-                                })
-                            },
-                            pin_syntax,
-                        )
-                    })
-                },
+                owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
             },
         );
+        // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
+        // a derived `PartialEq`) observes the constructed field, so the
+        // missing-field fact below no longer stands for this probe. Only the
+        // owner pin's own gates clear it; a token match never does.
+        if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && owner_return_pin.is_some()
+            && test_summaries.iter().any(|test| {
+                test.assertions.iter().any(|assertion| {
+                    matches!(
+                        assertion.kind,
+                        OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                    ) && assertion_admitted(test, assertion)
+                        && owner_pin_admits(test, assertion)
+                })
+            })
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::StructField)
+            });
+        }
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
