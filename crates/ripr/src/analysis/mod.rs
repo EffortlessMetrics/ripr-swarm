@@ -78,6 +78,8 @@ pub(crate) use seam_classification::ClassifiedSeam;
 pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
+#[cfg(test)]
+pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
