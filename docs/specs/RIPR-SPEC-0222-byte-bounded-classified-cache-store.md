@@ -41,7 +41,9 @@ proving a universal RSS threshold.
   files in its directory that a terminated run stranded, once per directory
   per process: regular files only, matching that exact name, untouched for
   ten minutes. A younger file may belong to a live writer; a writer stalled
-  longer than that fails its rename, which is a skipped cache write.
+  longer than that can lose its temporary file if a sweep reaches the
+  directory while it is stale, and its rename then fails and the cache
+  write is skipped.
 - Encoding writes through a bounded IO buffer into the existing atomic
   temporary-file protocol. The store path does not retain the complete
   encoded entry or shard as a `Vec<u8>`.
