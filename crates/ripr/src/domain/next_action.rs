@@ -491,7 +491,10 @@ impl CanonicalNextActionV1 {
     /// Mint one action, enforcing the selection law. Each refusal names the
     /// exact violated check so removing one check fails its focused negative
     /// (control 10).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one mint call carries the full selection-law check surface"
+    )]
     pub(crate) fn new(
         producer: NextActionProducer,
         subject: NextActionSubject,
@@ -1242,12 +1245,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert!(minted.is_ok());
-        assert!(
-            minted
-                .map_err(|error| format!("minted: {error}"))?
-                .is_executable()
-        );
+        let Ok(minted) = minted else {
+            return Err("run-command mint with a command must succeed".to_string());
+        };
+        assert!(minted.is_executable());
 
         let missing_command = CanonicalNextActionV1::new(
             NextActionProducer::RepairCard,
@@ -1260,7 +1261,9 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert!(missing_command.is_err());
+        let Err(_) = missing_command else {
+            return Err("run-command mint without a command must fail".to_string());
+        };
 
         let with_stop = CanonicalNextActionV1::new(
             NextActionProducer::RepairCard,
@@ -1275,7 +1278,9 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert!(with_stop.is_err());
+        let Err(_) = with_stop else {
+            return Err("run-command mint with a stop must fail".to_string());
+        };
         Ok(())
     }
 
@@ -1316,12 +1321,13 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             );
-            assert!(minted.is_ok(), "class {}", class.as_str());
-            assert!(
-                !minted
-                    .map_err(|error| format!("minted: {error}"))?
-                    .is_executable()
-            );
+            let Ok(minted) = minted else {
+                return Err(format!(
+                    "class {} mint with a stop must succeed",
+                    class.as_str()
+                ));
+            };
+            assert!(!minted.is_executable(), "class {}", class.as_str());
 
             let missing_stop = CanonicalNextActionV1::new(
                 NextActionProducer::RepairCard,
@@ -1334,7 +1340,12 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             );
-            assert!(missing_stop.is_err(), "class {}", class.as_str());
+            let Err(_) = missing_stop else {
+                return Err(format!(
+                    "class {} mint without a stop must fail",
+                    class.as_str()
+                ));
+            };
 
             let with_command = CanonicalNextActionV1::new(
                 NextActionProducer::RepairCard,
@@ -1349,13 +1360,18 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             );
-            assert!(with_command.is_err(), "class {}", class.as_str());
+            let Err(_) = with_command else {
+                return Err(format!(
+                    "class {} mint with a command must fail",
+                    class.as_str()
+                ));
+            };
         }
         Ok(())
     }
 
     #[test]
-    fn transition_required_exactly_when_class_moves_state() {
+    fn transition_required_exactly_when_class_moves_state() -> Result<(), String> {
         for class in [
             NextActionClass::RunCommand,
             NextActionClass::SatisfyPrerequisite,
@@ -1387,11 +1403,14 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        assert!(terminal.is_err());
+        let Err(_) = terminal else {
+            return Err("terminal mint with a transition must fail".to_string());
+        };
+        Ok(())
     }
 
     #[test]
-    fn alternatives_bounded_and_nonempty() {
+    fn alternatives_bounded_and_nonempty() -> Result<(), String> {
         let full: Vec<NextActionAlternative> = (0..MAX_NEXT_ACTION_ALTERNATIVES)
             .map(|index| NextActionAlternative {
                 label: format!("label-{index}"),
@@ -1411,7 +1430,9 @@ mod tests {
             full,
             Vec::new(),
         );
-        assert!(minted.is_ok());
+        let Ok(_) = minted else {
+            return Err("full-capacity alternatives mint must succeed".to_string());
+        };
 
         let mut overflowing: Vec<NextActionAlternative> = (0..=MAX_NEXT_ACTION_ALTERNATIVES)
             .map(|index| NextActionAlternative {
@@ -1436,7 +1457,9 @@ mod tests {
             overflowing,
             Vec::new(),
         );
-        assert!(refused.is_err());
+        let Err(_) = refused else {
+            return Err("overflowing alternatives mint must fail".to_string());
+        };
 
         let blank = CanonicalNextActionV1::new(
             NextActionProducer::RepairCard,
@@ -1454,7 +1477,10 @@ mod tests {
             }],
             Vec::new(),
         );
-        assert!(blank.is_err());
+        let Err(_) = blank else {
+            return Err("blank-label alternatives mint must fail".to_string());
+        };
+        Ok(())
     }
 
     #[test]
@@ -1589,7 +1615,9 @@ mod tests {
 
         let mut blank = base_input();
         blank.root = "   ".to_string();
-        assert!(select_canonical_next_action(&blank).is_err());
+        let Err(_) = select_canonical_next_action(&blank) else {
+            return Err("blank-root selection must fail".to_string());
+        };
         Ok(())
     }
 
@@ -2153,10 +2181,13 @@ mod tests {
     }
 
     #[test]
-    fn check_producer_must_bind_its_triage_case() {
+    fn check_producer_must_bind_its_triage_case() -> Result<(), String> {
         let mut input = base_input();
         input.producer = NextActionProducer::CheckTopResult;
-        assert!(select_canonical_next_action(&input).is_err());
+        let Err(_) = select_canonical_next_action(&input) else {
+            return Err("unbound check-case selection must fail".to_string());
+        };
+        Ok(())
     }
 
     #[test]
@@ -2207,7 +2238,9 @@ mod tests {
 
         let mut bare = base_input();
         bare.producer = NextActionProducer::Doctor;
-        assert!(select_canonical_next_action(&bare).is_err());
+        let Err(_) = select_canonical_next_action(&bare) else {
+            return Err("bare doctor selection must fail".to_string());
+        };
         Ok(())
     }
 
@@ -2315,25 +2348,34 @@ mod tests {
     }
 
     #[test]
-    fn producer_input_validation_fails_closed() {
+    fn producer_input_validation_fails_closed() -> Result<(), String> {
         let spec = test_spec();
         let mut both = base_input();
         both.item_candidates = vec!["item:a".to_string()];
-        assert!(select_canonical_next_action(&both).is_err());
+        let Err(_) = select_canonical_next_action(&both) else {
+            return Err("bound-plus-candidates selection must fail".to_string());
+        };
 
         let mut blank_state = base_input();
         blank_state.transition_from = String::new();
-        assert!(select_canonical_next_action(&blank_state).is_err());
+        let Err(_) = select_canonical_next_action(&blank_state) else {
+            return Err("blank-state selection must fail".to_string());
+        };
 
         let mut missing_effect = base_input();
         missing_effect.offered_command = Some(&spec);
         missing_effect.transition_to = None;
-        assert!(select_canonical_next_action(&missing_effect).is_err());
+        let Err(_) = select_canonical_next_action(&missing_effect) else {
+            return Err("command-without-effect selection must fail".to_string());
+        };
 
         let mut bound_nothing = base_input();
         bound_nothing.item_id = String::new();
         bound_nothing.card_item = None;
-        assert!(select_canonical_next_action(&bound_nothing).is_err());
+        let Err(_) = select_canonical_next_action(&bound_nothing) else {
+            return Err("unbound-item selection must fail".to_string());
+        };
+        Ok(())
     }
 
     #[test]
