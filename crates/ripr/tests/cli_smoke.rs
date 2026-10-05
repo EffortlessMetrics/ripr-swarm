@@ -20847,6 +20847,7 @@ fn plus_help_exits_cleanly() {
         "ripr-plus.last-good.json",
         "ripr-plus.last-good.md",
         "may be stale",
+        "keeps no last-good copy",
     ] {
         assert!(
             stdout.contains(kept),

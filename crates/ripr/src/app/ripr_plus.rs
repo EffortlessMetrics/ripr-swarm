@@ -25,8 +25,9 @@
 //! in `ripr check --format repo-exposure-summary-json`, not inside a
 //! receipt-composition subcommand.
 //!
-//! Output: `target/ripr/reports/ripr-plus.{json,md}`. A failed run that would
-//! replace a receipt whose status is not `indeterminate` first copies it to
+//! Output: `target/ripr/reports/ripr-plus.{json,md}`. A run whose named
+//! artifact cannot be read or composed, and that would replace a receipt whose
+//! status is not `indeterminate`, first copies it to
 //! `target/ripr/reports/ripr-plus.last-good.{json,md}`; that copy describes an
 //! earlier run and is never current evidence.
 
@@ -42,7 +43,8 @@ const RIPR_PLUS_JSON: &str = "target/ripr/reports/ripr-plus.json";
 const RIPR_PLUS_MD: &str = "target/ripr/reports/ripr-plus.md";
 const RIPR_PLUS_LAST_GOOD_JSON: &str = "target/ripr/reports/ripr-plus.last-good.json";
 const RIPR_PLUS_LAST_GOOD_MD: &str = "target/ripr/reports/ripr-plus.last-good.md";
-/// Shared by the error text and help so both carry the same authority limit.
+/// The authority limit the error text attaches to a kept copy; help repeats
+/// the same wording.
 const LAST_GOOD_IS_STALE: &str =
     "it describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
 /// The same limit as a standalone sentence, for messages that name no copy
@@ -258,12 +260,14 @@ cannot be read or composed, or --check cannot establish zero (an
 Outputs:
   target/ripr/reports/ripr-plus.json
   target/ripr/reports/ripr-plus.md
-  target/ripr/reports/ripr-plus.last-good.json  (only after a failed run)
-  target/ripr/reports/ripr-plus.last-good.md    (only after a failed run)
+  target/ripr/reports/ripr-plus.last-good.json  (only after a read or compose failure)
+  target/ripr/reports/ripr-plus.last-good.md    (only after a read or compose failure)
 
-A failed run still writes an `indeterminate` receipt to ripr-plus.json. If the
-receipt it replaces has a status other than `indeterminate`, that receipt and
-its Markdown, when present, are first copied to ripr-plus.last-good.{json,md}.
+When the named artifact cannot be read or composed, the run still writes an
+`indeterminate` receipt to ripr-plus.json. If the receipt it replaces has a
+status other than `indeterminate`, that receipt and its Markdown, when present,
+are first copied to ripr-plus.last-good.{json,md}. A --check failure on a
+composed receipt writes that receipt and keeps no last-good copy.
 The copy describes an earlier run, may be stale for the current HEAD, and is
 not current evidence.
 
@@ -1299,6 +1303,39 @@ mod tests {
         assert!(!kept.contains("Kept:"), "{kept}");
         assert!(!kept.contains("A kept copy"), "{kept}");
         assert!(kept.contains("is not current evidence"), "{kept}");
+        Ok(())
+    }
+
+    #[test]
+    fn surviving_markdown_copy_is_named_when_the_json_copy_fails() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-md-only-kept-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        fs::write(repo.join(RIPR_PLUS_JSON), r#"{"status":"pass"}"#)
+            .map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), "good receipt")
+            .map_err(|err| format!("seed md: {err}"))?;
+        // A directory where the saved JSON belongs makes only that copy fail.
+        fs::create_dir_all(repo.join(RIPR_PLUS_LAST_GOOD_JSON))
+            .map_err(|err| format!("block saved json: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let md = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("only partly kept"), "{kept}");
+        assert!(
+            kept.contains("Kept: target/ripr/reports/ripr-plus.last-good.md."),
+            "{kept}"
+        );
+        assert!(kept.contains("may be stale for the current HEAD"), "{kept}");
+        assert_eq!(md.map_err(|err| err.to_string())?, "good receipt");
         Ok(())
     }
 
