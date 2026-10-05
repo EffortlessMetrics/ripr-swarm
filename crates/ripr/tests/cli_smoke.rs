@@ -12436,8 +12436,8 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     init_producer_fixture_repo(&root)?;
     let root_arg = root.display().to_string();
 
-    // From the repository, as a user runs it: pilot's default `--out` is
-    // relative to the working directory.
+    // From the repository, as a user runs it: pilot's default `--out`
+    // binds to `--root`, which coincides with the working directory here.
     let pilot = run_command(
         env!("CARGO_BIN_EXE_ripr"),
         Some(&root),
@@ -12526,6 +12526,37 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
         "{report}"
     );
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// Pilot's default `--out` binds to `--root`, not the invoking directory
+/// (#6842, #4000): from a foreign cwd the packet lands under the analyzed
+/// repo and nothing is written into the caller tree.
+#[test]
+fn pilot_default_out_writes_under_the_selected_root_from_a_foreign_cwd()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-foreign-root");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let caller = unique_temp_workspace("pilot-foreign-caller");
+    std::fs::create_dir_all(&caller)?;
+    let root_arg = root.display().to_string();
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&caller),
+        &["pilot", "--root", &root_arg, "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    assert!(
+        root.join("target/ripr/pilot/pilot-summary.json").is_file(),
+        "the packet must land under the selected root"
+    );
+    assert!(
+        !caller.join("target").exists(),
+        "no packet artifacts may land in the caller tree"
+    );
+    std::fs::remove_dir_all(root)?;
+    std::fs::remove_dir_all(caller)?;
     Ok(())
 }
 

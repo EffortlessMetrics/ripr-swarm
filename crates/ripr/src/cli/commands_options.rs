@@ -18,6 +18,9 @@ pub(crate) enum InitCi {
 pub(crate) struct PilotOptions {
     pub(crate) root: PathBuf,
     pub(crate) out_dir: PathBuf,
+    /// `--out` was given, so `out_dir` is the caller's path and stays
+    /// verbatim; otherwise it is the default joined to the root (#6842).
+    pub(crate) out_explicit: bool,
     pub(crate) mode: Mode,
     pub(crate) explicit: CheckInputExplicit,
     pub(crate) max_seams: usize,

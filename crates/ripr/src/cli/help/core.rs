@@ -49,7 +49,8 @@ Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--ti
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot.
+  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot
+                    under --root; an explicit --out is resolved from the invoking directory.
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to

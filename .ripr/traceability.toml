@@ -944,6 +944,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::pilot_names_python_check_route_when_repo_has_no_rust_seams",
   "crates/ripr/tests/cli_smoke.rs::pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams",
   "crates/ripr/tests/cli_smoke.rs::pilot_keeps_rust_output_byte_identical_when_rust_seams_exist",
+  "crates/ripr/tests/cli_smoke.rs::pilot_default_out_writes_under_the_selected_root_from_a_foreign_cwd",
+  "crates/ripr/src/cli/commands/pilot.rs::tests::default_out_dir_binds_to_the_root_and_explicit_stays_verbatim",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_report_buckets_seam_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence",

@@ -113,8 +113,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
     apply_to_check_input(&mut input, &config, options.explicit);
 
-    let artifacts = pilot_artifacts(&options.out_dir);
-    output::file_write::create_output_dir(&options.out_dir, "--out")?;
+    let out_dir = resolve_pilot_out_dir(&options);
+    let artifacts = pilot_artifacts(&out_dir);
+    output::file_write::create_output_dir(&out_dir, "--out")?;
 
     // #5019: pilot's repo inventory is the same multi-minute walk `ripr
     // check` projects progress for, so route it through the shared
@@ -374,6 +375,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
     let mut options = PilotOptions {
         root: PathBuf::from("."),
         out_dir: PathBuf::from("target/ripr/pilot"),
+        out_explicit: false,
         mode: Mode::Draft,
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
@@ -391,6 +393,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             "--out" => {
                 i += 1;
                 options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                options.out_explicit = true;
             }
             "--mode" => {
                 i += 1;
@@ -416,6 +419,19 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         i += 1;
     }
     Ok(options)
+}
+
+/// The packet directory for a pilot run (#6842, #4000). An explicit
+/// `--out` is the caller's path and stays verbatim (relative stays
+/// cwd-relative, absolute stays absolute); the default binds to the
+/// analyzed root so packets and cache agree no matter the invoking
+/// directory.
+fn resolve_pilot_out_dir(options: &PilotOptions) -> PathBuf {
+    if options.out_explicit {
+        options.out_dir.clone()
+    } else {
+        options.root.join(&options.out_dir)
+    }
 }
 
 /// The deadline extension applies only to the default budget. A typed
@@ -570,6 +586,7 @@ mod tests {
             Ok(PilotOptions {
                 root: PathBuf::from("repo"),
                 out_dir: PathBuf::from("target/pilot"),
+                out_explicit: true,
                 mode: Mode::Ready,
                 explicit: CheckInputExplicit {
                     mode: true,
@@ -581,6 +598,29 @@ mod tests {
                 quiet: true,
             })
         );
+    }
+
+    #[test]
+    fn default_out_dir_binds_to_the_root_and_explicit_stays_verbatim() -> Result<(), String> {
+        // #6842: the default packet directory follows the analyzed root so
+        // packets and cache agree from any invoking directory; an explicit
+        // --out is the caller's path and keeps its spelling.
+        let default = parse_pilot_options(&args(&["--root", "repo"]))?;
+        assert!(!default.out_explicit);
+        assert_eq!(
+            resolve_pilot_out_dir(&default),
+            PathBuf::from("repo/target/ripr/pilot")
+        );
+        let relative = parse_pilot_options(&args(&["--root", "repo", "--out", "packets"]))?;
+        assert!(relative.out_explicit);
+        assert_eq!(resolve_pilot_out_dir(&relative), PathBuf::from("packets"));
+        let absolute = parse_pilot_options(&args(&["--root", "repo", "--out", "/tmp/packets"]))?;
+        assert!(absolute.out_explicit);
+        assert_eq!(
+            resolve_pilot_out_dir(&absolute),
+            PathBuf::from("/tmp/packets")
+        );
+        Ok(())
     }
 
     #[test]
