@@ -70,7 +70,8 @@ their sha256. Retained files are byte-identical to the upstream commit and
 include its license files.
 
 An `authored` subject is a small crate written for this corpus to fill a
-verdict or probe-family cell the upstream cases leave empty. Its id starts
+verdict, probe-family, test-shape or test-library oracle cell the upstream
+cases leave empty. Its id starts
 with `authored-` (an upstream id may not), it carries no upstream URL,
 commit, or shared-corpus reference, its license is this repository's
 (`MIT OR Apache-2.0`), it retains no license file of its own, and the whole

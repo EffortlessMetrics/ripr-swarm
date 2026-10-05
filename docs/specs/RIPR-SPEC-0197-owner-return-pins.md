@@ -75,7 +75,14 @@ rule only for an assertion whose context was admitted.
    `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
    `*_assert_eq!`) with an exact-value or whole-object oracle kind, on a line
    inside the test's own body, in a test without `#[should_panic]`. The
-   parser must match the exact indexed function body and the assertion's
+   test's outer attributes admit only `#[test]` and the `serial_test` locks
+   `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
+   body unchanged. A lock is admitted path-qualified (`serial_test::serial`)
+   or bare when the file has a `use serial_test::..` item, and only with no
+   arguments or bare lock keys; `inner_attrs`, `crate`, `path` or any other
+   argument shape refuses it. Every other attribute (`ignore`, async runtime
+   tests, parameterizing macros such as `rstest` or `test_case`) and every
+   inner attribute refuses the pin. The parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the
    source file, never an enclosing function, block, closure or impl. Module
@@ -418,7 +425,11 @@ assertions. This repair shares the existing callback without that larger migrati
 ## Non-Goals
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
-  evidence from bare `assert_eq!` invocations. Qualified assertion macros, other
+  evidence from bare `assert_eq!` invocations and from `assert_eq!` qualified
+  through a drop-in assertion crate (`std`, `core`, `pretty_assertions`,
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
+  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
+  reads `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
@@ -474,7 +485,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
-  `shared_return_admission_uses_the_outer_invocation_identity`, and
+  `shared_return_admission_uses_the_outer_invocation_identity`,
+  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - CFG authority (`analysis/facts/cfg_predicates/tests.rs`):
   `test_build_availability_preserves_unknown_and_boolean_identity` and

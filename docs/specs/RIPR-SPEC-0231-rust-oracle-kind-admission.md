@@ -102,6 +102,22 @@ argument, for the macros `assertion_oracle_text` recognizes; a custom helper
 is read from its whole line. The RIPR-SPEC-0106 upgrade never applies to an
 assertion that an admission rule below weakened.
 
+### Assertion macro paths
+
+The parser's assertion recognizer (`is_assertion_macro`) reads a macro called
+through one path segment into a drop-in assertion crate as its leaf:
+`std::`, `core::` (each optionally `::`-rooted), `pretty_assertions::` and
+`similar_asserts::` change only the failure output, and `assert_matches::`
+exports the std-shaped `assert_matches!`. So `pretty_assertions::assert_eq!`
+classifies exactly as `assert_eq!`. Any other crate path
+(`other::assert_eq!`), a deeper path (`pretty_assertions::nested::assert_eq!`)
+or a leaf outside the std set stays unrecognized. A recognized qualified
+`assert_eq!` faces the same RIPR-SPEC-0197 execution admission as the bare
+spelling, so the qualified path never gains credit the bare one is refused.
+The token-level `is_known_rust_assertion_macro` in
+`analysis/language/rust/oracles.rs` reads any path's last segment; aligning
+the two crate rules is outside this spec.
+
 ### Precedence
 
 The chain runs in this order; the first match wins. Before it, the
@@ -331,12 +347,21 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(matches!(items(), [..]))` and
     `assert!(matches!(items(), [rest @ ..]))`: `relational_check` / weak
     through the widened pre-check (today `exact_value` / strong at step 5).
+27. `pretty_assertions::assert_eq!(score(2), 4)` and
+    `std::assert_eq!(score(2), 4)`: recognized as `assert_eq!`; under
+    `if false { .. }` or in any context RIPR-SPEC-0197 refuses, no oracle
+    (`assertion_not_credited`). `other::assert_eq!(score(2), 4)`: not an
+    assertion.
 
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
+- Existing (example 27): `crates/ripr/src/analysis/syntax/ra/property_macros.rs`
+  `drop_in_assertion_crate_paths_keep_assertion_authority` and
+  `crates/ripr/src/analysis/classify/owner_pin/tests.rs`
+  `shared_return_admission_uses_the_outer_invocation_identity`.
 - Planned: one classifier unit test per acceptance example, and a fixture
   for example 1 showing the related test's reported kind and strength.
 

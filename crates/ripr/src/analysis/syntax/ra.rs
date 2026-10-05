@@ -1756,7 +1756,9 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &[
 ];
 
 /// The leaf of `crate::leaf` when `crate` is a known drop-in assertion crate.
-fn drop_in_assertion_leaf(macro_name: &str) -> Option<&str> {
+/// The owner-return admission gate shares it, so a qualified drop-in
+/// `assert_eq!` faces the same execution admission as a bare one.
+pub(crate) fn drop_in_assertion_leaf(macro_name: &str) -> Option<&str> {
     let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
     let (crate_name, leaf) = path.split_once("::")?;
     (DROP_IN_ASSERTION_CRATES.contains(&crate_name) && !leaf.contains("::")).then_some(leaf)

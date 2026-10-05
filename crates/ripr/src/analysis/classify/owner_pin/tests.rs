@@ -576,6 +576,12 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         "#[test]\n#[ignore]",
         "#[test]\n#[serial_test::serial]\n#[ignore]",
         "#[test]\n#[serial_test::unknown_lock]",
+        // The lock can hand the body to other macros or another runtime.
+        "#[test]\n#[serial_test::serial(inner_attrs = [my_macros::skip_body])]",
+        "#[test]\n#[serial_test::serial(crate = my_runtime)]",
+        "#[test]\n#[serial_test::file_serial(path => \"/tmp/lock\")]",
+        // A mention outside a `use` item does not import the macro.
+        "// serial_test is not used here\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
     ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
@@ -843,16 +849,22 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "assert_eq!(weight(input), 12);",
         "#[cfg(any())] assert_eq!(weight(input), 12);",
         "assert_eq!(weight(input), 12, \"{}\", stringify!(value));",
+        "std::assert_eq!(weight(input), 12);",
+        "::core::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_eq!(weight(input), 12);",
+        "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
-        "std::assert_eq!(weight(input), 12);",
+        "other::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_ne!(weight(input), 12);",
+        "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
     ] {
-        assert!(!is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
     }
 }
 

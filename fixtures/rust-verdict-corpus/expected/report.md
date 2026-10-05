@@ -183,7 +183,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 Non-claims:
 
 - Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.
-- Authored cases were written to fill verdict and probe-family cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.
+- Authored cases were written to fill verdict, probe-family, test-shape and test-library oracle cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.
 - Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.
 - The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.
 - The harness does not run mutation testing, cargo test, or any network access.

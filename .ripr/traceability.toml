@@ -11128,6 +11128,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::lexical_source_values_do_not_claim_observed_oracles",
   "crates/ripr/tests/owner_pin_execution.rs::equality_family_admission_preserves_mixed_oracle_identity_and_projection",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_default_pinned_through_a_byte_slice_receiver",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::serial_test_locks_keep_the_pin_and_other_attributes_refuse_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_method_needs_its_trait_imported_from_the_workspace",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::another_definition_of_the_method_defeats_the_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::receiver_must_be_bound_to_a_type_that_dispatches_to_the_owner",
@@ -12451,7 +12452,10 @@ metrics = [
 id = "RIPR-SPEC-0231"
 name = "Rust oracle kind and strength admission"
 spec = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::drop_in_assertion_crate_paths_keep_assertion_authority",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::shared_return_admission_uses_the_outer_invocation_identity",
+]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/extract/oracles/classify.rs",

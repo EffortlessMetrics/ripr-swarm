@@ -3,12 +3,12 @@
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
   "corpus_version": "2026-10-04.6",
-  "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
+  "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill verdict, probe-family, test-shape and test-library cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
-    "Authored cases were written to fill verdict and probe-family cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.",
+    "Authored cases were written to fill verdict, probe-family, test-shape and test-library oracle cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.",
     "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
     "The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.",
     "The harness does not run mutation testing, cargo test, or any network access."
@@ -6082,7 +6082,7 @@
           "limited"
         ]
       },
-      "reasoning": "checksum is called only from benches/throughput.rs, a harness = false criterion target that cargo test does not build or run, so both byte-mixing mutants survive.",
+      "reasoning": "checksum is called only from benches/throughput.rs, a harness = false criterion target that cargo test does not build or run, so both byte-mixing mutants go undetected.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -6202,7 +6202,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "predicate",
       "test_shape": "proptest_roundtrip_prop_assert_eq",
-      "hard_case": "A roundtrip property pins only that decode inverts encode: a mutant that splits runs early keeps the roundtrip and survives. ripr treats every proptest! body as opaque (rust_macro_reach_unresolved).",
+      "hard_case": "A roundtrip property pins only that decode inverts encode: a mutant that splits runs early keeps the roundtrip and goes undetected. ripr treats every proptest! body as opaque (rust_macro_reach_unresolved).",
       "truth": {
         "state": "partially_discriminated",
         "method": "runtime_mutant_kill",
@@ -6251,7 +6251,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value",
       "test_shape": "proptest_relational_prop_assert",
-      "hard_case": "The property only asserts percent(..) <= 100, a relational bound: lowering the cap to 99 survives, raising it to 101 is caught.",
+      "hard_case": "The property only asserts percent(..) <= 100, a relational bound: lowering the cap to 99 goes undetected, raising it to 101 is caught.",
       "truth": {
         "state": "partially_discriminated",
         "method": "runtime_mutant_kill",
@@ -6378,7 +6378,7 @@
           "limited"
         ]
       },
-      "reasoning": "parse_pair_never_panics only calls parse_pair and discards the result, so any change to the key normalisation survives.",
+      "reasoning": "parse_pair_never_panics only calls parse_pair and discards the result, so any change to the key normalisation goes undetected.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "limited",
@@ -6399,7 +6399,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "call_deletion",
       "test_shape": "pretty_assertions_use_shadowed_assert_eq",
-      "hard_case": "The test module imports `use pretty_assertions::{assert_eq, assert_ne};`; ripr treats that import as rebinding assert_eq for the whole workspace and refuses every bare assert_eq! oracle (#5359 admits the drop-in import).",
+      "hard_case": "ripr reads the pretty_assertions assert_eq! as a strong exact oracle and reports the call deletion as exposed, but a field_construction finding on the same line is weakly_exposed and the line-level gap outranks the credit.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -6578,7 +6578,7 @@
           "limited"
         ]
       },
-      "reasoning": "assert_ne! only rejects an unchanged price: a 20% discount survives, while dividing by 10000 leaves 1000 unchanged and fails.",
+      "reasoning": "assert_ne! only rejects an unchanged price: a 20% discount goes undetected, while dividing by 10000 leaves 1000 unchanged and fails.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -6727,7 +6727,7 @@
           "limited"
         ]
       },
-      "reasoning": "batch_size_has_a_default (#[serial_test::serial(env)]) only asserts batch_size() > 0, so a default of 63 survives and 0 fails.",
+      "reasoning": "batch_size_has_a_default (#[serial_test::serial(env)]) only asserts batch_size() > 0, so a default of 63 goes undetected and 0 fails.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -6777,7 +6777,7 @@
           "silent"
         ]
       },
-      "reasoning": "With 30 and 31 days, sending at 30 trips the mock's times(1) and returns true for the negated assert, and a grace of 31 makes remind(.., 31) false; both mutants fail.",
+      "reasoning": "Under `<=` the call at 30 days also sends, and the mock's times(1) expectation panics on that second send, so the test fails before the negated assert runs; under `GRACE_DAYS + 1 <` remind(.., 31) is false and the positive assert fails.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -6826,7 +6826,7 @@
           "limited"
         ]
       },
-      "reasoning": "sends_some_body expects one send with any arguments and reminds_only_after_the_grace_period matches the body with always(), so changing the wording or the day count survives.",
+      "reasoning": "sends_some_body expects one send with any arguments and reminds_only_after_the_grace_period matches the body with always(), so changing the wording or the day count goes undetected.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "limited",
@@ -6897,7 +6897,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "insta_inline_snapshot",
-      "hard_case": "An inline `@\"...\"` snapshot pins the exact rendered text, but ripr gives it the fixed snapshot/medium strength and reports weakly_exposed.",
+      "hard_case": "An inline `@\"...\"` snapshot pins the exact rendered text, but ripr does not see the snapshot test reaching line_total (\"No test is seen calling line_total\") and leaves the oracle observation unverified, so it reports weakly_exposed.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -7025,7 +7025,7 @@
           "limited"
         ]
       },
-      "reasoning": "`assert_json_snapshot!(record, {\".id\" => \"[id]\"})` replaces `id` with a placeholder before comparing, so any change to the id format survives; the other fields stay pinned.",
+      "reasoning": "`assert_json_snapshot!(record, {\".id\" => \"[id]\"})` replaces `id` with a placeholder before comparing, so any change to the id format goes undetected; the other fields stay pinned.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -7146,7 +7146,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "predicate_boundary",
       "test_shape": "rstest_named_case_attribute",
-      "hard_case": "The named cases `#[case::child(10, false)]` and `#[case::grown(30, true)]` never hit age 18, so the off-by-one survives; ripr would need the case literals to see that the boundary is missing.",
+      "hard_case": "The named cases `#[case::child(10, false)]` and `#[case::grown(30, true)]` never hit age 18, so the off-by-one goes undetected; ripr would need the case literals to see that the boundary is missing.",
       "truth": {
         "state": "partially_discriminated",
         "method": "runtime_mutant_kill",
@@ -7174,7 +7174,7 @@
           "limited"
         ]
       },
-      "reasoning": "The case table pins exact bools but only at 10 and 30, so `18 < age` survives (no case at 18) while `10 <= age` flips case_1_child.",
+      "reasoning": "The case table pins exact bools but only at 10 and 30, so `18 < age` goes undetected (no case at 18) while `10 <= age` flips case_1_child.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -7273,7 +7273,7 @@
           "limited"
         ]
       },
-      "reasoning": "`#[values(0, 50, 200)]` generates three tests that only assert `clamp_pct(v) <= 100`; v.min(99) stays within range and survives, v.max(100) breaks the bound at v=200.",
+      "reasoning": "`#[values(0, 50, 200)]` generates three tests that only assert `clamp_pct(v) <= 100`; v.min(99) stays within range and goes undetected, v.max(100) breaks the bound at v=200.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -7571,7 +7571,7 @@
           "limited"
         ]
       },
-      "reasoning": "The test pins only `report.lines().next()` (the title line) with expect![[..]]; the best= line is never compared, so both mutants survive.",
+      "reasoning": "The test pins only `report.lines().next()` (the title line) with expect![[..]]; the best= line is never compared, so both mutants go undetected.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "limited",
@@ -7703,7 +7703,7 @@
             "replacement": "acc * 10",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(40) instead of Ok(42)"
+            "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(0) instead of Ok(42)"
           },
           {
             "replacement": "acc + d",
@@ -7889,7 +7889,7 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "test_case_args_body_assert_eq",
-      "hard_case": "ripr sees the body assert_eq as exact_value but with unknown strength and reports reachable_unrevealed, because the case args feeding `n`/`expected` are not resolved.",
+      "hard_case": "The test fn carries #[test_case] instead of #[test] and takes its expected value as a parameter, so ripr does not establish the body assert_eq as an assertion context (rust_assertion_context_unestablished) and reports reachable_unrevealed.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
@@ -8016,7 +8016,7 @@
           "limited"
         ]
       },
-      "reasoning": "The roundtrip property decode(encode(xs)) == xs only checks that mask is an involution; a different XOR key is still an involution and survives, while wrapping_add(1) breaks it.",
+      "reasoning": "The roundtrip property decode(encode(xs)) == xs only checks that mask is an involution; a different XOR key is still an involution and goes undetected, while wrapping_add(1) breaks it.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -8048,7 +8048,7 @@
             "replacement": "(x >> i) & 3",
             "outcome": "tests_failed",
             "failing_test": "tests::popcount_matches_model",
-            "equivalence_review": "not equivalent: popcount(2) = 2 instead of 1"
+            "equivalence_review": "not equivalent: popcount(2) = 3 instead of 1"
           },
           {
             "replacement": "(x >> (i / 2)) & 1",
@@ -8115,7 +8115,7 @@
           "limited"
         ]
       },
-      "reasoning": "The quickcheck! macro property only asserts len <= max, so dropping an extra element survives while keeping max+1 elements violates the bound.",
+      "reasoning": "The quickcheck! macro property only asserts len <= max, so dropping an extra element goes undetected while keeping max+1 elements violates the bound.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "gap",
@@ -8413,7 +8413,7 @@
           "limited"
         ]
       },
-      "reasoning": "assert_some! only checks that an index was found, so returning a different index survives.",
+      "reasoning": "assert_some! only checks that an index was found, so returning a different index goes undetected.",
       "labeling_observation": {
         "ripr_commit": "5e385c644",
         "full_checkout_verdict": "limited",

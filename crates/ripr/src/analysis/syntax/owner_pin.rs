@@ -326,7 +326,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .and_modify(|previous| *previous = false)
             .or_insert(admitted);
     }
-    let serial_test_imported = source.contains("serial_test");
+    let serial_test_imported = imports_serial_test(parse.tree().syntax());
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
     for function in parse
         .tree()
@@ -459,10 +459,13 @@ fn supported_item_context(item: &SyntaxNode) -> bool {
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
 /// `serial_test` locks, which run the unchanged body while holding a mutex or
-/// file lock. A bare `#[serial]` counts only in a file that names
-/// `serial_test`. Every other attribute (`ignore`, `should_panic`, an async
-/// runtime or a parameterizing macro) may skip, invert or rewrite the body,
-/// so it keeps the test out of the pin.
+/// file lock. A bare `#[serial]` counts only in a file with a `use
+/// serial_test::..` item. Lock arguments are admitted only as bare key names
+/// (`#[serial(env, db)]`): `inner_attrs = [..]` hands the body to other
+/// attribute macros and `crate = ..` swaps the runtime that runs it, so any
+/// other argument refuses. Every other attribute (`ignore`, `should_panic`,
+/// an async runtime or a parameterizing macro) may skip, invert or rewrite
+/// the body, so it keeps the test out of the pin.
 fn runs_body_unchanged(attr: &ast::Attr, serial_test_imported: bool) -> bool {
     const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
     if attr.simple_name().as_deref() == Some("test") {
@@ -480,7 +483,57 @@ fn runs_body_unchanged(attr: &ast::Attr, serial_test_imported: bool) -> bool {
         Some(_) => return false,
         None => (false, path.as_str()),
     };
-    SERIAL_TEST_LOCKS.contains(&leaf) && (qualified || serial_test_imported)
+    SERIAL_TEST_LOCKS.contains(&leaf)
+        && (qualified || serial_test_imported)
+        && lock_arguments_are_bare_keys(attr)
+}
+
+/// No argument list, or one holding only identifiers and commas.
+fn lock_arguments_are_bare_keys(attr: &ast::Attr) -> bool {
+    let tree = match attr.meta() {
+        Some(ast::Meta::PathMeta(_)) => return true,
+        Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
+            Some(tree) => tree,
+            None => return false,
+        },
+        _ => return false,
+    };
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let Some((first, rest)) = tokens.split_first() else {
+        return false;
+    };
+    let Some((last, inner)) = rest.split_last() else {
+        return false;
+    };
+    first.text() == "("
+        && last.text() == ")"
+        && inner.iter().all(|token| {
+            token.text() == ","
+                || (token.kind() == ra_ap_syntax::SyntaxKind::IDENT
+                    && !matches!(token.text(), "inner_attrs" | "crate" | "path"))
+        })
+}
+
+/// Whether the file has a `use serial_test::..` item (any depth), so a bare
+/// lock attribute name resolves to the serial_test macro.
+fn imports_serial_test(root: &SyntaxNode) -> bool {
+    root.descendants().filter_map(ast::Use::cast).any(|item| {
+        item.use_tree()
+            .and_then(|tree| tree.path())
+            .map(|path| path.syntax().text().to_string())
+            .and_then(|path| {
+                path.trim_start_matches("::")
+                    .split("::")
+                    .next()
+                    .map(|root| root.trim() == "serial_test")
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn has_escape(

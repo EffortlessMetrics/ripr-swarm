@@ -46,8 +46,9 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
-    OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_ambiguities,
+    OwnerPinAssertions, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -135,7 +136,7 @@ impl OwnerPinSyntax {
         !matches!(
             probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) || !is_bare_assert_eq_invocation(&assertion.text)
+        ) || !is_admission_gated_assert_eq(&assertion.text)
             || self.admits(test, assertion, index)
     }
 
@@ -793,7 +794,13 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
     "zip",
 ];
 
-fn is_bare_assert_eq_invocation(text: &str) -> bool {
+/// Whether `text` is one outer `assert_eq!` invocation that must pass the
+/// owner-return execution admission: bare `assert_eq!`, or the same macro
+/// called through a drop-in assertion crate (`std::assert_eq!`,
+/// `pretty_assertions::assert_eq!`). A qualified drop-in reads as an
+/// assertion, so letting it skip this gate would credit an `assert_eq!` that
+/// the bare spelling refuses (for example one under `if false`).
+fn is_admission_gated_assert_eq(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let mut invocation = masked.trim_start();
     // The parser includes a macro statement's attributes in its fact text.
@@ -806,11 +813,12 @@ fn is_bare_assert_eq_invocation(text: &str) -> bool {
         };
         invocation = attribute[close + 1..].trim_start();
     }
-    invocation
-        .strip_prefix("r#")
-        .unwrap_or(invocation)
-        .strip_prefix("assert_eq")
-        .is_some_and(|after_name| after_name.trim_start().starts_with('!'))
+    let Some((path, _)) = invocation.split_once('!') else {
+        return false;
+    };
+    let path: String = path.chars().filter(|c| !c.is_whitespace()).collect();
+    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
 }
 
 /// Whether `text` is one plain `assert_eq!` invocation: not
