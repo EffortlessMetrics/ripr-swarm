@@ -6,4 +6,4 @@
   tests. `cargo xtask verdict-corpus check --language typescript` scores
   them: today 27/62 false actionable, 9/39 false exposed, 0/39 false
   silent. The DX scoreboard gates those three rates against the committed
-  baseline.
+  baseline (#6686).
