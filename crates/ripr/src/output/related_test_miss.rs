@@ -377,8 +377,23 @@ mod tests {
                     serde_json::from_str(&crate::output::json::render_context_packet(finding, 8))
                         .map_err(|error| format!("parse context packet: {error}"))?;
                 without_miss_keys(&mut context);
+                // The currentness-filtered projections (#6586): SARIF results,
+                // GitHub annotations and the diff badge only see
+                // candidate-current findings.
+                let output = report_with(vec![finding.clone()]);
+                let config = crate::config::RiprConfig::default();
+                let mut sarif: serde_json::Value = serde_json::from_str(
+                    &crate::output::sarif::render_findings_sarif(&output, &config, &[]),
+                )
+                .map_err(|error| format!("parse SARIF: {error}"))?;
+                without_miss_keys(&mut sarif);
                 Ok(format!(
-                    "{report}\n{context}\n{:?}\n{:?}\n{:?}\n{}\n{:?}",
+                    "{report}\n{context}\n{sarif}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}",
+                    crate::output::github::render_with_config(&output, &config),
+                    crate::output::badge::ripr_badge_summary(
+                        &output,
+                        crate::output::badge::BadgePolicy::default()
+                    ),
                     crate::domain::DiagnosticWitness::from_finding(finding),
                     crate::output::preview_actionability::preview_actionability_for(finding),
                     crate::output::perl_preview_card::perl_preview_card_json(finding),
@@ -390,7 +405,19 @@ mod tests {
                 ))
             }
             let mut explained_rows = 0;
-            for finding in crate::analysis::perl_miss_matrix_findings()? {
+            // Every matrix finding is checked as the fixture-only unknown and
+            // as the candidate-current finding an observed change produces.
+            let findings = crate::analysis::perl_miss_matrix_findings()?;
+            let current = findings.iter().cloned().map(|mut finding| {
+                finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+                finding
+            });
+            let findings = findings
+                .clone()
+                .into_iter()
+                .chain(current)
+                .collect::<Vec<_>>();
+            for finding in findings {
                 let mut cleared = finding.clone();
                 for row in &mut cleared.related_tests {
                     row.miss = None;
@@ -409,8 +436,9 @@ mod tests {
                 }
                 assert_eq!(full, crate::output::human::render_finding(&cleared));
             }
-            // Not vacuous: five of the six findings carry one explained row.
-            assert_eq!(explained_rows, 5);
+            // Not vacuous: five of the six findings carry one explained row,
+            // checked under both currentness values.
+            assert_eq!(explained_rows, 10);
             Ok(())
         }
     }

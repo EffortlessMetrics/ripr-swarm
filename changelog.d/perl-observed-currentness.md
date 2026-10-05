@@ -1,6 +1,10 @@
 <!-- section: Fixed -->
 - Perl: a fact-packet finding whose source is on disk (digest verified) and
   whose change range contains a line the diff adds is now
-  `candidate_current`, so the default human report shows it instead of
-  hiding it as `unresolved_subject`. Fixture-only packets and changes the
-  diff does not touch stay `unresolved_subject` (#6586).
+  `candidate_current`. It now appears in the default human report, SARIF
+  results, GitHub annotations (labelled preview advisory), `finding_alignment`
+  items and the diff badge's exposure-gap count, as candidate-current Python
+  and TypeScript preview findings already do. Fixture-only packets and changes
+  the diff does not touch stay `unresolved_subject`. A packet whose on-disk
+  source cannot be read is now rejected instead of skipping its digest check
+  (#6586).

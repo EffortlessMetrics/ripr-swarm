@@ -1113,7 +1113,10 @@ The evidence-first fields are additive in schema `0.2`:
   that seeded the probe. A Perl fact-packet finding is `candidate_current`
   only when its source is on disk under the root (its digest verified at
   ingestion) and the diff adds a line inside the packet change's range;
-  otherwise it stays `unresolved_subject` (#6586); repo-mode findings are `candidate_current` by
+  otherwise it stays `unresolved_subject` (#6586). Like candidate-current
+  Python and TypeScript findings, such a Perl finding reaches SARIF results,
+  GitHub annotations, `finding_alignment` items and the diff badge's
+  exposure-gap count; repo-mode findings are `candidate_current` by
   construction (they seed from the current tree). In this slice the field is
   informational for consumers: gate and actionability policy follow in the
   #3212 projection slice.

@@ -40,14 +40,22 @@ that seeded the probe: `after`-carrying probes are `candidate_current`;
 removed-only probes are `base_deleted`, or `moved_or_renamed` when the same
 trimmed expression text appears among the file's added lines. Repo-mode
 findings are `candidate_current` by construction. Preview-language findings
-are `unresolved_subject` until their producers resolve currentness.
+are `unresolved_subject` unless their producer resolves currentness: Python and
+TypeScript resolve it from the probe delta, and Perl from the rule below.
 
 Perl fact-packet findings (#6586) resolve from what ripr observed, not from
 producer claims: a finding is `candidate_current` only when its source file
-is on disk under the analysis root (so ingestion verified the packet's
+is on disk under the analysis root after resolving symlinks (so ingestion
+verified the packet's
 digest against it) and the diff adds a line inside the packet change's
-range. A fixture-only packet, or a change the diff does not add a line to,
-stays `unresolved_subject`.
+range. A source that exists but cannot be read rejects the packet at
+ingestion, so it never counts as verified. A fixture-only packet, or a change
+the diff does not add a line to, stays `unresolved_subject`. Candidate-current
+Perl findings pass the same `is_candidate_actionable` filters as Python and
+TypeScript preview findings: SARIF results, GitHub annotations,
+`finding_alignment` items and the diff badge's exposure-gap count. The gap
+ledger keeps Perl ineligible for gates, agent packets, PR comments and
+RIPR 0/RIPR+ counts.
 
 In this slice the disposition is informational for consumers and the
 probe's recorded location coordinate is unchanged: a removed-only probe
@@ -100,7 +108,9 @@ coordinate-stability shapes plus the content-addressed-id guard.
 `crates/ripr/src/analysis/language/perl/tests.rs`
 `perl_finding_is_candidate_current_only_for_an_observed_changed_line` pins
 the Perl rule: only an on-disk source with an added line inside the change
-is `candidate_current`. The
+is `candidate_current`;
+`perl_finding_through_a_symlink_out_of_the_root_stays_unresolved` pins that a
+source reached through a symlink out of the root is not. The
 re-blessed golden corpus (176 fixtures) carries the field on every
 finding with no other behavioral delta.
 

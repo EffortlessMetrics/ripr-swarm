@@ -21973,6 +21973,10 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
         examined.location.range.start.line,
         u32::try_from(direct.line.saturating_sub(1)).map_err(|error| error.to_string())?
     );
+    assert_eq!(
+        examined.location.uri.as_str(),
+        format!("file:///workspace/{}", direct.file.display())
+    );
     assert!(
         diagnostic
             .related_information

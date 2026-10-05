@@ -4174,6 +4174,7 @@ fn perl_finding_is_candidate_current_only_for_an_observed_changed_line() -> Resu
         (false, vec![added("lib/My/App.pm", 15)]),
         // The diff does not add a line inside the change.
         (true, vec![added("lib/My/App.pm", 14)]),
+        (true, vec![added("lib/My/App.pm", 16)]),
         (true, vec![added("lib/My/Other.pm", 15)]),
         (true, Vec::new()),
     ] {
@@ -4183,6 +4184,65 @@ fn perl_finding_is_candidate_current_only_for_an_observed_changed_line() -> Resu
             "{on_disk} {changed:?}"
         );
     }
+    Ok(())
+}
+
+/// #6586: a packet path whose directory is a symlink out of the analysis
+/// root is not an observed source, even when the diff adds a line in range.
+#[cfg(unix)]
+#[test]
+fn perl_finding_through_a_symlink_out_of_the_root_stays_unresolved() -> Result<(), String> {
+    use crate::analysis::diff::{ChangedFile, ChangedLine};
+    use crate::domain::SourceCurrentness;
+    let base = std::env::temp_dir().join(format!("ripr-perl-symlink-{}", std::process::id()));
+    struct TempDirGuard(std::path::PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _guard = TempDirGuard(base.clone());
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("root");
+    let outside = base.join("outside/My");
+    std::fs::create_dir_all(root.join("lib")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
+    let source = "package My::App;\nsub discount { return $_[0] / 2 }\n1;\n";
+    std::fs::write(outside.join("App.pm"), source).map_err(|error| error.to_string())?;
+    let changed = [ChangedFile {
+        path: std::path::PathBuf::from("lib/My/App.pm"),
+        added_lines: vec![ChangedLine {
+            line: 15,
+            text: "    return $amount / 2;".to_string(),
+            new_side_line: 15,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let packet = EXACT_RETURN_PACKET.replace(
+        "\"digest\": \"sha256:source\"",
+        &format!(
+            "\"digest\": \"sha256:{}\"",
+            super::hex_sha256(source.as_bytes())
+        ),
+    );
+    let packet_path = base.join("facts.json");
+    std::fs::write(&packet_path, bless_fingerprint(&packet)).map_err(|error| error.to_string())?;
+    let currentness = || -> Result<SourceCurrentness, String> {
+        let mut options = packet_test_options();
+        options.root = root.clone();
+        options.perl_facts_path = Some(packet_path.clone());
+        let result = PerlAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed)?;
+        let finding = result.findings.first().ok_or("expected one finding")?;
+        Ok(finding.source_currentness)
+    };
+    // Control: the same source inside the root is candidate-current.
+    std::fs::create_dir_all(root.join("lib/My")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("lib/My/App.pm"), source).map_err(|error| error.to_string())?;
+    assert_eq!(currentness()?, SourceCurrentness::CandidateCurrent);
+    // The same path through a symlink out of the root stays unresolved.
+    std::fs::remove_dir_all(root.join("lib/My")).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&outside, root.join("lib/My")).map_err(|error| error.to_string())?;
+    assert_eq!(currentness()?, SourceCurrentness::UnresolvedSubject);
     Ok(())
 }
 

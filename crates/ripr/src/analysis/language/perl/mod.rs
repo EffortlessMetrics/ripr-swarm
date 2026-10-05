@@ -379,9 +379,9 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
 }
 
 /// #6586: a Perl change is candidate-current only when the consumer observed
-/// it: the file is on disk under the analysis root (so ingestion verified
-/// its digest against the packet) and the diff adds a line inside the
-/// change's range. Anything else, including fixture-only packets and changes
+/// it: the file is on disk under the analysis root after resolving symlinks
+/// (so ingestion verified its digest against the packet) and the diff adds a
+/// line inside the change's range. Anything else, including fixture-only packets and changes
 /// the diff does not touch, stays the explicit unknown.
 fn perl_change_currentness(
     root: &std::path::Path,
@@ -390,7 +390,15 @@ fn perl_change_currentness(
     change: &ChangeFact,
 ) -> crate::domain::SourceCurrentness {
     use crate::domain::SourceCurrentness;
-    if !root.join(&file.path).is_file() {
+    // Resolve symlinks before trusting the on-disk source: a packet path whose
+    // directory is a symlink out of the root is not a source ripr observed
+    // under the analysis root.
+    let (Ok(canonical_root), Ok(source)) =
+        (root.canonicalize(), root.join(&file.path).canonicalize())
+    else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    if !source.starts_with(&canonical_root) || !source.is_file() {
         return SourceCurrentness::UnresolvedSubject;
     }
     let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
@@ -1240,9 +1248,15 @@ impl PerlFactPacket {
             if !on_disk.is_file() {
                 continue;
             }
-            let Ok(digest) = hex_sha256_file(&on_disk) else {
-                continue;
-            };
+            // A source that exists but cannot be read rejects the packet:
+            // currentness treats an on-disk source as digest-verified (#6586),
+            // so an unverified digest must not pass silently.
+            let digest = hex_sha256_file(&on_disk).map_err(|error| {
+                format!(
+                    "ingestion: cannot read file `{}` (`{}`) to verify its digest: {error}",
+                    file.file_id, file.path
+                )
+            })?;
             let recomputed_digest = format!("sha256:{digest}");
             if file.digest != recomputed_digest {
                 return Err(format!(
