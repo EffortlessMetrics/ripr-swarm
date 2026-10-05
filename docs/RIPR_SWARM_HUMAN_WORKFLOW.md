@@ -103,8 +103,8 @@ canonical shape is pinned by
 ```
 
 Missing `attempt.verify` (or equivalent verify evidence) classifies as
-`uncertain`. Closure also needs receipt movement such as `resolved` plus both
-before/after sha256 values. The ingest **output** envelope
+`uncertain`. Closure also needs recognized receipt movement such as `resolved`
+or `closed`, plus both before/after sha256 values. The ingest **output** envelope
 (`report: "swarm-ingest"`) is documented under `ripr swarm ingest` in
 [OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md).
 
