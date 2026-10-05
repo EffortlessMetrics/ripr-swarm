@@ -295,7 +295,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.36`: published intermediate matcher projection and failure guard facts.
 /// `1.37`: unresolved failure macros grant no divergence authority; discarded
 /// wrappers, Err block guards and weak wildcard operands retain ownership (#5713).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.37";
+/// `1.33` -> `1.34`: a related test whose exact-value assertion statically
+/// contradicts the owner's fold (#6026) keeps at most Weak oracle credit,
+/// keeps the seam's gap open, and names the contradiction in the evidence
+/// summary. Old classified entries would keep serving the wrong-valued
+/// assertion's `strongly_gripped` closure for warm workspaces.
+/// `1.38`: combine #5713 Err/block/wrapper ownership with landed #6701
+/// contradiction handling and debug equality extraction. Either lineage
+/// lacks part of the combined semantics and must miss.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.38";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -369,7 +377,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.37";
 /// `0.41`: same balanced terminal-guard transition as full `1.35` (#5713).
 /// `0.42`: published intermediate matcher/failure facts as full `1.36`.
 /// `0.43`: same Err-only divergence authority as full `1.37`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.43";
+/// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
+/// transition as full `1.34` (#6026).
+/// `0.44`: same combined #5713/#6701 transition as full `1.38`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.44";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -445,7 +456,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.43";
 /// `0.41`: same balanced terminal-guard transition as full `1.35` (#5713).
 /// `0.42`: published intermediate matcher/failure facts as full `1.36`.
 /// `0.43`: same Err-only divergence authority as full `1.37`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.43";
+/// `0.39` -> `0.40`: same statically-contradicted exact-value assertion
+/// transition as full `1.34` (#6026).
+/// `0.44`: same combined #5713/#6701 transition as full `1.38`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.44";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -587,7 +601,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// replace truncated or quoted-body twins; guard-blind facts must miss.
 /// `1.25`: published intermediate wrapped matcher and failure guard facts.
 /// `1.26`: only whole Err returns establish failure guard twins (#5713).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.26";
+/// `1.27`: landed #6701 recognizes debug equality operands in the shared
+/// extractor. Duplicate debug equality now stores Weak/RelationalCheck
+/// OracleFact values instead of Strong/ExactValue; warm raw facts must miss.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.27";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3860,7 +3877,7 @@ mod tests {
         // 1.23: combine span wire with the independent #5713 1.21/1.22
         // discarded matcher refusal and consumed terminal guard facts.
         // 1.24: balanced terminal guards and actual first-failure refusal.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.26");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.27");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3912,7 +3929,10 @@ mod tests {
         // 1.32 -> 1.33: bool-owner `assert!` pins (RIPR-SPEC-0197).
         // 1.34: combine those pins with #5713 consumed terminal guards.
         // 1.35: balanced terminal guards and actual first-failure refusal.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.37");
+        // 1.33 -> 1.34: a statically contradicted exact-value assertion
+        // keeps at most weak oracle credit and keeps the gap open (#6026).
+        // 1.38: compose #5713 with landed #6701; refuse both predecessors.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.38");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3941,8 +3961,11 @@ mod tests {
         // 0.38 -> 0.39: same bool-owner pin transition as the outer cache.
         // 0.40: same combined terminal guard transition as the outer cache.
         // 0.41: same balanced terminal guard transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.43");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.43");
+        // 0.39 -> 0.40: same statically-contradicted-exact-value transition
+        // as the outer cache (#6026).
+        // 0.44: same combined #5713/#6701 transition as full 1.38.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.44");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.44");
     }
 
     #[test]
@@ -4190,6 +4213,7 @@ mod tests {
             ("1.34", "0.40"),
             ("1.35", "0.41"),
             ("1.36", "0.42"),
+            ("1.37", "0.43"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -4259,7 +4283,7 @@ mod tests {
 
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
-        for previous in ["0.33", "0.38", "0.39", "0.40", "0.41", "0.42"] {
+        for previous in ["0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43"] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
                 let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
@@ -8096,7 +8120,7 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25"] {
+        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26"] {
             let previous_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 analyzer_version: crate::build_identity::cache_identity().to_string(),
