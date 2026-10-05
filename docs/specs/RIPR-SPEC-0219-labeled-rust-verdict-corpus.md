@@ -145,7 +145,14 @@ fully).
 Contradictions are internal to ripr's output and need no label:
 `reach_yes_without_related_tests`, `no_static_path_with_related_tests`,
 `exposed_without_discriminator`, `related_tests_listed_exceed_total`, and
-summary counts that disagree with the findings list.
+summary counts that disagree with the findings list. Since #5424 a
+`no_static_path` finding lists every test it examined with why each misses,
+so `no_static_path_with_related_tests` counts only a listed test whose
+relation ripr's reach stage treats as reaching the owner: anything other
+than `same_test_file`, `same_module`, `weak_token_substring`, or
+`seam_callee_call`. The rule reads the listed rows (at most eight, highest
+relation confidence first), so a reaching row ranked below the window goes
+uncounted.
 
 `cargo xtask verdict-corpus` has four subcommands:
 
@@ -284,8 +291,9 @@ the distinct codes seen in that case's run.
   `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
   RIPR-SPEC-0035 say must not count as a strong oracle.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
-  `no_static_path` while naming related tests, recorded as
-  `no_static_path_with_related_tests`. semver `op()` at 1.0.23
+  `no_static_path` and lists the same-file tests it examined, each with
+  `no_call_path`; no listed test calls `as_kb`, so the row records no
+  contradiction (#6580). semver `op()` at 1.0.23
   (`src/parse.rs:272`) carried `reach_yes_without_related_tests` until #5424
   named every examined test; its row now records no contradiction.
 

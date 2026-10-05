@@ -1,8 +1,8 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons,
+    ensure_unknown_stop_reason, exact_error_variant, is_proximity_only, missing_evidence,
+    recommended_next_step, stop_reasons,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -182,6 +182,20 @@ fn annotate_related_test_misses(
         .filter(|test| test.miss.is_none() && test.oracle.is_some())
         .map(|test| strength_rank(&test.oracle_strength))
         .min();
+    if matches!(class, ExposureClass::NoStaticPath) {
+        // #6580: reach is `No` only when every owner-anchored row is
+        // proximity-only and seam-callee rows are set aside (`reach_evidence`),
+        // so such a row never calls the owner and that is why it misses. An
+        // assertion-level reason `reveal` recorded first
+        // (`assertion_not_credited`) would point the reader at assertion
+        // admission instead of the missing call.
+        for test in related_tests
+            .iter_mut()
+            .filter(|test| test.relation_reason.is_none_or(reaches_nothing))
+        {
+            test.miss = Some(RelatedTestMiss::NoCallPath);
+        }
+    }
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
             Unconfirmed::Confirmed => false,
@@ -213,6 +227,12 @@ fn annotate_related_test_misses(
             _ => None,
         };
     }
+}
+
+/// Relations `reach_evidence` does not count as reaching the owner: the
+/// proximity-only links, and a seam-callee call, which it sets aside.
+fn reaches_nothing(reason: RelationReason) -> bool {
+    is_proximity_only(reason) || reason == RelationReason::SeamCalleeCall
 }
 
 /// Strongest first.
@@ -502,6 +522,77 @@ mod tests {
                 Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed),
                 None
             ]
+        );
+    }
+
+    #[test]
+    fn no_static_path_reports_the_missing_call_before_an_assertion_reason() {
+        let row = |name: &str, reason: RelationReason, miss| RelatedTest {
+            relation_reason: Some(reason),
+            miss,
+            ..matched_row(name, OracleStrength::None)
+        };
+        let mut rows = vec![
+            row(
+                "same_file_refused",
+                RelationReason::SameTestFile,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "same_module_no_assertion",
+                RelationReason::SameModule,
+                Some(crate::domain::RelatedTestMiss::NoAssertion),
+            ),
+            row(
+                "seam_callee_refused",
+                RelationReason::SeamCalleeCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "direct_call_refused",
+                RelationReason::DirectOwnerCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "owner_named_refused",
+                RelationReason::OwnerNamedTest,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+        ];
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::NoStaticPath,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ]
+        );
+
+        let mut gap = vec![row(
+            "same_file_refused",
+            RelationReason::SameTestFile,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+        )];
+        annotate_related_test_misses(
+            &mut gap,
+            &crate::domain::ExposureClass::WeaklyExposed,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            gap[0].miss,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            "only no_static_path rewrites a recorded miss"
         );
     }
 

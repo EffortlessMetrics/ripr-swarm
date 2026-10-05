@@ -1,6 +1,6 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.9. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
 | Ideal verdict | 78/203 | 0.3842 |
 | Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
-| Findings with a contradiction | 2/278 | 0.0072 |
+| Findings with a contradiction | 0/278 | 0.0000 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
@@ -50,8 +50,8 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `strsim-sorensen-dice-equal` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `bytesize-as-kib-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `bytesize-as-mb-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
-| `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
+| `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `atuin-ai-history-output-capability` | upstream | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | no | none |
 | `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | no | none |

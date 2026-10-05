@@ -486,7 +486,11 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
     if stage("reach") == "yes" && total == 0 {
         codes.push("reach_yes_without_related_tests");
     }
-    if class == "no_static_path" && total > 0 {
+    // Since #5424 a `no_static_path` finding lists every test it examined,
+    // each with why it misses, so proximity-linked rows are consistent with
+    // "no path". Only a listed test whose relation reaches the owner
+    // contradicts it.
+    if class == "no_static_path" && lists_a_reaching_test(finding) {
         codes.push("no_static_path_with_related_tests");
     }
     if class == "exposed" && stage("discriminate") != "yes" {
@@ -496,6 +500,30 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
         codes.push("related_tests_listed_exceed_total");
     }
     codes
+}
+
+/// Relations ripr's reach stage does not count as reaching the owner
+/// (`is_proximity_only` plus the seam-callee rows `reach_evidence` sets
+/// aside, in `crates/ripr/src/analysis/classify/reach.rs`). Any other listed
+/// relation makes reach `yes`, which `no_static_path` contradicts.
+const NON_REACHING_RELATIONS: [&str; 4] = [
+    "same_test_file",
+    "same_module",
+    "weak_token_substring",
+    "seam_callee_call",
+];
+
+fn lists_a_reaching_test(finding: &Value) -> bool {
+    finding
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests.iter().any(|test| {
+                test.get("relation_reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| !NON_REACHING_RELATIONS.contains(&reason))
+            })
+        })
 }
 
 const SUMMARY_CLASSES: [&str; 7] = [
