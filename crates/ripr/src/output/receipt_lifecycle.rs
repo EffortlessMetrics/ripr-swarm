@@ -231,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_receipt_write_artifact_is_found_not_missing() {
+    fn canonical_receipt_write_artifact_is_found_not_missing() -> Result<(), String> {
         let rendered =
             crate::app::receipt::write_receipt(&crate::app::receipt::ReceiptWriteOptions {
                 canonical_gap_id: "gap:5a536229e5ed368b".to_string(),
@@ -243,9 +243,9 @@ mod tests {
                 json: true,
                 root: None,
             })
-            .expect("fixture setup: canonical writer must emit JSON");
-        let receipt: Value =
-            serde_json::from_str(&rendered).expect("fixture setup: writer JSON must parse");
+            .map_err(|err| format!("fixture setup: canonical writer must emit JSON: {err}"))?;
+        let receipt: Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("fixture setup: writer JSON must parse: {err}"))?;
 
         assert_eq!(receipt["schema_version"], "0.1");
         assert_eq!(receipt["kind"], "receipt");
@@ -278,6 +278,7 @@ mod tests {
                 "canonical writer shape with verify_status {status} must be found, not {from_shape}"
             );
         }
+        Ok(())
     }
 
     #[test]
