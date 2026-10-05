@@ -2187,10 +2187,14 @@ pub(crate) fn finish_repair_attempt_from(
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
-    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    // Head identity (not just HEAD) brackets the evaluation: an A-B-A
+    // swap inside the window is undetectable by commit comparison alone,
+    // so the reflog fingerprint makes `current` robust to it (#5930).
+    let before = crate::agent::artifact::current_git_head_identity(&root)?;
     let (delta, mut verdict) =
         evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
-    let current = current_head == crate::agent::artifact::current_git_head(&root)?
+    let current_head = before.head.clone();
+    let current = before == crate::agent::artifact::current_git_head_identity(&root)?
         && (current_head == manifest.repository_head
             || (movement == HeadMovement::AdmitDescendantCommits
                 && crate::agent::artifact::git_merge_base_is_ancestor(

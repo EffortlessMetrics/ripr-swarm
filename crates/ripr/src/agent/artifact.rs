@@ -775,6 +775,37 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// A HEAD read that also detects an A-B-A swap between two reads (#5930).
+/// The `head` is the commit `current_git_head` reports; `reflog_top` is the
+/// newest reflog entries' fingerprint. Two snapshots are equal only when
+/// both match, so a swap that returns HEAD to the same commit still shows
+/// as movement. An unreadable or missing reflog degrades to an empty
+/// fingerprint (HEAD-only comparison, the previous behavior) rather than
+/// failing flows in repositories without reflogs; that residual is
+/// documented, not silent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HeadIdentity {
+    pub(crate) head: String,
+    pub(crate) reflog_top: String,
+}
+
+pub(crate) fn current_git_head_identity(root: &Path) -> Result<HeadIdentity, String> {
+    let head = current_git_head(root)?;
+    // Lenient by design (see struct docs): only the HEAD read is strict.
+    // Three entries defeat a repeated identical action within one timestamp
+    // tick, which a single top entry could miss.
+    let reflog = match git_spawn(root, &["log", "-g", "-3", "--format=%H %ct %gs", "HEAD"]) {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    };
+    Ok(HeadIdentity {
+        head,
+        reflog_top: reflog,
+    })
+}
+
 /// The object type Git reports for a well-formed revision, or `None` when the
 /// object is absent. Callers must establish repository liveness first: any
 /// non-zero `git cat-file` exit is read as absence, not as an infrastructure
@@ -1260,6 +1291,43 @@ mod tests {
             return Err(error);
         }
         Ok(root)
+    }
+
+    fn commit_file(root: &Path, name: &str, body: &str) -> Result<(), String> {
+        std::fs::write(root.join(name), body)
+            .map_err(|error| format!("write fixture file: {error}"))?;
+        run_git(root, &["add", "--", name])?;
+        run_git(root, &["commit", "--quiet", "-m", name])?;
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_detects_an_a_b_a_swap_between_reads() -> Result<(), String> {
+        // Issue #5930: a HEAD swap that returns to the same commit inside
+        // an evaluation window is invisible to commit comparison, so the
+        // after-phase `current` check must compare head identities. The
+        // swap is sequenced between the two reads (the deterministic
+        // equivalent of a mid-evaluation interleave): no timing involved.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let before = current_git_head_identity(&root)?;
+        // A quiet re-read with no movement must stay equal: no false positive.
+        let steady = current_git_head_identity(&root)?;
+        assert_eq!(before, steady);
+        // A -> B -> A: HEAD ends where it started, but the reflog grew.
+        commit_file(&root, "b.txt", "b")?;
+        run_git(&root, &["reset", "--quiet", "--soft", "HEAD~1"])?;
+        let after = current_git_head_identity(&root)?;
+        assert_eq!(
+            before.head, after.head,
+            "the old commit-only check would pass this swap"
+        );
+        assert_ne!(
+            before, after,
+            "head identity must detect the A-B-A swap: {before:?} vs {after:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

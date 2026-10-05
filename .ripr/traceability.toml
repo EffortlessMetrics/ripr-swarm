@@ -1260,7 +1260,8 @@ tests = [
   "crates/ripr/src/agent/loop_commands.rs::tests::bound_root_keeps_a_unix_backslash_directory_name",
   "crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once",
   "crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory",
-  "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture"
+  "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture",
+  "crates/ripr/src/agent/artifact.rs::tests::head_identity_detects_an_a_b_a_swap_between_reads"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
