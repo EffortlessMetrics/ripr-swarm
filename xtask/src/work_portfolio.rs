@@ -1057,7 +1057,9 @@ fn next_transition_for_open_pr(pr: &WorkCapturedPullRequestV1) -> String {
 /// Classify one campaign issue into the closed candidate-kind vocabulary and
 /// its exact next durable transition. In-flight states (resume/repair/
 /// merge-ready) always win over new-build kinds, so an existing PR or claim
-/// never produces a duplicate build candidate.
+/// never produces a duplicate build candidate. `merge_ready` additionally
+/// requires fresh PR evidence and no unresolved claim collision, so stale
+/// approvals and unarbitrated claims can never present as mergeable.
 #[allow(clippy::too_many_arguments)]
 fn classify_candidate(
     issue: &WorkCapturedIssueV1,
@@ -1067,6 +1069,7 @@ fn classify_candidate(
     has_claim_collision: bool,
     has_unregistered_branch_collision: bool,
     has_slice: bool,
+    pull_requests_fresh: bool,
     current_main: &str,
 ) -> (WorkCandidateKindV1, String) {
     if issue
@@ -1076,12 +1079,6 @@ fn classify_candidate(
         return (
             WorkCandidateKindV1::Complete,
             "no transition: the issue is complete and stays visible in the portfolio".to_string(),
-        );
-    }
-    if has_claim_collision {
-        return (
-            WorkCandidateKindV1::Blocked,
-            "root arbitrates the colliding durable claims on the issue and records the decision before any build resumes".to_string(),
         );
     }
     if let Some(pr) = open_prs.first() {
@@ -1095,6 +1092,18 @@ fn classify_candidate(
             );
         }
         if !pr.draft && pr.review_state == "approved" && pr.checks_state == "success" {
+            if !pull_requests_fresh {
+                return (
+                    WorkCandidateKindV1::VerifyCurrentHead,
+                    "the captured approval and checks may predate the current published head; re-establish REVIEW_READY on the current head before any merge".to_string(),
+                );
+            }
+            if has_claim_collision {
+                return (
+                    WorkCandidateKindV1::Blocked,
+                    "root arbitrates the colliding durable claims on the issue and records the decision before any merge".to_string(),
+                );
+            }
             return (
                 WorkCandidateKindV1::MergeReady,
                 "root performs the normal protected squash merge; no admin bypass and no merge from the portfolio".to_string(),
@@ -1135,6 +1144,12 @@ fn classify_candidate(
             format!(
                 "wait for the named authority `{external}`; no local build may start until the blocker clears"
             ),
+        );
+    }
+    if has_claim_collision {
+        return (
+            WorkCandidateKindV1::Blocked,
+            "root arbitrates the colliding durable claims on the issue and records the decision before any build resumes".to_string(),
         );
     }
     if has_unregistered_branch_collision {
@@ -1579,6 +1594,9 @@ pub(crate) fn compile_work_portfolio(
         {
             continue;
         }
+        let mut linked_issues = pr.linked_issues.clone();
+        linked_issues.sort_unstable();
+        linked_issues.dedup();
         pr_rows.push(WorkPullRequestV1 {
             number: pr.number,
             identity: format!("pr:{}", pr.number),
@@ -1587,7 +1605,7 @@ pub(crate) fn compile_work_portfolio(
             draft: pr.draft,
             head_branch: pr.head_branch.clone(),
             base_branch: pr.base_branch.clone(),
-            linked_issues: pr.linked_issues.clone(),
+            linked_issues,
             claim: pr.registered_claim.clone(),
             review_state: pr.review_state.clone(),
             unresolved_review_findings: pr.unresolved_review_findings,
@@ -1994,6 +2012,7 @@ pub(crate) fn compile_work_portfolio(
             has_claim_collision,
             has_branch_collision,
             has_slice,
+            context.fresh(WorkCapturedSourceKindV1::GithubPullRequests),
             &current_main,
         );
         let primary_pr = open_prs.first().copied().or(merged_prs.first().copied());
@@ -2803,7 +2822,6 @@ fn has_json_flag(args: &[String], usage: &str) -> Result<bool, String> {
         match arg.as_str() {
             "--json" => json = true,
             "--help" | "-h" => return Err(usage.to_string()),
-            other if other.starts_with("--captured") => {}
             other => return Err(format!("unknown argument `{other}`\n{usage}")),
         }
     }
@@ -4104,6 +4122,113 @@ mod tests {
         let Err(_error) = run_work_command_for_test(&["candidates", "--limit", "nope"]) else {
             return Err("a non-numeric limit must fail closed".to_string());
         };
+        let Err(_error) = run_work_command_for_test(&["portfolio", "--captured=/tmp/x"]) else {
+            return Err("a glued --captured value must fail closed, not read the default corpus"
+                .to_string());
+        };
+        let Err(_error) = run_work_command_for_test(&["portfolio", "--captured-old"]) else {
+            return Err("a --captured typo must fail closed, not read the default corpus"
+                .to_string());
+        };
+        Ok(())
+    }
+
+    /// `merge_ready` is an actionable signal and must never fire on stale PR
+    /// evidence or while durable claims on the issue still collide; both
+    /// demote to non-merge states with an explicit re-verification step.
+    #[test]
+    fn work_portfolio_merge_ready_requires_fresh_evidence_and_clear_claims() -> Result<(), String> {
+        fn captured_issue() -> WorkCapturedIssueV1 {
+            WorkCapturedIssueV1 {
+                number: 7001,
+                title: "synthetic".to_string(),
+                state: "open".to_string(),
+                lifecycle_disposition: None,
+                campaigns: vec!["campaign-synthetic".to_string()],
+                blocked_by: Vec::new(),
+                requirement_refs: Vec::new(),
+                semantic_paths: Vec::new(),
+                conflict_resources: Vec::new(),
+                accepted_contracts: Vec::new(),
+                contract_state: "accepted".to_string(),
+                single_agent_preferred: false,
+                honesty_risk: None,
+                proof_cost: None,
+                review_ci_cost: None,
+                readiness_source: None,
+                regression_risks: Vec::new(),
+                lane: None,
+            }
+        }
+        fn approved_pr() -> WorkCapturedPullRequestV1 {
+            WorkCapturedPullRequestV1 {
+                number: 8001,
+                title: "synthetic".to_string(),
+                state: "open".to_string(),
+                draft: false,
+                head_branch: "feat/synthetic".to_string(),
+                base_branch: "main".to_string(),
+                linked_issues: vec![7001],
+                registered_claim: None,
+                review_state: "approved".to_string(),
+                unresolved_review_findings: 0,
+                checks_state: "success".to_string(),
+                worktree_path: None,
+            }
+        }
+        let open = vec![&approved_pr()];
+        let empty_prs: Vec<&WorkCapturedPullRequestV1> = Vec::new();
+        let no_claims: Vec<&WorkCapturedClaimV1> = Vec::new();
+        let (kind, _) = classify_candidate(
+            &captured_issue(),
+            &open,
+            &empty_prs,
+            &no_claims,
+            false,
+            false,
+            true,
+            true,
+            "abc",
+        );
+        if kind != WorkCandidateKindV1::MergeReady {
+            return Err(format!(
+                "fresh approved green PR with no collisions must be merge_ready, got {kind:?}"
+            ));
+        }
+        let (kind, transition) = classify_candidate(
+            &captured_issue(),
+            &open,
+            &empty_prs,
+            &no_claims,
+            false,
+            false,
+            true,
+            false,
+            "abc",
+        );
+        if kind != WorkCandidateKindV1::VerifyCurrentHead
+            || !transition.contains("published head")
+        {
+            return Err(format!(
+                "stale PR evidence must demote merge_ready to current-head verification, got {kind:?}"
+            ));
+        }
+        let (kind, _) = classify_candidate(
+            &captured_issue(),
+            &open,
+            &empty_prs,
+            &no_claims,
+            true,
+            false,
+            true,
+            true,
+            "abc",
+        );
+        if kind != WorkCandidateKindV1::Blocked {
+            return Err(format!(
+                "an unresolved claim collision must block the merge path, got {kind:?}"
+            ));
+        }
         Ok(())
     }
 
