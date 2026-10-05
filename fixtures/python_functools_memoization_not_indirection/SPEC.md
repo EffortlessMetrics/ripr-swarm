@@ -51,4 +51,4 @@ control and is unchanged.
 - Resolve decorator runtime behavior or execute pytest.
 - Treat a local same-named `lru_cache` not imported from `functools` as
   transparent (unit tests cover that negative).
-- Claim runtime mutation-test vocabulary (`killed` / `survived`).
+- Claim runtime mutation outcomes from this static evidence.
