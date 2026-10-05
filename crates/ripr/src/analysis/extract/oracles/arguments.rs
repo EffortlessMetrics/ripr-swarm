@@ -43,6 +43,15 @@ pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
     delimited_contents_at(line, open).map(|contents| split_top_level_commas(&contents))
 }
 
+/// The condition operand of a boolean assertion macro (`assert!`,
+/// `debug_assert!` or `ensure!`), without its diagnostic arguments.
+pub(super) fn boolean_assertion_condition(line: &str) -> Option<String> {
+    ["debug_assert!", "assert!", "ensure!"]
+        .iter()
+        .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
+        .and_then(|arguments| arguments.into_iter().next())
+}
+
 pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
     macro_invocation_arguments(line, "ensure!")
 }

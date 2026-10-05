@@ -33,11 +33,14 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             // variables to ExactErrorVariant so the ErrorVariant seam can credit
             // them as a kind-matching discriminator. Constructor-payload
             // equality is classified as WholeObjectEquality before this
-            // binding-aware pass, so include it here.
+            // binding-aware pass, so include it here. An assertion that
+            // RIPR-SPEC-0231 weakened (`assert_ne!` against a struct literal)
+            // is never upgraded.
             if matches!(
                 classification.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
-            ) && is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
+            ) && classification.strength == OracleStrength::Strong
+                && is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
             {
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;

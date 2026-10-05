@@ -1,6 +1,6 @@
 use super::arguments::{
-    assertion_oracle_text, comparable_expression, custom_assertion_arguments,
-    equality_assertion_arguments,
+    assertion_oracle_text, boolean_assertion_condition, comparable_expression,
+    custom_assertion_arguments, equality_assertion_arguments,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 
@@ -272,6 +272,79 @@ pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
     (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
 }
 
+/// RIPR-SPEC-0231 rule 1: `assert_ne!` and `debug_assert_ne!` only show the
+/// value differs from one alternative, so they never pin an exact value.
+pub(super) fn is_inequality_macro_assertion(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("assert_ne!") || trimmed.starts_with("debug_assert_ne!")
+}
+
+/// An `assert_ne!` operand written as a struct literal (`Config { .. }`),
+/// which keeps the `whole_object_equality` kind at weak strength. A closure
+/// or block operand also contains `{` but is not a struct literal.
+pub(super) fn inequality_has_struct_literal_operand(line: &str) -> bool {
+    equality_assertion_arguments(line).is_some_and(|arguments| {
+        arguments
+            .iter()
+            .take(2)
+            .any(|operand| is_struct_literal(operand.trim()))
+    })
+}
+
+fn is_struct_literal(operand: &str) -> bool {
+    let operand = operand.strip_prefix('&').unwrap_or(operand).trim_start();
+    let Some((path, _)) = operand.split_once('{') else {
+        return false;
+    };
+    let path = path.trim_end();
+    let path = path
+        .split_once('<')
+        .map_or(path, |(head, _)| head)
+        .trim_end();
+    let last = path.rsplit("::").next().unwrap_or(path);
+    operand.ends_with('}')
+        && last.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && path.split("::").all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        })
+}
+
+/// RIPR-SPEC-0231 rule 1: `assert!(!matches!(..))` (and the `debug_assert!`
+/// and `ensure!` forms) only excludes one pattern, so it pins no value and
+/// names no error variant the result must have.
+pub(super) fn is_negated_pattern_assertion(line: &str) -> bool {
+    let Some(condition) = boolean_assertion_condition(line) else {
+        return false;
+    };
+    let Some(negated) = condition.trim().strip_prefix('!') else {
+        return false;
+    };
+    let mut inner = negated.trim_start();
+    while let Some(rest) = inner.strip_prefix('(') {
+        inner = rest.trim_start();
+    }
+    inner.starts_with("matches!") || inner.starts_with("assert_matches!")
+}
+
+/// RIPR-SPEC-0231 rule 1: a custom helper whose name has a `ne`, `not` or
+/// `neq` segment asserts inequality, whatever else the name says.
+pub(super) fn is_inequality_named_custom_helper(line: &str) -> bool {
+    custom_assertion_helper_name(line).is_some_and(|name| {
+        name.split('_')
+            .any(|segment| matches!(segment, "ne" | "not" | "neq"))
+    })
+}
+
+/// An `ensure!` condition whose only comparison is `!=`. One `==` anywhere
+/// still pins a value, so a mixed condition keeps its exact reading.
+pub(super) fn is_inequality_only_comparison(condition: &str) -> bool {
+    let (equal, not_equal) = comparison_operators(condition);
+    not_equal && !equal
+}
+
 pub(super) fn is_duplicative_equality_assertion(line: &str) -> bool {
     let Some(args) = equality_assertion_arguments(line) else {
         return false;
@@ -304,6 +377,14 @@ pub(super) fn is_exact_value_assertion(line: &str) -> bool {
 }
 
 pub(super) fn contains_exact_comparison(condition: &str) -> bool {
+    let (equal, not_equal) = comparison_operators(condition);
+    equal || not_equal
+}
+
+/// Which of `==` and `!=` appear outside string literals.
+fn comparison_operators(condition: &str) -> (bool, bool) {
+    let mut equal = false;
+    let mut not_equal = false;
     let mut chars = condition.chars().peekable();
     let mut in_string = false;
     let mut escaped = false;
@@ -320,11 +401,18 @@ pub(super) fn contains_exact_comparison(condition: &str) -> bool {
         }
         match ch {
             '"' => in_string = true,
-            '=' | '!' if matches!(chars.peek(), Some('=')) => return true,
+            '=' if matches!(chars.peek(), Some('=')) => {
+                equal = true;
+                chars.next();
+            }
+            '!' if matches!(chars.peek(), Some('=')) => {
+                not_equal = true;
+                chars.next();
+            }
             _ => {}
         }
     }
-    false
+    (equal, not_equal)
 }
 
 fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {

@@ -337,8 +337,16 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
-- Planned: one classifier unit test per acceptance example, and a fixture
-  for example 1 showing the related test's reported kind and strength.
+- Rule 1 (inequality): `classify.rs`
+  `spec_0231_rule_1_inequality_is_never_exact` covers acceptance examples 1,
+  2, 11, 13, 14, 19, 20 and the negated half of 26, with equality controls.
+  Fixture `fixtures/inequality_assertion_not_exact` shows example 1's related
+  test as `relational_check` / weak, and `cli_smoke.rs`
+  `repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip`
+  shows its seam is weakly gripped in the repo audit (strongly gripped
+  before).
+- Planned: one classifier unit test per remaining acceptance example (rules
+  2 to 6).
 
 ## Implementation Mapping
 

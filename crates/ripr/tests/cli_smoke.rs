@@ -23094,3 +23094,30 @@ fn review_comments_help_survives_invalid_admission_environment()
     }
     Ok(())
 }
+
+/// RIPR-SPEC-0231 rule 1: a seam whose only test is `assert_ne!(score(2), 0)`
+/// is weakly gripped in the repo audit. Before the rule, the inequality read
+/// `exact_value` / strong and the seam counted as strongly gripped.
+#[test]
+fn repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root().join("fixtures/inequality_assertion_not_exact/input");
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let metrics = &report["metrics"];
+    assert_eq!(
+        metrics["seams_total"], 1,
+        "fixture seam not parsed: {metrics}"
+    );
+    assert_eq!(metrics["strongly_gripped"], 0, "{metrics}");
+    assert_eq!(metrics["weakly_gripped"], 1, "{metrics}");
+    Ok(())
+}
