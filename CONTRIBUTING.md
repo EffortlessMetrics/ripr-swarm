@@ -64,7 +64,16 @@ Each PR should include:
 - scoped implementation or documentation changes
 - tests or documented verification
 - relevant docs updates
-- changelog entry when behavior, workflow, or public docs change
+- changelog entry when behavior, workflow, or public docs change, as one new
+  file under `changelog.d/` rather than an edit to `CHANGELOG.md`: name it
+  `<pr-or-issue>-<short-slug>.md`, make its first line the section as an HTML
+  comment (`<!-- section: Fixed -->`), and write the entry below it in the
+  prose style of `CHANGELOG.md`, ending with the issue or PR reference. Two PRs
+  that each add a file never conflict. The fragments are folded into
+  `Unreleased` by hand at the release cut; existing `CHANGELOG.md` entries stay
+  put. The format and fold step are in
+  [changelog.d/README.md](changelog.d/README.md), and the sections in
+  [Changelog policy](docs/CHANGELOG_POLICY.md)
 - traceability from spec to tests to code for behavior changes
 
 ## Scoped Evidence-Heavy PRs
