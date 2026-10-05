@@ -9922,9 +9922,10 @@ Field contract:
   configured-off severity while remaining visible in the status report.
 - `baseline.metadata.current`, `stale`, `missing_metadata`, and `unknown` -
   baseline review metadata health counts. `stale` includes past-due
-  `unix_ms:<millis>` and `YYYY-MM-DD` (or RFC3339) `review_after` values.
-  A present deadline that cannot be compared with `generated_at` counts as
-  `unknown`, not `current`. Missing metadata must not hide the entry.
+  `unix_ms:<millis>` and `YYYY-MM-DD` `review_after` values, and RFC3339
+  datetimes after conversion to the UTC run date. Impossible Gregorian dates
+  and a `T` suffix that is not RFC3339 count as `unknown`, not `current`.
+  Missing metadata must not hide the entry.
 - `debt_delta.*` - baseline movement buckets copied from the baseline debt
   delta report so summaries can show old debt, new debt, resolved debt,
   acknowledgements, suppressions, stale entries, invalid entries, and missing
