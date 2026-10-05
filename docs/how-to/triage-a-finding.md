@@ -58,7 +58,7 @@ Perl findings carry only `observation_unconfirmed`, on a narrow set of
 weakly exposed rows. `no_call_path`,
 `no_assertion`, `assertion_not_observing` and `assertion_not_credited` can
 appear under any class, because they describe a single test. The other values
-appear only under `no_static_path`, `weakly_exposed` and `reachable_unrevealed`.
+appear only under `weakly_exposed` and `reachable_unrevealed`.
 
 | `why` reads | `miss` value | What to do |
 | --- | --- | --- |
