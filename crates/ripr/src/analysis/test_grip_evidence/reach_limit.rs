@@ -93,7 +93,11 @@ impl TypeMentionIndex {
         let mut production: Vec<&FunctionSummary> = reach.production_functions().collect();
         sort_functions(&mut production);
         // Each function's position in that order, so a root's callees sort
-        // by an integer instead of by path.
+        // by an integer instead of by path. Keys are the addresses of the
+        // index's own `FunctionSummary` values: `production_functions` and
+        // `functions_reached_from` both borrow them from the reach graph's
+        // `by_name`, which the index owns for this whole build, so every
+        // callee has a key. The `usize::MAX` fallback below is unreachable.
         let order: HashMap<*const FunctionSummary, usize> = production
             .iter()
             .enumerate()
