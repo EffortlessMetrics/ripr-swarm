@@ -242,6 +242,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                unlinked_python_tests: None,
             }
         }
 
