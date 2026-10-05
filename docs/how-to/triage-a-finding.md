@@ -55,10 +55,10 @@ facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
 the test that catches an `exposed` change. The reason does not change the
 finding's class. Use it to choose a follow-up from the table below. Rust findings carry it today. Python and TypeScript findings do not yet, and
 Perl findings carry only `observation_unconfirmed`, on a narrow set of
-weakly exposed rows. `no_assertion`,
-`assertion_not_observing` and `assertion_not_credited` can appear under any
-class. The other values appear only under `no_static_path`, `weakly_exposed` and
-`reachable_unrevealed`.
+weakly exposed rows. `no_call_path`,
+`no_assertion`, `assertion_not_observing` and `assertion_not_credited` can
+appear under any class, because they describe a single test. The other values
+appear only under `no_static_path`, `weakly_exposed` and `reachable_unrevealed`.
 
 | `why` reads | `miss` value | What to do |
 | --- | --- | --- |
