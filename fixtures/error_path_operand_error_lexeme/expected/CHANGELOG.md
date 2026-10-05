@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (3)
+
+Reason:
+RIPR-SPEC-0108: fixture from #5255 predates the #5578 unconfirmed-observation wording; combined-tree drift on main
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
