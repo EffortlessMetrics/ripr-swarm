@@ -165,3 +165,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (15)
+
+Reason:
+RIPR-SPEC-0159: big_order_ships_free calls shipping, which calls ships_free; it now relates as helper_owner_call instead of owner_named_test (which wrongly said no call path) (#6694/#6672); related-test order follows the stronger relation; class unchanged
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

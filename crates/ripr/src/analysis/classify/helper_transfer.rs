@@ -516,6 +516,152 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Whether every hop of `chain` hands the result of its call straight to
+/// its caller's return (#6694, #6672), so an exact oracle on the entry's
+/// result can stand for an oracle on the owner's result.
+///
+/// Each hop's caller body must have no early `return` and no `?`, and its
+/// tail expression must be either the hop call itself (`capped(value,
+/// 10)`) or `if <call> { A } else { B }` / `if !<call> { A } else { B }`
+/// with textually distinct branches. Any other shape — a discarded or
+/// let-bound result, arithmetic on the result, an `else if` chain, a call
+/// inside one branch, a `match` — answers `false` (fail closed): reach
+/// still holds, but the entry's oracle is not paired with the owner's
+/// boundary.
+pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain) -> bool {
+    !chain.hops.is_empty()
+        && chain.hops.iter().enumerate().all(|(step, hop)| {
+            let callee = match step.checked_sub(1) {
+                None => owner_name,
+                Some(below) => match chain.hops.get(below) {
+                    Some(lower) => lower.caller.name.as_str(),
+                    None => return false,
+                },
+            };
+            caller_tail_forwards_call(&hop.caller.body, callee)
+        })
+}
+
+fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    if masked.len() != body.len() || callee.is_empty() {
+        return false;
+    }
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if close <= open {
+        return false;
+    }
+    let inner = &masked[open + 1..close];
+    if inner.contains('?') || contains_word(inner, "return") {
+        return false;
+    }
+    // The tail starts after the last depth-0 `;`.
+    let mut depth = 0usize;
+    let mut tail_start = 0usize;
+    for (at, character) in inner.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            ';' if depth == 0 => tail_start = at + 1,
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    let Some(raw_inner) = body.get(open + 1..close) else {
+        return false;
+    };
+    let tail = inner[tail_start..].trim();
+    let lead = inner[tail_start..].len() - inner[tail_start..].trim_start().len();
+    let Some(raw_tail) = raw_inner.get(tail_start + lead..tail_start + lead + tail.len()) else {
+        return false;
+    };
+    if is_exact_call(tail, callee) {
+        return true;
+    }
+    let Some(after_if) = tail.strip_prefix("if ") else {
+        return false;
+    };
+    let base = tail.len() - after_if.len();
+    let Some(then_open) = after_if.find('{') else {
+        return false;
+    };
+    let condition = after_if[..then_open].trim();
+    let condition = condition.strip_prefix('!').unwrap_or(condition).trim();
+    if !is_exact_call(condition, callee) {
+        return false;
+    }
+    let then_open = base + then_open;
+    let Some(then_close) = matching_close(tail, then_open) else {
+        return false;
+    };
+    let rest = &tail[then_close + 1..];
+    let Some(after_else) = rest.trim_start().strip_prefix("else") else {
+        return false;
+    };
+    let else_open_rel = after_else.len() - after_else.trim_start().len();
+    if !after_else[else_open_rel..].starts_with('{') {
+        return false;
+    }
+    let else_open = tail.len() - after_else.len() + else_open_rel;
+    let Some(else_close) = matching_close(tail, else_open) else {
+        return false;
+    };
+    if !tail[else_close + 1..].trim().is_empty() {
+        return false;
+    }
+    match (
+        raw_tail.get(then_open + 1..then_close),
+        raw_tail.get(else_open + 1..else_close),
+    ) {
+        (Some(then_raw), Some(else_raw)) => then_raw.trim() != else_raw.trim(),
+        _ => false,
+    }
+}
+
+/// `text` is exactly one direct call of `callee` (nothing before or after).
+fn is_exact_call(text: &str, callee: &str) -> bool {
+    if direct_call_paren(text, callee) != Some(0) {
+        return false;
+    }
+    matching_close(text, callee.len()).is_some_and(|close| close + 1 == text.len())
+}
+
+/// Index of the bracket closing the one opened at `open` (masked text).
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices().skip_while(|(at, _)| *at < open) {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,6 +810,106 @@ mod tests {
         ));
         assert!(is_direct_call_site("let x = helper();", "helper"));
         Ok(())
+    }
+
+    fn one_hop_chain(caller_body: &str) -> HelperChain {
+        let mut caller = function("src/lib.rs", "wrapper", &[]);
+        caller.body = caller_body.to_string();
+        HelperChain {
+            hops: vec![HelperHop {
+                caller,
+                call_text: String::new(),
+                arguments: Vec::new(),
+            }],
+            stop_above: None,
+        }
+    }
+
+    // #6694 / #6672: an exact oracle on the wrapper's result stands for the
+    // helper's result only when the wrapper hands that result to its return.
+    #[test]
+    fn chain_forwards_owner_result_accepts_tail_call_and_if_condition() {
+        for body in [
+            "pub fn capped_score(value: u32) -> u32 {\n    capped(value, 10)\n}",
+            "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
+            "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+        ] {
+            let callee = if body.contains("is_bulk") {
+                "is_bulk"
+            } else {
+                "capped"
+            };
+            assert!(
+                chain_forwards_owner_result(callee, &one_hop_chain(body)),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn chain_forwards_owner_result_refuses_shapes_that_drop_or_transform_the_result() {
+        for body in [
+            // discarded result
+            "pub fn w(qty: u32) -> u32 {\n    let _ = is_bulk(qty);\n    5\n}",
+            "pub fn w(qty: u32) -> u32 {\n    is_bulk(qty);\n    5\n}",
+            // let-bound result (not followed in V1)
+            "pub fn w(qty: u32) -> u32 {\n    let bulk = is_bulk(qty);\n    if bulk { 5 } else { 0 }\n}",
+            // the call sits in one branch, behind another condition
+            "pub fn w(qty: u32) -> bool {\n    if qty == 10 { true } else { is_bulk(qty) }\n}",
+            // equal branches never reveal the helper's result
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 5 }\n}",
+            // compound condition
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) && qty > 99 { 5 } else { 0 }\n}",
+            // else-if chain
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else if qty > 3 { 1 } else { 0 }\n}",
+            // arithmetic on the result
+            "pub fn w(qty: u32) -> bool {\n    is_bulk(qty) || true\n}",
+            // early exit before the tail
+            "pub fn w(qty: u32) -> bool {\n    if qty == 10 { return true; }\n    is_bulk(qty)\n}",
+            "pub fn w(qty: u32) -> Option<bool> {\n    let q = Some(qty)?;\n    Some(is_bulk(q))\n}",
+            // method call with the same name is not the hop
+            "pub fn w(qty: u32) -> bool {\n    self.is_bulk(qty)\n}",
+        ] {
+            assert!(
+                !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),
+                "{body}"
+            );
+        }
+        assert!(!chain_forwards_owner_result(
+            "is_bulk",
+            &HelperChain {
+                hops: Vec::new(),
+                stop_above: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn chain_forwards_owner_result_checks_every_hop() {
+        let mut lower = function("src/lib.rs", "middle", &[]);
+        lower.body = "fn middle(qty: u32) -> bool {\n    is_bulk(qty)\n}".to_string();
+        let mut upper = function("src/lib.rs", "entry", &[]);
+        upper.body =
+            "pub fn entry(qty: u32) -> u32 {\n    if middle(qty) { 5 } else { 0 }\n}".to_string();
+        let hop = |caller: FunctionSummary| HelperHop {
+            caller,
+            call_text: String::new(),
+            arguments: Vec::new(),
+        };
+        let chain = HelperChain {
+            hops: vec![hop(lower.clone()), hop(upper)],
+            stop_above: None,
+        };
+        assert!(chain_forwards_owner_result("is_bulk", &chain));
+        let mut dropping = function("src/lib.rs", "entry", &[]);
+        dropping.body =
+            "pub fn entry(qty: u32) -> u32 {\n    let _ = middle(qty);\n    5\n}".to_string();
+        let chain = HelperChain {
+            hops: vec![hop(lower), hop(dropping)],
+            stop_above: None,
+        };
+        assert!(!chain_forwards_owner_result("is_bulk", &chain));
     }
 
     // #3296 review B2: only whole-token literals bind; an identifier

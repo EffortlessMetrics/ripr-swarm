@@ -77,8 +77,20 @@ constant or helper hop stays paired. A same-test mix that calls the boundary
 without asserting and asserts a far call (`let _ = gate(10); assert_eq!(gate(100),
 true)`) does not pair.
 
-Helper-call transfer, proximity-only oracle credit, and bare-name method
-relation are out of scope.
+A private helper reached only through a wrapper (RIPR-SPEC-0159 chain,
+#6694 / #6672) pairs on the wrapper call: an admitted discriminating
+assertion whose subject is one call of the chain's entry, that names no
+second entry call and no owner call, pairs when activation recorded a
+boundary `==` row bound down the chain from that assertion's line. This
+holds only when every hop hands its call's result to its caller's return:
+the caller body has no `return` or `?`, and its tail is the hop call
+itself or `if <call> { A } else { B }` (or `if !<call>`) with distinct
+branches. A discarded, let-bound, transformed, or branch-guarded result
+keeps the pairing missing. A computed hop argument already stops the row
+transfer (RIPR-SPEC-0159), so no `==` row exists to pair.
+
+Proximity-only oracle credit and bare-name method relation are out of
+scope.
 
 ## Required Evidence
 
@@ -112,6 +124,12 @@ relation are out of scope.
   fixture remains `exposed`.
 - Given `let _ = gate(10); assert_eq!(gate(100), true)` in one test, when the
   predicate is classified, then it does not pair.
+- Given private `fn is_bulk(qty: u32) -> bool { 10 <= qty }` reached only
+  through `pub fn order_discount(qty: u32) -> u32 { if is_bulk(qty) { 5 } else
+  { 0 } }` and `assert_eq!(order_discount(10), 5)`, when the predicate is
+  classified, then it pairs. With `let _ = is_bulk(qty); 5` as the wrapper
+  body, or with the tests calling only `order_discount(12)` and
+  `order_discount(3)`, it does not.
 
 ## Test Mapping
 

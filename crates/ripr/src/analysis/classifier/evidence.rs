@@ -184,6 +184,7 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
+                context.helper_chain.as_ref(),
                 &assertion_admitted,
             ) {
             StageEvidence::new(

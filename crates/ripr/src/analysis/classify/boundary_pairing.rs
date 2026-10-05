@@ -10,6 +10,7 @@ use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
+use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
 use super::text::delimited_contents_at;
 use crate::domain::*;
 
@@ -37,6 +38,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
+    helper_chain: Option<&HelperChain>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
@@ -45,8 +47,22 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     let Some(owner) = owner_fn else {
         return false;
     };
+    // #6694 / #6672: a private helper reached only through a wrapper pairs
+    // on the wrapper call when every hop hands the helper's result to its
+    // caller's return; any other chain shape keeps the pairing missing.
+    let forwarding_entry = helper_chain
+        .filter(|chain| chain_forwards_owner_result(&owner.name, chain))
+        .and_then(|chain| chain.hops.last())
+        .map(|hop| hop.caller.name.as_str());
     related_tests.iter().any(|test| {
-        test_pairs_boundary_input_with_oracle(probe, owner, test, activation, assertion_admitted)
+        test_pairs_boundary_input_with_oracle(
+            probe,
+            owner,
+            test,
+            activation,
+            forwarding_entry,
+            assertion_admitted,
+        )
     })
 }
 
@@ -55,6 +71,7 @@ fn test_pairs_boundary_input_with_oracle(
     owner: &FunctionSummary,
     test: &TestSummary,
     activation: &ActivationEvidence,
+    forwarding_entry: Option<&str>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
@@ -64,7 +81,34 @@ fn test_pairs_boundary_input_with_oracle(
         }
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, activation)
             || assertion_observes_bound_name(assertion, &bound_names)
+            || forwarding_entry.is_some_and(|entry| {
+                assertion_observes_boundary_entry_call(owner, entry, assertion, activation)
+            })
     })
+}
+
+/// The assertion's subject is one call of the chain's entry, the assertion
+/// names neither the owner nor a second entry call, and activation already
+/// recorded a boundary `==` row bound down the chain from this assertion's
+/// line (the transferred row carries the entry call's text).
+fn assertion_observes_boundary_entry_call(
+    owner: &FunctionSummary,
+    entry: &str,
+    assertion: &OracleFact,
+    activation: &ActivationEvidence,
+) -> bool {
+    let subject = assertion_subject(&assertion.text);
+    owner_call_count(&subject, entry) == 1
+        && owner_call_count(&assertion.text, entry) == 1
+        && owner_call_count(&assertion.text, &owner.name) == 0
+        && activation_marks_boundary_call(
+            activation,
+            &CallFact {
+                line: assertion.line,
+                name: entry.to_string(),
+                text: assertion.text.clone(),
+            },
+        )
 }
 
 fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
@@ -351,7 +395,7 @@ mod tests {
         tests: &[&TestSummary],
         activation: &ActivationEvidence,
     ) -> bool {
-        has_same_test_boundary_oracle_pairing(probe, owner, tests, activation, &|_, _| true)
+        has_same_test_boundary_oracle_pairing(probe, owner, tests, activation, None, &|_, _| true)
     }
 
     #[test]
@@ -749,6 +793,110 @@ mod tests {
             ),
             "without the activation == fact, classify(\"word\") must not pair against final_label == \"alpha\""
         );
+    }
+
+    fn wrapper_chain(wrapper_body: &str) -> HelperChain {
+        let mut wrapper = gate_owner();
+        wrapper.name = "order_discount".to_string();
+        wrapper.id = SymbolId("src/lib.rs::order_discount".to_string());
+        wrapper.body = wrapper_body.to_string();
+        HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: wrapper,
+                call_text: "if is_bulk(qty) {".to_string(),
+                arguments: vec!["qty".to_string()],
+            }],
+            stop_above: None,
+        }
+    }
+
+    fn bulk_owner() -> FunctionSummary {
+        let mut owner = gate_owner();
+        owner.name = "is_bulk".to_string();
+        owner.id = SymbolId("src/lib.rs::is_bulk".to_string());
+        owner.body = "fn is_bulk(qty: u32) -> bool { 10 <= qty }".to_string();
+        owner
+    }
+
+    fn transferred_boundary_row(line: usize, assertion: &str) -> ActivationEvidence {
+        ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line,
+                text: format!("{assertion} | exact input qty = 10; literal operand 10 = 10"),
+                value: "qty == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        }
+    }
+
+    const FORWARDING_WRAPPER: &str =
+        "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 0 }\n}";
+
+    // #6694 / #6672: the wrapper's exact pin on the boundary input pairs with
+    // the private helper's boundary when the wrapper forwards the helper's
+    // result to its return and activation bound the row down the chain.
+    #[test]
+    fn forwarding_wrapper_oracle_pairs_with_the_helper_boundary() {
+        let probe = predicate_probe("10 <= qty");
+        let owner = bulk_owner();
+        let assertion = "assert_eq!(order_discount(10), 5);";
+        let test = test_summary(
+            "ten_items_earn_the_bulk_discount",
+            assertion,
+            vec![call("order_discount", assertion)],
+            vec![exact(assertion)],
+            &["10", "5"],
+        );
+        let activation = transferred_boundary_row(1, assertion);
+        let chain = wrapper_chain(FORWARDING_WRAPPER);
+        let pairs = |chain: Option<&HelperChain>, activation: &ActivationEvidence| {
+            has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&test],
+                activation,
+                chain,
+                &|_, _| true,
+            )
+        };
+        assert!(pairs(Some(&chain), &activation));
+        // Discriminating controls: no chain, no transferred boundary row,
+        // or a wrapper that drops the helper's result never pair.
+        assert!(!pairs(None, &activation));
+        assert!(!pairs(Some(&chain), &ActivationEvidence::default()));
+        let dropping = wrapper_chain(
+            "pub fn order_discount(qty: u32) -> u32 {\n    let _ = is_bulk(qty);\n    5\n}",
+        );
+        assert!(!pairs(Some(&dropping), &activation));
+    }
+
+    #[test]
+    fn wrapper_oracle_off_the_boundary_line_does_not_pair() {
+        // The boundary row sits on a call with no oracle; the asserted
+        // wrapper call is a far input on another line.
+        let probe = predicate_probe("10 <= qty");
+        let owner = bulk_owner();
+        let boundary_call = "let _ = order_discount(10);";
+        let far = "assert_eq!(order_discount(12), 5);";
+        let mut far_oracle = exact(far);
+        far_oracle.line = 2;
+        let test = test_summary(
+            "split",
+            &format!("{boundary_call}\n{far}"),
+            vec![call("order_discount", boundary_call)],
+            vec![far_oracle],
+            &["10", "12", "5"],
+        );
+        let activation = transferred_boundary_row(1, boundary_call);
+        assert!(!has_same_test_boundary_oracle_pairing(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &activation,
+            Some(&wrapper_chain(FORWARDING_WRAPPER)),
+            &|_, _| true,
+        ));
     }
 
     fn predicate_probe(expression: &str) -> Probe {

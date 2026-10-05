@@ -918,10 +918,12 @@ fn find_related_tests_with_candidates<'a>(
         // (same authority the activation rows consume). The chain is
         // resolved once per probe above the test loop (#3296 review
         // M1 — the per-test re-resolution was O(tests x functions)).
-        let helper_chain_reaches = !calls_owner
-            && !assertions_reference_owner
-            && (!same_file_or_named || property_only_owner_call)
-            && calls_helper_entry;
+        // A same-file or owner-named test that calls the entry keeps the
+        // call relation (#6694, #6672): the typed chain is stronger
+        // evidence than file proximity or a name token, and demoting it
+        // let a tested wrapper's private helper read as file-level reach.
+        let helper_chain_reaches =
+            !calls_owner && !assertions_reference_owner && calls_helper_entry;
 
         if !calls_owner
             && !assertions_reference_owner
@@ -2445,6 +2447,86 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    #[test]
+    fn same_file_wrapper_test_keeps_the_helper_call_relation() {
+        // #6694 / #6672: a test in the helper's own file that calls the
+        // wrapper reaches the private helper through the typed chain. File
+        // proximity or an owner-named test must not demote that call
+        // relation to `same_test_file` / `owner_named_test`; a same-file
+        // test that never calls the wrapper keeps `same_test_file`.
+        let owner = function("src/lib.rs", "is_bulk");
+        let wrapper = function("src/lib.rs", "order_discount");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), wrapper.clone()],
+            tests: vec![
+                test_with_call(
+                    "src/lib.rs",
+                    "ten_items_earn_the_bulk_discount",
+                    "assert_eq!(order_discount(10), 5);",
+                    "order_discount",
+                ),
+                test_with_call(
+                    "src/lib.rs",
+                    "is_bulk_named_wrapper_test",
+                    "assert_eq!(order_discount(9), 0);",
+                    "order_discount",
+                ),
+                test_with_call(
+                    "src/lib.rs",
+                    "quota_is_two_hundred",
+                    "assert_eq!(within_quota(200), true);",
+                    "within_quota",
+                ),
+            ],
+            ..Default::default()
+        });
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: wrapper,
+                call_text: "if is_bulk(qty) {".to_string(),
+                arguments: vec!["qty".to_string()],
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "10 <= qty");
+
+        // `find_related_tests` also asserts indexed/full-scan parity.
+        {
+            let related =
+                find_related_tests(&probe, Some(&owner), &index, true, Some(&chain), None);
+            let reasons: Vec<(&str, RelationReason)> = related
+                .iter()
+                .map(|(test, reason)| (test.name.as_str(), *reason))
+                .collect();
+            assert!(
+                reasons.contains(&(
+                    "ten_items_earn_the_bulk_discount",
+                    RelationReason::HelperOwnerCall
+                )),
+                "{reasons:?}"
+            );
+            assert!(
+                reasons.contains(&(
+                    "is_bulk_named_wrapper_test",
+                    RelationReason::HelperOwnerCall
+                )),
+                "{reasons:?}"
+            );
+            assert!(
+                reasons.contains(&("quota_is_two_hundred", RelationReason::SameTestFile)),
+                "{reasons:?}"
+            );
+        }
+        // Without the chain the wrapper test is file proximity only.
+        let unchained = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert!(
+            unchained
+                .iter()
+                .all(|(_, reason)| *reason != RelationReason::HelperOwnerCall),
+            "{unchained:?}"
+        );
     }
 
     #[test]

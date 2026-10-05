@@ -32,6 +32,11 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
+- The chain relation outranks file proximity and test-name affinity
+  (#6694, #6672): a test in the helper's own file, or one whose name
+  contains the helper's name, that calls a resolved hop's caller relates
+  as `HelperOwnerCall`, not `same_test_file` / `owner_named_test`. A
+  same-file test that calls no hop caller keeps its proximity reason.
 - A comparison operand that is a **direct call to a unique helper**
   (`is_word_start(input, 0) == want`) evaluates through the helper's
   return when the body is simple single-line `let` statements plus a

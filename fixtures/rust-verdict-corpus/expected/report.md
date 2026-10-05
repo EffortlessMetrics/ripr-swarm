@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 72/203 | 0.3547 |
-| False actionable (of discriminated) | 66/106 | 0.6226 |
+| False verdicts (all cases) | 71/203 | 0.3498 |
+| False actionable (of discriminated) | 65/106 | 0.6132 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 73/203 | 0.3596 |
+| Ideal verdict | 74/203 | 0.3645 |
 | Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
@@ -16,7 +16,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 62/169 | 56/86 | 6/83 | 0/83 | 68/169 | 39/169 |
+| authored | 169 | 61/169 | 55/86 | 6/83 | 0/83 | 69/169 | 39/169 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -57,7 +57,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | no | none |
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `pricing-free-shipping-boundary` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
-| `pricing-gold-discount-rate` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `pricing-gold-discount-rate` | authored | discriminated | credited | credited | exposed | ideal | yes | none |
 | `pricing-flat-shipping-fee` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `pricing-quote-total-field` | authored | partially_discriminated | gap | credited | exposed | false_exposed | no | none |
