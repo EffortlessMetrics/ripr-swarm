@@ -9052,12 +9052,14 @@
         "mutants": [
           {
             "replacement": "18 < age",
+            "mutated_line": "18 < age",
             "outcome": "tests_failed",
             "failing_test": "tests::eighteen_is_adult_and_seventeen_is_not",
             "equivalence_review": "not equivalent: eighteen_is_adult_and_seventeen_is_not fails on it"
           },
           {
             "replacement": "18 > age",
+            "mutated_line": "18 > age",
             "outcome": "tests_failed",
             "failing_test": "tests::eighteen_is_adult_and_seventeen_is_not",
             "equivalence_review": "not equivalent: eighteen_is_adult_and_seventeen_is_not fails on it"
@@ -9102,12 +9104,14 @@
         "mutants": [
           {
             "replacement": "5_000 < cents",
+            "mutated_line": "5_000 < cents",
             "outcome": "tests_failed",
             "failing_test": "tests::free_shipping_table",
             "equivalence_review": "not equivalent: free_shipping_table fails on it"
           },
           {
             "replacement": "5_000 > cents",
+            "mutated_line": "5_000 > cents",
             "outcome": "tests_failed",
             "failing_test": "tests::free_shipping_table",
             "equivalence_review": "not equivalent: free_shipping_table fails on it"
@@ -9152,12 +9156,14 @@
         "mutants": [
           {
             "replacement": "67 < age",
+            "mutated_line": "67 < age",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: can_retire(67) becomes false; the monotonic loop and the 0/119 endpoints cannot see where the step sits"
           },
           {
             "replacement": "67 > age",
+            "mutated_line": "67 > age",
             "outcome": "tests_failed",
             "failing_test": "tests::retirement_is_monotonic_in_age",
             "equivalence_review": "not equivalent: retirement_is_monotonic_in_age fails on it"
@@ -9200,12 +9206,14 @@
         "mutants": [
           {
             "replacement": "50 < score",
+            "mutated_line": "50 < score",
             "outcome": "tests_failed",
             "failing_test": "tests::pass_mark_is_fifty",
             "equivalence_review": "not equivalent: pass_mark_is_fifty fails on it"
           },
           {
             "replacement": "50 > score",
+            "mutated_line": "50 > score",
             "outcome": "tests_failed",
             "failing_test": "tests::pass_mark_is_fifty",
             "equivalence_review": "not equivalent: pass_mark_is_fifty fails on it"
@@ -9250,12 +9258,14 @@
         "mutants": [
           {
             "replacement": "2_000 < grams",
+            "mutated_line": "2_000 < grams",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: overweight(2_000) becomes false"
           },
           {
             "replacement": "2_000 > grams",
+            "mutated_line": "2_000 > grams",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: overweight(2_500) becomes false"
@@ -9298,18 +9308,21 @@
         "mutants": [
           {
             "replacement": "\"admin\" != role",
+            "mutated_line": "\"admin\" != role",
             "outcome": "tests_failed",
             "failing_test": "tests::only_admin_is_admin",
             "equivalence_review": "not equivalent: only_admin_is_admin fails on it"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_failed",
             "failing_test": "tests::only_admin_is_admin",
             "equivalence_review": "not equivalent: only_admin_is_admin fails on it"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_failed",
             "failing_test": "tests::only_admin_is_admin",
             "equivalence_review": "not equivalent: only_admin_is_admin fails on it"
@@ -9354,12 +9367,14 @@
         "mutants": [
           {
             "replacement": "day % 7 != 6 || day % 7 == 0",
+            "mutated_line": "day % 7 != 6 || day % 7 == 0",
             "outcome": "tests_failed",
             "failing_test": "tests::weekend_table",
             "equivalence_review": "not equivalent: weekend_table fails on it"
           },
           {
             "replacement": "day % 7 == 6 || day % 7 != 0",
+            "mutated_line": "day % 7 == 6 || day % 7 != 0",
             "outcome": "tests_failed",
             "failing_test": "tests::weekend_table",
             "equivalence_review": "not equivalent: weekend_table fails on it"
@@ -9404,18 +9419,21 @@
         "mutants": [
           {
             "replacement": "b != a",
+            "mutated_line": "b != a",
             "outcome": "tests_failed",
             "failing_test": "tests::same_currency_is_reflexive",
             "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: same_currency(\"USD\", \"EUR\") becomes true; reflexivity only checks equal pairs"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_failed",
             "failing_test": "tests::same_currency_is_reflexive",
             "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"
@@ -9459,12 +9477,14 @@
         "mutants": [
           {
             "replacement": "y != 0 && x == 0",
+            "mutated_line": "y != 0 && x == 0",
             "outcome": "tests_failed",
             "failing_test": "tests::origin_is_zero_zero",
             "equivalence_review": "not equivalent: origin_is_zero_zero fails on it"
           },
           {
             "replacement": "y == 0 && x != 0",
+            "mutated_line": "y == 0 && x != 0",
             "outcome": "tests_failed",
             "failing_test": "tests::origin_is_zero_zero",
             "equivalence_review": "not equivalent: origin_is_zero_zero fails on it"
@@ -9509,18 +9529,21 @@
         "mutants": [
           {
             "replacement": "443 != port",
+            "mutated_line": "443 != port",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: is_default_port(443) becomes false"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: is_default_port(8080) becomes true"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: is_default_port(443) becomes false"
@@ -9563,12 +9586,14 @@
         "mutants": [
           {
             "replacement": "qty + price",
+            "mutated_line": "qty + price",
             "outcome": "tests_failed",
             "failing_test": "tests::three_at_seven_costs_twenty_one",
             "equivalence_review": "not equivalent: three_at_seven_costs_twenty_one fails on it"
           },
           {
             "replacement": "qty / price",
+            "mutated_line": "qty / price",
             "outcome": "tests_failed",
             "failing_test": "tests::three_at_seven_costs_twenty_one",
             "equivalence_review": "not equivalent: three_at_seven_costs_twenty_one fails on it"
@@ -9612,12 +9637,14 @@
         "mutants": [
           {
             "replacement": "height + width",
+            "mutated_line": "height + width",
             "outcome": "tests_failed",
             "failing_test": "tests::area_table",
             "equivalence_review": "not equivalent: area_table fails on it"
           },
           {
             "replacement": "height / width",
+            "mutated_line": "height / width",
             "outcome": "tests_failed",
             "failing_test": "tests::area_table",
             "equivalence_review": "not equivalent: area_table fails on it"
@@ -9662,12 +9689,14 @@
         "mutants": [
           {
             "replacement": "qty + unit",
+            "mutated_line": "qty + unit",
             "outcome": "tests_failed",
             "failing_test": "tests::zero_quantity_costs_nothing",
             "equivalence_review": "not equivalent: zero_quantity_costs_nothing fails on it"
           },
           {
             "replacement": "qty / unit",
+            "mutated_line": "qty / unit",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: order_cost(2, 4) is 2 instead of 8; with qty 0 both give 0"
@@ -9710,12 +9739,14 @@
         "mutants": [
           {
             "replacement": "tip - bill",
+            "mutated_line": "tip - bill",
             "outcome": "tests_failed",
             "failing_test": "tests::tip_is_added",
             "equivalence_review": "not equivalent: tip_is_added fails on it"
           },
           {
             "replacement": "tip * bill",
+            "mutated_line": "tip * bill",
             "outcome": "tests_failed",
             "failing_test": "tests::tip_is_added",
             "equivalence_review": "not equivalent: tip_is_added fails on it"
@@ -9760,12 +9791,14 @@
         "mutants": [
           {
             "replacement": "60 + minutes",
+            "mutated_line": "60 + minutes",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: seconds(3) is 63 instead of 180"
           },
           {
             "replacement": "60 / minutes",
+            "mutated_line": "60 / minutes",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: seconds(3) is 20 instead of 180"
@@ -9808,18 +9841,21 @@
         "mutants": [
           {
             "replacement": "in_stock || paid",
+            "mutated_line": "in_stock || paid",
             "outcome": "tests_failed",
             "failing_test": "tests::ships_only_when_paid_and_in_stock",
             "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_failed",
             "failing_test": "tests::ships_only_when_paid_and_in_stock",
             "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_failed",
             "failing_test": "tests::ships_only_when_paid_and_in_stock",
             "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"
@@ -9865,18 +9901,21 @@
         "mutants": [
           {
             "replacement": "large && flagged",
+            "mutated_line": "large && flagged",
             "outcome": "tests_failed",
             "failing_test": "tests::review_table",
             "equivalence_review": "not equivalent: review_table fails on it"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_failed",
             "failing_test": "tests::review_table",
             "equivalence_review": "not equivalent: review_table fails on it"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_failed",
             "failing_test": "tests::review_table",
             "equivalence_review": "not equivalent: review_table fails on it"
@@ -9922,24 +9961,28 @@
         "mutants": [
           {
             "replacement": "!banned || has_ticket",
+            "mutated_line": "!banned || has_ticket",
             "outcome": "tests_failed",
             "failing_test": "tests::no_ticket_never_enters",
             "equivalence_review": "not equivalent: no_ticket_never_enters fails on it"
           },
           {
             "replacement": "banned && has_ticket",
+            "mutated_line": "banned && has_ticket",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: can_enter(true, false) becomes false; the property only tries has_ticket = false"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_failed",
             "failing_test": "tests::no_ticket_never_enters",
             "equivalence_review": "not equivalent: no_ticket_never_enters fails on it"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: can_enter(true, false) becomes false"
@@ -9984,18 +10027,21 @@
         "mutants": [
           {
             "replacement": "false != hidden",
+            "mutated_line": "false != hidden",
             "outcome": "tests_failed",
             "failing_test": "tests::hidden_items_are_not_visible",
             "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_failed",
             "failing_test": "tests::hidden_items_are_not_visible",
             "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_failed",
             "failing_test": "tests::hidden_items_are_not_visible",
             "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
@@ -10041,18 +10087,21 @@
         "mutants": [
           {
             "replacement": "attempts_left || timed_out",
+            "mutated_line": "attempts_left || timed_out",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
           },
           {
             "replacement": "true",
+            "mutated_line": "true",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
           },
           {
             "replacement": "false",
+            "mutated_line": "false",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: should_retry(true, true) becomes false"
@@ -10097,12 +10146,14 @@
         "mutants": [
           {
             "replacement": "String::new()",
+            "mutated_line": "String::new()",
             "outcome": "tests_failed",
             "failing_test": "tests::greets_by_name",
             "equivalence_review": "not equivalent: greets_by_name fails on it"
           },
           {
             "replacement": "\"xyzzy\".into()",
+            "mutated_line": "\"xyzzy\".into()",
             "outcome": "tests_failed",
             "failing_test": "tests::greets_by_name",
             "equivalence_review": "not equivalent: greets_by_name fails on it"
@@ -10146,18 +10197,21 @@
         "mutants": [
           {
             "replacement": "None",
+            "mutated_line": "None",
             "outcome": "tests_failed",
             "failing_test": "tests::first_word_table",
             "equivalence_review": "not equivalent: first_word_table fails on it"
           },
           {
             "replacement": "Some(\"\")",
+            "mutated_line": "Some(\"\")",
             "outcome": "tests_failed",
             "failing_test": "tests::first_word_table",
             "equivalence_review": "not equivalent: first_word_table fails on it"
           },
           {
             "replacement": "Some(\"xyzzy\")",
+            "mutated_line": "Some(\"xyzzy\")",
             "outcome": "tests_failed",
             "failing_test": "tests::first_word_table",
             "equivalence_review": "not equivalent: first_word_table fails on it"
@@ -10202,12 +10256,14 @@
         "mutants": [
           {
             "replacement": "String::new()",
+            "mutated_line": "String::new()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: slug(\"Hello World\") is empty instead of hello-world; an empty string has no spaces or capitals"
           },
           {
             "replacement": "\"xyzzy\".into()",
+            "mutated_line": "\"xyzzy\".into()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: every slug is xyzzy, which has no spaces or capitals"
@@ -10250,18 +10306,21 @@
         "mutants": [
           {
             "replacement": "vec![]",
+            "mutated_line": "vec![]",
             "outcome": "tests_failed",
             "failing_test": "tests::tags_are_trimmed",
             "equivalence_review": "not equivalent: tags_are_trimmed fails on it"
           },
           {
             "replacement": "vec![String::new()]",
+            "mutated_line": "vec![String::new()]",
             "outcome": "tests_failed",
             "failing_test": "tests::tags_are_trimmed",
             "equivalence_review": "not equivalent: tags_are_trimmed fails on it"
           },
           {
             "replacement": "vec![\"xyzzy\".into()]",
+            "mutated_line": "vec![\"xyzzy\".into()]",
             "outcome": "tests_failed",
             "failing_test": "tests::tags_are_trimmed",
             "equivalence_review": "not equivalent: tags_are_trimmed fails on it"
@@ -10306,12 +10365,14 @@
         "mutants": [
           {
             "replacement": "String::new()",
+            "mutated_line": "String::new()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: banner(3) is empty instead of v3"
           },
           {
             "replacement": "\"xyzzy\".into()",
+            "mutated_line": "\"xyzzy\".into()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: banner(3) is xyzzy instead of v3"
@@ -10354,18 +10415,21 @@
         "mutants": [
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::one_hit_counts_one",
             "equivalence_review": "not equivalent: one_hit_counts_one fails on it"
           },
           {
             "replacement": "self.hits -= 1;",
+            "mutated_line": "self.hits -= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::one_hit_counts_one",
             "equivalence_review": "not equivalent: one_hit_counts_one fails on it"
           },
           {
             "replacement": "self.hits *= 1;",
+            "mutated_line": "self.hits *= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::one_hit_counts_one",
             "equivalence_review": "not equivalent: one_hit_counts_one fails on it"
@@ -10410,18 +10474,21 @@
         "mutants": [
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::miss_table",
             "equivalence_review": "not equivalent: miss_table fails on it"
           },
           {
             "replacement": "self.misses -= 1;",
+            "mutated_line": "self.misses -= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::miss_table",
             "equivalence_review": "not equivalent: miss_table fails on it"
           },
           {
             "replacement": "self.misses *= 1;",
+            "mutated_line": "self.misses *= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::miss_table",
             "equivalence_review": "not equivalent: miss_table fails on it"
@@ -10466,18 +10533,21 @@
         "mutants": [
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: reads stays 0; an unchanged count still satisfies reads >= before"
           },
           {
             "replacement": "self.reads -= 1;",
+            "mutated_line": "self.reads -= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::reads_never_decrease",
             "equivalence_review": "not equivalent: 0 - 1 overflows and panics before the assertion runs"
           },
           {
             "replacement": "self.reads *= 1;",
+            "mutated_line": "self.reads *= 1;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: reads stays 0; an unchanged count still satisfies reads >= before"
@@ -10521,18 +10591,21 @@
         "mutants": [
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::writes_are_counted",
             "equivalence_review": "not equivalent: writes_are_counted fails on it"
           },
           {
             "replacement": "self.writes -= 1;",
+            "mutated_line": "self.writes -= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::writes_are_counted",
             "equivalence_review": "not equivalent: writes_are_counted fails on it"
           },
           {
             "replacement": "self.writes *= 1;",
+            "mutated_line": "self.writes *= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::writes_are_counted",
             "equivalence_review": "not equivalent: writes_are_counted fails on it"
@@ -10577,18 +10650,21 @@
         "mutants": [
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: evictions stays 0 instead of 1"
           },
           {
             "replacement": "self.evictions -= 1;",
+            "mutated_line": "self.evictions -= 1;",
             "outcome": "tests_failed",
             "failing_test": "tests::eviction_smoke",
             "equivalence_review": "not equivalent: 0 - 1 overflows; the smoke test fails only because the debug build panics"
           },
           {
             "replacement": "self.evictions *= 1;",
+            "mutated_line": "self.evictions *= 1;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: evictions stays 0 instead of 1"
@@ -10632,12 +10708,14 @@
         "mutants": [
           {
             "replacement": "(delete the match arm)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::canada_is_zone_two",
             "equivalence_review": "not equivalent: canada_is_zone_two fails on it"
           },
           {
             "replacement": "\"MX\" | \"CA\" => 1,",
+            "mutated_line": "\"MX\" | \"CA\" => 1,",
             "outcome": "tests_failed",
             "failing_test": "tests::canada_is_zone_two",
             "equivalence_review": "not equivalent: canada_is_zone_two fails on it"
@@ -10681,12 +10759,14 @@
         "mutants": [
           {
             "replacement": "(delete the match arm)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::http_class_table",
             "equivalence_review": "not equivalent: http_class_table fails on it"
           },
           {
             "replacement": "0x3 => \"success\",",
+            "mutated_line": "0x3 => \"success\",",
             "outcome": "tests_failed",
             "failing_test": "tests::http_class_table",
             "equivalence_review": "not equivalent: http_class_table fails on it"
@@ -10731,12 +10811,14 @@
         "mutants": [
           {
             "replacement": "(delete the match arm)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::neighbours_cost_less_than_overseas",
             "equivalence_review": "not equivalent: neighbours_cost_less_than_overseas fails on it"
           },
           {
             "replacement": "\"DE\" | \"FR\" => 1,",
+            "mutated_line": "\"DE\" | \"FR\" => 1,",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: postage_zone(\"FR\") is 1 instead of 2, still below the overseas zone 3"
@@ -10779,12 +10861,14 @@
         "mutants": [
           {
             "replacement": "(delete the match arm)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::suits_have_colors",
             "equivalence_review": "not equivalent: suits_have_colors fails on it"
           },
           {
             "replacement": "'S' | 'C' => \"red\",",
+            "mutated_line": "'S' | 'C' => \"red\",",
             "outcome": "tests_failed",
             "failing_test": "tests::suits_have_colors",
             "equivalence_review": "not equivalent: suits_have_colors fails on it"
@@ -10829,12 +10913,14 @@
         "mutants": [
           {
             "replacement": "(delete the match arm)",
+            "mutated_line": "",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: priority(\"high\") falls to the wildcard and is 5 instead of 1"
           },
           {
             "replacement": "\"high\" => 0,",
+            "mutated_line": "\"high\" => 0,",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: priority(\"high\") is 0 instead of 1"
@@ -10877,18 +10963,21 @@
         "mutants": [
           {
             "replacement": "n if true => -1,",
+            "mutated_line": "n if true => -1,",
             "outcome": "tests_failed",
             "failing_test": "tests::signs_of_three_values",
             "equivalence_review": "not equivalent: signs_of_three_values fails on it"
           },
           {
             "replacement": "n if false => -1,",
+            "mutated_line": "n if false => -1,",
             "outcome": "tests_failed",
             "failing_test": "tests::signs_of_three_values",
             "equivalence_review": "not equivalent: signs_of_three_values fails on it"
           },
           {
             "replacement": "n if 0 >= n => -1,",
+            "mutated_line": "n if 0 >= n => -1,",
             "outcome": "tests_failed",
             "failing_test": "tests::signs_of_three_values",
             "equivalence_review": "not equivalent: signs_of_three_values fails on it"
@@ -10934,18 +11023,21 @@
         "mutants": [
           {
             "replacement": "sum -= w;",
+            "mutated_line": "sum -= w;",
             "outcome": "tests_failed",
             "failing_test": "tests::three_parcels_weigh_twelve",
             "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"
           },
           {
             "replacement": "sum *= w;",
+            "mutated_line": "sum *= w;",
             "outcome": "tests_failed",
             "failing_test": "tests::three_parcels_weigh_twelve",
             "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"
           },
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::three_parcels_weigh_twelve",
             "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"
@@ -10990,18 +11082,21 @@
         "mutants": [
           {
             "replacement": "count -= line.split_whitespace().count();",
+            "mutated_line": "count -= line.split_whitespace().count();",
             "outcome": "tests_failed",
             "failing_test": "tests::word_count_table",
             "equivalence_review": "not equivalent: word_count_table fails on it"
           },
           {
             "replacement": "count *= line.split_whitespace().count();",
+            "mutated_line": "count *= line.split_whitespace().count();",
             "outcome": "tests_failed",
             "failing_test": "tests::word_count_table",
             "equivalence_review": "not equivalent: word_count_table fails on it"
           },
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::word_count_table",
             "equivalence_review": "not equivalent: word_count_table fails on it"
@@ -11046,18 +11141,21 @@
         "mutants": [
           {
             "replacement": "balance -= d;",
+            "mutated_line": "balance -= d;",
             "outcome": "tests_failed",
             "failing_test": "tests::deposits_never_lower_the_balance",
             "equivalence_review": "not equivalent: 0 - 1 overflows and panics before the assertion runs"
           },
           {
             "replacement": "balance *= d;",
+            "mutated_line": "balance *= d;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"
           },
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"
@@ -11101,18 +11199,21 @@
         "mutants": [
           {
             "replacement": "points -= r;",
+            "mutated_line": "points -= r;",
             "outcome": "tests_failed",
             "failing_test": "tests::rolls_add_up",
             "equivalence_review": "not equivalent: rolls_add_up fails on it"
           },
           {
             "replacement": "points *= r;",
+            "mutated_line": "points *= r;",
             "outcome": "tests_failed",
             "failing_test": "tests::rolls_add_up",
             "equivalence_review": "not equivalent: rolls_add_up fails on it"
           },
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_failed",
             "failing_test": "tests::rolls_add_up",
             "equivalence_review": "not equivalent: rolls_add_up fails on it"
@@ -11157,18 +11258,21 @@
         "mutants": [
           {
             "replacement": "sent -= p;",
+            "mutated_line": "sent -= p;",
             "outcome": "tests_failed",
             "failing_test": "tests::bytes_sent_smoke",
             "equivalence_review": "not equivalent: 0 - 512 overflows; the smoke test fails only because the debug build panics"
           },
           {
             "replacement": "sent *= p;",
+            "mutated_line": "sent *= p;",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: bytes_sent(&[512, 1024]) is 0 instead of 1536"
           },
           {
             "replacement": "(delete the statement)",
+            "mutated_line": "",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: bytes_sent(&[512, 1024]) is 0 instead of 1536"
@@ -11212,18 +11316,21 @@
         "mutants": [
           {
             "replacement": "if xs.len() != 0 {",
+            "mutated_line": "if xs.len() != 0 {",
             "outcome": "tests_failed",
             "failing_test": "tests::average_of_nothing_is_zero",
             "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
           },
           {
             "replacement": "if true {",
+            "mutated_line": "if true {",
             "outcome": "tests_failed",
             "failing_test": "tests::average_of_nothing_is_zero",
             "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
           },
           {
             "replacement": "if false {",
+            "mutated_line": "if false {",
             "outcome": "tests_failed",
             "failing_test": "tests::average_of_nothing_is_zero",
             "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
@@ -11268,12 +11375,14 @@
         "mutants": [
           {
             "replacement": "if name.len() != 0 {",
+            "mutated_line": "if name.len() != 0 {",
             "outcome": "tests_failed",
             "failing_test": "tests::initial_table",
             "equivalence_review": "not equivalent: initial_table fails on it"
           },
           {
             "replacement": "if true {",
+            "mutated_line": "if true {",
             "outcome": "tests_failed",
             "failing_test": "tests::initial_table",
             "equivalence_review": "not equivalent: initial_table fails on it"
@@ -11318,18 +11427,21 @@
         "mutants": [
           {
             "replacement": "if samples.len() != 0 {",
+            "mutated_line": "if samples.len() != 0 {",
             "outcome": "tests_failed",
             "failing_test": "tests::mean_lies_between_min_and_max",
             "equivalence_review": "not equivalent: mean_lies_between_min_and_max fails on it"
           },
           {
             "replacement": "if true {",
+            "mutated_line": "if true {",
             "outcome": "tests_failed",
             "failing_test": "tests::mean_lies_between_min_and_max",
             "equivalence_review": "not equivalent: mean_lies_between_min_and_max fails on it"
           },
           {
             "replacement": "if false {",
+            "mutated_line": "if false {",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: mean_latency(&[]) divides by zero and panics instead of returning 0; the property never passes an empty slice"
@@ -11372,18 +11484,21 @@
         "mutants": [
           {
             "replacement": "if 100 >= total {",
+            "mutated_line": "if 100 >= total {",
             "outcome": "tests_failed",
             "failing_test": "tests::small_orders_get_no_discount",
             "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
           },
           {
             "replacement": "if true {",
+            "mutated_line": "if true {",
             "outcome": "tests_failed",
             "failing_test": "tests::small_orders_get_no_discount",
             "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
           },
           {
             "replacement": "if false {",
+            "mutated_line": "if false {",
             "outcome": "tests_failed",
             "failing_test": "tests::small_orders_get_no_discount",
             "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
@@ -11428,18 +11543,21 @@
         "mutants": [
           {
             "replacement": "if 0 != total {",
+            "mutated_line": "if 0 != total {",
             "outcome": "tests_failed",
             "failing_test": "tests::ratio_smoke",
             "equivalence_review": "not equivalent: ratio(1, 0) skips the guard and divides by zero; the smoke test fails only on the panic"
           },
           {
             "replacement": "if true {",
+            "mutated_line": "if true {",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: ratio(3, 4) is 0 instead of 75"
           },
           {
             "replacement": "if false {",
+            "mutated_line": "if false {",
             "outcome": "tests_failed",
             "failing_test": "tests::ratio_smoke",
             "equivalence_review": "not equivalent: ratio(1, 0) divides by zero; the smoke test fails only on the panic"
@@ -11482,12 +11600,14 @@
         "mutants": [
           {
             "replacement": "let port: u16 = text.trim().parse().unwrap_or(0);",
+            "mutated_line": "let port: u16 = text.trim().parse().unwrap_or(0);",
             "outcome": "tests_failed",
             "failing_test": "tests::port_parses_and_rejects_words",
             "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"
           },
           {
             "replacement": "let port: u16 = text.trim().parse().unwrap_or(8080);",
+            "mutated_line": "let port: u16 = text.trim().parse().unwrap_or(8080);",
             "outcome": "tests_failed",
             "failing_test": "tests::port_parses_and_rejects_words",
             "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"
@@ -11532,12 +11652,14 @@
         "mutants": [
           {
             "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
+            "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
             "outcome": "tests_failed",
             "failing_test": "tests::percent_table",
             "equivalence_review": "not equivalent: percent_table fails on it"
           },
           {
             "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
+            "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
             "outcome": "tests_failed",
             "failing_test": "tests::percent_table",
             "equivalence_review": "not equivalent: percent_table fails on it"
@@ -11582,12 +11704,14 @@
         "mutants": [
           {
             "replacement": "let count: u32 = text.parse().unwrap_or(0);",
+            "mutated_line": "let count: u32 = text.parse().unwrap_or(0);",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: parse_count(\"x\") is Ok(0) instead of Err; the round trip only feeds valid numbers"
           },
           {
             "replacement": "let count: u32 = text.parse().unwrap_or(1);",
+            "mutated_line": "let count: u32 = text.parse().unwrap_or(1);",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: parse_count(\"x\") is Ok(1) instead of Err"
@@ -11630,12 +11754,14 @@
         "mutants": [
           {
             "replacement": "let year: i32 = text.parse().unwrap_or(0);",
+            "mutated_line": "let year: i32 = text.parse().unwrap_or(0);",
             "outcome": "tests_failed",
             "failing_test": "tests::years_parse",
             "equivalence_review": "not equivalent: years_parse fails on it"
           },
           {
             "replacement": "let year: i32 = text.parse().unwrap_or(1970);",
+            "mutated_line": "let year: i32 = text.parse().unwrap_or(1970);",
             "outcome": "tests_failed",
             "failing_test": "tests::years_parse",
             "equivalence_review": "not equivalent: years_parse fails on it"
@@ -11680,12 +11806,14 @@
         "mutants": [
           {
             "replacement": "let retries: u8 = text.parse().unwrap_or(0);",
+            "mutated_line": "let retries: u8 = text.parse().unwrap_or(0);",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: parse_retries(\"many\") is Ok(0) instead of Err"
           },
           {
             "replacement": "let retries: u8 = text.parse().unwrap_or(3);",
+            "mutated_line": "let retries: u8 = text.parse().unwrap_or(3);",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: parse_retries(\"many\") is Ok(3) instead of Err"
@@ -11728,18 +11856,21 @@
         "mutants": [
           {
             "replacement": "xs.iter().filter(|&&x| x >= 0).count()",
+            "mutated_line": "xs.iter().filter(|&&x| x >= 0).count()",
             "outcome": "tests_failed",
             "failing_test": "tests::counts_two_positive",
             "equivalence_review": "not equivalent: counts_two_positive fails on it"
           },
           {
             "replacement": "xs.iter().filter(|&&x| x < 0).count()",
+            "mutated_line": "xs.iter().filter(|&&x| x < 0).count()",
             "outcome": "tests_failed",
             "failing_test": "tests::counts_two_positive",
             "equivalence_review": "not equivalent: counts_two_positive fails on it"
           },
           {
             "replacement": "xs.iter().filter(|&&x| x == 0).count()",
+            "mutated_line": "xs.iter().filter(|&&x| x == 0).count()",
             "outcome": "tests_failed",
             "failing_test": "tests::counts_two_positive",
             "equivalence_review": "not equivalent: counts_two_positive fails on it"
@@ -11785,12 +11916,14 @@
         "mutants": [
           {
             "replacement": "xs.iter().map(|&x| x + 2).collect()",
+            "mutated_line": "xs.iter().map(|&x| x + 2).collect()",
             "outcome": "tests_failed",
             "failing_test": "tests::doubled_table",
             "equivalence_review": "not equivalent: doubled_table fails on it"
           },
           {
             "replacement": "xs.iter().map(|&x| x / 2).collect()",
+            "mutated_line": "xs.iter().map(|&x| x / 2).collect()",
             "outcome": "tests_failed",
             "failing_test": "tests::doubled_table",
             "equivalence_review": "not equivalent: doubled_table fails on it"
@@ -11835,12 +11968,14 @@
         "mutants": [
           {
             "replacement": "ages.iter().filter(|&&a| a > 18).count()",
+            "mutated_line": "ages.iter().filter(|&&a| a > 18).count()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: count_adults(&[18]) is 0 instead of 1; the property only uses age 40"
           },
           {
             "replacement": "ages.iter().filter(|&&a| a < 18).count()",
+            "mutated_line": "ages.iter().filter(|&&a| a < 18).count()",
             "outcome": "tests_failed",
             "failing_test": "tests::all_adult_groups_count_fully",
             "equivalence_review": "not equivalent: all_adult_groups_count_fully fails on it"
@@ -11884,12 +12019,14 @@
         "mutants": [
           {
             "replacement": "days.iter().any(|&d| d >= 30)",
+            "mutated_line": "days.iter().any(|&d| d >= 30)",
             "outcome": "tests_failed",
             "failing_test": "tests::overdue_after_thirty_days",
             "equivalence_review": "not equivalent: overdue_after_thirty_days fails on it"
           },
           {
             "replacement": "days.iter().any(|&d| d < 30)",
+            "mutated_line": "days.iter().any(|&d| d < 30)",
             "outcome": "tests_failed",
             "failing_test": "tests::overdue_after_thirty_days",
             "equivalence_review": "not equivalent: overdue_after_thirty_days fails on it"
@@ -11935,12 +12072,14 @@
         "mutants": [
           {
             "replacement": "prices.iter().map(|&p| p + 100).sum()",
+            "mutated_line": "prices.iter().map(|&p| p + 100).sum()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 203 instead of 300"
           },
           {
             "replacement": "prices.iter().map(|&p| p / 100).sum()",
+            "mutated_line": "prices.iter().map(|&p| p / 100).sum()",
             "outcome": "tests_passed",
             "failing_test": null,
             "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 0 instead of 300"
