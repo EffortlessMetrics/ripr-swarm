@@ -8193,7 +8193,9 @@ mod generation_transition_tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
         let content = cfg_test_helper_source().as_bytes().to_vec();
-        for predecessor in ["1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27", "1.28"] {
+        for predecessor in [
+            "1.21", "1.22", "1.23", "1.24", "1.25", "1.26", "1.27", "1.28",
+        ] {
             let previous_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 analyzer_version: crate::build_identity::cache_identity().to_string(),
