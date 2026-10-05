@@ -42,6 +42,7 @@ A packet is assignable only when the gap-decision ledger is derived from a
 canonical repo-exposure artifact on a **clean** checkout:
 
 ```bash
+mkdir -p target/ripr/reports
 ripr check --root . --format repo-exposure-json > target/ripr/reports/repo-exposure.json
 ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json
 ripr swarm queue --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --language rust --top 10
@@ -101,6 +102,14 @@ canonical shape is pinned by
   }
 }
 ```
+
+This fixture is the ingest input shape, not an assignable queue packet.
+`packet.staleness_status = "not_evaluated"` would keep the gap in
+`blocked_review` if queued. Ingest still classifies this example `closed`
+from passing verify plus `resolved` receipt movement; that advisory
+classification does not grant assignment authority. Ingest only treats
+`staleness_status` as `stale_packet` when the value is `stale` or
+`stale_packet`.
 
 Missing `attempt.verify` (or equivalent verify evidence) classifies as
 `uncertain`. Closure also needs recognized receipt movement such as `resolved`
