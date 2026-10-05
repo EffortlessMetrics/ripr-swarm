@@ -775,7 +775,6 @@ pub struct FileFacts {
     pub path: PathBuf,
     pub functions: Vec<FunctionFact>,
     pub tests: Vec<TestFact>,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFact>,
@@ -804,6 +803,26 @@ pub struct FileFacts {
     /// cache and bound by its semantic payload digest. Reference-counted so
     /// child [`SourceText`] spans share this allocation (#5415 step 2).
     pub source: Arc<str>,
+}
+
+impl FileFacts {
+    /// File-level calls derived from per-function calls (#5415 step 3):
+    /// every test fn is also present in [`Self::functions`], so functions
+    /// alone reproduce the removed stored set — sorted by (line, name),
+    /// deduped by (line, name, text). Call text is the whole source line,
+    /// so the file level is effectively (line, name)-unique. Test-gated:
+    /// no production consumer reads the file-level set.
+    #[cfg(test)]
+    pub(crate) fn file_calls(&self) -> Vec<CallFact> {
+        let mut calls: Vec<CallFact> = self
+            .functions
+            .iter()
+            .flat_map(|function| function.calls.iter().cloned())
+            .collect();
+        calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
+        calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
+        calls
+    }
 }
 
 /// Producer-owned source role for one indexed Rust function (#3531).
@@ -1355,7 +1374,6 @@ pub(crate) struct FileFactsWire {
     pub path: PathBuf,
     pub functions: Vec<FunctionFactWire>,
     pub tests: Vec<TestFactWire>,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFactWire>,
@@ -1497,7 +1515,6 @@ impl From<&FileFacts> for FileFactsWire {
                 .iter()
                 .map(|fact| TestFactWire::attached(fact, &facts.source))
                 .collect(),
-            calls: facts.calls.clone(),
             returns: facts.returns.clone(),
             literals: facts.literals.clone(),
             probe_shapes: facts
@@ -1585,7 +1602,6 @@ impl FileFactsWire {
             path: self.path,
             functions,
             tests,
-            calls: self.calls,
             returns: self.returns,
             literals: self.literals,
             probe_shapes,
@@ -1740,7 +1756,7 @@ mod tests {
         assert!(facts.path.as_os_str().is_empty());
         assert!(facts.functions.is_empty());
         assert!(facts.tests.is_empty());
-        assert!(facts.calls.is_empty());
+        assert!(facts.file_calls().is_empty());
         assert!(facts.returns.is_empty());
         assert!(facts.literals.is_empty());
         assert!(facts.probe_shapes.is_empty());
@@ -1892,7 +1908,6 @@ mod tests {
                 impl_context: FunctionImplContext::Unknown,
             }],
             tests: Vec::new(),
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: vec![ProbeShapeFact {
@@ -1964,7 +1979,6 @@ mod tests {
                 impl_context: FunctionImplContext::Unknown,
             }],
             tests: Vec::new(),
-            calls: vec![call],
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: Vec::new(),
@@ -1987,16 +2001,14 @@ mod tests {
         Ok(())
     }
 
-    /// Characterization for #5415 step 3: both producers store exactly the
-    /// sorted, (line, name, text)-deduped concatenation of per-function
-    /// calls at file level — nested-fn overlaps collapse under the parser
-    /// (the lexical scanner skips nested fn lines instead), call text is
-    /// the whole source line so same-line repeats collapse too, and test
-    /// fns (also present in `functions`) add no second copy. The
-    /// derivation must reproduce this set exactly once the stored copy
-    /// is removed.
+    /// #5415 step 3: the derived file-level set is exactly the sorted,
+    /// (line, name, text)-deduped concatenation of per-function calls —
+    /// nested-fn overlaps collapse under the parser (the lexical scanner
+    /// skips nested fn lines instead), call text is the whole source line
+    /// so same-line repeats collapse too, and test fns (also present in
+    /// `functions`) add no second copy.
     #[test]
-    fn stored_file_calls_equal_derived_sort_dedup_of_function_calls() -> Result<(), String> {
+    fn derived_file_calls_match_sort_dedup_of_function_calls() -> Result<(), String> {
         use crate::analysis::syntax::{
             LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
         };
@@ -2022,8 +2034,9 @@ fn checks_helper() {
         for (producer, facts, expect_collapse) in
             [("parser", &parser, true), ("lexical", &lexical, false)]
         {
+            let derived = facts.file_calls();
             assert!(
-                !facts.calls.is_empty(),
+                !derived.is_empty(),
                 "{producer} fixture must produce file-level calls"
             );
             let per_function: usize = facts.functions.iter().map(|f| f.calls.len()).sum();
@@ -2034,14 +2047,14 @@ fn checks_helper() {
                 .collect();
             expected.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
             expected.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
-            assert_eq!(facts.calls, expected);
+            assert_eq!(derived, expected);
             // Nested-fn overlap collapses under the parser: some
             // per-function call appears in two functions but lands once at
             // file level. The lexical scanner skips nested fn lines, so its
             // per-function calls are already disjoint on this fixture.
             if expect_collapse {
                 assert!(
-                    facts.calls.len() < per_function,
+                    derived.len() < per_function,
                     "{producer} fixture must exercise file-level dedup"
                 );
             }
@@ -2052,8 +2065,7 @@ fn checks_helper() {
                 .position(|line| line.contains("helper(3)"))
                 .map(|index| index + 1)
                 .ok_or_else(|| "fixture lost its helper(3) line".to_string())?;
-            let same_line_helpers = facts
-                .calls
+            let same_line_helpers = derived
                 .iter()
                 .filter(|call| call.line == probe_line && call.name == "helper")
                 .count();
@@ -2063,14 +2075,13 @@ fn checks_helper() {
             );
             // The file level is (line, name)-unique: no concat-without-dedup
             // implementation can pass.
-            let mut keys: Vec<(usize, &str)> = facts
-                .calls
+            let mut keys: Vec<(usize, &str)> = derived
                 .iter()
                 .map(|call| (call.line, call.name.as_str()))
                 .collect();
             keys.sort();
             keys.dedup();
-            assert_eq!(keys.len(), facts.calls.len(), "file level is unique");
+            assert_eq!(keys.len(), derived.len(), "file level is unique");
         }
         Ok(())
     }
@@ -2194,7 +2205,6 @@ fn checks_helper() {
                 impl_context: FunctionImplContext::Unknown,
             }],
             tests: Vec::new(),
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: Vec::new(),

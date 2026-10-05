@@ -1325,7 +1325,6 @@ mod tests {
                 path,
                 functions: fns,
                 tests: Vec::new(),
-                calls: Vec::new(),
                 returns: Vec::new(),
                 literals: Vec::new(),
                 probe_shapes: Vec::new(),
