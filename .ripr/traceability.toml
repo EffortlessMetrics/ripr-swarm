@@ -1738,6 +1738,7 @@ tests = [
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_when_a_nonzero_count_carries_no_items",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_surfaces_a_failed_gate_decision",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_for_a_malformed_run_state_disclosure",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_for_a_malformed_disclosure_member",
   "crates/ripr/src/output/baseline_delta.rs::tests::zero_status_withholds_achieved_over_self_produced_limited_delta",
   "crates/ripr/src/output/baseline_delta.rs::tests::zero_status_withholds_achieved_over_config_error_gate_delta",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_parses_option_surface",

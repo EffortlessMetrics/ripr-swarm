@@ -374,7 +374,11 @@ renders the run-state lines when an envelope is present, and names the gate
 status only on failure (`config_error`); successful evaluations stay
 undisclosed. Zero status withholds `achieved` over a delta disclosing a
 limited run or a `config_error` current, and rejects a delta whose
-disclosure envelope is present but malformed.
+disclosure envelope is present but malformed, including corrupt
+predicate-consumed members such as a non-boolean `analysis_complete`.
+A current side whose `status` is present but not a non-blank string is
+rejected as an unreadable current input: a discarded status would hide a
+failed evaluation behind empty decisions.
 
 ## Command Sequence
 
@@ -477,8 +481,10 @@ The implementation adds tests for:
   `run_limitations`) forwarded verbatim into JSON and Markdown, omitted for
   complete runs;
 - current gate status propagation, with zero-status withhold over
-  `config_error` deltas;
-- zero-status rejection of present-but-malformed disclosure envelopes.
+  `config_error` deltas, and rejection of present-but-malformed `status`
+  at parse;
+- zero-status rejection of present-but-malformed disclosure envelopes,
+  including corrupt predicate-consumed members.
 
 ## Implementation Mapping
 

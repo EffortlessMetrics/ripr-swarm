@@ -9634,12 +9634,17 @@ Field contract:
   These are the shared vocabulary positions the RIPR Zero
   partial-denominator guard reads; complete runs carry none of them.
   Present-but-malformed envelopes fail the delta as Invalid in zero-status
-  reading.
+  reading, including corrupt predicate-consumed members (non-boolean
+  `analysis_complete`, non-string scope `run_status`, malformed limitation
+  entries).
 - `current_gate_status` - the current gate decision's `status` verbatim.
   Gate decisions carry no limitation envelope (a limited input is refused
   as `config_error` with empty decisions), so this is the production-live
   disclosure that a delta is built from an evaluation that did not
   complete. Zero status withholds `achieved` over `config_error` deltas.
+  A present-but-malformed `status` (non-string or blank) rejects the
+  current input as unreadable instead of being discarded; absent stays
+  accepted for older inputs.
 - `limits_note` - advisory boundary text for generated CI summaries.
 
 Markdown should fit in a generated CI job summary. It should include the

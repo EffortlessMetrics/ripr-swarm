@@ -646,9 +646,46 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
     }
     if let Some(status) = value.get("current_gate_status")
         && !status.is_null()
-        && !status.is_string()
+        && status.as_str().is_none_or(|text| text.trim().is_empty())
     {
         malformed_disclosures.push("current_gate_status");
+    }
+    // Predicate-consumed members validate too (#6770 review): a well-typed
+    // envelope with corrupt members ({"analysis_complete": "false"}) would
+    // otherwise dodge the disclosure predicates and read as a complete
+    // denominator. Only members the shared predicates consume are gated;
+    // diagnostic-only positions (the outcome kind) keep their safe defaults.
+    if let Some(outcome) = value.get("analysis_outcome")
+        && let Some(complete) = outcome.get("analysis_complete")
+        && !complete.is_null()
+        && !complete.is_boolean()
+    {
+        malformed_disclosures.push("analysis_outcome.analysis_complete");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && let Some(run_status) = scope.get("run_status")
+        && !run_status.is_null()
+        && !run_status.is_string()
+    {
+        malformed_disclosures.push("analysis_scope.run_status");
+    }
+    if let Some(limitations) = value.get("run_limitations").and_then(Value::as_array)
+        && limitations.iter().any(|entry| {
+            if entry.is_null() {
+                return false;
+            }
+            let Some(entry) = entry.as_object() else {
+                return true;
+            };
+            entry
+                .get("run_status")
+                .is_some_and(|status| !status.is_null() && !status.is_string())
+                || entry
+                    .get("category")
+                    .is_some_and(|category| !category.is_null() && !category.is_string())
+        })
+    {
+        malformed_disclosures.push("run_limitations[]");
     }
     if !malformed_disclosures.is_empty() {
         return DeltaParse {
@@ -2438,6 +2475,65 @@ mod tests {
         assert!(rendered.contains("run_limitations"), "{rendered}");
         assert!(rendered.contains("current_gate_status"), "{rendered}");
         assert!(!rendered.contains("analysis_scope"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_disclosure_member() -> Result<(), String> {
+        // Predicate-consumed members validate, not just envelope shapes
+        // (#6770 review): {"analysis_complete": "false"} dodges the
+        // boolean-false predicate, so without member validation a corrupt
+        // qualifier reads as a complete denominator. Null limitation
+        // entries stay lenient, matching top-level null handling.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": {"analysis_complete": "false"},
+          "analysis_scope": {"run_status": 42},
+          "run_limitations": [{"run_status": 42}, "bare-string", null],
+          "current_gate_status": "  "
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("analysis_outcome.analysis_complete"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
         assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
         Ok(())
     }

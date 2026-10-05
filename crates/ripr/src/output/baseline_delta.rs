@@ -792,7 +792,26 @@ fn parse_current_decisions(path: &str, json_text: Result<String, String>) -> Cur
         run_limitations: value.get("run_limitations").cloned(),
         analysis_outcome: value.get("analysis_outcome").cloned(),
         analysis_scope: value.get("analysis_scope").cloned(),
-        current_gate_status: string_field(value.get("status")),
+        // #6257 review: a present-but-malformed gate status is rejected,
+        // never silently discarded: without the propagated status, a failed
+        // evaluation's empty decisions read as a complete denominator.
+        // Absent (or explicit null) stays accepted for older inputs. This
+        // deliberately bypasses string_field's blank-to-None mapping: a
+        // disclosure carrier fails closed where an identity hint stays lenient.
+        current_gate_status: match value.get("status") {
+            None => None,
+            Some(status) if status.is_null() => None,
+            Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
+            Some(_) => {
+                return CurrentParse {
+                    unavailable: true,
+                    warnings: vec![format!(
+                        "required current gate-decision input {path} has malformed status; status must be a non-blank string"
+                    )],
+                    ..CurrentParse::default()
+                };
+            }
+        },
     }
 }
 
@@ -1913,6 +1932,16 @@ mod tests {
                 Ok(valid_baseline.to_string()),
                 Ok(r#"{"schema_version":"0.1"}"#.to_string()),
                 "current gate-decision input current.json is missing decisions array",
+            ),
+            (
+                Ok(valid_baseline.to_string()),
+                Ok(r#"{"schema_version":"0.1","decisions":[],"status":42}"#.to_string()),
+                "current gate-decision input current.json has malformed status",
+            ),
+            (
+                Ok(valid_baseline.to_string()),
+                Ok(r#"{"schema_version":"0.1","decisions":[],"status":"  "}"#.to_string()),
+                "current gate-decision input current.json has malformed status",
             ),
         ] {
             let report = build_baseline_delta_report(BaselineDeltaInput {
