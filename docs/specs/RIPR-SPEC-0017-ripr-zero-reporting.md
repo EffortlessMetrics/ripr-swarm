@@ -99,14 +99,14 @@ summary. It should:
 The command surface is:
 
 ```text
-ripr zero status \\
-  --baseline .ripr/gate-baseline.json \\
-  --delta target/ripr/reports/baseline-debt-delta.json \\
-  --gap-ledger target/ripr/reports/gap-decision-ledger.json \\
-  --gate target/ripr/reports/gate-decision.json \\
-  --pr-guidance target/ripr/review/comments.json \\
-  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \\
-  --out target/ripr/reports/ripr-zero-status.json \\
+ripr zero status \
+  --baseline .ripr/gate-baseline.json \
+  --delta target/ripr/reports/baseline-debt-delta.json \
+  --gap-ledger target/ripr/reports/gap-decision-ledger.json \
+  --gate target/ripr/reports/gate-decision.json \
+  --pr-guidance target/ripr/review/comments.json \
+  --recommendation-calibration target/ripr/reports/recommendation-calibration.json \
+  --out target/ripr/reports/ripr-zero-status.json \
   --out-md target/ripr/reports/ripr-zero-status.md
 ```
 
@@ -424,7 +424,7 @@ The report must include:
 - warnings for stale metadata, missing metadata, missing inputs, unsupported
   schemas, ambiguous identities, and unavailable trends;
 - limits text that states RIPR 0 is not perfect tests, 100 percent coverage, or
-  runtime adequacy.
+  runtime mutation adequacy.
 
 The report must not hide acknowledged, suppressed, stale, invalid, or
 missing-input entries.
