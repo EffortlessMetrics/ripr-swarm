@@ -448,6 +448,14 @@ impl EffectStateCarrier {
             return true;
         }
         let body = tokenize(&test.body);
+        // An inline format capture (`format!("{inv:?}")`) names its value only
+        // inside the string literal the tokenizer masks.
+        if inline_format_captures(&assertion.text)
+            .into_iter()
+            .any(|name| self.may_carry(&[Tok::Ident(name)], &body, 0))
+        {
+            return true;
+        }
         self.may_carry(&tokenize(&assertion.text), &body, 0)
     }
 
@@ -472,6 +480,18 @@ impl EffectStateCarrier {
                 continue;
             }
             if name == self.self_ty || name == "Self" || name == "self" {
+                return true;
+            }
+            if punct(tokens, index + 1, '(')
+                && !KEYWORDS.contains(&name)
+                && name.starts_with(|c: char| c.is_lowercase() || c == '_')
+                && path_root(tokens, index).is_none_or(|root| {
+                    root.starts_with(char::is_lowercase) && !STD_ROOTS.contains(&root)
+                })
+            {
+                // A free or module-path function result is not provably
+                // non-carrying: a fixture helper such as `setup()` returns
+                // the receiver itself.
                 return true;
             }
             if index > 0 && punct(tokens, index - 1, ':') {
@@ -506,9 +526,16 @@ impl EffectStateCarrier {
             if depth >= MAX_BINDING_DEPTH {
                 return true;
             }
-            let Some(initializer) = single_let_initializer(test_body, name) else {
+            let Some((annotation, initializer)) = single_let_initializer(test_body, name) else {
                 return true;
             };
+            if annotation
+                .iter()
+                .any(|token| matches!(token, Tok::Ident(ty) if *ty == self.self_ty || ty == "Self"))
+            {
+                // `let inv: Inventory = Default::default()` holds the receiver type.
+                return true;
+            }
             if self.may_carry(&initializer, test_body, depth + 1) {
                 return true;
             }
@@ -625,7 +652,7 @@ fn reader_methods(methods: &SelfTypeMethods<'_>, written: &BTreeSet<String>) -> 
 
 /// The initializer tokens of the one `let [mut] name [: T] = ..;` in the test
 /// body. `None` when there is no such `let` or more than one.
-fn single_let_initializer(body: &[Tok], name: &str) -> Option<Vec<Tok>> {
+fn single_let_initializer(body: &[Tok], name: &str) -> Option<(Vec<Tok>, Vec<Tok>)> {
     let mut found = None;
     let mut count = 0usize;
     for (index, token) in body.iter().enumerate() {
@@ -634,12 +661,17 @@ fn single_let_initializer(body: &[Tok], name: &str) -> Option<Vec<Tok>> {
         }
         let mut cursor = index + 1;
         if ident(body, cursor) == Some("mut") {
+            if ident(body, cursor + 1) == Some(name) {
+                // Later writes to a `mut` binding are not tracked: unknown.
+                return None;
+            }
             cursor += 1;
         }
         if ident(body, cursor) != Some(name) {
             continue;
         }
         cursor += 1;
+        let annotation_start = cursor;
         // Skip a type annotation up to the `=` at depth zero.
         let mut depth = 0isize;
         while let Some(token) = body.get(cursor) {
@@ -671,9 +703,64 @@ fn single_let_initializer(body: &[Tok], name: &str) -> Option<Vec<Tok>> {
             end += 1;
         }
         count += 1;
-        found = Some(body[start..end].to_vec());
+        let annotation = body
+            .get(annotation_start..cursor)
+            .unwrap_or_default()
+            .to_vec();
+        found = Some((annotation, body[start..end].to_vec()));
     }
     if count == 1 { found } else { None }
+}
+
+/// Path roots whose functions are std library calls, decided by their
+/// arguments rather than treated as fixture helpers.
+const STD_ROOTS: &[&str] = &["std", "core", "alloc"];
+
+/// The leftmost segment of the `a::b::name` path ending at `index`, or `None`
+/// when `name` is not path-qualified.
+fn path_root(tokens: &[Tok], index: usize) -> Option<&str> {
+    let mut root = None;
+    let mut cursor = index;
+    while cursor >= 3 && punct(tokens, cursor - 1, ':') && punct(tokens, cursor - 2, ':') {
+        let Some(segment) = ident(tokens, cursor - 3) else {
+            break;
+        };
+        root = Some(segment);
+        cursor -= 3;
+    }
+    root
+}
+
+/// Identifiers captured inline by a format string (`"{inv}"`, `"{inv:?}"`).
+/// `{{` is an escaped brace, not a capture.
+fn inline_format_captures(text: &str) -> Vec<String> {
+    let masked = mask_comments_and_strings(text);
+    let (raw, masked) = (text.as_bytes(), masked.as_bytes());
+    if raw.len() != masked.len() {
+        return Vec::new();
+    }
+    let mut captures = Vec::new();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'{' && masked[index] != b'{' {
+            if raw.get(index + 1) == Some(&b'{') {
+                index += 2;
+                continue;
+            }
+            let start = index + 1;
+            let mut end = start;
+            while end < raw.len() && (raw[end].is_ascii_alphanumeric() || raw[end] == b'_') {
+                end += 1;
+            }
+            if end > start && !raw[start].is_ascii_digit() {
+                captures.push(String::from_utf8_lossy(&raw[start..end]).into_owned());
+            }
+            index = end.max(index + 1);
+            continue;
+        }
+        index += 1;
+    }
+    captures
 }
 
 #[cfg(test)]

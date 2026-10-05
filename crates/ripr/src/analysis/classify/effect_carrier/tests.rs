@@ -99,6 +99,12 @@ fn ledger() {
     let copy = inv.clone();
     let low = inv.low_skus();
     let fresh = Inventory::new(5);
+    let built = setup();
+    let staged = fixtures::stocked();
+    let blank: Inventory = Default::default();
+    let mut gathered = Vec::new();
+    gathered.extend(inv.low_skus());
+    let count: usize = 3;
     assert_eq!(inv.history(), &[Event::Received { sku: "BOLT-M8".to_string(), qty: 10 }]);
     assert_eq!(receipt, Receipt { sku: "BOLT-M8".to_string(), qty: 3, remaining: 7 });
     assert_eq!(inv.history().to_vec(), Vec::new());
@@ -229,6 +235,16 @@ fn whole_object_equality_confirms_only_when_it_can_hold_the_written_field() {
         ("assert_eq!(copy, fresh);", true),
         ("assert_eq!(low, Vec::<String>::new());", true),
         (r#"assert_eq!(format!("{:?}", inv), String::new());"#, true),
+        (r#"assert_eq!(format!("{inv:?}"), String::new());"#, true),
+        (r#"assert_eq!(format!("{{inv}}"), String::new());"#, false),
+        // A fixture helper's result, a receiver-typed annotation, and a
+        // `mut` binding written after its `let` may all carry the state.
+        ("assert_eq!(built, fresh);", true),
+        ("assert_eq!(staged, fresh);", true),
+        ("assert_eq!(blank, Vec::<String>::new());", true),
+        ("assert_eq!(gathered, Vec::<String>::new());", true),
+        // A primitive annotation on a literal still cannot.
+        ("assert_eq!(count, Vec::new());", false),
         ("assert_eq!(inv.low_stock, BTreeSet::new());", true),
         // A binding with no `let` in the test is unknown: it may carry.
         (
