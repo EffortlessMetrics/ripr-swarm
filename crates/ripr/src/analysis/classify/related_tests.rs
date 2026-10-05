@@ -2365,13 +2365,14 @@ fn ends_with_expression_keyword(bytes: &[u8]) -> bool {
 }
 
 /// Start of the ASCII identifier ending `bytes`, or `None` when it is really
-/// the tail of `r#return`, `x.r#match` or a non-ASCII `éreturn`.
+/// the tail of `r#return`, `x.r#match`, a macro's `$return` or a non-ASCII
+/// `éreturn`.
 fn plain_word_start(bytes: &[u8]) -> Option<usize> {
     let word_start = bytes
         .iter()
         .rposition(|byte| !is_ident_byte(*byte))
         .map_or(0, |index| index + 1);
-    if word_start > 0 && matches!(bytes[word_start - 1], b'#' | b'.' | 0x80..=0xff) {
+    if word_start > 0 && matches!(bytes[word_start - 1], b'#' | b'.' | b'$' | 0x80..=0xff) {
         return None;
     }
     Some(word_start)
@@ -5436,6 +5437,8 @@ let r = try_parse_summary(\"x\");",
             ("r#in (Site::new()).build();", false),
             ("éreturn (Site::new()).build();", false),
             ("ñin (Site::new()).build();", false),
+            ("$return (Site::new()).build();", false),
+            ("$break 'a (Site::new()).build();", false),
             ("'outer: loop { break 'outer (Site::new()).build(); }", true),
             ("loop { r#break 'a (Site::new()).build(); }", false),
             ("loop { other 'a (Site::new()).build(); }", false),
