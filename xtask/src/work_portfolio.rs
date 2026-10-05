@@ -357,7 +357,7 @@ pub(crate) struct WorkCapturedDirV1 {
     pub cargo_allow: Option<WorkCapturedCargoAllowV1>,
 }
 
-fn workspace_path(relative: &str) -> PathBuf {
+pub(crate) fn workspace_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(relative)
@@ -741,6 +741,27 @@ pub(crate) enum WorkCandidateKindV1 {
     Complete,
 }
 
+impl WorkCandidateKindV1 {
+    /// Stable snake_case wire name, matching the serde `snake_case`
+    /// representation; shared identity string forms derive from this so the
+    /// wire vocabulary has one owner.
+    pub(crate) fn wire_name(self) -> &'static str {
+        match self {
+            Self::ResearchIssue => "research_issue",
+            Self::ChallengeContract => "challenge_contract",
+            Self::CompilePlan => "compile_plan",
+            Self::ResumePr => "resume_pr",
+            Self::RepairReview => "repair_review",
+            Self::VerifyCurrentHead => "verify_current_head",
+            Self::MergeReady => "merge_ready",
+            Self::ReconcileCloseout => "reconcile_closeout",
+            Self::StartBuild => "start_build",
+            Self::Blocked => "blocked",
+            Self::Complete => "complete",
+        }
+    }
+}
+
 /// The eight explicit ranking factors from #1704, in exactly that order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -952,7 +973,7 @@ fn strip_volatile(value: &mut Value) {
 /// Digest one DTO into a portable identity: serialize, strip volatile keys,
 /// hash. `serde_json` maps serialize in sorted-key order, so the digest is
 /// byte-stable for a fixed DTO.
-fn portable_identity<T: Serialize>(label: &str, dto: &T) -> Result<String, String> {
+pub(crate) fn portable_identity<T: Serialize>(label: &str, dto: &T) -> Result<String, String> {
     let mut value =
         serde_json::to_value(dto).map_err(|error| format!("serialize {label}: {error}"))?;
     strip_volatile(&mut value);
@@ -1602,6 +1623,69 @@ fn issue_has_accepted_slice(graph: &WorkCapturedCargoAllowV1, issue: &WorkCaptur
                 .iter()
                 .any(|slice| slice.issue_refs.contains(&issue.number))
     })
+}
+
+/// Classify one captured issue with the same candidate-kind law the compiler
+/// applies to portfolio candidates, so identity checks for issues no
+/// campaign records (#1706 standalone work, RIPR-SPEC-0235) never fork the
+/// action taxonomy. Collision marks are compiler-internal edge derivations;
+/// a standalone issue is classified without them, and its claim/branch
+/// collisions stay visible through the selection law's overlap checks
+/// instead of being re-derived here.
+pub(crate) fn classify_captured_issue(
+    captured: &WorkCapturedDirV1,
+    issue: &WorkCapturedIssueV1,
+) -> WorkCandidateKindV1 {
+    let empty_prs = Vec::new();
+    let pull_requests: &[WorkCapturedPullRequestV1] = captured
+        .pull_requests
+        .as_ref()
+        .map(|body| body.pull_requests.as_slice())
+        .unwrap_or(&empty_prs);
+    let empty_claims = Vec::new();
+    let claims: &[WorkCapturedClaimV1] = captured
+        .claims
+        .as_ref()
+        .map(|body| body.claims.as_slice())
+        .unwrap_or(&empty_claims);
+    let linked_prs: Vec<&WorkCapturedPullRequestV1> = pull_requests
+        .iter()
+        .filter(|pr| pr.linked_issues.contains(&issue.number))
+        .collect();
+    let open_prs: Vec<&WorkCapturedPullRequestV1> = linked_prs
+        .iter()
+        .copied()
+        .filter(|pr| pr.state == "open")
+        .collect();
+    let merged_prs: Vec<&WorkCapturedPullRequestV1> = linked_prs
+        .iter()
+        .copied()
+        .filter(|pr| pr.state == "merged")
+        .collect();
+    let issue_claims: Vec<&WorkCapturedClaimV1> = claims
+        .iter()
+        .filter(|claim| claim.issue == Some(issue.number) && claim.state == "active")
+        .collect();
+    let has_slice = captured
+        .cargo_allow
+        .as_ref()
+        .is_some_and(|graph| issue_has_accepted_slice(graph, issue));
+    let freshness = build_observations(&captured.manifest)
+        .map(|(_, freshness)| freshness)
+        .unwrap_or_default();
+    let context = WorkCompileContext { freshness };
+    classify_candidate(
+        issue,
+        &open_prs,
+        &merged_prs,
+        &issue_claims,
+        false,
+        false,
+        has_slice,
+        context.fresh(WorkCapturedSourceKindV1::GithubPullRequests),
+        &captured.manifest.default_branch_sha,
+    )
+    .0
 }
 
 /// A PR's branch is genuinely claimed only when the active claim on that

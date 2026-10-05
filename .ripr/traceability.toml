@@ -12655,6 +12655,44 @@ metrics = [
   "unit_test_pass_rate",
 ]
 [[behavior]]
+id = "RIPR-SPEC-0235"
+name = "Shared selected-work identity schemas and legacy compatibility"
+spec = "docs/specs/RIPR-SPEC-0235-selected-work-identity.md"
+tests = [
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_wrong_identities_fail_visibly_with_exact_routes",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_snapshot_change_keeps_compatible_issue_head",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_new_overlap_forces_reconcile",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_campaign_representations_without_default",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_no_singleton_or_runtime_state_fields",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_human_and_json_projections_agree",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_plan_disposition_vocabulary_frozen",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_stable_forms_and_equality",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_burndown_partial_projection_states",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_resume_from_artifacts_only",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_deterministic_output",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_corpus_loader_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_basis_completeness_reflects_sources",
+]
+fixtures = [
+  "fixtures/work_selection_identity",
+]
+code = [
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/work_portfolio.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0235-selected-work-identity.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+[[behavior]]
 id = "RIPR-SPEC-0225"
 name = "Whole-value equality credit for constructed fields"
 spec = "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md"

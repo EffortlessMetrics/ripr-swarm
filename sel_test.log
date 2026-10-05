@@ -1,0 +1,15 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src\main.rs (target\debug\deps\xtask-14e08b4666f3dd08.exe)
+
+running 1 test
+Error: "expected 18/18 passed cases, got WorkSelectionCheckCountsV1 { scenarios: 12, cases: 18, passed: 17, failed: 1 }"
+test work_selection_identity::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold ... FAILED
+
+failures:
+
+failures:
+    work_selection_identity::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3276 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p xtask --bin xtask`

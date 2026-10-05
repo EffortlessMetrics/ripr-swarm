@@ -62,6 +62,7 @@ mod repo_readiness;
 mod schema_pattern;
 mod types;
 mod work_portfolio;
+mod work_selection_identity;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;

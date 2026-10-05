@@ -1,0 +1,70 @@
+{
+  "schema_version": "work_cargo_allow.v1",
+  "requirements": [
+    {
+      "id": "REQ-editor-badges",
+      "spec_refs": [
+        "RIPR-SPEC-0207"
+      ],
+      "slices": [
+        {
+          "id": "slice-9202",
+          "delta_id": "DELTA-editor-badges",
+          "issue_refs": [
+            9202
+          ]
+        }
+      ]
+    },
+    {
+      "id": "REQ-dup-family",
+      "spec_refs": [
+        "RIPR-SPEC-0202"
+      ],
+      "slices": [
+        {
+          "id": "slice-9106",
+          "delta_id": "DELTA-dup-family",
+          "issue_refs": [
+            9106
+          ]
+        },
+        {
+          "id": "slice-9105",
+          "delta_id": "DELTA-dup-family",
+          "issue_refs": [
+            9105
+          ]
+        }
+      ]
+    },
+    {
+      "id": "REQ-allow-graph",
+      "spec_refs": [],
+      "slices": [
+        {
+          "id": "slice-9104",
+          "delta_id": "DELTA-allow-graph",
+          "issue_refs": [
+            9104
+          ]
+        }
+      ]
+    },
+    {
+      "id": "REQ-editor-preview",
+      "spec_refs": [
+        "RIPR-SPEC-0206"
+      ],
+      "slices": [
+        {
+          "id": "slice-1693",
+          "delta_id": "DELTA-editor-preview",
+          "issue_refs": [
+            1693
+          ]
+        }
+      ]
+    }
+  ]
+}

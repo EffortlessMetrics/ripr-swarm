@@ -1,0 +1,108 @@
+{
+  "schema_version": "work_selection_identity_provenance.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "captured_at": "2026-10-05T12:00:00Z",
+  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0235 selected-work identity law checker; regenerate with fixtures/work_selection_identity/author_corpus.py",
+  "files": [
+    {
+      "path": "captured/multi-campaign/campaigns.json",
+      "sha256": "a36450ed536b959a14a044ddf046add3bc70a19579325cbc7fd66cf0eb90a486"
+    },
+    {
+      "path": "captured/multi-campaign/cargo_allow.json",
+      "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+    },
+    {
+      "path": "captured/multi-campaign/claims.json",
+      "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+    },
+    {
+      "path": "captured/multi-campaign/issues.json",
+      "sha256": "9ae7519775c619aa7cc854149997c021dc3a23a020cd5a231951ec439387cc1a"
+    },
+    {
+      "path": "captured/multi-campaign/local_state.json",
+      "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+    },
+    {
+      "path": "captured/multi-campaign/manifest.json",
+      "sha256": "5f6bbb9f74ad8f181adba522a1e94263ed96f66eefc28f30e660725bf0c6c949"
+    },
+    {
+      "path": "captured/multi-campaign/pull_requests.json",
+      "sha256": "8e323e43dd48059e7a8c523615fcccaebcdfd27d3626959f9d9eebdbef4fa90d"
+    },
+    {
+      "path": "captured/multi-campaign/surfaces.json",
+      "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+    },
+    {
+      "path": "captured/overlap-introduced/campaigns.json",
+      "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+    },
+    {
+      "path": "captured/overlap-introduced/cargo_allow.json",
+      "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+    },
+    {
+      "path": "captured/overlap-introduced/claims.json",
+      "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+    },
+    {
+      "path": "captured/overlap-introduced/issues.json",
+      "sha256": "773536aa67c1f096f663a98527b36a4e47ea27df9178497d5a417d9d2c8e598e"
+    },
+    {
+      "path": "captured/overlap-introduced/local_state.json",
+      "sha256": "0730322e8035f6cf4f9329014d23f81fc78d9a0d0e731cf37f87578453d02a82"
+    },
+    {
+      "path": "captured/overlap-introduced/manifest.json",
+      "sha256": "5f6bbb9f74ad8f181adba522a1e94263ed96f66eefc28f30e660725bf0c6c949"
+    },
+    {
+      "path": "captured/overlap-introduced/pull_requests.json",
+      "sha256": "5d15cd9d3d50aa01e1169d0ce804a86641b820a0d2b111d6552091624cfd6719"
+    },
+    {
+      "path": "captured/overlap-introduced/surfaces.json",
+      "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+    },
+    {
+      "path": "captured/standalone/campaigns.json",
+      "sha256": "aff6f6c53068cfb4af319e476c08d9b70cdfe8053368b8757d4195b2a71e4430"
+    },
+    {
+      "path": "captured/standalone/cargo_allow.json",
+      "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+    },
+    {
+      "path": "captured/standalone/claims.json",
+      "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+    },
+    {
+      "path": "captured/standalone/issues.json",
+      "sha256": "ad919082826087288a7781cb2024ef13d9af813991413ba5bb44c0936e914d8e"
+    },
+    {
+      "path": "captured/standalone/local_state.json",
+      "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+    },
+    {
+      "path": "captured/standalone/manifest.json",
+      "sha256": "5f6bbb9f74ad8f181adba522a1e94263ed96f66eefc28f30e660725bf0c6c949"
+    },
+    {
+      "path": "captured/standalone/pull_requests.json",
+      "sha256": "8e323e43dd48059e7a8c523615fcccaebcdfd27d3626959f9d9eebdbef4fa90d"
+    },
+    {
+      "path": "captured/standalone/surfaces.json",
+      "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+    },
+    {
+      "path": "corpus.json",
+      "sha256": "a8d49b1572f3da287198e2d022116417c7873659dd2ba87d13dbe4d3134e3719"
+    }
+  ]
+}
