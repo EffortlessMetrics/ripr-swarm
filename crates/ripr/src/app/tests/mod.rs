@@ -13,6 +13,7 @@ mod badge_rendering;
 mod handwritten_recovery;
 mod mode_and_selector;
 mod preview_analyzed_outcome;
+mod python_test_note;
 // Drives the Python adapter end to end through `check_workspace_with_config`.
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;

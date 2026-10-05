@@ -93,11 +93,11 @@ pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cle
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
-pub(crate) use workspace::UnlinkedPythonTests;
 pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
+pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
@@ -767,11 +767,6 @@ pub struct AnalysisResult {
     /// so the note can name the real repair (staging) instead of offering
     /// `--worktree`. Empty when no untracked routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
-    /// Python test files present in the repository when the diff has a
-    /// `no_static_path` finding in a changed Rust file (#6340). ripr does not
-    /// link Python tests to Rust changes; this only lets the human note say so.
-    /// Never serialized and never read by a verdict, class or gate.
-    pub(crate) unlinked_python_tests: Option<workspace::UnlinkedPythonTests>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
