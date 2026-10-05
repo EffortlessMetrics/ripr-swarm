@@ -773,12 +773,13 @@ fn inventory_classified_seams_from_state_with_config(
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
     let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
-    // The live-object peak is production-observable here (issue #4997):
-    // the retained prefix stays within K while the trace reports how many
-    // seam objects were ever live at once.
+    // The retained-object peak is production-observable here (issue #4997):
+    // the retained prefix stays within K while the trace reports the peak
+    // retained count. It excludes the single in-flight candidate that
+    // `push` owns while it decides membership.
     trace_latency_phase(
         "inventory_seams",
-        &format!("ok peak_live_seams={}", bounded.peak_retained),
+        &format!("ok peak_retained_seams={}", bounded.peak_retained),
         seams_started.elapsed(),
     );
     let seams = bounded.seams;

@@ -581,7 +581,13 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::limited status surfaces findings_trustworthy false as untrustworthy snapshot evidence (#5004)",
   "editors/vscode/test/suite/extension.test.ts::limited status keeps the canned refresh step when no degraded component names a recovery (#5004)",
   "editors/vscode/test/suite/extension.test.ts::limited partial scope keeps the budget remedy alongside the component recovery (#5004)",
-  "editors/vscode/test/suite/extension.test.ts::limited status fails closed to the canned step for a malformed components payload (#5004)"
+  "editors/vscode/test/suite/extension.test.ts::limited status fails closed to the canned step for a malformed components payload (#5004)",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_matches_legacy_across_limits_and_orders",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_first_seam_discovered_last",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_duplicate_shapes_do_not_consume_slots",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_peak_stays_capped_on_high_cardinality",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_unlimited_equals_legacy_exactly",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_cancellation_fails_closed"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
