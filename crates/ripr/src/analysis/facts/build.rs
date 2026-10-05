@@ -7,10 +7,9 @@ use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSy
 use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation;
 use crate::analysis::seam_cache::{
-    CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
+    CacheLoad, FileFactCacheStats, KnownFilePaths, RepoFileFactCache, RepoFileFactCacheKey,
 };
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Files parsed per parallel batch. Each worker installs the owning request's
@@ -71,7 +70,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
         &cache,
         || match attribution {
             MissAttribution::Named => cache.known_file_paths(),
-            MissAttribution::Skipped => HashSet::new(),
+            MissAttribution::Skipped => KnownFilePaths::default(),
         },
     )
 }
@@ -82,7 +81,7 @@ fn build_index_with_file_fact_cache(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
+    mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
@@ -112,7 +111,7 @@ fn build_index_with_file_fact_cache(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
@@ -151,7 +150,7 @@ fn insert_cached_file_batches(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
+    load_known_file_paths: &mut impl FnMut() -> KnownFilePaths,
     accounting: &mut CacheAccounting,
 ) -> Result<RustIndex, String> {
     let CacheAccounting {
@@ -166,7 +165,7 @@ fn insert_cached_file_batches(
     // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
     // and decode the entire cache directory just to discard the inventory.
     // Initialized once, at the first miss.
-    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
+    let mut known_cached_file_paths: Option<KnownFilePaths> = None;
     let mut index = RustIndex::default();
     let token = cancellation::current_token();
     for batch in files.chunks(PARSE_BATCH_FILES) {
@@ -392,7 +391,7 @@ fn build_index_with_adapters(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
@@ -905,7 +904,7 @@ pub fn check(x: i32) -> bool {
         ) -> Result<super::super::FileFacts, String> {
             Ok(super::super::FileFacts {
                 path: path.to_path_buf(),
-                source: text.to_string(),
+                source: text.into(),
                 ..super::super::FileFacts::default()
             })
         }
@@ -935,7 +934,7 @@ pub fn check(x: i32) -> bool {
             index
                 .files()
                 .get(&PathBuf::from("src/lib.rs"))
-                .map_or("", |facts| facts.data().source.as_str()),
+                .map_or("", |facts| facts.data().source.as_ref()),
             "pub fn fallback() {}\n"
         );
         assert!(
@@ -1700,7 +1699,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1733,7 +1732,7 @@ pub fn check(x: i32) -> bool {
                     &adapter,
                     &StubSyntaxAdapter,
                     &fixture.cache,
-                    HashSet::new,
+                    KnownFilePaths::default,
                 )
             })
         });
@@ -1872,7 +1871,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1927,7 +1926,7 @@ pub fn check(x: i32) -> bool {
                         &adapter,
                         &adapter,
                         &fixture.cache,
-                        HashSet::new,
+                        KnownFilePaths::default,
                     )
                     .err()
                 } else {
