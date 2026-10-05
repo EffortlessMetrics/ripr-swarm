@@ -2348,14 +2348,33 @@ fn path_start(bytes: &[u8], end: usize) -> usize {
 /// Whether `bytes` ends with a keyword that takes an expression operand, so a
 /// following `(` groups an expression instead of calling a function.
 fn ends_with_expression_keyword(bytes: &[u8]) -> bool {
+    let Some(word_start) = plain_word_start(bytes) else {
+        return false;
+    };
+    let word = &bytes[word_start..];
+    // `break 'outer (..)`: a label after `break` still opens an expression.
+    if word_start > 0 && bytes[word_start - 1] == b'\'' {
+        let before_label = bytes[..word_start - 1].trim_ascii_end();
+        return plain_word_start(before_label)
+            .is_some_and(|start| &before_label[start..] == b"break");
+    }
+    matches!(
+        word,
+        b"return" | b"break" | b"yield" | b"in" | b"if" | b"while" | b"match" | b"else"
+    )
+}
+
+/// Start of the ASCII identifier ending `bytes`, or `None` when it is really
+/// the tail of `r#return`, `x.r#match` or a non-ASCII `éreturn`.
+fn plain_word_start(bytes: &[u8]) -> Option<usize> {
     let word_start = bytes
         .iter()
         .rposition(|byte| !is_ident_byte(*byte))
         .map_or(0, |index| index + 1);
-    matches!(
-        &bytes[word_start..],
-        b"return" | b"break" | b"yield" | b"in" | b"if" | b"while" | b"match" | b"else"
-    )
+    if word_start > 0 && matches!(bytes[word_start - 1], b'#' | b'.' | 0x80..=0xff) {
+        return None;
+    }
+    Some(word_start)
 }
 
 /// Index of the bracket opening the one closed at `close`, or `None`.
@@ -5412,6 +5431,14 @@ let r = try_parse_summary(\"x\");",
             ("let w = W { field:Site::new().build() };", true),
             ("let w = W { field:Site { langs: 1 }.build() };", true),
             ("let w = W { field:Cache::new().build() };", false),
+            ("r#return (Site::new()).build();", false),
+            ("x.r#match (Site::new()).build();", false),
+            ("r#in (Site::new()).build();", false),
+            ("éreturn (Site::new()).build();", false),
+            ("ñin (Site::new()).build();", false),
+            ("'outer: loop { break 'outer (Site::new()).build(); }", true),
+            ("loop { r#break 'a (Site::new()).build(); }", false),
+            ("loop { other 'a (Site::new()).build(); }", false),
         ];
         for (body, expected) in cases {
             let summary = test("tests/site.rs", "t", body);
