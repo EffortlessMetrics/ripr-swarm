@@ -144,3 +144,78 @@ fn shared_record_definition_and_body_keep_the_real_initializer() -> Result<(), S
     );
     Ok(())
 }
+
+/// Real RA summary and diff probes for one replaced line, so the probe sees
+/// the removed text the diff pairs with it.
+fn probes_for_replaced_line(
+    source: &str,
+    line: usize,
+    removed: &str,
+) -> Result<Vec<Probe>, String> {
+    let path = PathBuf::from("src/lib.rs");
+    let text = source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .ok_or_else(|| format!("fixture has no line {line}"))?
+        .to_string();
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        files: BTreeMap::from([(path.clone(), facts)]),
+        ..Default::default()
+    });
+    let changed = ChangedFile {
+        path,
+        added_lines: vec![ChangedLine {
+            line,
+            new_side_line: line,
+            text,
+        }],
+        removed_lines: vec![ChangedLine {
+            line,
+            new_side_line: line,
+            text: removed.to_string(),
+        }],
+    };
+    Ok(probes_for_file(Path::new("."), &changed, &index))
+}
+
+fn field_construction_expressions(probes: &[Probe]) -> Vec<&str> {
+    probes
+        .iter()
+        .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+        .map(|probe| probe.expression.as_str())
+        .collect()
+}
+
+const ONE_LINE_ID: &str = "pub struct Id {\n    counter: u32,\n    version: u8,\n}\npub fn new_v1() -> Id {\n    Id { counter: 0x00ab_cdef, version: 0x1 }\n}\n";
+
+#[test]
+fn one_line_struct_literal_probes_the_edited_field_not_its_neighbour() -> Result<(), String> {
+    // #6731: `counter` sorts first, but only `version` changed.
+    let probes = probes_for_replaced_line(
+        ONE_LINE_ID,
+        6,
+        "    Id { counter: 0x00ab_cdef, version: 1 }",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 0x1"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn one_line_struct_literal_still_probes_an_edited_first_field() -> Result<(), String> {
+    let probes = probes_for_replaced_line(
+        ONE_LINE_ID,
+        6,
+        "    Id { counter: 0x00ab_cdee, version: 0x1 }",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["counter: 0x00ab_cdef"],
+        "{probes:?}"
+    );
+    Ok(())
+}

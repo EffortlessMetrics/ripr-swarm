@@ -9,7 +9,8 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    is_structural_delimiter_line, parser_probe_shapes_for_changed_line, should_ignore_changed_line,
+    is_structural_delimiter_line, parser_probe_shapes_for_changed_line_against,
+    should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
@@ -77,8 +78,14 @@ pub(crate) fn probes_for_file_with_relations(
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
             continue;
         }
-        let parser_shapes =
-            parser_probe_shapes_for_changed_line(index, &changed.path, added.new_side_line, text);
+        let removed_counterpart = nearby_removed_line(added.new_side_line, text, changed);
+        let parser_shapes = parser_probe_shapes_for_changed_line_against(
+            index,
+            &changed.path,
+            added.new_side_line,
+            text,
+            removed_counterpart.as_deref(),
+        );
         let parser_shapes = parser_shapes
             .into_iter()
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)

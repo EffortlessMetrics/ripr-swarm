@@ -25,6 +25,26 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
     line: usize,
     changed_text: &str,
 ) -> Vec<ParserProbeShape<'a>> {
+    parser_probe_shapes_for_changed_line_against(index, file, line, changed_text, None)
+}
+
+/// Like [`parser_probe_shapes_for_changed_line`], with the removed text the
+/// diff pairs with this line. When several same-family shapes share the line
+/// (`Id { counter: 0x00ab_cdef, version: 0x1 }`), a shape whose text the
+/// removed line already holds is unchanged and loses to one it does not
+/// hold, so the probe names the edited field rather than its neighbour
+/// (#6731).
+pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
+    index: &'a RustIndex,
+    file: &Path,
+    line: usize,
+    changed_text: &str,
+    removed_text: Option<&str>,
+) -> Vec<ParserProbeShape<'a>> {
+    let unchanged = |shape_text: &str| {
+        let shape_text = shape_text.trim();
+        removed_text.is_some_and(|removed| !shape_text.is_empty() && removed.contains(shape_text))
+    };
     let Some(facts) = file_facts(index, file) else {
         return Vec::new();
     };
@@ -68,10 +88,16 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
                 continue;
             }
             let current = &selected[position];
-            let candidate_rank = shape_match_rank(candidate.text, changed_text);
-            let current_rank = shape_match_rank(current.text, changed_text);
-            if candidate_rank < current_rank
-                || (candidate_rank == current_rank && candidate.text < current.text)
+            let candidate_key = (
+                unchanged(candidate.text),
+                shape_match_rank(candidate.text, changed_text),
+            );
+            let current_key = (
+                unchanged(current.text),
+                shape_match_rank(current.text, changed_text),
+            );
+            if candidate_key < current_key
+                || (candidate_key == current_key && candidate.text < current.text)
             {
                 selected[position] = candidate;
             }
