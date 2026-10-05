@@ -6097,13 +6097,17 @@ quickcheck! {
     /// #1924 measurement: string-churn profile of the classify relate path.
     ///
     /// Builds a high-cardinality fixture (200 tests sharing long path
-    /// prefixes and module names, 200 probes) and drives the full relate
-    /// path, reporting string-byte volumes (total vs deduplicated) and
-    /// wall time. This is the profile the interning gate requires: it
-    /// pins the duplication ratio as a fact about the code and fixture.
-    /// The go/no-go judgment lives on #1924 with the measured numbers;
-    /// this test asserts measurement validity (completion, exact counts,
-    /// consistency), not a gate threshold.
+    /// prefixes and module names, 200 probes) and drives the indexed relate
+    /// path, reporting generator-input string-byte volumes (total vs
+    /// deduplicated) and wall time. This is the profile the interning gate
+    /// requires: it pins the duplication ratio as a fact about the code
+    /// and fixture. The volumes cover generator inputs only, not every
+    /// retained string (per-test owner strings, derived index clones), so
+    /// the reported ratio is an upper bound on retained duplication: the
+    /// uncounted strings are per-test-distinct, which can only lower the
+    /// true ratio. The go/no-go judgment lives on #1924 with the measured
+    /// numbers; this test asserts measurement validity (completion, exact
+    /// counts, consistency), not a gate threshold.
     #[test]
     fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
         use std::collections::HashSet;
@@ -6145,13 +6149,15 @@ quickcheck! {
         let candidate_index = RelatedTestCandidateIndex::new(&index);
         let index_elapsed = index_built.elapsed();
 
-        // Relate every probe against its own owner; time the whole path.
-        // Also count indexed candidate evaluations: each evaluation runs
-        // the per-candidate string matching (lowering, normalization,
+        // Relate every probe against its own owner. The test-only
+        // indexed/full-scan parity check rebuilds its candidate index and
+        // runs a full scan per call, so it stays outside the timer, as does
+        // the candidate-evaluation count. The timer covers only the indexed
+        // production path under test. Each indexed evaluation runs the
+        // per-candidate string matching (lowering, normalization,
         // substring checks) that interning would have to beat.
-        let started = Instant::now();
-        let mut related_own = 0usize;
         let mut candidate_evaluations = 0usize;
+        let mut parity_own = 0usize;
         for (i, expected) in names.iter().enumerate() {
             let owner_name = format!("verify_{i:03}");
             let owner = function("src/owners.rs", &owner_name);
@@ -6161,12 +6167,34 @@ quickcheck! {
                 .len();
             let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
             if related.iter().any(|(test, _)| test.name == *expected) {
+                parity_own += 1;
+            }
+        }
+        let started = Instant::now();
+        let mut related_own = 0usize;
+        for (i, expected) in names.iter().enumerate() {
+            let owner_name = format!("verify_{i:03}");
+            let owner = function("src/owners.rs", &owner_name);
+            let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            if related.iter().any(|(test, _)| test.name == *expected) {
                 related_own += 1;
             }
         }
         let elapsed = started.elapsed();
 
-        // Volumes from the generator inputs (what summaries retain).
+        // Generator-input volumes only. Summaries additionally retain
+        // per-test-distinct owner strings and the candidate index holds
+        // derived clones, so these totals bound rather than equal the
+        // retained string volume (see the upper-bound note above).
         let mut total_bytes: usize = 0;
         let mut unique: HashSet<&str> = HashSet::new();
         for part in files.iter().chain(names.iter()).chain(bodies.iter()) {
@@ -6176,9 +6204,14 @@ quickcheck! {
         let unique_bytes: usize = unique.iter().map(|s| s.len()).sum();
         let unique_files: HashSet<&str> = files.iter().map(|file| file.as_str()).collect();
 
+        if parity_own != COUNT {
+            return Err(format!(
+                "parity pass must relate every own test, got {parity_own}/{COUNT}"
+            ));
+        }
         if related_own != COUNT {
             return Err(format!(
-                "every probe must relate its own test, got {related_own}/{COUNT}"
+                "indexed pass must relate every own test, got {related_own}/{COUNT}"
             ));
         }
         if unique_files.len() != GROUPS {
@@ -6208,8 +6241,9 @@ quickcheck! {
         eprintln!(
             "ripr-churn-profile tests={COUNT} probes={COUNT} full_scan_opportunities={} \
              indexed_candidate_evaluations={candidate_evaluations} \
-             string_total_bytes={total_bytes} string_unique_bytes={unique_bytes} \
-             duplication_ratio={:.2} index_build_ms={} relate_wall_ms={}",
+             generator_input_string_total_bytes={total_bytes} \
+             generator_input_string_unique_bytes={unique_bytes} \
+             generator_input_duplication_ratio={:.2} index_build_ms={} indexed_relate_wall_ms={}",
             COUNT * COUNT,
             total_bytes as f64 / unique_bytes as f64,
             index_elapsed.as_millis(),
