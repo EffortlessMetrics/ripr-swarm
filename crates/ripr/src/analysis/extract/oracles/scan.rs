@@ -2,7 +2,7 @@ use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
 use super::arguments::{
-    assertion_oracle_text, complete_block_body, discarded_matcher_scrutinee,
+    assertion_oracle_text, complete_block_body, delimited_contents_at, discarded_matcher_scrutinee,
     starts_discarded_matcher_computation,
 };
 use super::classify::classify_assertion;
@@ -27,10 +27,15 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
     let mut lines = body.lines().enumerate().peekable();
     let mut guard_condition_end_line = None;
     while let Some((offset, line)) = lines.next() {
-        if guard_condition_end_line.is_some_and(|end| start_line + offset <= end) {
-            continue;
-        }
         let mut trimmed = line.trim().to_string();
+        if let Some(end) = guard_condition_end_line {
+            if start_line + offset < end {
+                continue;
+            }
+            if start_line + offset == end {
+                trimmed = guard_condition_line_tail(&trimmed).unwrap_or_default();
+            }
+        }
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
         }
@@ -44,7 +49,9 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         {
             out.push(oracle);
             guard_condition_end_line = Some(condition_end_line);
-            continue;
+            // A guard and another observer may share the closing header row.
+            // Own the condition and failure prefix, not that entire row.
+            trimmed = guard_condition_line_tail(&trimmed).unwrap_or_default();
         }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
             collect_multiline_assertion(&mut trimmed, &mut lines);
@@ -1785,6 +1792,23 @@ where
     let brace = statement.find('{')?;
     let condition_end_line = line_number + statement[..brace].matches('\n').count();
     Some((oracle, condition_end_line))
+}
+
+/// Keep source after the recognized header row's first Err-return expression.
+/// The shared delimiter helper masks trivia and strings, so payload text cannot
+/// move the suffix. Body and post-guard observers retain their actual text.
+fn guard_condition_line_tail(line: &str) -> Option<String> {
+    let brace = mask_comments_and_strings(line).find('{')?;
+    let body = &line[brace + 1..];
+    let open = mask_comments_and_strings(body).find('(')?;
+    let arguments = delimited_contents_at(body, open)?;
+    let tail = body.get(open + arguments.len() + 2..)?;
+    Some(
+        tail.trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, ';' | '}')
+        })
+        .to_string(),
+    )
 }
 
 /// Shared by lexical guards and traversed inline-trial guard spans. The

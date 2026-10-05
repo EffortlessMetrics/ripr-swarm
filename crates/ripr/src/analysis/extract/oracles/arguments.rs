@@ -288,7 +288,7 @@ fn macro_invocation_arguments_at(
     })
 }
 
-fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
+pub(super) fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
     let masked = mask_comments_and_strings(text);
     let open = masked.as_bytes().get(open_index).copied()?;
     if !matches!(open, b'(' | b'[' | b'{') {

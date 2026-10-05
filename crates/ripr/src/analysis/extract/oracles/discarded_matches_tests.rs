@@ -420,45 +420,68 @@ fn lexical_terminal_matcher_owns_condition_continuations_without_owning_sibling_
 -> Result<(), String> {
     // The binding belongs to the enclosing test. Its expect_ spelling must
     // not turn a continuation operand into a second assertion fact.
-    let body =
-        "if !matches!(\nexpect_value,\n2\n) {\nreturn Err(());\n}\nassert_eq!(sibling(), 7);";
-    let source = format!(
-        "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
+    for (body, sibling_line) in [
+        (
+            "if !matches!(\nexpect_value,\n2\n) {\nreturn Err(());\n}\nassert_eq!(sibling(), 7);",
+            16,
+        ),
+        (
+            "if !matches!(\nexpect_value,\n2\n) { return Err(()); } assert_eq!(sibling(), 7);",
+            13,
+        ),
+        (
+            "if !matches!(\nexpect_value,\n2\n) { return Err(()) } assert_eq!(sibling(), 7);",
+            13,
+        ),
+        (
+            "if !matches!(\nexpect_value,\n2\n) { return Err({ let _ = \" ); } assert!(phantom())\"; () }); } assert_eq!(sibling(), 7);",
+            13,
+        ),
+    ] {
+        let source = format!(
+            "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
          #[test]\nfn observes_score() -> Result<(), ()> {{\n\
          let expect_value = score();\n{body}\nOk(())\n}}\n"
-    );
-    let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
-    let [test] = parsed.tests.as_slice() else {
-        return Err("condition-ownership control subject missing".to_string());
-    };
-    if test.name != "observes_score"
-        || !test
-            .calls
-            .iter()
-            .any(|call| call.name == "score" && call.line == 5)
-    {
-        return Err(format!(
-            "condition-ownership control lost its owner call: {test:?}"
-        ));
-    }
-    let facts = extract_assertions(body, 10);
-    let [guard, sibling] = facts.as_slice() else {
-        return Err(format!(
-            "condition continuation received separate credit: {facts:?}"
-        ));
-    };
-    if guard.line != 10
-        || guard.kind != OracleKind::ExactValue
-        || guard.strength != OracleStrength::Strong
-        || !guard.observed_tokens.contains(&"expect_value".to_string())
-        || sibling.line != 16
-        || !sibling.text.starts_with("assert_eq!(sibling()")
-        || sibling.kind != OracleKind::ExactValue
-        || sibling.strength != OracleStrength::Strong
-    {
-        return Err(format!(
-            "condition/sibling ownership or coordinates changed: {facts:?}"
-        ));
+        );
+        let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let [test] = parsed.tests.as_slice() else {
+            return Err("condition-ownership control subject missing".to_string());
+        };
+        if test.name != "observes_score"
+            || !test
+                .calls
+                .iter()
+                .any(|call| call.name == "score" && call.line == 5)
+        {
+            return Err(format!(
+                "condition-ownership control lost its owner call: {test:?}"
+            ));
+        }
+        let facts = extract_assertions(body, 10);
+        let [guard, sibling] = facts.as_slice() else {
+            return Err(format!(
+                "condition continuation received separate credit: {facts:?}"
+            ));
+        };
+        if guard.line != 10
+            || guard.kind != OracleKind::ExactValue
+            || guard.strength != OracleStrength::Strong
+            || !guard.observed_tokens.contains(&"expect_value".to_string())
+            || sibling.line != sibling_line
+            || !sibling.text.starts_with("assert_eq!(sibling()")
+            || sibling.kind != OracleKind::ExactValue
+            || sibling.strength != OracleStrength::Strong
+            || !sibling.observed_tokens.contains(&"sibling".to_string())
+            || sibling
+                .observed_tokens
+                .contains(&"expect_value".to_string())
+            || sibling.observed_tokens.contains(&"phantom".to_string())
+            || sibling.observed_tokens.contains(&"Err".to_string())
+        {
+            return Err(format!(
+                "condition/sibling ownership or coordinates changed: {facts:?}"
+            ));
+        }
     }
     Ok(())
 }
