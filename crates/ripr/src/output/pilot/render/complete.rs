@@ -3,6 +3,7 @@ use super::render_helpers::{
     push_path_field, push_top_seam_json, yes_no,
 };
 use super::why_line;
+use crate::agent::loop_commands::shell_path;
 use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -13,10 +14,12 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
 };
-use crate::output::pilot::ranking::{actionable_in_owner, actionable_total, top_actionable_seams};
+use crate::output::pilot::ranking::{
+    actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
+};
 use crate::output::pilot::{
-    PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
-    PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
+    PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute, PilotLanguageRoutes,
+    PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -40,7 +43,7 @@ pub(crate) fn render_pilot_summary_json(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams);
+    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -131,6 +134,12 @@ pub(crate) fn render_pilot_summary_json(
     out.push_str("],\n");
     push_python_first_use_json(&mut out, context.python_first_use);
     push_language_routes_json(&mut out, context.language_routes);
+    push_current_change_json(
+        &mut out,
+        classified,
+        top.first().copied(),
+        context.current_change,
+    );
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(
         "    \"inspect_packet\": \"{}\",\n",
@@ -172,7 +181,7 @@ pub(crate) fn render_pilot_summary_md(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams);
+    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -186,10 +195,28 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
-    out.push_str(&format!(
-        "- Actionable seams: {} total, showing up to {}\n\n",
-        actionable_total, context.max_seams
-    ));
+    if let Some(scope) = scope_line(context, true) {
+        out.push_str(&format!("- Scope: {scope}\n"));
+    }
+    // #6602: a seam limit cut the classified list before ranking, so every
+    // Rust seam count below covers only the seams that were kept, and the
+    // actionable count is a lower bound.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "- Seam limit reached: ranked the first {} of {} seams; Rust seam counts below cover those only\n",
+            limit.analyzed, limit.total
+        ));
+        out.push_str(&format!(
+            "- Actionable seams: at least {}, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    } else {
+        out.push_str(&format!(
+            "- Actionable seams: {} total, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    }
+    out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
     if top.is_empty() {
@@ -215,6 +242,9 @@ pub(crate) fn render_pilot_summary_md(
         }
     } else {
         out.push_str("## Top Recommendation\n\n");
+        if let Some(label) = current_change_label(context, top[0]) {
+            out.push_str(&format!("- Current change: {}\n", label.markdown()));
+        }
         push_markdown_recommendation(&mut out, top[0]);
         out.push('\n');
 
@@ -233,15 +263,23 @@ pub(crate) fn render_pilot_summary_md(
             );
         }
         for (idx, entry) in top.iter().enumerate() {
+            let in_change = context
+                .current_change
+                .is_some_and(|change| change.touches(entry));
             out.push_str(&format!(
-                "{}. `{}` {} (`{}`) {}:{} `{}`\n",
+                "{}. `{}` {} (`{}`) {}:{} `{}`{}\n",
                 idx + 1,
                 entry.seam.id().as_str(),
                 entry.class.plain_label(),
                 entry.class.as_str(),
                 display_path(entry.seam.file()),
                 entry.seam.display_line(),
-                entry.seam.kind().as_str()
+                entry.seam.kind().as_str(),
+                if in_change {
+                    " (in your current change)"
+                } else {
+                    ""
+                }
             ));
             out.push_str(&format!("   - Owner: `{}`\n", entry.seam.owner()));
             // Ranking spreads the list across owners (#5770); say once, on
@@ -255,7 +293,12 @@ pub(crate) fn render_pilot_summary_md(
                 .saturating_sub(top.iter().filter(|shown| same_owner(shown)).count());
             if first_of_owner && unlisted > 0 {
                 out.push_str(&format!(
-                    "   - Also in this function: {} more actionable {} not listed here\n",
+                    "   - Also in this function: {}{} more actionable {} not listed here\n",
+                    if context.seam_limit.is_some() {
+                        "at least "
+                    } else {
+                        ""
+                    },
                     unlisted,
                     if unlisted == 1 { "seam" } else { "seams" }
                 ));
@@ -438,7 +481,7 @@ pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, 1);
+    let top = top_actionable_seams(classified, 1, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -451,11 +494,17 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    if let Some(scope) = scope_line(context, false) {
+        out.push_str(&format!("  scope: {scope}\n"));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
+        if let Some(label) = current_change_label(context, entry) {
+            out.push_str(&format!("  current change: {}\n", label.terminal()));
+        }
         // The id leads the line, as it does in the Markdown sibling
         // (`render_helpers::push_markdown_recommendation`). Until this was
         // added, the terminal was the only one of the three pilot renderers
@@ -651,6 +700,127 @@ pub(crate) fn render_pilot_terminal(
 /// Terminal note for a top seam whose focused test is named but that fails the
 /// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
 const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
+
+/// What pilot's ranking covers: change-first when there is a current change,
+/// else the whole repository (with the reason when the change could not be
+/// loaded). `None` when change data was not collected.
+fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    Some(if change.is_changed() {
+        match change.base() {
+            Some(base) if code => {
+                format!("change-first (Rust seams on lines changed since `{base}` rank first)")
+            }
+            Some(base) => {
+                format!("change-first (Rust seams on lines changed since {base} rank first)")
+            }
+            None => "change-first (Rust seams on changed lines rank first)".to_string(),
+        }
+    } else if let Some(reason) = change.unavailable_reason() {
+        format!("whole repository (current change unavailable: {reason})")
+    } else {
+        "whole repository".to_string()
+    })
+}
+
+/// Whether the top recommendation is part of the current change.
+/// `None` when there is no current change or it could not be
+/// loaded: pilot's ranking is then repo-wide, as it always was.
+enum CurrentChangeLabel {
+    PartOfChange { base: Option<String> },
+    Elsewhere { base: Option<String>, check: String },
+}
+
+fn current_change_label(
+    context: PilotSummaryContext<'_>,
+    top: &ClassifiedSeam,
+) -> Option<CurrentChangeLabel> {
+    let change = context
+        .current_change
+        .filter(|change| change.is_changed())?;
+    let base = change.base().map(str::to_string);
+    Some(if change.touches(top) {
+        CurrentChangeLabel::PartOfChange { base }
+    } else {
+        CurrentChangeLabel::Elsewhere {
+            base,
+            check: format!(
+                "ripr check --root {}{}",
+                shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
+                change.check_selector()
+            ),
+        }
+    })
+}
+
+impl CurrentChangeLabel {
+    fn changed_line(base: Option<&String>, code: bool) -> String {
+        match base {
+            Some(base) if code => format!("a line changed since `{base}`"),
+            Some(base) => format!("a line changed since {base}"),
+            None => "a line your current change touches".to_string(),
+        }
+    }
+
+    fn terminal(&self) -> String {
+        match self {
+            Self::PartOfChange { base } => format!(
+                "part of it (this seam is on {})",
+                Self::changed_line(base.as_ref(), false)
+            ),
+            Self::Elsewhere { base, check } => format!(
+                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run: {check}",
+                Self::changed_line(base.as_ref(), false)
+            ),
+        }
+    }
+
+    fn markdown(&self) -> String {
+        match self {
+            Self::PartOfChange { base } => format!(
+                "part of it (this seam is on {})",
+                Self::changed_line(base.as_ref(), true)
+            ),
+            Self::Elsewhere { base, check } => format!(
+                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run `{check}`.",
+                Self::changed_line(base.as_ref(), true)
+            ),
+        }
+    }
+}
+
+fn push_current_change_json(
+    out: &mut String,
+    classified: &[ClassifiedSeam],
+    top: Option<&ClassifiedSeam>,
+    change: Option<&PilotCurrentChange>,
+) {
+    out.push_str("  \"current_change\": ");
+    let Some(change) = change else {
+        out.push_str("null,\n");
+        return;
+    };
+    out.push_str("{\n");
+    json_string_field(out, 4, "state", change.state(), true);
+    json_optional_string_field(out, 4, "base", change.base(), true);
+    json_optional_string_field(out, 4, "reason", change.unavailable_reason(), true);
+    if change.is_changed() {
+        out.push_str(&format!(
+            "    \"actionable_seams_in_change\": {},\n",
+            actionable_in_change(classified, change)
+        ));
+    } else {
+        out.push_str("    \"actionable_seams_in_change\": null,\n");
+    }
+    match top.filter(|_| change.is_changed()) {
+        Some(entry) => out.push_str(&format!(
+            "    \"top_recommendation_in_change\": {}\n",
+            change.touches(entry)
+        )),
+        None => out.push_str("    \"top_recommendation_in_change\": null\n"),
+    }
+    out.push_str("  },\n");
+}
 
 /// Closing line when every language pilot did not rank is unavailable in
 /// this binary, so no runnable command exists.

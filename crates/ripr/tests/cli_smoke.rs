@@ -18,6 +18,9 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/discarded_matches.rs"]
+mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
@@ -26,8 +29,14 @@ mod implicit_git_root;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_recovery_root.rs"]
+mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[cfg(unix)]
+#[path = "cli_smoke/workflow_directory.rs"]
+mod workflow_directory;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
@@ -40,6 +49,21 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn run_ripr(args: &[&str]) -> Output {
     let bin = env!("CARGO_BIN_EXE_ripr");
     Command::new(bin).args(args).output().unwrap()
+}
+
+#[cfg(feature = "lang-rust")]
+fn run_matcher_calibration_with_deadline(
+    args: &[&str],
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(workspace_root())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    run_owned_stdin_probe(command, &[], budget)
 }
 
 fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
@@ -7400,28 +7424,36 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     assert_failure(&after_a);
     let (_, manifest_a) = sole_repair_attempt(&root)?;
     assert_eq!(manifest_a["state"], "failed", "{manifest_a}");
-    // The refused after phase still published its verify document; keep it
-    // for the receipt reruns below.
-    std::fs::rename(
-        root.join("target/ripr/workflow/agent-verify.json"),
-        root.join("target/ripr/workflow/agent-verify-a.json"),
-    )?;
-
-    // With exactly one attempt for the seam — the failed one — the bare
-    // receipt refuses, and the refusal uses the serialized vocabulary the
-    // manifest and verdict carry: `failed`/`violated`, not Debug spellings.
-    let not_ready = receipt_with_attempt(&root, None, "target/ripr/workflow/agent-verify-a.json")?;
-    assert_failure(&not_ready);
-    let stderr = String::from_utf8_lossy(&not_ready.stderr);
+    // #6033: the refused after phase withdraws the shared workflow artifacts
+    // it wrote, so none of them survives beside the terminal attempt.
+    for artifact in [
+        "target/ripr/workflow/agent-verify.json",
+        "target/ripr/workflow/after.repo-exposure.json",
+        "target/ripr/workflow/analysis-outcome.json",
+    ] {
+        assert!(
+            !root.join(artifact).exists(),
+            "a refused after phase must withdraw {artifact}"
+        );
+    }
+    // The refused phase's typed stdout envelope carries the same serialized
+    // vocabulary the manifest and verdict carry — `failed`/`violated`, not
+    // Debug spellings — so the not-receipt-ready refusal is pinned in-band
+    // even though no receipt document can exist for this attempt.
+    let refusal_envelope: serde_json::Value = serde_json::from_slice(&after_a.stdout)?;
+    assert_eq!(refusal_envelope["kind"], "repair_after_failure");
+    assert_eq!(refusal_envelope["attempt_id"], attempt_a);
+    assert_eq!(refusal_envelope["attempt_state"], "failed");
+    assert_eq!(refusal_envelope["edit_cage_verdict"], "violated");
+    let envelope_error = refusal_envelope["error"]
+        .as_str()
+        .ok_or("failure envelope carries the terse error")?;
+    assert!(envelope_error.contains(&format!(
+        "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
+    )), "the envelope must carry the serialized refusal vocabulary: {envelope_error}");
     assert!(
-        stderr.contains(&format!(
-            "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
-        )),
-        "the receipt-ready refusal must use the serialized vocabulary:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("state Failed") && !stderr.contains("verdict Violated"),
-        "the refusal must not leak Debug spellings:\n{stderr}"
+        !envelope_error.contains("state Failed") && !envelope_error.contains("verdict Violated"),
+        "the envelope must not leak Debug spellings: {envelope_error}"
     );
 
     // Attempt B: fresh, prepared after A's committed edit, finished cleanly.
@@ -11697,11 +11729,11 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
-    assert!(stdout.contains("target/ripr/agent"));
-    assert!(stdout.contains("target/ripr/workflow"));
-    assert!(stdout.contains("target/ripr/review"));
+    // #5409: one upload path covers every RIPR report directory.
+    assert!(stdout.contains("            target/ripr\n            target/ci\n"));
+    assert!(stdout.contains("target/ripr/review/publish/requests.tsv"));
     assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/existing-comments.json"));
+    assert!(stdout.contains("ripr pr-comments existing --root . --raw -"));
     // #4696: the analysis steps run inside one packet command.
     assert!(stdout.contains("run: ripr reports ci-packet --root ."));
     // #3906: CI writes only the before side of the repair loop.
@@ -12508,7 +12540,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     init_producer_fixture_repo(&root)?;
     let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
     lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
 
@@ -12551,6 +12583,39 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert!(
         before.get("artifact").is_none(),
         "a budget-truncated pilot snapshot must not carry the comparable identity"
+    );
+    // #6602: the summary says the budget cut the ranked population, out of
+    // every seam the inventory found.
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    let full_total = count(&full);
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
+    );
+    // When the inventory limit also cuts, the disclosed total is still the
+    // inventory's, not the already-capped list the budget saw.
+    assert!(
+        full_total > 2,
+        "fixture must exceed the inventory limit: {full}"
+    );
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&pilot);
+    let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        summary.contains(&format!(
+            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+        )),
+        "{summary}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -13700,6 +13765,14 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     .map_err(|err| format!("write changed pricing: {err}"))?;
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
+    // An uncommitted edit to another tracked Python file makes the working
+    // tree the current change. The scope line names Rust seam ranking only,
+    // and the Python card is still chosen from the committed diff.
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
+    )
+    .map_err(|err| format!("write uncommitted tests edit: {err}"))?;
 
     let out_dir = unique_temp_workspace("pilot-python-git-out");
     let output = run_ripr(&[
@@ -13721,6 +13794,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
+        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -13747,6 +13821,16 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
             "missing summary JSON needle: {needle}"
         );
     }
+    let summary: serde_json::Value = serde_json::from_str(&summary_json)
+        .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "changed",
+        "{summary_json}"
+    );
+    assert_eq!(
+        summary["current_change"]["actionable_seams_in_change"], 0,
+        "{summary_json}"
+    );
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
@@ -14367,9 +14451,326 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     Ok(())
 }
 
+/// `RIPR_GIT_TIMEOUT` bounds pilot's current-change git calls as it bounds
+/// `ripr check` (#2613): an invalid value fails closed before any analysis,
+/// and a hung `git diff` is cut at the configured deadline (not the 5-minute
+/// default), leaving the ranking repo-wide with the reason named.
+#[cfg(unix)]
+#[test]
+fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-git-timeout",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"timeout_fx\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-git-timeout-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let args = [
+        "pilot",
+        "--root",
+        root_arg.as_str(),
+        "--out",
+        out_arg.as_str(),
+    ];
+
+    let invalid = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "soon")],
+    )
+    .map_err(|err| format!("run pilot with invalid timeout: {err}"))?;
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(!invalid.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("RIPR_GIT_TIMEOUT requires a non-negative integer"),
+        "{stderr}"
+    );
+
+    // A `git` shim that hangs on `diff` and passes everything else through.
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git is not on PATH")?;
+    let shim_dir = unique_temp_workspace("pilot-git-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then exec sleep 60; fi\ndone\nexec '{}' \"$@\"\n",
+            real_git.display()
+        ),
+    )
+    .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", &search_path)],
+    )
+    .map_err(|err| format!("run pilot with hanging git diff: {err}"))?;
+    let elapsed = started.elapsed();
+    assert_success(&output);
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "pilot waited {elapsed:?} on a hung git diff under RIPR_GIT_TIMEOUT=1"
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["reason"], "git timed out",
+        "{summary}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// Rust-only output is untouched by language routing, and adding TypeScript
 /// beside Rust seams leaves the human output byte-identical: the mixed repo
 /// keeps the Rust result and lists the other language in JSON only.
+/// #1169: right after `ripr check` describes a change, pilot's top
+/// recommendation must not read as the next step for that change when it is
+/// a repo-wide seam elsewhere. Drives the real binary through the default
+/// base resolution and both diff routes (uncommitted and committed).
+#[test]
+fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-current-change-out");
+    let top_line = |summary: &serde_json::Value| summary["top_actionable_seams"][0]["line"].clone();
+
+    // A committed change with no ranked seam: the repo-wide top seam is
+    // labeled as elsewhere, and `ripr check` is named for the change.
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 2, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed");
+    assert_eq!(summary["current_change"]["base"], "origin/main");
+    assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("run: ripr check --root "), "{stdout}");
+    // A committed change is what plain `ripr check` reads.
+    assert!(!stdout.contains("--worktree"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "{stdout}"
+    );
+    assert!(md.contains("- Current change: not part of it."), "{md}");
+
+    // An uncommitted edit to `is_digit` is the current change: its seam now
+    // outranks the better-classed `discounted` seam and is labeled part of it.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        lib.replace("byte <= b'9'", "byte < b'9'"),
+    )
+    .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    assert!(
+        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        "{stdout}"
+    );
+    assert!(md.contains("- Current change: part of it"), "{md}");
+
+    // A seam budget of one would cut the changed `is_digit` seam, which comes
+    // after `discounted` in inventory order; pilot keeps it past the cut.
+    let (root_arg, out_arg) = (root.display().to_string(), out_dir.display().to_string());
+    let budgeted = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )
+    .map_err(|err| format!("run budgeted pilot: {err}"))?;
+    assert_success(&budgeted);
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read budgeted summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse budgeted summary: {err}"))?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+
+    // An uncommitted edit on no ranked seam: plain `ripr check` reads
+    // committed history and would miss it, so the named command selects the
+    // working tree.
+    std::fs::write(root.join("src/lib.rs"), format!("{lib}// note\n"))
+        .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    let check_line = stdout
+        .lines()
+        .find(|line| line.contains("For the change itself, run: "))
+        .ok_or_else(|| format!("no check command: {stdout}"))?;
+    assert!(check_line.ends_with(" --worktree"), "{check_line}");
+    assert!(md.contains(" --worktree`."), "{md}");
+
+    // A failed working-tree probe is not a clean tree: a corrupt index makes
+    // `git status` fail while the base still resolves, and pilot must say the
+    // change is unavailable instead of ranking `<base>...HEAD`.
+    std::fs::write(root.join(".git/index"), "not an index\n")
+        .map_err(|err| format!("corrupt index: {err}"))?;
+    let (stdout, _, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(summary["current_change"]["reason"], "git status failed");
+    assert!(
+        stdout.contains("scope: whole repository (current change unavailable: git status failed)"),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+/// #5324: `ripr pilot --root X` without `--out`, run from another
+/// directory, writes its packet under X (where `ripr agent status --root X`
+/// reads it) and leaves the working directory's `target/` untouched.
+#[test]
+fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-default-out-root",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"out_root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/discount.rs",
+                "#[test]\nfn small_amounts_pass_through() {\n    assert!(out_root::discounted(50) > 0);\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let elsewhere = unique_temp_workspace("pilot-default-out-cwd");
+    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create cwd: {err}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&elsewhere),
+        &["pilot", "--root", &root_arg],
+    )
+    .map_err(|err| format!("run ripr pilot: {err}"))?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let packet = root.join("target/ripr/pilot");
+    assert!(
+        packet.join("pilot-summary.json").is_file(),
+        "packet missing under the root {}: {stdout}",
+        packet.display()
+    );
+    assert!(
+        !elsewhere.join("target").exists(),
+        "pilot wrote under the working directory {}",
+        elsewhere.display()
+    );
+    // Pilot renders human paths with forward separators on every platform,
+    // so the needle normalizes the same way (#6856).
+    assert!(
+        stdout.contains(
+            &packet
+                .join("pilot-summary.md")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+        "{stdout}"
+    );
+    // The packet's loop commands must write into the analyzed repository,
+    // not the directory pilot was launched from.
+    let packets = std::fs::read_to_string(packet.join("agent-seam-packets.json"))
+        .map_err(|err| format!("read packets: {err}"))?;
+    let packets: serde_json::Value =
+        serde_json::from_str(&packets).map_err(|err| format!("parse packets: {err}"))?;
+    let before = packets["next"]["before_snapshot_command"]
+        .as_str()
+        .ok_or_else(|| format!("the fixture must yield a repair loop: {packets}"))?;
+    // Commands render with forward separators on every platform, so both
+    // needles normalize the same way (#6856). Without this the launch-dir
+    // needle passes vacuously on Windows and the root needle always fails.
+    let elsewhere_text = elsewhere.to_string_lossy().replace('\\', "/");
+    let root_text = root.to_string_lossy().replace('\\', "/");
+    assert!(
+        !before.contains(&elsewhere_text),
+        "the snapshot redirect names the launch directory: {before}"
+    );
+    assert!(before.contains(&root_text), "{before}");
+    Ok(())
+}
+
 #[test]
 fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
     let root = pilot_language_fixture_repo(
@@ -23101,5 +23502,147 @@ fn review_comments_help_survives_invalid_admission_environment()
             "{stderr}"
         );
     }
+    Ok(())
+}
+
+/// #6033: a cage-violated after phase is the one failure shape that used to
+/// emit the success-shaped movement document on the documented stdout
+/// channel (`status: advisory`, gap closed) while the attempt terminated as
+/// `failed`. With `--json`, stdout must instead be the typed
+/// `repair_after_failure` envelope naming the terminal attempt state and the
+/// cage verdict, and the shared workflow artifacts the phase wrote must be
+/// withdrawn, so `agent status` does not present them as current loop
+/// artifacts beside the terminal attempt.
+#[test]
+fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The natural redirect shape from #4216: ripr output redirected into the
+    // checkout sits untracked in the tree, so the cage refuses the attempt.
+    let root = built_repair_fixture("agent-repair-cage-violated-stdout")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    // The terminal cage failure is not a retryable refusal: exit 2, not 3.
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
+
+    let stdout: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&after.stdout))
+        .map_err(|error| {
+        format!(
+            "after-phase stdout must be one JSON document: {error}: {}",
+            String::from_utf8_lossy(&after.stdout)
+        )
+    })?;
+    assert_eq!(stdout["kind"], "repair_after_failure", "{stdout}");
+    assert_eq!(stdout["schema_version"], "0.4", "{stdout}");
+    assert_eq!(stdout["attempt_id"], attempt_id, "{stdout}");
+    assert_eq!(stdout["attempt_state"], "failed", "{stdout}");
+    assert_eq!(stdout["edit_cage_verdict"], "violated", "{stdout}");
+    assert!(
+        stdout["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("not receipt-ready")),
+        "the envelope carries the terse final error: {stdout}"
+    );
+    assert!(
+        stdout.get("verify").is_none() && stdout.get("changed_seams").is_none(),
+        "no success-shaped movement document beside a terminal attempt: {stdout}"
+    );
+
+    // The artifacts this phase wrote are withdrawn; the before phase's
+    // retained projection is not this phase's to clean.
+    assert!(
+        !root
+            .join("target/ripr/workflow/after.repo-exposure.json")
+            .exists(),
+        "a refused after phase must not leave a fresh after snapshot as a current loop artifact"
+    );
+    assert!(
+        !root.join("target/ripr/workflow/agent-verify.json").exists(),
+        "a refused after phase must not leave a fresh verify document as a current loop artifact"
+    );
+    assert!(
+        !root
+            .join("target/ripr/workflow/analysis-outcome.json")
+            .exists(),
+        "a refused after phase must not leave a fresh analysis outcome as a current loop artifact"
+    );
+    assert!(
+        root.join("target/ripr/workflow/before.repo-exposure.json")
+            .exists(),
+        "the before phase's own artifact stays"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #6033 review: a cage-refused after phase must not leave a success-shaped
+/// projection of the refused attempt in place of a previous attempt's
+/// artifacts either. When all three shared workflow paths already exist
+/// (preseeded here with sentinel bytes), the phase renames their bytes
+/// aside, and a terminal cage failure restores exactly those original
+/// bytes while withdrawing the phase's fresh artifacts.
+#[test]
+fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = built_repair_fixture("agent-repair-cage-violated-preseeded")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+
+    // Preseed all three shared paths the way an earlier loop's projections
+    // would have left them.
+    let preseeded = [
+        (
+            "target/ripr/workflow/after.repo-exposure.json",
+            "{\"stale\":\"after\"}",
+        ),
+        (
+            "target/ripr/workflow/agent-verify.json",
+            "{\"stale\":\"verify\"}",
+        ),
+        (
+            "target/ripr/workflow/analysis-outcome.json",
+            "{\"stale\":\"analysis-outcome\"}",
+        ),
+    ];
+    for (relative, contents) in preseeded {
+        std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
+        std::fs::write(root.join(relative), contents)?;
+    }
+
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
+
+    // The pre-attempt bytes are restored verbatim; the refused attempt's
+    // fresh projection is gone.
+    for (relative, contents) in preseeded {
+        let restored = std::fs::read_to_string(root.join(relative))?;
+        assert_eq!(
+            restored, contents,
+            "{relative} must carry the pre-attempt bytes after the refusal"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }

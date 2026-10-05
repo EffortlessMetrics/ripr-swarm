@@ -15,6 +15,7 @@ mod language;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 mod probes;
 pub(crate) mod repair_route;
 /// Process CPU time and peak resident memory observability (#5213). One
@@ -48,9 +49,10 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline_core, load_worktree_diff, no_merge_base_diagnosis,
-    parse_unified_diff, resolve_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes,
+    load_diff, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -69,6 +71,8 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
+#[cfg(all(test, feature = "lang-perl"))]
+pub(crate) use language::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
 };
@@ -99,6 +103,7 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
+pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
