@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.7",
+  "corpus_version": "2026-10-05.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -1392,6 +1392,35 @@
         {
           "path": "src/lib.rs",
           "sha256": "9de9776303d3c4e7876c7c911fe038881200b2146e2b88240f331e0f8b4900a3"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spot",
+      "origin": "authored",
+      "version_label": "authored 2026-10-05 from refuted ripr pilot picks",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "c3290d326c35892e3cf61d57d574fed0acdb5f75e6d2c5d69d91e42a8650320a"
+        },
+        {
+          "path": "src/copy.rs",
+          "sha256": "dfaec64927c835a24daa6511035d84c81c61d9c864e296c990c1373a2b23fa81"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "ca71a0e380d6ab0fc549bf9d87c73ebf32ec7f521992ea572d8524c2133fad87"
+        },
+        {
+          "path": "src/parse.rs",
+          "sha256": "26badc79661c0c7939f48305f3039200fded9d6747458a3c00125afe114f502c"
+        },
+        {
+          "path": "src/score.rs",
+          "sha256": "59438fd1046d1db4f406580b640b7f585bfc156c57c8299670d6629f19de49de"
         }
       ]
     }
@@ -8568,6 +8597,293 @@
       "reasoning": "letter_is_refused asserts total(\"x\").is_err(), but no_letters(s)? already returns Err(Bad) for \"x\" before the digit loop, so the unwrap_or mutants never run on that input and the test passes. Spec cells: RIPR-SPEC-0227 example 13 (rule 3b negative control: condition 2 fails, an earlier ? already returns Err).",
       "labeling_observation": {
         "ripr_commit": "a9d36dc71",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spot-code-length-guard-query",
+      "subject_id": "authored-spot",
+      "diff": "cases/spot-code-length-guard-query.diff",
+      "anchor": {
+        "file": "src/parse.rs",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pure_query_call_in_guard_exact_result",
+      "hard_case": "The tests pass \"1234\" and \"123\", both sides of the length boundary, but ripr does not carry those literals through s.len() and reports the equality witness s.len() == 4 as missing.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if s.len() <= 4 {",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::a_letter_is_not_a_digit",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if s.len() > 4 {",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::three_characters_are_too_short",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if s.len() == 4 {",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::four_digits_parse_to_their_value",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if s.len() < 5 {",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::a_letter_is_not_a_digit",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Each test pins parse_code's exact Result, so moving the length boundary either way changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:85 and date.rs:89 (s.len(), ends_with), bytesize display.rs:242 (powi), rust-hex lib.rs:225 (hex.len()), semver identifier.rs is_empty/as_str branch calls.",
+      "labeling_observation": {
+        "ripr_commit": "b2f2a21",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spot-code-digit-helper-ok-or",
+      "subject_id": "authored-spot",
+      "diff": "cases/spot-code-digit-helper-ok-or.diff",
+      "anchor": {
+        "file": "src/parse.rs",
+        "line": 19
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_variant",
+      "test_shape": "pure_helper_call_with_ok_or_exact_result",
+      "hard_case": "a_letter_is_not_a_digit pins Err(NotDigit) exactly, but ripr finds no owner-bound propagation witness for an error produced by a helper call's ok_or and returned through ?, so the error_path probe reads weakly_exposed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "let d = digit('0').ok_or_else(|| CodeError::NotDigit)?;",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::a_letter_is_not_a_digit",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "let d = digit(c).ok_or_else(|| CodeError::Short)?;",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::a_letter_is_not_a_digit",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "let d = digit(c).unwrap_or(0);",
+            "outcome": "tests_failed",
+            "failing_test": "parse::tests::a_letter_is_not_a_digit",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "a_letter_is_not_a_digit pins Err(NotDigit) and four_digits_parse_to_their_value pins the Ok value, so replacing the helper call, its error variant or its fallback changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:74 (two_digits_inner(..).ok_or(..)), rust-hex lib.rs:230 (decode_to_slice(..)?).",
+      "labeling_observation": {
+        "ripr_commit": "b2f2a21",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "infection_unknown",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spot-window-clone-field-whole-equality",
+      "subject_id": "authored-spot",
+      "diff": "cases/spot-window-clone-field-whole-equality.diff",
+      "anchor": {
+        "file": "src/copy.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "manual_clone_whole_value_equality",
+      "hard_case": "The only oracle compares the clone with its original as whole values; it never names the private start field, so ripr reports no field-value assertion for the constructed field.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "start: self.end,",
+            "outcome": "tests_failed",
+            "failing_test": "copy::tests::a_clone_equals_its_original",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "start: Default::default(),",
+            "outcome": "tests_failed",
+            "failing_test": "copy::tests::a_clone_equals_its_original",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "start: self.start + 1,",
+            "outcome": "tests_failed",
+            "failing_test": "copy::tests::a_clone_equals_its_original",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "a_clone_equals_its_original compares the clone with Window::new(3, 9) through the derived PartialEq, so any change to the start field fails it. Pattern from refuted pilot picks: semver identifier.rs:209-210 (head/tail in Identifier::clone).",
+      "labeling_observation": {
+        "ripr_commit": "b2f2a21",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spot-cap-generic-via-wrapper",
+      "subject_id": "authored-spot",
+      "diff": "cases/spot-cap-generic-via-wrapper.diff",
+      "anchor": {
+        "file": "src/score.rs",
+        "line": 5
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "generic_helper_via_wrapper_exact_result",
+      "hard_case": "capped is generic and private, and the tests call only the capped_score wrapper; ripr relates them to capped by same_test_file only, does not pair the wrapper's exact pins with the boundary (same_test_pairing_missing), and reports propagation_unknown.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if value < cap {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::scores_above_the_cap_are_capped",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if value == cap {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::scores_above_the_cap_are_capped",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if value != cap {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::scores_above_the_cap_are_capped",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "scores_above_the_cap_are_capped pins 11, 10 and 3 through the wrapper, so flipping or replacing the comparison changes a pinned value (value >= cap is equivalent and not listed). Pattern from refuted pilot picks: strsim lib.rs:64, 99, 101, 121 (generic_hamming / generic_jaro reached through hamming / jaro).",
+      "labeling_observation": {
+        "ripr_commit": "b2f2a21",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "propagation_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spot-initials-computed-local-boundary",
+      "subject_id": "authored-spot",
+      "diff": "cases/spot-initials-computed-local-boundary.diff",
+      "anchor": {
+        "file": "src/score.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "boundary_on_computed_local_exact_result",
+      "hard_case": "letters comes from split_whitespace().count(); ripr does not map the test's empty-string input to letters == 0 and reports that no test input reaches the boundary.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if letters != 0 {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if letters == 1 {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          },
+          {
+            "replacement": "if letters > 0 {",
+            "outcome": "tests_failed",
+            "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+            "equivalence_review": "not equivalent: a pinned value changes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "initials_count_words_and_flag_blank_names pins initials(\"\") to 100 and a two-word name to 2, so every listed boundary mutant changes a pinned value. Pattern from refuted pilot picks: strsim lib.rs:99 and 101 (a_len == 0 on a counted length), rust-hex lib.rs:225.",
+      "labeling_observation": {
+        "ripr_commit": "b2f2a21",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
