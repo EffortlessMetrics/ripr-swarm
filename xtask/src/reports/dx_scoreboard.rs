@@ -946,48 +946,54 @@ fn from_spot_check_v2(base_row: &Value) -> bool {
     })
 }
 
-/// Opens the population suffix on every spot-check row's evidence. The
-/// suffix runs to the end of the evidence, so the last occurrence is the one
-/// ingest wrote.
-const POPULATION_MARKER: &str = " [population: ";
+/// Opens the population suffix on every spot-check row's evidence. Everything
+/// before it is text this module writes, so the first occurrence is the
+/// marker, and everything after it is one JSON array.
+const POPULATION_MARKER: &str = " population=";
 
-/// One repository of a spot-check population: its name, checkout revision,
-/// cargo-mutants version and any cargo-mutants arguments, since a change in
-/// any of them changes which mutants a rate is computed over.
-fn population_member(repo: &Value) -> Option<String> {
+/// One repository of a spot-check population, as a structured value so
+/// distinct argument vectors stay distinct: its name, checkout revision,
+/// cargo-mutants version, the digest of the mutant set the rates were
+/// computed over, and the cargo-mutants arguments (`null` when a supplied
+/// `mutants.out` did not record them).
+fn population_member(repo: &Value) -> Option<Value> {
     let name = repo["name"].as_str().filter(|name| !name.is_empty())?;
     let revision = repo["revision"]
         .as_str()
         .filter(|revision| !revision.is_empty())?;
-    let mut member = format!("{name}@{revision}");
-    if let Some(version) = repo["cargo_mutants_version"].as_str() {
-        member.push_str(&format!(" cargo-mutants {version}"));
-    }
-    let args = repo["cargo_mutants_args"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    if !args.is_empty() {
-        member.push_str(&format!(" args {}", args.join(" ")));
-    }
-    Some(member)
+    let mutant_set = repo["mutant_set_sha256"]
+        .as_str()
+        .filter(|digest| !digest.is_empty())?;
+    let args = match &repo["cargo_mutants_args"] {
+        Value::Null => Value::Null,
+        Value::Array(args) if args.iter().all(Value::is_string) => Value::Array(args.clone()),
+        _ => return None,
+    };
+    Some(json!({
+        "name": name,
+        "revision": revision,
+        "cargo_mutants_version": repo["cargo_mutants_version"],
+        "mutant_set_sha256": mutant_set,
+        "cargo_mutants_args": args,
+    }))
 }
 
-/// The population a spot-check row was measured over, read back from the
-/// evidence of each of its samples. `None` when a sample predates the suffix
-/// or when samples disagree, so neither can pass as a known population.
-fn spot_check_population(row: &Value) -> Option<String> {
+/// The population a spot-check row was measured over, decoded from the
+/// evidence of each of its samples. `None` when a sample predates the suffix,
+/// does not decode, or disagrees with another sample, so none of those can
+/// pass as a known population.
+fn spot_check_population(row: &Value) -> Option<Value> {
     let samples = row["samples"].as_array()?;
     let mut populations = samples.iter().map(|sample| {
         let detail = sample["detail"].as_str()?;
-        let start = detail.rfind(POPULATION_MARKER)? + POPULATION_MARKER.len();
-        detail[start..].strip_suffix(']').map(str::to_string)
+        let start = detail.find(POPULATION_MARKER)? + POPULATION_MARKER.len();
+        serde_json::from_str::<Value>(&detail[start..])
+            .ok()
+            .filter(Value::is_array)
     });
     let first = populations.next()??;
     populations
-        .all(|population| population.as_deref() == Some(first.as_str()))
+        .all(|population| population.as_ref() == Some(&first))
         .then_some(first)
 }
 
@@ -1003,7 +1009,7 @@ fn spot_check_population(row: &Value) -> Option<String> {
 ///
 /// Rates pool every repository, so each row's evidence ends with the
 /// population it measured (every repository's name, revision, cargo-mutants
-/// version and arguments). A baseline over a different population is not
+/// version, mutant-set digest and arguments). A baseline over a different population is not
 /// compared: swapping a repository moves a pooled rate without any verdict
 /// changing (#6311).
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
@@ -1050,7 +1056,7 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     for (index, repo) in repos.iter().enumerate() {
         population.push(population_member(repo).ok_or_else(|| {
             format!(
-                "mutation spot-check repo {} needs a name and revision, so its rates can be tied to the repositories they measured",
+                "mutation spot-check repo {} needs a name, revision, mutant_set_sha256 and cargo_mutants_args (an array of strings, or null when unrecorded), so its rates can be tied to the population they measured",
                 index + 1
             )
         })?);
@@ -1105,8 +1111,8 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     } else {
         String::new()
     };
-    population.sort();
-    let population = format!("{POPULATION_MARKER}{}]", population.join(", "));
+    population.sort_by_key(Value::to_string);
+    let population = format!("{POPULATION_MARKER}{}", Value::Array(population));
     for row in &mut rows {
         if let Some(Value::String(evidence)) = row.get_mut("evidence") {
             evidence.push_str(&caveat);
@@ -1754,9 +1760,9 @@ pub(crate) fn compare_with_baseline(
                 "comparable": false,
                 "value": base_row["value"],
                 "reason": format!(
-                    "baseline measured population [{}]; this run measured [{}]",
-                    before.as_deref().unwrap_or("unrecorded"),
-                    now.as_deref().unwrap_or("unrecorded"),
+                    "baseline measured population {}; this run measured {}",
+                    before.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
+                    now.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
                 ),
             });
         }

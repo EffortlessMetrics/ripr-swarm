@@ -558,9 +558,11 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         },
         "repos": [
             {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
              "pairings": {"canonical_precise": 2, "records_total": 86, "seam_precise": 80},
              "calibration_metrics": {"mutants_total": 86}},
             {"name": "semver", "revision": "280ebcb6", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "bb", "cargo_mutants_args": null,
              "pairings": {"canonical_precise": 170, "records_total": 1659},
              "calibration_metrics": {"mutants_total": 1659}},
         ],
@@ -656,11 +658,24 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         }
     }
 
-    // Every row names the population it pooled.
-    let population =
-        "[population: atuin@90f590b9 cargo-mutants 27.1.0, semver@280ebcb6 cargo-mutants 27.1.0]";
+    // Every row names the population it pooled, as one JSON value.
+    let names = |detail: &str| -> Option<Vec<String>> {
+        let start = detail.find(" population=")? + " population=".len();
+        let population: Value = serde_json::from_str(&detail[start..]).ok()?;
+        population.as_array().map(|members| {
+            members
+                .iter()
+                .map(|member| member["name"].as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+    };
     for sample in &unsampled {
-        assert!(sample.detail.ends_with(population), "{}", sample.detail);
+        assert_eq!(
+            names(&sample.detail),
+            Some(vec!["atuin".to_string(), "semver".to_string()]),
+            "{}",
+            sample.detail
+        );
     }
 
     // A pooled rate over a different population is not a trend: swapping a
@@ -697,7 +712,26 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     moved["repos"][0]["revision"] = json!("0123abcd");
     let mut upgraded = receipt.clone();
     upgraded["repos"][1]["cargo_mutants_version"] = json!("27.2.0");
-    for changed in [&swapped, &moved, &upgraded, &sampled] {
+    // A supplied mutants.out whose arguments went unrecorded (null) is not
+    // the same population as a run this harness started with none ([]),
+    // and a different mutant set is a different population whatever the
+    // recorded arguments say.
+    let mut recorded = receipt.clone();
+    recorded["repos"][0]["cargo_mutants_args"] = json!([]);
+    let mut reselected = receipt.clone();
+    reselected["repos"][0]["mutant_set_sha256"] = json!("cc");
+    // An argument that mimics the population marker cannot hide the rest.
+    let mut marker = receipt.clone();
+    marker["repos"][0]["cargo_mutants_args"] = json!([" population=[]"]);
+    for changed in [
+        &swapped,
+        &moved,
+        &upgraded,
+        &sampled,
+        &recorded,
+        &reselected,
+        &marker,
+    ] {
         assert_eq!(comparable_against(changed)?, vec![Some(false); 3]);
     }
     let samples = parse_ingest(&swapped, &config)?;
@@ -714,8 +748,34 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         .unwrap_or_default()
         .to_string();
     assert!(
-        reason.contains("semver@280ebcb6") && reason.contains("ripgrep@280ebcb6"),
+        reason.contains(r#""name":"semver""#) && reason.contains(r#""name":"ripgrep""#),
         "{reason}"
+    );
+
+    // Argument vectors compare as vectors, not as text joined by spaces.
+    let mut split = receipt.clone();
+    split["repos"][0]["cargo_mutants_args"] = json!(["--re=a", "--exclude=b"]);
+    let mut joined = receipt.clone();
+    joined["repos"][0]["cargo_mutants_args"] = json!(["--re=a --exclude=b"]);
+    let split_report = build_report(
+        &config,
+        &["trust".to_string()],
+        &parse_ingest(&split, &config)?,
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &parse_ingest(&joined, &config)?,
+        &context("r"),
+        Some(&split_report),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.gap_claim_agreement")?["baseline"]["comparable"].as_bool(),
+        Some(false)
     );
 
     // A v2 baseline written before rows named their population cannot show
@@ -1167,7 +1227,7 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 1},
             "claims_no_discriminator": {"agreement_rate": 0.5, "mutants_scored": 1},
         },
-        "repos": [{"name": "a", "revision": "abc",
+        "repos": [{"name": "a", "revision": "abc", "mutant_set_sha256": "aa", "cargo_mutants_args": null,
                    "pairings": {"seam_precise": 5}, "calibration_metrics": {"mutants_total": 9}}],
     });
     // A v1-shaped repo row must not fall back to its `seam_precise` count.
@@ -1183,12 +1243,19 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
     );
     receipt["repos"][0]["pairings"]["records_total"] = json!(9);
     // A rate that cannot name the repositories it pooled is not ingested.
-    for field in ["name", "revision"] {
+    for (field, bad) in [
+        ("name", json!("")),
+        ("revision", json!("")),
+        ("mutant_set_sha256", Value::Null),
+        ("cargo_mutants_args", json!("--re=a")),
+        ("cargo_mutants_args", json!([1])),
+    ] {
         let mut anonymous = receipt.clone();
-        anonymous["repos"][0][field] = json!("");
+        anonymous["repos"][0][field] = bad;
         assert!(
             mutation_spot_check_to_input(&anonymous)
-                .is_err_and(|e| e.contains("needs a name and revision"))
+                .is_err_and(|e| e.contains("needs a name, revision, mutant_set_sha256")),
+            "{field}"
         );
     }
     assert!(mutation_spot_check_to_input(&receipt).is_ok_and(|input| {

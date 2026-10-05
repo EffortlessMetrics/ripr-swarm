@@ -126,13 +126,16 @@ These native receipts are also accepted as-is:
   committed baseline's rows for these three metrics came from v1) is reported
   as not comparable instead of gating a v2 value against it.
   These rates pool every repository in the receipt, so each row's evidence
-  ends with its population: every repository's name, checkout revision,
-  cargo-mutants version and arguments. The gate compares a row only against
-  a baseline over the same population; a swapped repository, a moved
-  revision or a different cargo-mutants run reports "not comparable" with
-  both populations, because the pooled rate can move with no verdict
-  changing. Repository order does not matter. A receipt repository without a
-  name and revision is refused.
+  ends with its population as one JSON array: every repository's name,
+  checkout revision, cargo-mutants version, `mutant_set_sha256` (a digest of
+  the sorted mutant names, so selection arguments count even when unrecorded)
+  and `cargo_mutants_args` (`null` for a supplied `mutants.out`, whose
+  arguments the harness cannot see). The gate compares a row only against a
+  baseline over the same population; a swapped repository, a moved revision,
+  a different mutant set or a different cargo-mutants run reports "not
+  comparable" with both populations, because the pooled rate can move with
+  no verdict changing. Repository order does not matter. A receipt
+  repository missing any of these fields is refused.
 - `ripr-rust-corpus-smoke-v1` from `cargo xtask rust-corpus smoke`: per
   repository, `corpus.not_analyzed` (0 when the run reached `analyzed`, 1 when
   it failed closed, timed out or broke) and `corpus.check_ms` (the time of an

@@ -36,6 +36,7 @@ use crate::run::{
     capture_stdout_to_file_with_timeout,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -294,8 +295,11 @@ struct RepoRun {
     revision: String,
     diffs_checked: usize,
     exposure_run_status: Option<String>,
-    cargo_mutants_args: Vec<String>,
+    /// `None` for a supplied `mutants.out`: its run's arguments are not
+    /// recorded anywhere this harness can read.
+    cargo_mutants_args: Option<Vec<String>>,
     cargo_mutants_version: Option<String>,
+    mutant_set_sha256: String,
     metrics: Value,
     records: Vec<Record>,
 }
@@ -391,10 +395,11 @@ fn spot_check_repo(
             .and_then(Value::as_str)
             .map(str::to_string),
         cargo_mutants_args: if options.mutants_out.contains_key(name) {
-            Vec::new()
+            None
         } else {
-            options.mutants_args.get(name).cloned().unwrap_or_default()
+            Some(options.mutants_args.get(name).cloned().unwrap_or_default())
         },
+        mutant_set_sha256: mutant_set_sha256(&mutant_records),
         cargo_mutants_version: outcomes
             .get("cargo_mutants_version")
             .and_then(Value::as_str)
@@ -679,6 +684,26 @@ struct Record {
 }
 
 /// cargo-mutants genre per mutant name, from `mutants.out/mutants.json`.
+/// Digest of the sorted mutant names cargo-mutants generated. The set is what
+/// the rates are computed over, and it reflects selection arguments
+/// (`--re`, `--exclude`, `--workspace`) even when a supplied run did not
+/// record them, so the scoreboard keys comparability on it.
+fn mutant_set_sha256(mutants: &Value) -> String {
+    let mut names = mutants
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|mutant| mutant.get("name")?.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    let mut digest = Sha256::new();
+    for name in names {
+        digest.update(name.as_bytes());
+        digest.update(b"\n");
+    }
+    format!("{:x}", digest.finalize())
+}
+
 fn mutant_genres(mutants: &Value) -> BTreeMap<String, String> {
     mutants
         .as_array()
@@ -983,6 +1008,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
             "exposure_run_status": repo.exposure_run_status,
             "cargo_mutants_args": repo.cargo_mutants_args,
             "cargo_mutants_version": repo.cargo_mutants_version,
+            "mutant_set_sha256": repo.mutant_set_sha256,
             "calibration_metrics": repo.metrics,
             "pairings": pairing_counts(&repo.records),
         })).collect::<Vec<_>>(),
@@ -1489,6 +1515,16 @@ mod tests {
     }
 
     #[test]
+    fn mutant_set_digest_ignores_order_and_tracks_membership() {
+        let a = json!({"name": "src/a.rs:1:1: replace > with <", "genre": "BinaryOperator"});
+        let b = json!({"name": "src/b.rs:2:2: replace f -> bool with true", "genre": "FnValue"});
+        let forward = mutant_set_sha256(&json!([a.clone(), b.clone()]));
+        assert_eq!(forward, mutant_set_sha256(&json!([b.clone(), a.clone()])));
+        assert_ne!(forward, mutant_set_sha256(&json!([a])));
+        assert_eq!(forward.len(), 64);
+    }
+
+    #[test]
     fn genres_come_from_the_mutants_json_array() {
         let mutants = json!([
             {"name": "src/a.rs:3:9: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator"},
@@ -1647,8 +1683,9 @@ mod tests {
             revision: "abc".to_string(),
             diffs_checked: records.len(),
             exposure_run_status: None,
-            cargo_mutants_args: Vec::new(),
+            cargo_mutants_args: Some(Vec::new()),
             cargo_mutants_version: Some("27.1.0".to_string()),
+            mutant_set_sha256: "0".repeat(64),
             metrics: Value::Null,
             records,
         }
