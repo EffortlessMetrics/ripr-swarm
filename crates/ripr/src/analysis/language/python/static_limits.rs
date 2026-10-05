@@ -266,6 +266,7 @@ pub(super) fn is_transparent_owner_decorator(decorator: &str) -> bool {
         || decorator == "async_def"
         || is_static_route_decorator(decorator)
         || is_static_cli_decorator(decorator)
+        || is_qualified_functools_memoization_decorator(decorator)
 }
 
 pub(super) fn is_transparent_owner_decorator_for_owner(
@@ -278,6 +279,38 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.imports,
             &owner.cli_receiver_names,
         )
+        || is_imported_functools_memoization_decorator(decorator, &owner.imports)
+}
+
+fn is_functools_memoization_name(name: &str) -> bool {
+    matches!(name, "lru_cache" | "cache" | "cached_property")
+}
+
+/// `@functools.lru_cache`, `@functools.cache`, `@functools.cached_property`
+/// (bare or with call args; `expr_full_name` already drops the call).
+fn is_qualified_functools_memoization_decorator(decorator: &str) -> bool {
+    decorator
+        .strip_prefix("functools.")
+        .is_some_and(is_functools_memoization_name)
+}
+
+/// Bare `@lru_cache` / `@cache` / `@cached_property` only when the name is
+/// bound from `functools`. A same-named local decorator stays limited.
+/// `import functools as ft` then `@ft.lru_cache` is the same binding.
+fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+    if let Some((receiver, method)) = decorator.rsplit_once('.') {
+        return is_functools_memoization_name(method)
+            && imports.iter().any(|import| {
+                import.imported == "functools"
+                    && import.alias == receiver
+                    && import.source_module.is_empty()
+            });
+    }
+    imports.iter().any(|import| {
+        import.source_module == "functools"
+            && is_functools_memoization_name(import.imported.as_str())
+            && import.alias == decorator
+    })
 }
 
 pub(super) fn is_static_route_decorator(decorator: &str) -> bool {
@@ -571,5 +604,161 @@ fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool 
                 || contains_python_call_shape(text, "sys.stderr.write")
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::StaticLimitKind;
+    use std::path::PathBuf;
+
+    fn from_functools(name: &str) -> PythonImport {
+        PythonImport {
+            imported: name.to_string(),
+            alias: name.to_string(),
+            source_module: "functools".to_string(),
+        }
+    }
+
+    fn import_functools() -> PythonImport {
+        PythonImport {
+            imported: "functools".to_string(),
+            alias: "functools".to_string(),
+            source_module: String::new(),
+        }
+    }
+
+    fn owner_with(decorators: &[&str], imports: Vec<PythonImport>) -> PythonOwner {
+        PythonOwner {
+            name: "owner".to_string(),
+            qualified_name: "owner".to_string(),
+            file: PathBuf::from("src/owner.py"),
+            start_line: 1,
+            end_line: 4,
+            owner_kind: None,
+            decorators: decorators.iter().map(|name| (*name).to_string()).collect(),
+            imports,
+            cli_receiver_names: Vec::new(),
+            route_paths: Vec::new(),
+            dynamic_route_decorators: Vec::new(),
+            parameters: Vec::new(),
+            reexport_modules: Vec::new(),
+            ambiguous_src_modules: Vec::new(),
+            module_constants: Vec::new(),
+            same_class_callees: Vec::new(),
+            class_path: String::new(),
+        }
+    }
+
+    fn decorator_limit(owner: &PythonOwner) -> Option<StaticLimitKind> {
+        static_limit_for_change("return amount + 2", owner, &[]).map(|limit| limit.kind)
+    }
+
+    #[test]
+    fn functools_memoization_decorators_do_not_limit() {
+        for name in ["lru_cache", "cache", "cached_property"] {
+            let qualified = format!("functools.{name}");
+            assert!(
+                is_transparent_owner_decorator(&qualified),
+                "expected `{qualified}` to be transparent without import context"
+            );
+            let owner = owner_with(&[name], vec![from_functools(name)]);
+            assert!(
+                is_transparent_owner_decorator_for_owner(name, &owner),
+                "expected bare `{name}` imported from functools to be transparent"
+            );
+            assert_eq!(
+                decorator_limit(&owner),
+                None,
+                "imported `{name}` must not emit decorator_indirection"
+            );
+            assert_eq!(
+                decorator_limit(&owner_with(&[qualified.as_str()], vec![import_functools()])),
+                None,
+                "`{qualified}` must not emit decorator_indirection"
+            );
+        }
+    }
+
+    #[test]
+    fn local_lru_cache_without_functools_import_stays_limited() {
+        for name in ["lru_cache", "cache", "cached_property"] {
+            let owner = owner_with(&[name], Vec::new());
+            assert!(
+                !is_transparent_owner_decorator(name),
+                "bare `{name}` without import context must stay limited"
+            );
+            assert_eq!(
+                decorator_limit(&owner),
+                Some(StaticLimitKind::DecoratorIndirection),
+                "local `{name}` must keep decorator_indirection"
+            );
+            let other_module = owner_with(
+                &[name],
+                vec![PythonImport {
+                    imported: name.to_string(),
+                    alias: name.to_string(),
+                    source_module: "helpers".to_string(),
+                }],
+            );
+            assert_eq!(
+                decorator_limit(&other_module),
+                Some(StaticLimitKind::DecoratorIndirection),
+                "`{name}` imported from a non-functools module must stay limited"
+            );
+        }
+    }
+
+    #[test]
+    fn retry_and_unrelated_decorators_stay_limited_with_functools_present() {
+        let functools = vec![from_functools("lru_cache"), import_functools()];
+        for decorator in ["retry", "retry.with_backoff", "cache.get", "post", "wraps"] {
+            let owner = owner_with(&[decorator], functools.clone());
+            assert!(
+                !is_transparent_owner_decorator(decorator),
+                "expected `{decorator}` to remain a static limit"
+            );
+            assert_eq!(
+                decorator_limit(&owner),
+                Some(StaticLimitKind::DecoratorIndirection),
+                "`{decorator}` must keep decorator_indirection even when functools is imported"
+            );
+        }
+    }
+
+    #[test]
+    fn memoization_plus_retry_still_limits() {
+        let owner = owner_with(&["lru_cache", "retry"], vec![from_functools("lru_cache")]);
+        assert_eq!(
+            decorator_limit(&owner),
+            Some(StaticLimitKind::DecoratorIndirection)
+        );
+    }
+
+    #[test]
+    fn aliased_functools_module_memoization_is_transparent() {
+        let owner = owner_with(
+            &["ft.lru_cache"],
+            vec![PythonImport {
+                imported: "functools".to_string(),
+                alias: "ft".to_string(),
+                source_module: String::new(),
+            }],
+        );
+        assert_eq!(decorator_limit(&owner), None);
+    }
+
+    #[test]
+    fn aliased_from_functools_import_is_transparent() {
+        let owner = owner_with(
+            &["memoize"],
+            vec![PythonImport {
+                imported: "lru_cache".to_string(),
+                alias: "memoize".to_string(),
+                source_module: "functools".to_string(),
+            }],
+        );
+        assert_eq!(decorator_limit(&owner), None);
     }
 }
