@@ -138,7 +138,7 @@ fn places(ranked: &[&ClassifiedSeam]) -> Vec<String> {
 
 fn ranked(notations: &[&str], max_seams: usize) -> Result<Vec<String>, String> {
     let entries = spec_seams(notations)?;
-    Ok(places(&top_actionable_seams(&entries, max_seams)))
+    Ok(places(&top_actionable_seams(&entries, max_seams, None)))
 }
 
 fn summary_md(entries: &[ClassifiedSeam], max_seams: usize) -> String {
@@ -202,7 +202,7 @@ fn spec_0237_example_06_evidence_is_a_boolean() -> Result<(), String> {
     let one = spec_seam("W src/a.rs g 10 m")?;
     let entries = [three, one];
     assert_eq!(
-        places(&top_actionable_seams(&entries, 2)),
+        places(&top_actionable_seams(&entries, 2, None)),
         ["src/a.rs:10", "src/b.rs:5"]
     );
     Ok(())
@@ -287,7 +287,7 @@ fn spec_0237_example_09_kind_tie_break() -> Result<(), String> {
     let boundary = spec_seam("W src/a.rs f 5")?;
     let entries = [return_value, boundary];
 
-    let top = top_actionable_seams(&entries, 1);
+    let top = top_actionable_seams(&entries, 1, None);
     assert_eq!(
         top.iter()
             .map(|entry| entry.seam.kind())
@@ -416,7 +416,7 @@ fn spec_0237_example_21_opaque_is_counted() -> Result<(), String> {
         "W src/b.rs g 1",
     ])?;
     assert_eq!(
-        places(&top_actionable_seams(&entries, 3)),
+        places(&top_actionable_seams(&entries, 3, None)),
         ["src/a.rs:1", "src/b.rs:1", "src/a.rs:2"]
     );
     let md = summary_md(&entries, 3);
@@ -452,11 +452,12 @@ fn spec_0237_example_24_budget_bounds_the_count() -> Result<(), String> {
         "W src/a.rs f 2",
         "W src/a.rs f 3",
     ])?;
-    let cut = apply_pilot_seam_budget_inner(&mut entries, 2, SeamLimitSource::Configured);
+    let cut =
+        apply_pilot_seam_budget_inner(&mut entries, 2, SeamLimitSource::Configured, |_| false);
     assert_eq!(cut.map(|info| (info.analyzed, info.total)), Some((2, 4)));
 
     assert_eq!(
-        places(&top_actionable_seams(&entries, 5)),
+        places(&top_actionable_seams(&entries, 5, None)),
         ["src/a.rs:1", "src/b.rs:1"]
     );
     let md = summary_md(&entries, 5);
