@@ -514,6 +514,27 @@ fn spec_0237_example_25_json_matches_markdown() -> Result<(), String> {
         .and_then(|top| top.get(0))
         .and_then(keys)
         .ok_or("no lone top seam")?;
+    // Pin the field set itself, so a count field added to every seam (the
+    // lone one included) still fails here.
+    let mut sorted = lone_keys.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        [
+            "file",
+            "grip_class",
+            "kind",
+            "line",
+            "missing_discriminator",
+            "owner",
+            "related_test_present",
+            "seam_id",
+            "suggested_assertion_present",
+            "targeted_test_brief",
+            "why",
+        ],
+        "{lone_json}"
+    );
     for seam in top {
         assert_eq!(keys(seam).as_ref(), Some(&lone_keys), "{json}");
     }
