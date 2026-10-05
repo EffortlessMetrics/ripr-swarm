@@ -92,13 +92,6 @@ fn is_preview_evidence(finding: &Finding) -> bool {
     finding.language_status == Some(LanguageStatus::Preview)
 }
 
-/// Candidate-current findings that may populate calibrated RIPR 0 buckets.
-/// Base-side and unresolved subjects stay out (#3281); preview evidence
-/// stays visible in reports but is not badge gap or unknown debt (#6761).
-fn counts_toward_calibrated_ripr_zero(finding: &Finding) -> bool {
-    finding.is_candidate_actionable() && !is_preview_evidence(finding)
-}
-
 /// Headline bucket for one calibrated finding. Exhaustive over
 /// `ExposureClass` so a new variant cannot silently skip both gap and
 /// unknown accounting.
@@ -144,7 +137,8 @@ pub fn ripr_badge_summary_with_suppressions(
     today: &str,
     policy: BadgePolicy,
 ) -> BadgeSummary {
-    let mut gap_findings = Vec::new();
+    let mut calibrated_gap_findings = Vec::new();
+    let mut present_gap_findings = Vec::new();
     let mut unknowns = 0usize;
     let mut unique_tests: BTreeSet<(String, String, usize)> = BTreeSet::new();
 
@@ -152,22 +146,40 @@ pub fn ripr_badge_summary_with_suppressions(
         // Analyzed-test and analyzed-finding denominators keep every finding,
         // including preview and base-side evidence that the headline omits.
         record_related_tests(&mut unique_tests, finding);
-        if !counts_toward_calibrated_ripr_zero(finding) {
+        if !finding.is_candidate_actionable() {
             continue;
         }
         match calibrated_ripr_zero_bucket(&finding.class) {
-            CalibratedRiprZeroBucket::ExposureGap => gap_findings.push(finding),
-            CalibratedRiprZeroBucket::Unknown => unknowns += 1,
+            CalibratedRiprZeroBucket::ExposureGap => {
+                // Presence includes preview evidence so a valid preview
+                // suppression is not a stale unmatched selector. Calibrated
+                // RIPR 0 counts still exclude it (#6761).
+                present_gap_findings.push(finding);
+                if !is_preview_evidence(finding) {
+                    calibrated_gap_findings.push(finding);
+                }
+            }
+            CalibratedRiprZeroBucket::Unknown => {
+                if !is_preview_evidence(finding) {
+                    unknowns += 1;
+                }
+            }
             CalibratedRiprZeroBucket::NotHeadline => {}
         }
     }
 
-    let candidates =
-        CheckSuppressionCandidate::for_findings(&output.root, gap_findings, suppressions);
-    let (suppressed_findings, warnings) =
-        apply_check_suppressions(&candidates, suppressions, today);
-    let suppressed = suppressed_findings.len();
-    let unsuppressed_exposure_gaps = candidates.len().saturating_sub(suppressed);
+    let presence =
+        CheckSuppressionCandidate::for_findings(&output.root, present_gap_findings, suppressions);
+    let (suppressed_findings, warnings) = apply_check_suppressions(&presence, suppressions, today);
+    let calibrated_ids: BTreeSet<&str> = calibrated_gap_findings
+        .iter()
+        .map(|finding| finding.id.as_str())
+        .collect();
+    let suppressed = suppressed_findings
+        .keys()
+        .filter(|id| calibrated_ids.contains(id.as_str()))
+        .count();
+    let unsuppressed_exposure_gaps = calibrated_gap_findings.len().saturating_sub(suppressed);
 
     let counts = BadgeCounts {
         unsuppressed_exposure_gaps,

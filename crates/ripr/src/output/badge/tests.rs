@@ -1120,6 +1120,56 @@ fn ripr_badge_with_suppressions_moves_matched_findings_into_suppressed_bucket() 
     assert!(summary.warnings.is_empty());
 }
 
+/// #6761: a suppression that names a present preview finding is a valid
+/// advisory exception, not a stale unmatched selector. It also must not
+/// inflate `suppressed_exposure_gaps` — that bucket is calibrated RIPR 0.
+#[test]
+fn preview_suppression_is_not_an_unmatched_or_calibrated_gap() {
+    let mut preview = preview_finding(ExposureClass::WeaklyExposed, LanguageId::Python);
+    preview.id = "probe:py:1".to_string();
+    let rust = finding_at_id("probe:rs:1", ExposureClass::WeaklyExposed);
+    let output = check_output(vec![preview, rust]);
+    let suppressions = vec![exposure_suppression("probe:py:1", None)];
+
+    let summary = ripr_badge_summary_with_suppressions(
+        &output,
+        &suppressions,
+        "2026-05-03",
+        BadgePolicy::default(),
+    );
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 1);
+    assert_eq!(summary.counts.suppressed_exposure_gaps, 0);
+    assert_eq!(summary.counts.analyzed_findings, 2);
+    assert!(
+        summary.warnings.is_empty(),
+        "preview suppression must not look stale: {:?}",
+        summary.warnings
+    );
+}
+
+/// A selector that matches no present finding, preview or otherwise, still
+/// warns. Swallowing unmatched warnings would hide real stale policy.
+#[test]
+fn unmatched_suppression_still_warns_beside_a_preview_finding() {
+    let mut preview = preview_finding(ExposureClass::WeaklyExposed, LanguageId::Python);
+    preview.id = "probe:py:1".to_string();
+    let output = check_output(vec![preview]);
+    let suppressions = vec![exposure_suppression("probe:missing", None)];
+
+    let summary = ripr_badge_summary_with_suppressions(
+        &output,
+        &suppressions,
+        "2026-05-03",
+        BadgePolicy::default(),
+    );
+
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(summary.warnings.len(), 1);
+    assert!(summary.warnings[0].contains("probe:missing"));
+    assert!(summary.warnings[0].contains("did not match any current finding"));
+}
+
 #[test]
 fn ripr_badge_with_expired_suppression_keeps_finding_in_headline_and_warns() {
     let output = check_output(vec![finding_at_id("probe:a", ExposureClass::WeaklyExposed)]);
