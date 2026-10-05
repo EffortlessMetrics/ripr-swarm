@@ -5031,7 +5031,7 @@ fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
                     assert_eq!(matcher.line, 6 - shift, "{matcher:?}");
                     assert_eq!(matcher.kind, kind, "{matcher:?}");
                     assert_eq!(matcher.strength, strength, "{matcher:?}");
-                    assert_eq!(matcher.observed_tokens, ["value"]);
+                    assert_eq!(matcher.observed_tokens, ["matches", "value"]);
                     assert_eq!(sibling.line, 7 - shift, "{sibling:?}");
                     assert_eq!(sibling.kind, OracleKind::ExactValue);
                     assert_eq!(sibling.strength, OracleStrength::Strong);

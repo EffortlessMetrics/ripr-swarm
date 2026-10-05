@@ -767,7 +767,8 @@ fn wrapped_discarded_matchers_cannot_borrow_sibling_observers() -> Result<(), St
                 || fact.text != observer
                 || fact.kind != kind
                 || fact.strength != strength
-                || fact.observed_tokens != ["unrelated"]
+                || (helper_route && fact.observed_tokens != ["ensure", "unrelated"])
+                || (!helper_route && fact.observed_tokens != ["unrelated"])
             {
                 return Err(format!(
                     "wrapped matcher contaminated sibling grip: {fact:?}"
@@ -845,7 +846,7 @@ fn terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins() -> Resul
                 if matcher.line != 6
                     || matcher.kind != kind
                     || matcher.strength != strength
-                    || matcher.observed_tokens != ["value"]
+                    || matcher.observed_tokens != ["matches", "value"]
                     || sibling.line != 7
                     || sibling.kind != OracleKind::ExactValue
                     || sibling.strength != OracleStrength::Strong
