@@ -54,7 +54,7 @@ pub(super) fn missing_field_value_facts(
         match owner_result_field_observation(
             indexed,
             context,
-            owner_name,
+            owner_fn,
             owner_module.as_deref(),
             field_name,
         ) {
@@ -87,12 +87,15 @@ enum OwnerResultObservation {
 fn owner_result_field_observation(
     indexed: &CompactTest<'_>,
     context: &CompactGripContext<'_>,
-    owner_name: &str,
+    owner_fn: &FunctionSummary,
     owner_module: Option<&str>,
     field_name: &str,
 ) -> Option<OwnerResultObservation> {
+    let owner_name = owner_fn.name.as_str();
     if !indexed.test.calls.iter().any(|call| {
-        call.name == owner_name && call_text_contains_named_call(&call.text, owner_name)
+        call.name == owner_name
+            && call_text_contains_named_call(&call.text, owner_name)
+            && crate::analysis::classify::owner_call_text(&call.text, owner_fn).is_some()
     }) {
         return None;
     }

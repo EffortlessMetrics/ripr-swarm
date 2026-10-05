@@ -25,7 +25,7 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_direct_collection, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, test_calls_free_function,
+    direct_collection_mutation_receiver, owner_call_text, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -696,10 +696,12 @@ fn observed_value_facts_for_test(
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     for call in indexed.test.body_calls() {
-        if !call_may_reach_owner(call, owner_fn) {
+        if call.name != owner_name {
             continue;
         }
-        let Some(args) = call_arguments(&call.text, owner_name) else {
+        let Some(args) =
+            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
+        else {
             continue;
         };
         for (arg_index, arg) in args.into_iter().enumerate() {
@@ -768,10 +770,12 @@ fn field_assignment_value_unresolved_for_test(
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     indexed.test.calls.iter().any(|call| {
-        if !call_may_reach_owner(call, owner_fn) {
+        if call.name != owner_name {
             return false;
         }
-        let Some(args) = call_arguments(&call.text, owner_name) else {
+        let Some(args) =
+            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
+        else {
             return false;
         };
         operands.iter().any(|operand| {
@@ -1510,8 +1514,9 @@ fn test_passes_boundary_constant(
         return false;
     }
     indexed.test.calls.iter().any(|call| {
-        call_may_reach_owner(call, owner_fn)
-            && call_arguments(&call.text, owner_name)
+        call.name == owner_name
+            && owner_call_text(&call.text, owner_fn)
+                .and_then(|text| call_arguments(text, owner_name))
                 .and_then(|arguments| arguments.get(constant.argument_index).cloned())
                 .is_some_and(|argument| {
                     super::value_resolution::argument_names_constant(&argument, &constant.name)

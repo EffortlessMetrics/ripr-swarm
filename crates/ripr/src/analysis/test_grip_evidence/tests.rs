@@ -3665,9 +3665,7 @@ fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly
 #[test]
 fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
 {
-    let (evidence, _class) = free_kb_return_evidence(
-        "assert_eq!(ByteSize::kb(1), ByteSize(1_000));\n        assert_eq!(kb(2u64), 2_000);",
-    )?;
+    let (evidence, _class) = free_kb_return_evidence("assert_eq!(ByteSize::kb(1).0, kb(2));")?;
     assert!(
         evidence
             .related_tests
@@ -3681,8 +3679,12 @@ fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() 
         evidence
             .observed_values
             .iter()
-            .all(|fact| fact.value != "1"),
-        "only the bare call's argument is an activation value: {:?}",
+            .all(|fact| fact.value != "1")
+            && evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value.starts_with('2')),
+        "only the same-line bare call's argument is an activation value: {:?}",
         evidence.observed_values
     );
     Ok(())

@@ -2270,27 +2270,63 @@ fn owner_call_relation_reason(
 /// Whether the test spells a call of `name` that can reach a free function:
 /// bare `name(` or module-qualified `module::name(`. A receiver call
 /// (`value.name(`) and a type-path call (`Type::name(`, `Self::name(`,
-/// `<T as Trait>::name(`, `Type::<T>::name(`) reach an associated function
-/// instead (#6713). A qualifier is read as a type when it starts with an
-/// uppercase letter or ends in generic arguments; Rust module names are
-/// snake_case by convention, so `crate::`, `super::` and `dep::` stay free.
+/// `<T as Trait>::name(`, `Type::<T>::name(`, `u64::name(`) reach an
+/// associated function instead (#6713). A qualifier is read as a type when
+/// it starts with an uppercase letter, is a primitive type, or ends in
+/// generic arguments; Rust module names are snake_case by convention, so
+/// `crate::`, `super::` and `dep::` stay free. Known limits: an uppercase
+/// module name loses the call, and a lowercase type alias keeps it.
 pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
-    let masked_body = mask_comments_and_strings(&test.body);
-    text_has_free_function_call(&masked_body, name)
-        || test
-            .calls
-            .iter()
-            .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
+    // Captured calls are single lines; the body is the fallback for a call
+    // the call facts did not capture.
+    test.calls
+        .iter()
+        .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
+        || free_function_call_start_in(&mask_comments_and_strings(&test.body), name).is_some()
 }
 
-/// [`text_has_free_function_call`] over one captured call's raw source
-/// text, with comments and strings masked first.
+/// Whether one captured call's raw source text spells a free-function call
+/// of `name`, with comments and strings masked first.
 pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
-    text_has_free_function_call(&mask_comments_and_strings(text), name)
+    free_function_call_text(text, name).is_some()
 }
+
+/// The suffix of a captured call's raw source text that starts at its first
+/// free-function call of `name`, so an argument reader cannot take the
+/// arguments of a same-line `Type::name(..)` instead (#6713). Masking keeps
+/// byte offsets, so the masked match indexes the raw text.
+pub(in crate::analysis) fn free_function_call_text<'text>(
+    text: &'text str,
+    name: &str,
+) -> Option<&'text str> {
+    let at = free_function_call_start_in(&mask_comments_and_strings(text), name)?;
+    text.get(at..)
+}
+
+/// The text a captured call named like `owner` contributes as an owner
+/// call: the whole line for an owner that may be reached through a path or
+/// receiver, the free-call suffix for a module-level `fn`, `None` when the
+/// line only calls a same-named associated function or method.
+pub(in crate::analysis) fn owner_call_text<'text>(
+    text: &'text str,
+    owner: &FunctionSummary,
+) -> Option<&'text str> {
+    if owner.impl_context == FunctionImplContext::Free {
+        free_function_call_text(text, &owner.name)
+    } else {
+        Some(text)
+    }
+}
+
+/// Primitive types whose lowercase name qualifies associated functions
+/// (`u64::max(`), so they never name a module.
+const PRIMITIVE_TYPE_QUALIFIERS: &[&str] = &[
+    "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16",
+    "u32", "u64", "u128", "usize",
+];
 
 /// Whether a call's `(` follows a name ending at `after_name`, across
 /// whitespace and an optional turbofish (`name::<T>(`).
@@ -2312,6 +2348,8 @@ fn call_paren_follows(text: &str, after_name: usize) -> bool {
         loop {
             match bytes.get(at) {
                 Some(b'<') => depth += 1,
+                // `->` in a fn-pointer argument is not a closing bracket.
+                Some(b'>') if at > 0 && bytes[at - 1] == b'-' => {}
                 Some(b'>') => {
                     depth -= 1;
                     if depth == 0 {
@@ -2328,14 +2366,28 @@ fn call_paren_follows(text: &str, after_name: usize) -> bool {
     bytes.get(at) == Some(&b'(')
 }
 
+#[cfg(test)]
 fn text_has_free_function_call(text: &str, name: &str) -> bool {
+    free_function_call_start_in(text, name).is_some()
+}
+
+/// Byte offset of the first free-function call of `name` in already-masked
+/// `text`.
+fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
+    if name.is_empty() {
+        return None;
+    }
     let bytes = text.as_bytes();
-    text.match_indices(name).any(|(at, _)| {
+    text.match_indices(name).map(|(at, _)| at).find(|&at| {
         let after = at + name.len();
         if !ident_boundary(bytes, at, after) || !call_paren_follows(text, after) {
             return false;
         }
         let mut before = at;
+        // `r#name(` is the same identifier.
+        if before >= 2 && &bytes[before - 2..before] == b"r#" {
+            before -= 2;
+        }
         while before > 0 && bytes[before - 1].is_ascii_whitespace() {
             before -= 1;
         }
@@ -2345,8 +2397,10 @@ fn text_has_free_function_call(text: &str, name: &str) -> bool {
         if before >= 2 && bytes[before - 2] == b':' && bytes[before - 1] == b':' {
             // `Type::<T>::name` and `<T as Trait>::name` end the qualifier
             // in `>`, which reads as no identifier: a type path.
-            return ident_ending_at(text, before - 2)
-                .is_some_and(|qualifier| !qualifier.starts_with(|c: char| c.is_ascii_uppercase()));
+            return ident_ending_at(text, before - 2).is_some_and(|qualifier| {
+                !qualifier.starts_with(|c: char| c.is_ascii_uppercase())
+                    && !PRIMITIVE_TYPE_QUALIFIERS.contains(&qualifier)
+            });
         }
         true
     })
@@ -2993,6 +3047,8 @@ mod tests {
             "ByteSize::kb::<u32>(1)",
             "kb::Unit",
             "kb::<u32",
+            "u64::kb(1)",
+            "str :: kb(1)",
         ] {
             assert!(!text_has_free_function_call(text, "kb"), "{text}");
         }
@@ -3003,9 +3059,21 @@ mod tests {
             "(kb)(1) + kb(2)",
             "kb::<u32>(1)",
             "units::kb :: <Vec<u8>> (1)",
+            "r#kb(1)",
+            "kb::<fn() -> u8>(f)",
         ] {
             assert!(text_has_free_function_call(text, "kb"), "{text}");
         }
+
+        assert_eq!(
+            free_function_call_text("assert_eq!(ByteSize::kb(1).0, kb(2));", "kb"),
+            Some("kb(2));")
+        );
+        assert_eq!(
+            free_function_call_text(r#"note("kb(1)", ByteSize::kb(2), kb(3))"#, "kb"),
+            Some("kb(3))")
+        );
+        assert_eq!(free_function_call_text("ByteSize::kb(2)", "kb"), None);
 
         let mut owner = free_function("src/lib.rs", "kb");
         owner.impl_context = FunctionImplContext::Unknown;

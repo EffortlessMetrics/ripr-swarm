@@ -157,16 +157,38 @@ impl TestValueFacts {
     }
 }
 
+fn is_free(function: &FunctionSummary) -> bool {
+    function.impl_context == crate::analysis::facts::FunctionImplContext::Free
+}
+
+/// The part of a captured call line that is a call of the owner: the whole
+/// line, or for a module-level `fn` the suffix from its own bare or
+/// module-qualified call, never a same-line `Type::name(..)` (#6713).
+fn owner_name_call_text<'text>(
+    text: &'text str,
+    owner_name: &str,
+    free_owner: bool,
+) -> Option<&'text str> {
+    if free_owner && !owner_name.is_empty() {
+        super::related_tests::free_function_call_text(text, owner_name)
+    } else {
+        Some(text)
+    }
+}
+
 fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
 
+    let free_owner = owner_fn.is_some_and(is_free);
     for call in test.body_calls() {
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = call_arguments(&call.text, &call.name) else {
+        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+            .and_then(|text| call_arguments(text, &call.name))
+        else {
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
@@ -1147,6 +1169,7 @@ fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
 fn owner_call_parameter_values(
     related_tests: &[&TestSummary],
     owner_name: &str,
+    free_owner: bool,
     parameters: &[String],
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
@@ -1158,7 +1181,9 @@ fn owner_call_parameter_values(
             if call.name != owner_name {
                 continue;
             }
-            let Some(arguments) = call_arguments(&call.text, &call.name) else {
+            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+                .and_then(|text| call_arguments(text, &call.name))
+            else {
                 continue;
             };
             let row = arguments
@@ -1200,7 +1225,8 @@ fn call_values_for_owner(
     } else {
         parameters.to_vec()
     };
-    let direct = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    let direct =
+        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
     if !direct.is_empty() {
         return direct;
     }
@@ -1223,8 +1249,12 @@ fn helper_transferred_rows(
         return Vec::new();
     };
     let entry_parameters = function_parameters(&entry.caller);
-    let mut rows =
-        owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters);
+    let mut rows = owner_call_parameter_values(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+    );
     if rows.is_empty() {
         return Vec::new();
     }
@@ -1587,7 +1617,10 @@ fn owner_calls_passing_constant(
         .flat_map(|test| test.calls.iter())
         .filter(|call| call.name == owner.name)
         .filter_map(|call| {
-            let arguments = call_arguments(&call.text, &call.name)?;
+            // A free owner's arguments come from its own call site, never a
+            // same-line `Type::name(..)` (#6713).
+            let text = owner_name_call_text(&call.text, &owner.name, is_free(owner))?;
+            let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
                 .then(|| (call.line, call.text.clone()))
@@ -3308,10 +3341,12 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        assert!(owner_call_parameter_values(&[&test], "", &["amount".to_string()]).is_empty());
-        assert!(owner_call_parameter_values(&[&test], "score", &[]).is_empty());
+        assert!(
+            owner_call_parameter_values(&[&test], "", false, &["amount".to_string()]).is_empty()
+        );
+        assert!(owner_call_parameter_values(&[&test], "score", false, &[]).is_empty());
 
-        let rows = owner_call_parameter_values(&[&test], "score", &["amount".to_string()]);
+        let rows = owner_call_parameter_values(&[&test], "score", false, &["amount".to_string()]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].value, "2");
