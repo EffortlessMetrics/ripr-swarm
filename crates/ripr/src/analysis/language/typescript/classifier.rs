@@ -2727,6 +2727,7 @@ pub(crate) fn classify_change_with_alias_state(
             &related_candidates,
             alias_map,
             workspace_root,
+            &error_facts,
         )
     } else {
         None
@@ -3057,6 +3058,7 @@ fn ts_rule8_mocked_changed_callee(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
+    error_facts: &ErrorChangeFacts,
 ) -> Option<MockedChangedCallee> {
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -3090,6 +3092,7 @@ fn ts_rule8_mocked_changed_callee(
             owner,
             alias_map,
             workspace_root,
+            error_facts,
         );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
@@ -3101,7 +3104,14 @@ fn ts_rule8_mocked_changed_callee(
                 alias_map,
                 workspace_root,
             )
-            && ts_changed_value_is_observed(probe_shape, line_text, &owner.name, &subset)
+            && ts_changed_value_is_observed(
+                probe_shape,
+                line_text,
+                owner,
+                &subset,
+                alias_map,
+                workspace_root,
+            )
         {
             exposing.push(representative);
         }
