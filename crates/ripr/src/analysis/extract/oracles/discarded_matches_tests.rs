@@ -732,3 +732,198 @@ fn terminal_guard_balanced_scrutinee_keeps_its_same_row_sibling() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn wrapped_discarded_matchers_cannot_borrow_sibling_observers() -> Result<(), String> {
+    for computation in [
+        "let held = { matches!(value, 2) };",
+        "held = ({ core::matches!(value, 2) });",
+        "let held = {\n{ matches!(value, 2) }\n};",
+        "let held = identity(matches!(value, 2));",
+    ] {
+        for helper_route in [false, true] {
+            let observer = if helper_route {
+                "ensure!(unrelated.is_ok());"
+            } else {
+                "assert_eq!(unrelated, 7);"
+            };
+            let body = format!("{computation} {observer}");
+            let facts = if helper_route {
+                extract_line_scanned_oracles(&body, 10)
+            } else {
+                extract_assertions(&body, 10)
+            };
+            let [fact] = facts.as_slice() else {
+                return Err(format!(
+                    "wrapped computation lost its sibling: {body}: {facts:?}"
+                ));
+            };
+            let (kind, strength) = if helper_route {
+                (OracleKind::SmokeOnly, OracleStrength::Smoke)
+            } else {
+                (OracleKind::ExactValue, OracleStrength::Strong)
+            };
+            if fact.line != 10 + computation.matches('\n').count()
+                || fact.text != observer
+                || fact.kind != kind
+                || fact.strength != strength
+                || fact.observed_tokens != ["unrelated"]
+            {
+                return Err(format!(
+                    "wrapped matcher contaminated sibling grip: {fact:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapped_discarded_matchers_retain_actual_scrutinee_observers() -> Result<(), String> {
+    for body in [
+        "let held = { matches!({ assert_eq!(value, 2); value }, 2) };",
+        "let held = ({\n{ matches!({\nassert_eq!(value, 2); value\n}, 2) }\n});",
+    ] {
+        let facts = extract_assertions(body, 10);
+        let [fact] = facts.as_slice() else {
+            return Err(format!(
+                "pure block wrapper lost actual observer: {facts:?}"
+            ));
+        };
+        let expected_line = 10
+            + body[..body.find("assert_eq!").ok_or("missing stimulus")?]
+                .matches('\n')
+                .count();
+        if fact.line != expected_line
+            || !fact.text.starts_with("assert_eq!(value, 2)")
+            || fact.text.contains("matches!")
+            || fact.kind != OracleKind::ExactValue
+            || fact.strength != OracleStrength::Strong
+            || fact.observed_tokens != ["value"]
+        {
+            return Err(format!(
+                "wrapped actual observer lost its own grip: {fact:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins() -> Result<(), String> {
+    for (pattern, kind, strength) in [
+        ("2", OracleKind::ExactValue, OracleStrength::Strong),
+        ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
+    ] {
+        for statement in [
+            format!("assert!(matches!(value, {pattern}));"),
+            format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
+            format!("if !matches!(value, {pattern}) {{ bail!(\"bad\"); }}"),
+        ] {
+            let source = terminal_matcher_twin_source(&statement);
+            let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            let [test] = parsed.tests.as_slice() else {
+                return Err("terminal failure control lost its named subject".to_string());
+            };
+            if test.name != "observes_score"
+                || !test
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "score" && call.line == 5)
+            {
+                return Err(format!(
+                    "terminal control did not reach its owner: {test:?}"
+                ));
+            }
+            let lexical = extract_assertions(&source, 1);
+            for facts in [&lexical, &test.assertions] {
+                let [matcher, sibling] = facts.as_slice() else {
+                    return Err(format!(
+                        "terminal failure/twin evidence missing: {statement}: {facts:?}"
+                    ));
+                };
+                if matcher.line != 6
+                    || matcher.kind != kind
+                    || matcher.strength != strength
+                    || matcher.observed_tokens != ["value"]
+                    || sibling.line != 7
+                    || sibling.kind != OracleKind::ExactValue
+                    || sibling.strength != OracleStrength::Strong
+                    || sibling.observed_tokens != ["sibling"]
+                {
+                    return Err(format!(
+                        "terminal failure/twin or sibling grip changed: {facts:?}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn nonfirst_quoted_and_recovered_failure_macros_cannot_pin_a_matcher() -> Result<(), String> {
+    for statement in [
+        "if !matches!(value, 2) { let _message = \"panic!(bad)\"; }",
+        "if !matches!(value, 2) { let _setup = 0; panic!(\"bad\"); }",
+        "if !matches!(value, 2) { recover(bail!(\"bad\")); }",
+        "if !matches!(value, 2) { /* panic!(bad); */ let _setup = 0; }",
+    ] {
+        let source = terminal_matcher_twin_source(statement);
+        let parsed = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let [test] = parsed.tests.as_slice() else {
+            return Err("terminal negative lost its named subject".to_string());
+        };
+        let lexical = extract_assertions(&source, 1);
+        for facts in [&lexical, &test.assertions] {
+            let [sibling] = facts.as_slice() else {
+                return Err(format!(
+                    "nonterminal failure received matcher credit: {statement}: {facts:?}"
+                ));
+            };
+            if sibling.line != 7 || sibling.observed_tokens != ["sibling"] {
+                return Err(format!(
+                    "terminal negative lost its real sibling: {sibling:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls()
+-> Result<(), String> {
+    fn discard(value: i32) {
+        let _held = { matches!(value, 2) };
+        let unrelated = 7;
+        assert_eq!(unrelated, 7);
+    }
+    macro_rules! bail {
+        ($message:expr) => {
+            return Err($message)
+        };
+    }
+    fn consumed(value: i32) -> Result<(), &'static str> {
+        if !matches!(value, 2) {
+            bail!("bad");
+        }
+        Ok(())
+    }
+    for value in [2, 3] {
+        if std::panic::catch_unwind(|| discard(value)).is_err() {
+            return Err("discarded boolean unexpectedly failed".to_string());
+        }
+    }
+    if consumed(2).is_err() || consumed(3).is_ok() {
+        return Err("resolved bail control did not discriminate 2 from 3".to_string());
+    }
+    let original_value = 2;
+    let original = std::panic::catch_unwind(|| assert!(matches!(original_value, 2)));
+    let wrong_value = 3;
+    let wrong = std::panic::catch_unwind(|| assert!(matches!(wrong_value, 2)));
+    if original.is_err() || wrong.is_ok() {
+        return Err("consumed assertion twin did not discriminate 2 from 3".to_string());
+    }
+    Ok(())
+}
