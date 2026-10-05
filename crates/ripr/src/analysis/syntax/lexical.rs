@@ -385,10 +385,7 @@ fn checks_value() {
                 .any(|function| function.name == "load_value")
         );
         assert!(facts.tests.iter().any(|test| test.name == "checks_value"));
-        assert!(facts
-            .file_calls()
-            .iter()
-            .any(|call| call.name == "helper"));
+        assert!(facts.file_calls().iter().any(|call| call.name == "helper"));
         assert!(
             facts
                 .returns
