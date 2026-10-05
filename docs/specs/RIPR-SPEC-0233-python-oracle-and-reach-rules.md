@@ -174,8 +174,9 @@ strong credits `exposed`. A test with no recorded assertion reports
 code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
-This table is the existing behavior and is normative, with rules 1 to 3
-and 12 to 14 below as the only changes.
+This table is the existing behavior and is normative, with rules 1 to 3,
+12 and 14 below as the only changes. Rule 13 changes relations, not the
+table.
 
 ### Oracle admission rules
 
@@ -401,14 +402,18 @@ the rule; ripr still reports only what the static shape shows.
 14. **A bound exception compared by value pins the error.** A `with` item
     `pytest.raises(...) as N` (or bare `raises`), or
     `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`,
-    is recorded `exact_error_variant` / strong when a later statement of
-    the same test body asserts `==` (an `assert` chain with `==`, or
-    `assertEqual`) between two operands, one of which contains `N.value`
-    (pytest) or `N.exception` (unittest), and `N` is not assigned again
-    in between. Rule 1 applies to that comparison first: a tautology
-    does not promote. The value assertion keeps its own table row. The
-    promoted `with` item is the error-path assertion of rule 6, read
-    exactly as example 14 reads `raises(..., match=...)`.
+    is recorded `exact_error_variant` / strong when a statement after the
+    `with` statement, in the same test body, asserts `==` (an `assert`
+    chain with `==`, or `assertEqual`) between two operands, one of which
+    contains `N.value` (pytest) or `N.exception` (unittest), and `N` is
+    not assigned again in between. A comparison inside the `with` body
+    does not count: it runs only when nothing is raised. Rule 1 applies
+    to that comparison first: a tautology does not promote. The value
+    assertion keeps its own table row. The promoted item, its `with`
+    body and that comparison form one assertion for rules 4 and 6: its
+    text is the three together, so a direct owner call in the body meets
+    the owner-name credit branch even when the change is only the
+    exception message and the comparison holds the old message.
 
 ### Verdict ladder
 
@@ -591,7 +596,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `exposed` (today `weakly_exposed`; rule 14, #6603). The same with
     `with self.assertRaises(KeyError) as cm:` and
     `self.assertEqual(str(cm.exception), "'empty'")`: `exposed` (today
-    `weakly_exposed`).
+    `weakly_exposed`). With the raise line changed only in its message,
+    `raise KeyError('blank')` from `raise KeyError('empty')`, and the
+    same pytest test: `exposed` through the owner call in the `with`
+    body (today `weakly_exposed`; the corpus case
+    `py-spec0233-ex21-exc-value` has this shape).
 22. Owner `def build(): return {'port': 80, 'timeout': 8080}`, changed
     from `'port': 8080`; test `assert build()['timeout'] == 8080`:
     `weakly_exposed`, `orthogonal` (today `exposed`). Test
@@ -652,11 +661,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
     (today no limit). Changed `return getattr (x, 'a')`:
     `dynamic_dispatch` (today no limit).
 34. Error owner, `with pytest.raises(KeyError) as exc: perr('')` then
-    `assert exc.value is not None`: `broad_error` / weak,
-    `weakly_exposed` (unchanged; rule 14 needs `==`). With
+    `assert exc.value is not None`: `weakly_exposed` (class unchanged;
+    rule 14 needs `==`). The reported kind is `broad_error` / weak under
+    rule 4 (today `relational_check`, the last weak assertion). With
     `exc = other` between the block and
     `assert str(exc.value) == "'empty'"`: `weakly_exposed` (unchanged;
-    `exc` was assigned again).
+    `exc` was assigned again). With
+    `assert str(exc.value) == "'empty'"` inside the `with` body after
+    `perr('')`: `weakly_exposed` (unchanged; the comparison never runs
+    when the call raises).
 
 ## Test Mapping
 
@@ -682,12 +695,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
   orders.
 - Planned: a split-gate test for examples 31 and 32.
 - Planned: a negative detector test per token case of rule 8.
-- Planned: rule 12 to 14 tests for examples 8, 20, 21 and 34, including
-  the `lambda` callable, the `assertRaises` callable and the reassigned
-  `exc` negatives.
+- Planned: rule 12 to 14 tests for examples 8, 20, 21 and 34: the
+  `assertRaises` callable, the message-only change of example 21, the
+  unchanged `lambda` callable, and the reassigned-`exc`, inside-the-body
+  and `is not None` negatives.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited once rules 12 to 14 land.
+  (#6597) score credited once rules 12 to 14 land. The corpus has no
+  `assertRaises` callable, `assertRaises ... as cm` or example 34 case
+  yet; each needs its own case before those parts read as established.
 
 ## Implementation Mapping
 
