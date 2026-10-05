@@ -83,7 +83,11 @@ impl BatchFixture {
     }
 
     fn stored_paths(&self) -> BTreeSet<PathBuf> {
-        self.cache.known_file_paths().into_iter().collect()
+        self.cache
+            .known_file_paths()
+            .validated_paths()
+            .into_iter()
+            .collect()
     }
 
     /// Build through the production cached builder and return the result,
@@ -202,7 +206,7 @@ impl RustSyntaxAdapter for ObservingAdapter<'_> {
         if self.fail.contains(path) {
             return Err(format!("forced parse failure for {}", path.display()));
         }
-        let stored = self.cache.known_file_paths().len();
+        let stored = self.cache.known_file_paths().validated_paths().len();
         self.stored_at_parse
             .lock()
             .map_err(|error| error.to_string())?
