@@ -7,4 +7,4 @@
   `edited_producer` and reported apart. Producer-packet false-verdict,
   false-actionable, false-exposed, false-silent and abstention rates are on
   the trust scoreboard. The check runs by hand and at re-bless time; no CI
-  lane runs it yet (RIPR-SPEC-0238).
+  lane runs it yet (RIPR-SPEC-0238, #6612).
