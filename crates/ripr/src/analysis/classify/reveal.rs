@@ -2,6 +2,7 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::builder_override::{overridden_fields_read, struct_literal_fields};
 use super::propagation_witness::{
     assertion_observes_direct_collection, direct_collection_mutation_receiver,
 };
@@ -90,6 +91,12 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
             Confidence::Medium,
             "Strongest oracle does not confirm observation of the changed expression; a weaker assertion cannot supply its confirmation (oracle_confirmation_mixed)",
         )
+    } else if analysis.observation_unverified && analysis.override_defeated {
+        StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            BUILDER_OVERRIDE_UNOBSERVED_SUMMARY,
+        )
     } else {
         build_discriminate_evidence(
             &analysis.strongest,
@@ -140,7 +147,18 @@ struct RevealAssertionAnalysis {
     ///
     /// Cleared as soon as a confirming assertion fires.
     observation_unverified: bool,
+    /// True when some assertion's only confirming token was a struct field
+    /// the test overwrote on the owner's result before reading it (see
+    /// `builder_override`). Only names the downgrade; the class is decided
+    /// by `observation_unverified`.
+    override_defeated: bool,
 }
+
+/// Discriminator summary for a `return_value` struct literal whose observed
+/// field the test overrides before asserting (RIPR-SPEC-0040 builder
+/// override). Keeps the `(observation_unverified)` token that downstream
+/// consumers key on.
+const BUILDER_OVERRIDE_UNOBSERVED_SUMMARY: &str = "Discriminator unconfirmed: the related test overwrites the changed field on the owner's result before asserting on it, so no assertion observes this probe's changed expression (observation_unverified)";
 
 /// Returns true for families where an assertion must specifically reference the
 /// changed sub-expression to confirm observation. For **value** families
@@ -343,6 +361,20 @@ fn analyze_related_assertions(
         }),
     };
     let confirm_required = needs_token_confirmation(&probe.family);
+    // RIPR-SPEC-0040 builder override: the fields a changed `return_value`
+    // struct literal initializes. A field token confirms nothing for an
+    // assertion that reads that field after the test overwrote it.
+    let override_fields = if matches!(probe.family, ProbeFamily::ReturnValue) {
+        let fields = struct_literal_fields(&probe.expression);
+        if fields.is_empty() {
+            struct_literal_fields(analysis_expression)
+        } else {
+            fields
+        }
+    } else {
+        Vec::new()
+    };
+    let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
@@ -434,7 +466,7 @@ fn analyze_related_assertions(
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 )
                 && (return_admission.owner_return_pin)(test, assertion);
-            let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
+            let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
                 assertion_count,
@@ -442,6 +474,33 @@ fn analyze_related_assertions(
                 cross_package_defeats_owner,
                 owner_pinned,
             );
+            let overridden = match (match_context.owner_callee, has_token_match) {
+                (Some(owner), true) if !override_fields.is_empty() => {
+                    overridden_fields_read(&test.body, &assertion.text, owner, &override_fields)
+                }
+                _ => Vec::new(),
+            };
+            if !overridden.is_empty() {
+                let unoverridden: Vec<String> = probe_tokens
+                    .iter()
+                    .filter(|token| !overridden.contains(token))
+                    .cloned()
+                    .collect();
+                let narrowed = RevealMatchContext {
+                    probe_tokens: &unoverridden,
+                    ..match_context
+                };
+                let (_, narrowed_token_match) = assertion_matches_probe_detail_with_literals(
+                    &narrowed,
+                    assertion,
+                    assertion_count,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                    owner_pinned,
+                );
+                override_defeated |= !narrowed_token_match;
+                has_token_match = narrowed_token_match;
+            }
             if matched && !credits_oracle {
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -547,6 +606,7 @@ fn analyze_related_assertions(
         matched_any,
         refused_context,
         observation_unverified,
+        override_defeated,
     }
 }
 
@@ -5038,6 +5098,83 @@ return Err(\"typed pin\".into());
             "summary must name the reason: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0040 builder override (#6613): a `return_value` struct
+    /// literal whose only confirming token is a field the test overwrites on
+    /// the owner's result (`.attempts(5)`) before reading it does not reach
+    /// the assertion, so the exact value oracle cannot read `exposed`.
+    #[test]
+    fn return_value_struct_literal_field_overridden_by_test_is_unverified() {
+        let probe = Probe {
+            owner: Some(SymbolId(
+                "src/settings.rs::impl RetryBuilder::new".to_string(),
+            )),
+            ..probe(
+                ProbeFamily::ReturnValue,
+                "RetryBuilder { attempts: 4, delay_ms: 100 }",
+            )
+        };
+        let test = test_with_body_assertions(
+            "override_sets_attempts",
+            "let retry = RetryBuilder::new().attempts(5).build();\nassert_eq!(retry.attempts, 5);",
+            vec![oracle(
+                "assert_eq!(retry.attempts, 5);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Weak);
+        assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
+        assert!(discriminate.summary.contains("(observation_unverified)"));
+    }
+
+    /// Control for the builder override: reading the field the default
+    /// builder produced, with no setter, still observes the changed literal.
+    #[test]
+    fn return_value_struct_literal_default_field_read_stays_exposed() {
+        let probe = Probe {
+            owner: Some(SymbolId(
+                "src/settings.rs::impl RetryBuilder::new".to_string(),
+            )),
+            ..probe(
+                ProbeFamily::ReturnValue,
+                "RetryBuilder { attempts: 4, delay_ms: 100 }",
+            )
+        };
+        for (body, assertion) in [
+            (
+                "let retry = RetryBuilder::new().build();\nassert_eq!(retry.attempts, 3);",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            // A setter on a different field leaves `attempts` defaulted.
+            (
+                "let retry = RetryBuilder::new().delay_ms(5).build();\nassert_eq!(retry.attempts, 3);",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+        ] {
+            let test = test_with_body_assertions(
+                "default_attempts",
+                body,
+                vec![oracle(
+                    assertion,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{body}: {}",
+                discriminate.summary
+            );
+        }
     }
 
     /// A MatchArm probe whose expression DOES have a token that appears in the
