@@ -23650,10 +23650,19 @@ fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
     )?;
     std::fs::write(root.join("src/lib.rs"), "")?;
     init_git_fixture_repo(&root)?;
+    // Canonicalize so Windows passes the verbatim (`\\?\`) spelling: the
+    // prefix assertions below then pin the strip for real instead of
+    // vacuously. (UNC roots keep their prefix by `human_path_text` design
+    // (#4378) and have no portable fixture, so they stay uncovered.)
+    let root_arg = root
+        .canonicalize()
+        .map_err(|err| format!("canonicalize fixture root: {err}"))?
+        .display()
+        .to_string();
     let output = run_ripr(&[
         "first-pr",
         "--root",
-        &root.display().to_string(),
+        &root_arg,
         "--base",
         "nope-missing-base",
         "--head",
@@ -23686,10 +23695,15 @@ fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
         texts.len(),
         "each distinct warning must appear once: {texts:?}"
     );
-    for rev in ["nope-missing-base", "also-missing-head"] {
+    for (role, rev) in [
+        ("--base", "nope-missing-base"),
+        ("--head", "also-missing-head"),
+    ] {
         assert!(
-            texts.iter().any(|warning| warning.contains(rev)),
-            "a warning must name the unresolvable ref `{rev}`: {texts:?}"
+            texts
+                .iter()
+                .any(|warning| warning.contains(role) && warning.contains(rev)),
+            "a warning must pair `{role}` with unresolvable ref `{rev}`: {texts:?}"
         );
     }
     // Renderer-owned spellings stay comparable: the root-check path must
