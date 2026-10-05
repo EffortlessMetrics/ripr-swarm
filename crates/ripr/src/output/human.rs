@@ -574,7 +574,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         })
         .collect::<BTreeSet<_>>()
         .len();
-    // Each finding's "Related test (1 of N)" line counts matched assertion
+    // Each finding's "Related test (1 of N)" line counts matched related-test
     // rows before bounded packing (#5146), and one test can contribute many
     // rows. When packing hid rows, the retained distinct tests are a floor
     // and the row total is reported as rows, not as tests. Across findings
@@ -602,7 +602,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
             )
         };
         format!(
-            "at least {retained_related_tests} statically linked related test(s) across {rows} matched assertion row(s)"
+            "at least {retained_related_tests} statically linked related test(s) across {rows} matched related-test row(s)"
         )
     };
     let scope_summary = if s.changed_rust_files > 0 {
@@ -5416,7 +5416,7 @@ mod tests {
     fn all_no_path_disclosure_counts_related_tests_before_packing() {
         // The finding line reads "Related test (1 of 81)" from the matched
         // row total; the scope note must neither report only the 8 retained
-        // rows nor call 81 assertion rows 81 tests (one test can own many).
+        // rows nor call 81 related-test rows 81 tests (one test can own many).
         let related = |line: usize| RelatedTest {
             name: format!("test_{line}"),
             file: PathBuf::from("tests/sample.rs"),
@@ -5463,7 +5463,7 @@ mod tests {
         let one = flat(render(&output(vec![packed(0..8, 81)])));
         assert!(
             one.contains(
-                "analyzed: 1 changed expression(s) and at least 8 statically linked related test(s) across 81 matched assertion row(s)."
+                "analyzed: 1 changed expression(s) and at least 8 statically linked related test(s) across 81 matched related-test row(s)."
             ),
             "a single packed finding reports its matched total; got:\n{one}"
         );
@@ -5474,7 +5474,7 @@ mod tests {
         ])));
         assert!(
             two.contains(
-                "and at least 16 statically linked related test(s) across at least 81 matched assertion row(s)."
+                "and at least 16 statically linked related test(s) across at least 81 matched related-test row(s)."
             ),
             "packed totals across findings are a floor; got:\n{two}"
         );
@@ -5488,7 +5488,7 @@ mod tests {
         ])));
         assert!(
             floor.contains(
-                "and at least 24 statically linked related test(s) across at least 24 matched assertion row(s)."
+                "and at least 24 statically linked related test(s) across at least 24 matched related-test row(s)."
             ),
             "retained rows are a floor once any finding is packed; got:\n{floor}"
         );

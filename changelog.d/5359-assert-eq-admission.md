@@ -27,5 +27,5 @@
   such as `digit > b'9'` has a visible boundary. Comment and string masking had
   hidden them since 0.10 (#5359).
 - The all-no-path note counts statically linked related tests before bounded
-  packing and names the matched assertion rows separately, so it no longer
+  packing and names the matched related-test rows separately, so it no longer
   says "8 related tests" beside a finding that lists 81 rows (#5359).

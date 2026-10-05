@@ -112,8 +112,8 @@ related tests by file, name, and line across all findings.
 
 When bounded packing dropped related-test rows from any finding, the retained
 unique count is a lower bound and each finding's packed row count counts
-matched assertion rows, not tests. The scope then reads "at least T statically
-linked related test(s) across R matched assertion row(s)", where R is the
+matched related-test rows, not tests. The scope then reads "at least T statically
+linked related test(s) across R matched related-test row(s)", where R is the
 packed row count for a single finding and "at least" the larger of the packed
 row count and T across several findings, so the note never presents a row
 count as a test count.
