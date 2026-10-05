@@ -51,3 +51,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (5)
+
+Reason:
+RIPR-SPEC-0122: the fixture diff's added text is not in the input checkout, so check withholds the stub route instead of stubbing the pre-change seam (#5471)
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

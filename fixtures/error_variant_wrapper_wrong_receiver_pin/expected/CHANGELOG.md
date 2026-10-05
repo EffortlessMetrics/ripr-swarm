@@ -155,3 +155,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (14)
+
+Reason:
+RIPR-SPEC-0122: the fixture diff's added text is not in the input checkout, so check withholds the stub route instead of stubbing the pre-change seam (#5471)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

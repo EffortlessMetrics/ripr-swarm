@@ -330,3 +330,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_test_call_limitation (12)
+
+Reason:
+RIPR-SPEC-0122: the fixture diff's added text is not in the input checkout, so check withholds the stub route instead of stubbing the pre-change seam (#5471)
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_test_call_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

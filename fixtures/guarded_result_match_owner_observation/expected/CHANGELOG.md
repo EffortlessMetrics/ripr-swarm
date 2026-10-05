@@ -153,3 +153,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (14)
+
+Reason:
+RIPR-SPEC-0122: the fixture diff's added text is not in the input checkout, so check withholds the stub route instead of stubbing the pre-change seam (#5471)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

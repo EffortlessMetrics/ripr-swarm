@@ -147,3 +147,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_whole_delete (11)
+
+Reason:
+RIPR-SPEC-0122: the fixture diff's added text is not in the input checkout, so check withholds the stub route instead of stubbing the pre-change seam (#5471)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_whole_delete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

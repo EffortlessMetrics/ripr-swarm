@@ -118,24 +118,25 @@ pub(crate) fn resolve_test_stub(
 /// The one `--at FILE:LINE` resolver, shared by `ripr agent stub --at` and
 /// the route `ripr check` prints (#5471).
 ///
-/// When `file` names a file under `root`, the candidates are that file's
-/// seams from a parse of the file alone: no workspace index, test evidence,
-/// or classification, so the location `check` reported is not re-judged
-/// by a second classifier (which is how the route and the command
-/// disagreed). `check` already decided the location is a gap; the stub
-/// needs only the seam's shape and the owner source, and is placed inline
-/// (an integration-file placement needs classified evidence, so it stays on
-/// `--seam-id`).
+/// With `kind` (the finding's probe family, `--kind`) and a `file` under
+/// `root`, the candidates are that file's seams from a parse of the file
+/// alone: no workspace index, test evidence, or classification, so the
+/// finding `check` reported is not re-judged by a second classifier (which
+/// is how the route and the command disagreed). `check` already decided the
+/// location is a gap of that kind; the stub needs only the seam's shape and
+/// the owner source, and is placed inline (an integration-file placement
+/// needs classified evidence, so it stays on `--seam-id`). Only seams of the
+/// matching seam kind are tried, in line-then-nearest order, so a line
+/// holding a boundary and an error variant stubs the one `check` reported
+/// and never a seam of another kind.
+///
+/// Without `kind` nothing has vouched for the location, so a file under
+/// `root` is classified in a scan scoped to that file and only its reported
+/// gaps are tried: a bare `--at` never stubs a seam the tests already pin.
 ///
 /// A suffix that names no file under `root` (`src/lib.rs` for
 /// `crates/a/src/lib.rs`) keeps the repo-wide classified lookup so its
 /// more-than-one-file refusal still applies; `check` never prints that form.
-///
-/// `kind` is the finding's probe family (`--kind`). Only seams of the
-/// matching seam kind are tried, in line-then-nearest order, so a line
-/// holding a boundary and an error variant stubs the one `check` reported
-/// and never a seam of another kind. Without it every seam is tried in that
-/// order.
 fn resolve_at_location(
     root: &Path,
     config: &RiprConfig,
@@ -144,15 +145,31 @@ fn resolve_at_location(
     kind: Option<&str>,
 ) -> Result<TestStubResolution, TestStubError> {
     let kind = kind.and_then(analysis::seam_kind_for_probe_family);
-    match scoped_file(root, file) {
-        Some(relative) => {
+    match (scoped_file(root, file), kind) {
+        (Some(relative), Some(_)) => {
             let seams =
                 analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
                     .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
             resolve_at(root, candidates, file, line, kind)
         }
-        None => {
+        (Some(relative), None) => {
+            let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                root,
+                config,
+                &[relative],
+                &[],
+            )
+            .map_err(TestStubError::Operational)?;
+            resolve_at(
+                root,
+                classified_candidates(&scoped.classified),
+                file,
+                line,
+                kind,
+            )
+        }
+        (None, _) => {
             let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
                 .map_err(TestStubError::Operational)?;
             resolve_at(root, classified_candidates(&classified), file, line, kind)
@@ -303,9 +320,39 @@ pub(crate) fn check_stub_route(
     output: &CheckOutput,
 ) -> Option<StubRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    stub_route_location(finding, root)?;
+    let (file, line, _) = stub_route_location(finding, root)?;
+    if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
+        return None;
+    }
     let config = crate::config::load_for_root(root).ok()?;
     stub_route_for_finding(root, &config, finding)
+}
+
+/// Whether the finding's expression is still on disk in the function the
+/// resolver will search (the finding line alone outside a function). A
+/// `--diff` patch (a file or stdin) can disagree with the checkout, and a
+/// removed-only finding names text the disk no longer holds; the resolver
+/// reads the disk, so either would route to a seam the finding never named.
+/// The function, not the exact line, is the scope because hunk headers can
+/// be off by a line while the text is the same; whitespace is ignored so a
+/// multi-line expression still matches.
+fn finding_text_is_on_disk(root: &Path, file: &str, line: usize, expression: &str) -> bool {
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    let wanted = squash(expression);
+    if wanted.is_empty() || line == 0 {
+        return false;
+    }
+    let Ok(source) = std::fs::read_to_string(root.join(file)) else {
+        return false;
+    };
+    let (start, end) = owner_fn_line_span(&source, line).unwrap_or((line, line));
+    let scope = source
+        .lines()
+        .skip(start.saturating_sub(1))
+        .take(end.saturating_sub(start) + 1)
+        .collect::<Vec<_>>()
+        .join(" ");
+    squash(&scope).contains(&wanted)
 }
 
 /// A `ripr check` finding line is the changed line, which is not always a
@@ -320,8 +367,10 @@ fn resolve_at(
     line: usize,
     kind: Option<SeamKind>,
 ) -> Result<TestStubResolution, TestStubError> {
-    let noun = match candidates.first() {
-        Some(AtCandidate::Classified(_)) => "reported gap",
+    // An empty list says nothing about its source; only the `--kind` path
+    // gathers shape candidates, so without a kind it was a gap list.
+    let noun = match (candidates.first(), kind) {
+        (Some(AtCandidate::Classified(_)), _) | (None, None) => "reported gap",
         _ => "seam ripr can stub",
     };
     let in_file = candidates

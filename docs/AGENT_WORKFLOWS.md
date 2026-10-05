@@ -291,9 +291,10 @@ To go from one `ripr check` finding to a test in one step, run
 it (or `--seam-id ID`). `--kind` is the finding's probe family; only seams of
 that kind are tried, so it picks the seam the finding reported when its line
 holds several, and two separate seams of that kind on one line are refused
-with their seam IDs. With `--at` the stub
+with their seam IDs. With `--at` and `--kind` the stub
 is read from that one file's seams, without re-classifying them, and placed
-inline. It prints a compiling `#[test]` placed in the
+inline. A bare `--at` (no `--kind`) classifies that one file and tries only
+its reported gaps, so it never stubs a seam the tests already pin. It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
 and arguments and a boundary input when the changed comparison names one. A

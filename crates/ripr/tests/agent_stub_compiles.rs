@@ -564,6 +564,21 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
         "another kind's seam must not answer for the finding: {stdout}"
     );
 
+    // A stale patch: its added line is not the disk's line 2, so the
+    // resolver (which reads the disk) would answer for other text.
+    let stale = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n >= cap { cap } else { n }",
+        "    if n > cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &stale)?;
+    assert!(stdout.contains("src/zz.rs:2"), "{stdout}");
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "a patch that disagrees with the disk must not route: {stdout}"
+    );
+
     // A stubbable location prints the route, and the printed command, run
     // as printed, yields a stub through the same resolver.
     let zz = one_line_diff(
@@ -605,15 +620,74 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     scratch.cleanup()
 }
 
+/// #5471: without `--kind` no `check` finding vouches for the location, so a
+/// bare `--at` keeps the gap filter: a seam the tests already pin is not
+/// stubbed, while an unpinned one in the same file still is.
+#[test]
+fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
+    const PINNED: &str = "pub fn gate(a: u32) -> bool {\n    a > 10\n}\n\npub fn loose(b: u32) -> bool {\n    b > 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn gate_boundary() {\n        assert_eq!(gate(10), false);\n        assert_eq!(gate(11), true);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_bare\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), PINNED).map_err(|error| error.to_string())?;
+    let stub_at = |at: &str| -> Result<Output, String> {
+        let mut stub = ripr_command();
+        stub.args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--at", at, "--json"]);
+        run_bounded(stub, &root, "stub", Duration::from_mins(2))
+    };
+
+    let pinned = stub_at("src/lib.rs:2")?;
+    let stdout = String::from_utf8_lossy(&pinned.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&pinned.stderr).to_string();
+    assert!(
+        !pinned.status.success(),
+        "a seam the tests pin is no gap to stub: {stdout}{stderr}"
+    );
+    assert!(stderr.contains("no reported gap"), "{stderr}");
+
+    let open = stub_at("src/lib.rs:6")?;
+    let stdout = String::from_utf8_lossy(&open.stdout).to_string();
+    assert!(
+        open.status.success(),
+        "an unpinned seam is still stubbed: {stdout}{}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(document["owner"], "src/lib.rs::loose", "{stdout}");
+    scratch.cleanup()
+}
+
+/// Clears inherited repository selectors so a hook or wrapper that exports
+/// them cannot redirect the fixture into the outer repository.
+fn isolate_from_outer_repo(command: &mut Command) -> &mut Command {
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+}
+
 /// Runs git in `repo`; its captured streams land in `scratch`, outside it.
 fn git(scratch: &Path, repo: &Path, args: &[&str]) -> Result<(), String> {
     let mut git = Command::new("git");
-    git.current_dir(repo)
+    isolate_from_outer_repo(&mut git)
+        .current_dir(repo)
         .args([
             "-c",
             "user.name=RIPR test",
             "-c",
             "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
         ])
         .args(args);
     let output = run_bounded(git, scratch, "git", Duration::from_secs(30))?;
@@ -655,7 +729,7 @@ fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Re
     git(&streams, &root, &["commit", "-qam", "change boundary"])?;
     let check = |root: &Path| -> Result<String, String> {
         let mut check = ripr_command();
-        check
+        isolate_from_outer_repo(&mut check)
             .args(["check", "--root"])
             .arg(root)
             .args(["--base", "HEAD~1"]);

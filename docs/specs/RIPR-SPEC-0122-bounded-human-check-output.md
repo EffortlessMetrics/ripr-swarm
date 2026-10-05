@@ -215,10 +215,13 @@ the stub producer refuses them.
 
 The check pipeline runs that same `--at` resolver for the selected finding
 before rendering (#5471), with the configuration `ripr agent stub` loads for
-the same root. For a file under the root, that resolver reads the seams of
+the same root. For a file under the root and a `--kind`, which the printed
+route always carries, that resolver reads the seams of
 that one file from a parse of the file alone, with no workspace index, test
 evidence, or seam classification: `check` already judged the location a gap,
-so the stub is not re-judged by a second classifier. Candidates are the seams
+so the stub is not re-judged by a second classifier. (A bare `--at`, with no
+finding vouching for the location, classifies that one file and tries only
+its reported gaps.) Candidates are the seams
 on the finding line, then the seams in the same function nearest first,
 limited to seams whose kind matches `--kind` (the one seam kind each of the
 four families names: `predicate` boundary, `return_value`, `error_path` error
@@ -232,7 +235,9 @@ resolver produces a stub. When it refuses, the block is replaced by one line,
 function has no seam of that kind, or the location is refused as ambiguous,
 nothing is printed. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
-that read HEAD content behind uncommitted edits) prints no route. Only the
+that read HEAD content behind uncommitted edits) prints no route, and neither
+does a finding whose expression is not on disk in the function holding its
+line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
 

@@ -143,7 +143,8 @@ Options:
                    that kind are tried, so a line holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
-                   `ripr check` prints it.
+                   `ripr check` prints it. Without it, --at tries only the
+                   file's reported gaps, so a seam tests pin is refused.
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
