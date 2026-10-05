@@ -538,20 +538,22 @@ fn legacy_workflow_attempt_receipt(
     }
     // Canonical admission for a never-promoted projection: the pair's
     // basis is live by construction (it was just minted from these
-    // snapshots or hand-shaped against them), so when the named snapshots
-    // are present the workflow verify document must be their canonical
-    // render. This defeats never-promoted and jointly rewritten
-    // projections at the compatibility fallback. A historical pair
-    // (snapshots gone) or an unknown HEAD keeps the validator-only
-    // reading. Retained pairs are NOT re-admitted here: their basis is
-    // historical and the live snapshots legitimately advance (#5256).
-    if let CanonicalAdmission::Refused { reason } =
-        canonically_admit_terminal_pair(root, &verify_bytes)
-    {
-        return AgentStatusAttemptReceipt::Unavailable {
-            path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
-            reason,
-        };
+    // snapshots or hand-shaped against them), so the workflow verify
+    // document must be their canonical render. This defeats
+    // never-promoted and jointly rewritten projections at the
+    // compatibility fallback. A missing basis is unconfirmed too: the
+    // validator does not check after-path existence, so a pair naming a
+    // missing snapshot would otherwise read issued. Only an admitted
+    // pair issues here. Retained pairs are NOT re-admitted: their basis
+    // is historical and the live snapshots legitimately advance (#5256).
+    match canonically_admit_terminal_pair(root, &verify_bytes) {
+        CanonicalAdmission::Admitted => {}
+        CanonicalAdmission::Refused { reason } | CanonicalAdmission::Unavailable { reason } => {
+            return AgentStatusAttemptReceipt::Unavailable {
+                path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
+                reason,
+            };
+        }
     }
     AgentStatusAttemptReceipt::Issued {
         path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
@@ -3354,8 +3356,47 @@ mod tests {
                 violations: Vec::new(),
             },
         });
-        let (receipt_bytes, verify_bytes) =
-            crate::testing::verify_fixture::mint_bound_receipt_pair(&root, &legacy, "unchanged")?;
+        // The issued half needs a genuinely canonical pair: mint the
+        // verify from real before/after snapshots so canonical admission
+        // admits it. A fabricated pair with no evaluable basis reads
+        // unavailable now (missing-basis pairs stay unconfirmed).
+        write_file(&root.join("tests/target.rs"), "// focused test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            &root,
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:legacy",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        write_file(&after_path, &after_snapshot)?;
+        let retained_before = root.join(
+            &crate::app::repair_attempt::find_manifest_artifact_by_role(&legacy, "before_snapshot")
+                .ok_or_else(|| "fixture manifest has no before_snapshot".to_string())?
+                .path,
+        );
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            &root,
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_bytes = verify.into_bytes();
+        let digest = {
+            use sha2::Digest;
+            let sum = sha2::Sha256::digest(&verify_bytes);
+            let mut rendered = String::from("sha256:");
+            for byte in sum {
+                rendered.push_str(&format!("{byte:02x}"));
+            }
+            rendered
+        };
+        let receipt_bytes =
+            crate::testing::verify_fixture::mint_bound_receipt(&legacy, "unchanged", &digest)?;
         write_file(
             &root.join(WORKFLOW_AGENT_VERIFY_ARTIFACT),
             std::str::from_utf8(&verify_bytes).map_err(|err| format!("verify not UTF-8: {err}"))?,

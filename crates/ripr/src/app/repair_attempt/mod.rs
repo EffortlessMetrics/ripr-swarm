@@ -5746,31 +5746,12 @@ mod tests {
         let mut forged_bytes = serde_json::to_vec_pretty(&forged)
             .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
         forged_bytes.push(b'\n');
-        std::fs::write(&receipt_path, &forged_bytes)
-            .map_err(|error| format!("write forged receipt failed: {error}"))?;
-        let manifest_path = repair_attempt_directory(&root, &retained.repair_attempt_id)
-            .join(REPAIR_ATTEMPT_MANIFEST);
-        let manifest_raw = std::fs::read_to_string(&manifest_path)
-            .map_err(|error| format!("read manifest failed: {error}"))?;
-        let mut manifest_value: serde_json::Value = serde_json::from_str(&manifest_raw)
-            .map_err(|error| format!("parse manifest failed: {error}"))?;
-        let entry = manifest_value["terminal_artifacts"]
-            .as_array_mut()
-            .ok_or("manifest lost terminal_artifacts")?
-            .iter_mut()
-            .find(|artifact| artifact["role"] == TERMINAL_RECEIPT_ROLE)
-            .ok_or("manifest lost its agent_receipt entry")?;
-        entry["sha256"] = serde_json::Value::String(sha256_bytes(&forged_bytes));
-        entry["bytes"] = serde_json::Value::from(
-            u64::try_from(forged_bytes.len()).map_err(|error| error.to_string())?,
-        );
-        std::fs::write(
-            &manifest_path,
-            serde_json::to_vec_pretty(&manifest_value)
-                .map_err(|error| format!("serialize rebound manifest failed: {error}"))?,
-        )
-        .map_err(|error| format!("write rebound manifest failed: {error}"))?;
-        let forged_manifest = load_repair_attempt_manifest(&root, &retained.repair_attempt_id)?;
+        let forged_manifest = rewrite_retained_terminal_artifact(
+            &root,
+            &retained,
+            TERMINAL_RECEIPT_ROLE,
+            &forged_bytes,
+        )?;
         match load_attempt_terminal_receipt(&root, &forged_manifest) {
             AttemptTerminalReceipt::Unavailable { reason, .. } if reason.contains("verdict") => {}
             other => {
@@ -6368,6 +6349,98 @@ mod tests {
             return Err(format!(
                 "honest pair must keep disposition {first_disposition} after the snapshots advance, got {later_disposition}"
             ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review: a pending projection whose verify names a missing
+    /// after snapshot must stay unconfirmed. The validator binds digest,
+    /// seam, verdict, and status but does not check after-path existence,
+    /// so without fail-closed unavailable handling the legacy fallback
+    /// would issue a gap-closing receipt from an unevaluable basis.
+    #[test]
+    fn pending_pair_naming_missing_snapshot_stays_unconfirmed() -> Result<(), String> {
+        let root = test_repo_root("missing-after")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "missing")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        // Control: the honest canonical pair is admitted while its basis
+        // is present.
+        match canonically_admit_terminal_pair(root.as_path(), verify.as_bytes()) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("honest pair must be admitted, got {other:?}")),
+        }
+        // Attack: point inputs.after at a missing path and rebind the
+        // receipt's verify digest so the validator still passes.
+        let mut forged_verify: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse honest verify failed: {error}"))?;
+        forged_verify["inputs"]["after"] =
+            serde_json::Value::String("target/ripr/workflow/after.gone.json".to_string());
+        let mut forged_verify_bytes = serde_json::to_vec_pretty(&forged_verify)
+            .map_err(|error| format!("serialize forged verify failed: {error}"))?;
+        forged_verify_bytes.push(b'\n');
+        let receipt_bytes =
+            mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&forged_verify_bytes))?;
+        let receipt_value: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse forged receipt failed: {error}"))?;
+        validate_issued_receipt_evidence(&root, &finished, &receipt_value, &forged_verify_bytes)
+            .map_err(|error| format!("missing-basis pair must pass the validator: {error}"))?;
+        match canonically_admit_terminal_pair(&root, &forged_verify_bytes) {
+            CanonicalAdmission::Unavailable { .. } => {}
+            other => {
+                return Err(format!(
+                    "missing-basis pair must be unavailable, not {other:?}"
+                ));
+            }
+        }
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &receipt_bytes)
+            .map_err(|error| format!("write forged receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &forged_verify_bytes,
+        )
+        .map_err(|error| format!("write forged verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a missing-basis projection must not complete retention".to_string());
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a missing-basis pair must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a missing-basis pair must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a missing-basis pair must warn it is unconfirmed".to_string());
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
