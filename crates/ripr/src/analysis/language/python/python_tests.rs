@@ -2874,6 +2874,36 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "helper imported from a test-support module",
+            "from tests.helpers import run_case\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "helper module imported whole",
+            "import tests.support as support\ndef test_x():\n    support.run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "production import is not a helper",
+            "from src.pricing import apply_discount\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "usefixtures mark",
+            "import pytest\n@pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "assertion-like setUp",
+            "import unittest\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(READY)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "plain setup_method",
+            "class TestX:\n    def setup_method(self):\n        self.value = 20\n    def test_x(self):\n        apply_discount(self.value)\n",
+            none,
+        ),
+        (
             "autouse fixture in the module",
             "import pytest\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n    assert True\n\ndef test_x():\n    apply_discount(20)\n",
             unresolved,

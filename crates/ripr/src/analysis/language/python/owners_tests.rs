@@ -1,4 +1,4 @@
-use super::admission::{PythonAdmissionContext, assertion_admission};
+use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -301,10 +301,15 @@ pub(super) fn collect_tests_from_statements(
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten();
+                let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
-                    &function.body,
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                    },
                     &assertions,
-                    &fixtures,
                     parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
                     admission,
                 );
@@ -314,7 +319,7 @@ pub(super) fn collect_tests_from_statements(
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
                     fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
@@ -343,10 +348,15 @@ pub(super) fn collect_tests_from_statements(
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
                     .flatten();
+                let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
-                    &function.body,
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                    },
                     &assertions,
-                    &fixtures,
                     parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
                     admission,
                 );
@@ -356,7 +366,7 @@ pub(super) fn collect_tests_from_statements(
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
                     fixtures,
                     parametrized: is_parametrized(&function.decorator_list),

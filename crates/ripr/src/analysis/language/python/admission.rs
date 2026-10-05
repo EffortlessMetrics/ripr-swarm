@@ -18,7 +18,7 @@
 //! fact and is not folded into this state.
 
 use super::expr_full_name;
-use super::{PythonAssertion, PythonOracleShape};
+use super::{PythonAssertion, PythonImport, PythonOracleShape};
 use rustpython_parser::ast::{self, Expr, Stmt};
 use std::collections::BTreeSet;
 
@@ -54,25 +54,46 @@ impl PythonAssertionAdmission {
 pub(super) struct PythonAdmissionContext {
     helper_names: BTreeSet<String>,
     has_autouse_fixture: bool,
+    /// A setup or teardown hook (`setUp`, `teardown_method`, `setup_module`,
+    /// ...) in this file whose body is assertion-like. The runner calls it
+    /// around tests without the test naming it.
+    has_assertion_like_lifecycle: bool,
 }
 
 impl PythonAdmissionContext {
     pub(super) fn of_module(statements: &[Stmt]) -> Self {
         let mut context = Self::default();
-        context.collect(statements);
+        let mut lifecycle_bodies = Vec::new();
+        context.collect(statements, &mut lifecycle_bodies);
+        // Helper names are complete only after the whole module is seen.
+        context.has_assertion_like_lifecycle = lifecycle_bodies.iter().any(|body| {
+            let mut scan = BodyScan {
+                context: &context,
+                imports: &[],
+                assertion_like: false,
+            };
+            scan.statements(body);
+            scan.assertion_like
+        });
         context
     }
 
-    fn collect(&mut self, statements: &[Stmt]) {
+    fn collect<'s>(&mut self, statements: &'s [Stmt], lifecycle: &mut Vec<&'s [Stmt]>) {
         for stmt in statements {
             match stmt {
                 Stmt::FunctionDef(function) => {
                     self.note_function(function.name.as_str(), &function.decorator_list);
+                    if LIFECYCLE_HOOKS.contains(&function.name.as_str()) {
+                        lifecycle.push(&function.body);
+                    }
                 }
                 Stmt::AsyncFunctionDef(function) => {
                     self.note_function(function.name.as_str(), &function.decorator_list);
+                    if LIFECYCLE_HOOKS.contains(&function.name.as_str()) {
+                        lifecycle.push(&function.body);
+                    }
                 }
-                Stmt::ClassDef(class) => self.collect(&class.body),
+                Stmt::ClassDef(class) => self.collect(&class.body, lifecycle),
                 _ => {}
             }
         }
@@ -86,6 +107,43 @@ impl PythonAdmissionContext {
             self.helper_names.insert(name.to_string());
         }
     }
+}
+
+/// unittest, pytest xunit-style and nose setup/teardown hooks the runner
+/// calls around a test without the test naming them.
+const LIFECYCLE_HOOKS: &[&str] = &[
+    "setUp",
+    "tearDown",
+    "setUpClass",
+    "tearDownClass",
+    "setUpModule",
+    "tearDownModule",
+    "asyncSetUp",
+    "asyncTearDown",
+    "setup",
+    "teardown",
+    "setup_method",
+    "teardown_method",
+    "setup_class",
+    "teardown_class",
+    "setup_function",
+    "teardown_function",
+    "setup_module",
+    "teardown_module",
+];
+
+/// Module path segments that mark test-support code. A call to a name
+/// imported from such a module may be an assertion helper with any name.
+fn is_test_support_module(module: &str) -> bool {
+    module.split('.').any(|segment| {
+        segment.starts_with("test")
+            || segment.ends_with("_test")
+            || segment.ends_with("_tests")
+            || matches!(
+                segment,
+                "conftest" | "helpers" | "helper" | "fixtures" | "support" | "testing"
+            )
+    })
 }
 
 /// pytest's built-in fixtures. They supply inputs and capture state; they do
@@ -122,17 +180,25 @@ const ASSERTION_LIKE_PREFIXES: &[&str] = &[
     "validate", "verify",
 ];
 
+/// The parts of one test function the admission scan reads.
+pub(super) struct PythonTestFunction<'a> {
+    pub(super) body: &'a [Stmt],
+    pub(super) decorators: &'a [Expr],
+    /// The test's non-`self` parameters.
+    pub(super) parameters: &'a [String],
+    /// Module imports plus the test body's own imports.
+    pub(super) imports: &'a [PythonImport],
+}
+
 /// The admission state of one test body.
 ///
-/// `parameters` are the test function's non-`self` parameters and
 /// `parametrize_argnames` the names a statically certain
 /// `@pytest.mark.parametrize` binds (`None` when the decorators cannot be
 /// enumerated). A parameter that is neither a built-in fixture nor a known
 /// parametrize argname is a fixture RIPR cannot see into.
 pub(super) fn assertion_admission(
-    body: &[Stmt],
+    test: &PythonTestFunction<'_>,
     assertions: &[PythonAssertion],
-    parameters: &[String],
     parametrize_argnames: Option<&BTreeSet<String>>,
     context: &PythonAdmissionContext,
 ) -> PythonAssertionAdmission {
@@ -142,10 +208,19 @@ pub(super) fn assertion_admission(
     {
         return PythonAssertionAdmission::Recognized;
     }
-    if !assertions.is_empty() || context.has_autouse_fixture {
+    // `@pytest.mark.usefixtures(...)` requests fixtures without naming them
+    // as parameters.
+    let uses_fixtures = test.decorators.iter().any(|decorator| {
+        expr_full_name(decorator).is_some_and(|name| name.ends_with("usefixtures"))
+    });
+    if !assertions.is_empty()
+        || context.has_autouse_fixture
+        || context.has_assertion_like_lifecycle
+        || uses_fixtures
+    {
         return PythonAssertionAdmission::Unresolved;
     }
-    let opaque_fixture = parameters.iter().any(|name| {
+    let opaque_fixture = test.parameters.iter().any(|name| {
         !PYTEST_BUILTIN_FIXTURES.contains(&name.as_str())
             && !parametrize_argnames.is_some_and(|argnames| argnames.contains(name))
     });
@@ -154,9 +229,10 @@ pub(super) fn assertion_admission(
     }
     let mut scan = BodyScan {
         context,
+        imports: test.imports,
         assertion_like: false,
     };
-    scan.statements(body);
+    scan.statements(test.body);
     if scan.assertion_like {
         PythonAssertionAdmission::Unresolved
     } else {
@@ -186,6 +262,7 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
 /// functions, lambdas and classes, looking for anything assertion-like.
 struct BodyScan<'a> {
     context: &'a PythonAdmissionContext,
+    imports: &'a [PythonImport],
     assertion_like: bool,
 }
 
@@ -414,17 +491,25 @@ impl BodyScan<'_> {
 
     /// A call is assertion-like when its callee cannot be named statically
     /// (`checks[kind](value)`), when its last segment reads as an assertion
-    /// or a failure, or when it names a function defined in the same module
-    /// that is not itself a test (a helper that may assert).
+    /// or a failure, when it names a function defined in the same module
+    /// that is not itself a test, or when its root name is imported from a
+    /// test-support module (`from tests.helpers import run_case`): either
+    /// may be a helper that asserts.
     fn call_is_assertion_like(&self, call: &ast::ExprCall) -> bool {
         let Some(name) = expr_full_name(call.func.as_ref()) else {
             return true;
         };
         let last = name.rsplit('.').next().unwrap_or(name.as_str());
+        let root = name.split('.').next().unwrap_or(name.as_str());
         let lowered = last.to_ascii_lowercase();
         ASSERTION_LIKE_PREFIXES
             .iter()
             .any(|prefix| lowered.starts_with(prefix))
             || self.context.helper_names.contains(last)
+            || self.imports.iter().any(|import| {
+                import.alias == root
+                    && (is_test_support_module(&import.source_module)
+                        || is_test_support_module(&import.imported))
+            })
     }
 }
