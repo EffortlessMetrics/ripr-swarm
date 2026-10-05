@@ -36,12 +36,14 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod identity_registry;
 mod issue_lifecycle_attempt;
+mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod no_panic;
 mod orchestration_attempt;
@@ -19252,6 +19254,7 @@ fn is_docs_path(path: &str) -> bool {
         || path == "AGENTS.md"
         || path == "CONTRIBUTING.md"
         || path == "CHANGELOG.md"
+        || path.starts_with("changelog.d/")
         || path.starts_with("docs/")
         || is_plan_path(path)
 }
@@ -20928,6 +20931,7 @@ fn detected_surface_rows(changes: &[ChangedPath]) -> Vec<(&'static str, Vec<Stri
             "Docs",
             paths_matching(changes, |path| {
                 path.starts_with("docs/")
+                    || path.starts_with("changelog.d/")
                     || is_plan_path(path)
                     || matches!(
                         path,
@@ -21001,6 +21005,7 @@ fn public_contract_rows(changes: &[ChangedPath]) -> Vec<(&'static str, Vec<Strin
             "Docs",
             paths_matching(changes, |path| {
                 path.starts_with("docs/")
+                    || path.starts_with("changelog.d/")
                     || is_plan_path(path)
                     || matches!(
                         path,
@@ -21084,6 +21089,7 @@ fn is_evidence_path(path: &str) -> bool {
         || is_policy_path(path)
         || is_plan_path(path)
         || path.starts_with("docs/")
+        || path.starts_with("changelog.d/")
         || path.starts_with("metrics/")
         || matches!(
             path,
