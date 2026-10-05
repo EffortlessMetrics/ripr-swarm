@@ -29,7 +29,7 @@ Updated:
 ## Pending — error_path_operand_error_lexeme (3)
 
 Reason:
-RIPR-SPEC-0224, #5508: combined-tree fix; #5255 landed this fixture with the pre-#5578 observation_unconfirmed wording. No verdict change.
+RIPR-SPEC-0224, #5508: align this fixture with the b2f2a2154 observation_unconfirmed sentence; blessed pre-reword, pins the retired miss sentence. formatting_only 1-line flip per surface; no verdict change.
 
 Command:
 `cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
