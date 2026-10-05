@@ -4697,8 +4697,11 @@ mod tests {
         // `DISCOUNT_THRESHOLD` boundary in
         // `python_same_stem_sibling_owner_not_related`). A returned relational
         // comparison read as a predicate adds one more direct-aligned boundary
-        // card (`python_return_comparison_boundary`).
-        if (direct, no_strong, orthogonal) != (6, 28, 11) {
+        // card (`python_return_comparison_boundary`). RIPR-SPEC-0233 rule 6:
+        // an error-path finding aligns only through an assertion that observes
+        // the raise, so `python_adversarial_error_path_untaken_branch` moves
+        // from direct to orthogonal.
+        if (direct, no_strong, orthogonal) != (5, 28, 12) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));
