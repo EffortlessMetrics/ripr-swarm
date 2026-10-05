@@ -16,8 +16,8 @@ pub(crate) use oracles::{
     OracleTextShape, assertion_oracle_text, classify_assertion, equality_assertion_arguments,
     err_return_guard_oracles, extract_assertions, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
-    is_unwrap_err_bound_error_assertion, terminal_err_return_guard_oracle,
-    unwrap_err_bound_variables,
+    is_unwrap_err_bound_error_assertion, outer_assertion_condition,
+    terminal_err_return_guard_oracle, unwrap_err_bound_variables,
 };
 pub(crate) use returns::extract_return_facts;
 pub(crate) use shadow::{

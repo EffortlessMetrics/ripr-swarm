@@ -235,7 +235,7 @@ pub(super) fn complete_block_body(text: &str) -> Option<(String, usize, usize)> 
 /// The new scalar predicate credit requires an entire outer assertion. The
 /// older argument helper deliberately recognizes macro calls inside a line;
 /// that is not sufficient authority for this narrower classification.
-pub(super) fn outer_assertion_condition(line: &str) -> Option<String> {
+pub(crate) fn outer_assertion_condition(line: &str) -> Option<String> {
     let text = line.trim();
     let suffix = text.strip_prefix("assert!")?.trim_start();
     if !suffix.starts_with('(') {
