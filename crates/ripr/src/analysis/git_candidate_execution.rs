@@ -936,6 +936,17 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn cleanup_failure_report_escapes_control_and_bidi_characters() {
+        let error = std::io::Error::other("denied");
+        let report = cleanup_failure_report(Path::new("a\u{1b}b\u{202e}c"), &error);
+        assert!(report.contains("a\\u{1b}b\\u{202e}c"), "{report}");
+        assert!(
+            !report.contains('\u{1b}') && !report.contains('\u{202e}'),
+            "{report}"
+        );
+    }
+
     /// The guard's whole reason to exist on the failure path is that it says
     /// something. Capture what it actually writes.
     ///
