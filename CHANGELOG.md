@@ -59,7 +59,11 @@ are scoped or reviewed.
   in parser, lexical or registered-harness facts. Actual asserting wrappers
   retain pattern credit, including the weak whole-wildcard boundary from
   #5410. File-fact generation 1.21 invalidates favorable predecessor facts
-  (RIPR-SPEC-0001, #5713).
+  (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
+  existing honesty corpus, preserving absent, weak and strong observer
+  boundaries. Shared-validator negative controls reject strong and weak
+  false credit, missed strong credit, empty findings and removed consumers;
+  the current CLI compares raw JSON and human projections with those reports.
 
 - Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
   JSON through the same product importer as `ripr calibrate cargo-mutants`.

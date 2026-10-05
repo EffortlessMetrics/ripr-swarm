@@ -91,8 +91,10 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     diff,
                     "{id}: canonical patch must describe its actual source"
                 );
-                let root_arg = fixture.to_string_lossy();
-                let patch_arg = patch.to_string_lossy();
+                let root_arg = format!(
+                    "fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/{id}"
+                );
+                let patch_arg = format!("{root_arg}/diff.patch");
                 let json = run(&[
                     "check", "--root", &root_arg, "--diff", &patch_arg, "--mode", "fast",
                     "--format", "json",
@@ -153,6 +155,22 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 );
                 let report: serde_json::Value = serde_json::from_slice(&json.stdout)
                     .map_err(|error| format!("{id}: {error}"))?;
+                let canonical = workspace_root()
+                    .join("fixtures/evidence-promotion-honesty-corpus/discarded-matcher-reports")
+                    .join(&id);
+                for (file, actual) in [
+                    ("check.json", json.stdout.as_slice()),
+                    ("human.txt", human.stdout.as_slice()),
+                    ("human-full.txt", human_full.stdout.as_slice()),
+                ] {
+                    let expected_bytes = std::fs::read(canonical.join(file))
+                        .map_err(|error| format!("{id}: missing canonical {file}: {error}"))?;
+                    assert_eq!(
+                        actual,
+                        expected_bytes.as_slice(),
+                        "{id}: current {file} producer bytes must match the registered canonical report"
+                    );
+                }
                 let findings = report["findings"].as_array().ok_or("missing findings")?;
                 assert_eq!(
                     findings.len(),

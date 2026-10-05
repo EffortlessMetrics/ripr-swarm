@@ -18,7 +18,11 @@ oracle metadata and explanations, and retains raw outputs with invocation
 and producer identity. Relative canonical roots keep the producer paths
 stable without normalizing captured JSON.
 
-Canonical reports and typed honesty cases require fresh outputs from these
-checked-in roots. Earlier temporary-root outputs remain historical evidence.
+Canonical reports were captured from these checked-in roots, copied without
+normalization and registered as fourteen typed cases in the existing corpus.
+The sibling `discarded-matcher-reports` directory retains their custody and
+the bootstrap's aggregate cleanup failure. Canonical validator negatives and
+current-head CLI comparison remain separate execution requirements.
+Earlier temporary-root outputs remain historical evidence.
 These authored controls do not establish a representative population,
 runtime mutation outcomes or an accuracy percentage.
