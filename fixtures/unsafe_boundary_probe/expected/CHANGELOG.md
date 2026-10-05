@@ -160,3 +160,15 @@ Updated:
 ## #5051 plain no-path guidance
 
 Only the selected untyped no-path safe-action sentence changes. Static-limited state, selection, classification, full output and JSON remain unchanged.
+
+## Pending — unsafe_boundary_probe (14)
+
+Reason:
+RIPR-SPEC-0228 #6676: a let binding's type annotation is not a struct-literal field; the changed binding outside the unsafe boundary now renders its static_unknown probe instead of a spurious field_construction probe; classification unchanged (no_static_path)
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
