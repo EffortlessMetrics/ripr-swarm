@@ -10595,6 +10595,8 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::buried_if_expression_argument_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::buried_max_call_argument_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::buried_if_expression_in_assert_bang_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::buried_if_expression_does_not_pair_via_activation_equality",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::subtraction_from_boundary_literal_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::local_bound_to_boundary_literal_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::named_constant_activation_equality_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_literal_argument_pairs",

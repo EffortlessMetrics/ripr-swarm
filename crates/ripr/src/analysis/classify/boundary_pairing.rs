@@ -88,15 +88,20 @@ fn assertion_observes_boundary_owner_call(
     activation: &ActivationEvidence,
 ) -> bool {
     let subject = assertion_subject(&assertion.text);
-    if owner_call_argument_lists(&subject, &owner.name)
+    let lists = owner_call_argument_lists(&subject, &owner.name);
+    if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
     {
         return true;
     }
     // Line-level activation cannot tell two same-name calls apart. Use it
-    // only when the assertion text names the owner once.
-    owner_call_count(&assertion.text, &owner.name) == 1
+    // only when the assertion text names the owner once, and only when
+    // every parsed argument is a literal or identifier. Compound arguments
+    // can mint a false activation `==` fact from a buried scalar (#6668);
+    // named constants and helper hops keep identifier / literal arguments.
+    lists.len() == 1
+        && owner_call_arguments_admit_activation_fallback(&lists[0])
         && activation_marks_boundary_call(
             activation,
             &CallFact {
@@ -179,10 +184,13 @@ fn owner_call_activates_boundary(
     if call.name != owner.name {
         return false;
     }
-    if let Some(arguments) = call_arguments(&call.text, &call.name)
-        && argument_list_activates_boundary(probe, owner, test, &arguments)
-    {
-        return true;
+    if let Some(arguments) = call_arguments(&call.text, &call.name) {
+        if argument_list_activates_boundary(probe, owner, test, &arguments) {
+            return true;
+        }
+        if !owner_call_arguments_admit_activation_fallback(&arguments) {
+            return false;
+        }
     }
     owner_call_count(&call.text, &owner.name) == 1
         && activation_marks_boundary_call(activation, call)
@@ -325,16 +333,25 @@ fn find_marker(text: &str, marker: &str) -> Option<usize> {
 /// (including a type suffix), or a plain identifier resolved to a local /
 /// rstest binding. Compound expressions that merely contain a boundary
 /// token are empty; infection `==` facts remain the call-level path for
-/// named constants.
+/// named constants whose arguments are themselves identifiers.
 fn pairing_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
     let trimmed = argument.trim();
-    if trimmed.is_empty() {
-        return Vec::new();
-    }
-    if argument_is_plain_identifier(trimmed) || argument_is_whole_scalar_literal(trimmed) {
+    if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
     Vec::new()
+}
+
+fn argument_is_direct_pairing_shape(argument: &str) -> bool {
+    !argument.is_empty()
+        && (argument_is_plain_identifier(argument) || argument_is_whole_scalar_literal(argument))
+}
+
+fn owner_call_arguments_admit_activation_fallback(arguments: &[String]) -> bool {
+    !arguments.is_empty()
+        && arguments
+            .iter()
+            .all(|argument| argument_is_direct_pairing_shape(argument.trim()))
 }
 
 fn argument_is_plain_identifier(text: &str) -> bool {
@@ -352,37 +369,80 @@ fn argument_is_whole_scalar_literal(argument: &str) -> bool {
     if argument_is_whole_quoted_literal(argument) {
         return true;
     }
-    if argument.contains(char::is_whitespace) {
+    argument_is_whole_numeric_literal(argument)
+}
+
+/// True when `argument` is one numeric token (`10`, `-10`, `10u32`, `1.5e-3`),
+/// not an expression that contains a number (`10-offset`, `10+1`).
+fn argument_is_whole_numeric_literal(argument: &str) -> bool {
+    if argument.is_empty() || argument.contains(char::is_whitespace) {
         return false;
     }
-    if extract_literals(argument).len() != 1 {
+    let bytes = argument.as_bytes();
+    let mut idx = usize::from(bytes.first() == Some(&b'-'));
+    if idx >= bytes.len() || !bytes[idx].is_ascii_digit() {
         return false;
     }
-    !argument.chars().any(|ch| {
-        matches!(
-            ch,
-            '(' | ')'
-                | '{'
-                | '}'
-                | '['
-                | ']'
-                | ','
-                | '+'
-                | '*'
-                | '/'
-                | '%'
-                | '|'
-                | '&'
-                | '^'
-                | '<'
-                | '>'
-                | '?'
-                | ';'
-                | '='
-                | '!'
-                | ':'
-        )
-    })
+    if bytes[idx] == b'0'
+        && let Some(radix) = bytes.get(idx + 1).and_then(|marker| match marker {
+            b'x' | b'X' => Some(16u32),
+            b'o' | b'O' => Some(8),
+            b'b' | b'B' => Some(2),
+            _ => None,
+        })
+    {
+        idx += 2;
+        let digits_start = idx;
+        while idx < bytes.len() && (bytes[idx] == b'_' || (bytes[idx] as char).is_digit(radix)) {
+            idx += 1;
+        }
+        if idx == digits_start {
+            return false;
+        }
+    } else {
+        while idx < bytes.len() && (bytes[idx].is_ascii_digit() || bytes[idx] == b'_') {
+            idx += 1;
+        }
+        if idx < bytes.len()
+            && bytes[idx] == b'.'
+            && bytes.get(idx + 1).is_some_and(|next| next.is_ascii_digit())
+        {
+            idx += 1;
+            while idx < bytes.len() && (bytes[idx].is_ascii_digit() || bytes[idx] == b'_') {
+                idx += 1;
+            }
+        }
+        if idx < bytes.len() && (bytes[idx] == b'e' || bytes[idx] == b'E') {
+            let mut exponent = idx + 1;
+            if bytes
+                .get(exponent)
+                .is_some_and(|sign| *sign == b'+' || *sign == b'-')
+            {
+                exponent += 1;
+            }
+            let digits_start = exponent;
+            while exponent < bytes.len()
+                && (bytes[exponent].is_ascii_digit() || bytes[exponent] == b'_')
+            {
+                exponent += 1;
+            }
+            if exponent > digits_start {
+                idx = exponent;
+            }
+        }
+    }
+    if idx < bytes.len() {
+        if !bytes[idx].is_ascii_alphabetic() {
+            return false;
+        }
+        while idx < bytes.len() {
+            if !bytes[idx].is_ascii_alphanumeric() && bytes[idx] != b'_' {
+                return false;
+            }
+            idx += 1;
+        }
+    }
+    idx == bytes.len()
 }
 
 fn argument_is_whole_quoted_literal(text: &str) -> bool {
@@ -573,6 +633,73 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "a bool-owner assert!(gate(if false {{ 10 }} else {{ 50 }})) pin must not pair from a buried literal"
+        );
+    }
+
+    #[test]
+    fn buried_if_expression_does_not_pair_via_activation_equality() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let buried = test_summary(
+            "buried_if_activation",
+            "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            vec![call(
+                "gate",
+                "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            )],
+            vec![exact(
+                "assert_eq!(gate(if false { 10 } else { 50 }), true);",
+            )],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(if false { 10 } else { 50 }), true); | first scalar"
+                    .to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&buried], &activation),
+            "a false activation == fact from a buried scalar must not restore pairing"
+        );
+    }
+
+    #[test]
+    fn subtraction_from_boundary_literal_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let subtracted = test_summary(
+            "subtracted",
+            "let offset = 1;\nassert_eq!(gate(10-offset), false);",
+            vec![call("gate", "assert_eq!(gate(10-offset), false);")],
+            vec![exact("assert_eq!(gate(10-offset), false);")],
+            &["10", "1"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "assert_eq!(gate(10-offset), false); | first scalar".to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&subtracted],
+                &ActivationEvidence::default(),
+            ),
+            "gate(10-offset) evaluates to 9 when offset is 1, so mentioning 10 must not pair"
+        );
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&subtracted], &activation),
+            "a false activation == fact from 10-offset must not restore pairing"
         );
     }
 
@@ -888,6 +1015,19 @@ mod tests {
             pairing_argument_values(&local, "10u32"),
             vec!["10".to_string()]
         );
+        assert_eq!(
+            pairing_argument_values(&local, "-10"),
+            vec!["-10".to_string()]
+        );
+        assert!(
+            pairing_argument_values(&local, "10-offset").is_empty(),
+            "subtraction of a local is not the boundary literal"
+        );
+        assert!(argument_is_whole_numeric_literal("1.5e-3"));
+        assert!(argument_is_whole_numeric_literal("-10"));
+        assert!(argument_is_whole_numeric_literal("10u32"));
+        assert!(!argument_is_whole_numeric_literal("10-offset"));
+        assert!(!argument_is_whole_numeric_literal("10+1"));
         assert_eq!(
             pairing_argument_values(&local, "threshold"),
             vec!["10".to_string()]
