@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (3)
+
+Reason:
+the unconfirmed-observation wording from #5578 reaches the fixture #5255 added (combined-tree drift on main)
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
