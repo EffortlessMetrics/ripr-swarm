@@ -1835,9 +1835,10 @@ impl RepoFileFactCache {
     /// The full decode and integrity check run later, in
     /// [`KnownFilePaths::contains`], and only for the entries of a file that
     /// actually missed, so an entry repaired or removed mid-build is judged as
-    /// it is then. Before, one miss decoded and re-hashed every entry in the
-    /// directory: on ripr-swarm (~4,500 entries) a single committed edit took
-    /// `index_cached_parse` from 2.1 s to 13.5 s.
+    /// it is then. The full-decode inventory this replaced re-hashed every
+    /// entry in the directory on one miss: on ripr-swarm (~4,500 entries) a
+    /// single committed edit cost `index_cached_parse` 13.5 s with it and
+    /// 2.1 s with the header read.
     pub(crate) fn known_file_paths(&self) -> KnownFilePaths {
         let identity = crate::build_identity::cache_identity();
         let mut candidates: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
