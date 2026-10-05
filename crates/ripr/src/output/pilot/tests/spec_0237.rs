@@ -358,6 +358,18 @@ fn spec_0237_example_17_top_pick_never_moves() -> Result<(), String> {
     ];
     assert_eq!(ranked(&example_14, 1)?, ["src/a.rs:1"]);
     assert_eq!(ranked(&example_12, 1)?, ["src/a.rs:1"]);
+
+    // The terminal names that seam whatever `--max-seams` is, and no other.
+    let entries = spec_seams(&example_14)?;
+    let artifacts = pilot_artifacts();
+    for max_seams in [1, 3, 10] {
+        let mut context = pilot_context(&artifacts);
+        context.max_seams = max_seams;
+        let terminal = render_pilot_terminal(&entries, context);
+        assert!(terminal.contains("src/a.rs:1"), "{terminal}");
+        assert!(!terminal.contains("src/a.rs:2"), "{terminal}");
+        assert!(!terminal.contains("src/b.rs:1"), "{terminal}");
+    }
     Ok(())
 }
 
@@ -387,10 +399,12 @@ fn md_places(md: &str) -> Vec<String> {
 fn assert_note_under_first(md: &str, listed: &[&str], note: &str) {
     assert_eq!(md_places(md), listed, "{md}");
     assert_eq!(md.matches(note).count(), 1, "{md}");
+    assert_eq!(md.matches("Also in this function").count(), 1, "{md}");
     let section = ranked_section(md);
     let at = |needle: &str| section.find(needle).unwrap_or(usize::MAX);
-    let note_at = at(note);
-    assert!(at("\n1. `") < note_at && note_at < at("\n2. `"), "{md}");
+    let (first, note_at, second) = (at("\n1. `"), at(note), at("\n2. `"));
+    assert!(second != usize::MAX, "{md}");
+    assert!(first < note_at && note_at < second, "{md}");
 }
 
 #[test]
@@ -429,6 +443,9 @@ fn spec_0237_example_23_unknown_classes_are_counted_singular() -> Result<(), Str
 
 #[test]
 fn spec_0237_example_24_budget_bounds_the_count() -> Result<(), String> {
+    // The spec's analysis order. Production inventory sorts by file and line
+    // before the budget cut, so this order is artificial; the test pins only
+    // that the renderer counts the analyzed slice, not seams cut before it.
     let mut entries = spec_seams(&[
         "W src/a.rs f 1",
         "W src/b.rs g 1",
@@ -481,13 +498,24 @@ fn spec_0237_example_25_json_matches_markdown() -> Result<(), String> {
         "   - Also in this function: 2 more actionable seams not listed here\n",
     );
 
-    // Decision 8: the owner count is Markdown only.
+    // Decision 8: the owner count is Markdown only. Every object carries the
+    // field set a lone seam with no owner siblings gets, so no count field
+    // appears for an owner with unlisted seams.
+    let lone = spec_seams(&["W src/c.rs c::lone 1"])?;
+    let lone_json = render_pilot_summary_json(&lone, pilot_context(&artifacts));
+    let lone_value =
+        serde_json::from_str::<serde_json::Value>(&lone_json).map_err(|err| err.to_string())?;
+    let keys = |seam: &serde_json::Value| {
+        seam.as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+    };
+    let lone_keys = lone_value
+        .get("top_actionable_seams")
+        .and_then(|top| top.get(0))
+        .and_then(keys)
+        .ok_or("no lone top seam")?;
     for seam in top {
-        let object = seam.as_object().ok_or("top seam is not an object")?;
-        let owner_count = object
-            .keys()
-            .find(|key| key.contains("unlisted") || key.contains("in_owner"));
-        assert_eq!(owner_count, None, "{json}");
+        assert_eq!(keys(seam).as_ref(), Some(&lone_keys), "{json}");
     }
     Ok(())
 }
