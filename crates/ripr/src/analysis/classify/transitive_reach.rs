@@ -20,7 +20,7 @@ use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Maximum call-hop depth for the transitive walk.
 pub(in crate::analysis) const MAX_TRANSITIVE_DEPTH: usize = 5;
@@ -123,6 +123,15 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
 
 struct ReachGraph<'a> {
     all_tests: Vec<&'a TestFact>,
+    /// Each test body with comments and strings masked, aligned with
+    /// `all_tests` and filled on first use. Witness corroboration reads a
+    /// test's body for every reaching callee of every owner, and masking it
+    /// each time made rust-analyzer's cold pilot 3.5x slower (#6009).
+    masked_test_bodies: Vec<OnceLock<String>>,
+    /// Per test: `(method, impl type)` to whether the test calls the method
+    /// on that type. The answer depends only on the test, and every owner
+    /// whose reaching set holds the method asks again.
+    receiver_checks: Vec<Mutex<HashMap<(String, String), bool>>>,
     /// Every production function with a given name. Name-only facts cannot
     /// tell `StringDecoder::decode` from `StringDecoderRange::decode`, so the
     /// walk follows all of them rather than whichever one was indexed first.
@@ -186,8 +195,12 @@ impl<'a> ReachGraph<'a> {
                 &mut macro_definitions,
             );
         }
+        let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
+        let receiver_checks = all_tests.iter().map(|_| Mutex::default()).collect();
         Self {
             all_tests,
+            masked_test_bodies,
+            receiver_checks,
             by_name,
             callers,
             macro_bodies,
@@ -262,7 +275,7 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
-    /// Whether `test` gives a name-only reason to believe its call to
+    /// Whether a test gives a name-only reason to believe its call to
     /// `entry` lands on a function that reaches the owner, rather than on an
     /// unrelated function that shares the name (#5481: a unit test calling
     /// `Cache::build` while the path runs through `Site::build`).
@@ -276,14 +289,18 @@ impl<'a> ReachGraph<'a> {
     /// impl segments, or a depth edge), the entry counts as corroborated,
     /// which keeps the plain file-order selection. This only ranks witnesses;
     /// it never removes one or changes the classification.
-    fn entry_is_corroborated(
+    ///
+    /// The entry is corroborated for a test exactly when this returns `None`
+    /// or the test calls the entry on one of the returned self types
+    /// (`test_calls_on_type`). Only the second half depends on the test, so
+    /// `transitive_witness` resolves this once per entry.
+    fn entry_receiver_types(
         &self,
         entry: &str,
-        test: &TestFact,
         reaching: &HashSet<&str>,
         owner_name: &str,
-    ) -> bool {
-        let mut saw_reaching_function = false;
+    ) -> Option<Vec<String>> {
+        let mut self_types = Vec::new();
         for function in self.by_name.get(entry).into_iter().flatten() {
             let reaches = calls_of(function).iter().any(|call| {
                 !is_macro_call(&call.name)
@@ -293,20 +310,40 @@ impl<'a> ReachGraph<'a> {
             if !reaches {
                 continue;
             }
-            saw_reaching_function = true;
-            match super::related_tests::impl_self_type_name(&function.id.0) {
-                None => return true,
-                Some(self_type)
-                    if super::related_tests::method_call_resolves_to_impl_type(
-                        test, entry, &self_type,
-                    ) =>
-                {
-                    return true;
-                }
-                Some(_) => {}
-            }
+            self_types.push(super::related_tests::impl_self_type_name(&function.id.0)?);
         }
-        !saw_reaching_function
+        if self_types.is_empty() {
+            None
+        } else {
+            Some(self_types)
+        }
+    }
+
+    /// Whether test `test_index` calls `method` on a receiver resolved to
+    /// `impl_type`; see `method_call_resolves_to_impl_type`.
+    fn test_calls_on_type(&self, test_index: usize, method: &str, impl_type: &str) -> bool {
+        let (Some(test), Some(masked), Some(checks)) = (
+            self.all_tests.get(test_index),
+            self.masked_test_bodies.get(test_index),
+            self.receiver_checks.get(test_index),
+        ) else {
+            return false;
+        };
+        let key = (method.to_string(), impl_type.to_string());
+        let lock = || checks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(&known) = lock().get(&key) {
+            return known;
+        }
+        let masked_body =
+            masked.get_or_init(|| crate::analysis::extract::mask_comments_and_strings(&test.body));
+        let calls = super::related_tests::method_call_resolves_to_impl_type_in(
+            test,
+            masked_body,
+            method,
+            impl_type,
+        );
+        lock().insert(key, calls);
+        calls
     }
 }
 
@@ -338,14 +375,17 @@ impl<'a> TransitiveReachIndex<'a> {
 
         // One witness per test: its best entry symbol that reaches the owner,
         // where an entry the test body corroborates (see
-        // `ReachGraph::entry_is_corroborated`) beats a bare name match, then
+        // `ReachGraph::entry_receiver_types`) beats a bare name match, then
         // the lexicographically-smallest name. Collected as a sortable tuple
         // with the corroboration rank first, so a test calling an unrelated
         // type's same-named method cannot win on file order alone (#5481),
         // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
         let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
-        for test in &graph.all_tests {
+        // The receiver types depend only on the entry and this owner, so
+        // they are resolved once per entry rather than once per test.
+        let mut receiver_types: HashMap<&str, Option<Vec<String>>> = HashMap::new();
+        for (test_index, test) in graph.all_tests.iter().enumerate() {
             let mut entry: Option<(bool, &str)> = None;
             for callee in &test.calls {
                 // Skip macro invocations.
@@ -358,12 +398,15 @@ impl<'a> TransitiveReachIndex<'a> {
                     continue;
                 }
                 if reaching.contains(callee.name.as_str()) {
-                    let uncorroborated = !graph.entry_is_corroborated(
-                        callee.name.as_str(),
-                        test,
-                        &reaching,
-                        owner_name,
-                    );
+                    let name = callee.name.as_str();
+                    let self_types = receiver_types
+                        .entry(name)
+                        .or_insert_with(|| graph.entry_receiver_types(name, &reaching, owner_name));
+                    let uncorroborated = self_types.as_ref().is_some_and(|self_types| {
+                        !self_types
+                            .iter()
+                            .any(|self_type| graph.test_calls_on_type(test_index, name, self_type))
+                    });
                     let candidate = (uncorroborated, callee.name.as_str());
                     match entry {
                         Some(current) if current <= candidate => {}
@@ -1486,6 +1529,46 @@ mod tests {
                 .map(|w| w.test_name.as_str()),
             Some("cache_builds")
         );
+    }
+
+    // The per-test receiver memo is shared by every owner queried on one
+    // index. `full_build` is reached through `Site::build` and `render_cache`
+    // through `Cache::build`, so the same test answers differently for each
+    // owner; a memo keyed on the method alone would carry the first owner's
+    // answer into the second query and name `atom_written` for both.
+    #[test]
+    fn receiver_memo_answers_each_owner_as_a_fresh_index_does() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                make_method("Cache", "build", vec!["render_cache"]),
+            ],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/render.rs", 24, vec!["new", "build"]),
+                    "let mut c = Cache::new(); c.build(); assert!(c.is_built());",
+                ),
+                with_body(
+                    make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+                    "let site = Site { langs: Vec::new() }; assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+        let witness_name = |reach: &TransitiveReachIndex<'_>, owner: &str| {
+            reach.transitive_witness(owner).map(|w| w.test_name)
+        };
+
+        let shared = TransitiveReachIndex::new(&index);
+        for (owner, expected) in [
+            ("full_build", "atom_written"),
+            ("render_cache", "cache_builds"),
+        ] {
+            assert_eq!(witness_name(&shared, owner).as_deref(), Some(expected));
+            assert_eq!(
+                witness_name(&shared, owner),
+                witness_name(&TransitiveReachIndex::new(&index), owner)
+            );
+        }
     }
 
     // (#5481 review) A test that names the reaching type away from the call
