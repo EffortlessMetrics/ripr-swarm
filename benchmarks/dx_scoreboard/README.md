@@ -201,13 +201,16 @@ report says so instead of passing them.
 
 The scoreboard and fast-corpus baselines are reports from hosted runs on
 `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, the model
-most hosted runs drew. The full-corpus job drew a different model on each of
-three runs (EPYC 9V74, Xeon 6973P, Xeon Platinum 8370C), so its baseline is
-the latest of those and its check times compare only when that model recurs. Two runs of identical code on that model stayed within
-5% on every speed and memory sample (margins are 15% for memory and 25% for
-time), and corpus check times moved at most 11 ms. A nightly that
-lands on another model still gates counts and completion; its wall-time and
-memory rows read "runner class differs". To re-record, take the
+most hosted runs drew. Two EPYC 7763 runs of the same ripr code stayed within
+5.2% of each other on every speed and memory sample (margins are 15% for
+memory and 25% for time), and fast-corpus check times moved at most 14 ms. The
+full-corpus job drew a different model on each of three runs (EPYC 9V74, Xeon
+6973P, Xeon Platinum 8370C), so its baseline is the latest of those and its
+check times compare only when that model recurs. A nightly that lands on
+another model still gates counts and completion; its wall-time and memory
+rows read "runner class differs". The nightly passes no `--ingest`, so the
+scoreboard baseline holds no mutation spot-check or first-run values; a local
+run that ingests those reports leaves them uncompared. To re-record, take the
 `dx-scoreboard.json` printed in the lane's log group or uploaded artifact.
 
 The nightly `.github/workflows/dx-scoreboard.yml` runs the full corpus with

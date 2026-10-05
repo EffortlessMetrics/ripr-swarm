@@ -2027,21 +2027,62 @@ fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
 fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo()
 -> Result<(), String> {
     // An empty `.git` makes git fall through to the enclosing repository,
-    // which here is this workspace (the test runs inside it).
+    // here the `parent` repo the test creates, and the pin checkout would
+    // then detach that repo's own working tree.
     let root = std::env::temp_dir().join(format!("ripr-dx-own-checkout-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let parent = root.join("parent");
-    let nested = parent.join("corpus").join("serde");
-    fs::create_dir_all(nested.join(".git")).map_err(|err| err.to_string())?;
-    super::measure::git(Some(&parent), &["init", "--quiet"])?;
-    let nested = fs::canonicalize(&nested).map_err(|err| err.to_string())?;
-    let parent = fs::canonicalize(&parent).map_err(|err| err.to_string())?;
+    let corpus = parent.join("corpus");
+    fs::create_dir_all(corpus.join("serde").join(".git")).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&parent), args);
+    git(&["init", "--quiet"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "a",
+    ])?;
+    let parent_head = git(&["rev-parse", "HEAD"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "b",
+    ])?;
+    let parent_tip = git(&["symbolic-ref", "HEAD"])?;
+    let options = parse_options(&["--corpus-dir".to_string(), corpus.display().to_string()])?;
+    let entry = CorpusEntry {
+        id: "serde".to_string(),
+        url: String::new(),
+        // A pin the parent repo can check out, so only the guard stops it.
+        sha: parent_head.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+    };
 
-    let refused = super::measure::verify_own_checkout(&nested);
-    let accepted = super::measure::verify_own_checkout(&parent);
+    let refused = super::measure::prepare_checkout(&entry, &options);
+    let tip_after = git(&["symbolic-ref", "HEAD"]);
+    let accepted = super::measure::verify_own_checkout(
+        &fs::canonicalize(&parent).map_err(|err| err.to_string())?,
+    );
     let _ = fs::remove_dir_all(&root);
 
     let err = refused.err().ok_or("a broken .git must be refused")?;
     assert!(err.contains("is not its own git checkout"), "{err}");
+    assert_eq!(
+        tip_after?, parent_tip,
+        "the parent repo must stay on its branch"
+    );
     accepted
 }

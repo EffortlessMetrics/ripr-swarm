@@ -413,7 +413,7 @@ pub(crate) fn contradiction_outcome(
     }
 }
 
-fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, String> {
+pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, String> {
     let dir = options.corpus_dir.join(&entry.id);
     if !dir.join(".git").exists() {
         if !options.clone {
@@ -509,7 +509,13 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
         GIT_TIMEOUT,
         "git",
     )?;
-    if !output.timed_out && output.status.is_some_and(|status| status.success()) {
+    if output.timed_out {
+        Err(format!(
+            "git {} timed out after {} s",
+            args.join(" "),
+            GIT_TIMEOUT.as_secs()
+        ))
+    } else if output.status.is_some_and(|status| status.success()) {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         Err(format!(
