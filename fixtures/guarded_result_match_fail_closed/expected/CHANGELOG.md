@@ -244,7 +244,20 @@ Updated:
 ## Pending — guarded_result_match_fail_closed (16)
 
 Reason:
-RIPR-SPEC-0197/RIPR-SPEC-0224: combine refusal disclosure with examined-test miss rows after merging main
+RIPR-SPEC-0224, #5508: observation_unconfirmed now reads 'ripr could not confirm that this assertion observes the changed behavior'; human-full re-blessed after rebase onto #5424. No verdict change.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (17)
+
+Reason:
+RIPR-SPEC-0224, #5508: an observation_unconfirmed row is labelled 'unconfirmed:' instead of 'misses:' in human-full. No verdict change.
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
