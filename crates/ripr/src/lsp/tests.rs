@@ -21944,10 +21944,9 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
             .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
             .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
     };
-    assert!(
-        hover_row(&direct.name)?.contains(&format!("`{}` {explained}", direct.name)),
-        "{hover}"
-    );
+    // #6299: a matched row keeps its oracle projection and appends the
+    // labelled reason.
+    assert!(hover_row(&direct.name)?.contains(&explained), "{hover}");
     let advisory_row = hover_row(&advisory.name)?;
     assert!(
         !advisory_row.contains(&why) && !advisory_row.contains(&format!("{label}:")),
