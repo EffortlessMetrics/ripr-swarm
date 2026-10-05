@@ -247,7 +247,6 @@ pub(crate) struct WorkCapturedPullRequestV1 {
     pub unresolved_review_findings: u64,
     pub checks_state: String,
     pub worktree_path: Option<String>,
-    pub semantic_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -280,17 +279,12 @@ pub(crate) struct WorkCapturedClaimsV1 {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkCapturedBranchV1 {
     pub name: String,
-    pub head: String,
-    pub dirty_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkCapturedWorktreeV1 {
     pub path: String,
-    pub branch: String,
-    pub head: String,
-    pub dirty: bool,
 }
 
 /// Captured local truth. `root` is the volatile checkout spelling; both the
@@ -309,7 +303,6 @@ pub(crate) struct WorkCapturedLocalStateV1 {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkCapturedSurfaceV1 {
     pub id: String,
-    pub title: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -982,12 +975,11 @@ pub(crate) fn work_portfolio_json<T: Serialize>(dto: &T) -> Result<String, Strin
 // Compiler: captured inputs -> WorkPortfolioSnapshotV1. Pure and read-only.
 // ---------------------------------------------------------------------------
 
-struct WorkCompileContext<'a> {
-    captured: &'a WorkCapturedDirV1,
+struct WorkCompileContext {
     freshness: BTreeMap<WorkCapturedSourceKindV1, WorkSourceFreshnessV1>,
 }
 
-impl<'a> WorkCompileContext<'a> {
+impl WorkCompileContext {
     fn fresh(&self, kind: WorkCapturedSourceKindV1) -> bool {
         self.freshness
             .get(&kind)
@@ -1491,7 +1483,7 @@ pub(crate) fn compile_work_portfolio(
     captured: &WorkCapturedDirV1,
 ) -> Result<WorkPortfolioSnapshotV1, String> {
     let (observations, freshness) = build_observations(&captured.manifest)?;
-    let context = WorkCompileContext { captured, freshness };
+    let context = WorkCompileContext { freshness };
     let current_main = captured.manifest.default_branch_sha.clone();
     let root = captured.manifest.root.clone();
     let local_root = captured
@@ -2314,7 +2306,7 @@ fn issue_branch_matches(
 /// Confidence reasons for one candidate, named and honest. `partial:` and
 /// `not_proven:` prefixes drive the confidence level.
 fn confidence_reasons_for(
-    context: &WorkCompileContext<'_>,
+    context: &WorkCompileContext,
     issue: &WorkCapturedIssueV1,
     primary_pr: Option<&WorkCapturedPullRequestV1>,
     issue_claims: &[&WorkCapturedClaimV1],
@@ -2984,6 +2976,9 @@ pub(crate) fn load_work_portfolio_provenance(
         return Err(
             "work portfolio provenance must record repository and capture_method".to_string(),
         );
+    }
+    if provenance.captured_at.trim().is_empty() {
+        return Err("work portfolio provenance must record captured_at".to_string());
     }
     let mut names = BTreeSet::new();
     for corpus in &provenance.corpora {

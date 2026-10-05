@@ -281,7 +281,6 @@ def build_pull_requests(root):
             "review_state": review,
             "unresolved_review_findings": findings,
             "checks_state": checks,
-            "semantic_paths": [],
         }
         if claim is not None:
             row["registered_claim"] = claim
@@ -326,16 +325,16 @@ def build_claims(root):
 
 
 def build_local_state(root):
-    def branch(name, head="9f1c2a4b8d3e6f708192a4b5c6d7e8f901234567", dirty=None):
-        return {"name": name, "head": head, "dirty_paths": dirty or []}
+    def branch(name):
+        return {"name": name}
 
     return {
         "schema_version": "work_local_state.v1",
         "root": root,
         "branches": [
             branch("main"),
-            branch("feat/work-9108", dirty=[]),
-            branch("feat/work-9101", dirty=["crates/ripr/src/output/json/report.rs"]),
+            branch("feat/work-9108"),
+            branch("feat/work-9101"),
             branch("feat/work-9107-b"),
             branch("feat/work-9102"),
             branch("feat/work-9301"),
@@ -343,12 +342,12 @@ def build_local_state(root):
             branch("feat/work-9107-a"),
         ],
         "worktrees": [
-            {"path": wt(root, "wt-9107-b"), "branch": "feat/work-9107-b", "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "dirty": True},
-            {"path": wt(root, "wt-9108"), "branch": "feat/work-9108", "head": "8888888888888888888888888888888888888888", "dirty": False},
-            {"path": wt(root, "wt-9102"), "branch": "feat/work-9102", "head": "2222222222222222222222222222222222222222", "dirty": False},
-            {"path": wt(root, "wt-9101"), "branch": "feat/work-9101", "head": "1111111111111111111111111111111111111111", "dirty": True},
-            {"path": wt(root, "wt-9103"), "branch": "feat/work-9103", "head": "3333333333333333333333333333333333333333", "dirty": False},
-            {"path": wt(root, "wt-9107-a"), "branch": "feat/work-9107-a", "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dirty": True},
+            {"path": wt(root, "wt-9107-b")},
+            {"path": wt(root, "wt-9108")},
+            {"path": wt(root, "wt-9102")},
+            {"path": wt(root, "wt-9101")},
+            {"path": wt(root, "wt-9103")},
+            {"path": wt(root, "wt-9107-a")},
         ],
     }
 
@@ -356,10 +355,10 @@ def build_local_state(root):
 SURFACES = {
     "schema_version": "work_surfaces.v1",
     "surfaces": [
-        {"id": "surface-editor", "title": "Editor surface"},
-        {"id": "surface-docs", "title": "Docs surface"},
-        {"id": "surface-rust-cli", "title": "Rust CLI surface"},
-        {"id": "surface-ci", "title": "CI surface"},
+        {"id": "surface-editor"},
+        {"id": "surface-docs"},
+        {"id": "surface-rust-cli"},
+        {"id": "surface-ci"},
     ],
 }
 
