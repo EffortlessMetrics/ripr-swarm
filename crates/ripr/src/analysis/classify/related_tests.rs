@@ -2291,7 +2291,7 @@ pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &s
 /// Whether one captured call's raw source text spells a free-function call
 /// of `name`, with comments and strings masked first.
 pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
-    free_function_call_text(text, name).is_some()
+    free_function_call_start_in(&mask_comments_and_strings(text), name).is_some()
 }
 
 /// The suffix of a captured call's raw source text that starts at its first

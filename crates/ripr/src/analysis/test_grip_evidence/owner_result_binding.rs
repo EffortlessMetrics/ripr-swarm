@@ -95,7 +95,10 @@ fn owner_result_field_observation(
     if !indexed.test.calls.iter().any(|call| {
         call.name == owner_name
             && call_text_contains_named_call(&call.text, owner_name)
-            && crate::analysis::classify::owner_call_text(&call.text, owner_fn).is_some()
+            && (owner_fn.impl_context != crate::analysis::facts::FunctionImplContext::Free
+                || crate::analysis::classify::call_text_may_call_free_function(
+                    &call.text, owner_name,
+                ))
     }) {
         return None;
     }
