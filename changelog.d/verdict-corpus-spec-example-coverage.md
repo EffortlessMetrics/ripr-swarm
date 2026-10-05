@@ -7,4 +7,5 @@
   unmeasured. The report's new `spec_example_coverage` section reads 71/100
   covered; `cargo xtask verdict-corpus check` fails when covered falls below
   the ledger's floor, and the dx-scoreboard trust board tracks
-  `trust.verdict_corpus_spec_example_coverage` against a 100% target.
+  `trust.verdict_corpus_spec_example_coverage` against a 100% target
+  (#6638).
