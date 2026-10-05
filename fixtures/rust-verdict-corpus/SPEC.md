@@ -35,7 +35,7 @@ report must equal `expected/report.json`.
 ## Must Not
 
 - Run mutation testing, `cargo test`, or network access (`check` and
-  `report`; only `relabel` runs test commands, and never the network).
+  `report`; only `relabel` runs test commands, with cargo offline).
 - Treat the rates as a population estimate.
 - Edit a retained subject file; a changed byte fails its sha256.
 

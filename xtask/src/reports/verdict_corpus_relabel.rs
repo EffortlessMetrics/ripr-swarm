@@ -12,6 +12,7 @@
 //! are excerpts, so they replay only from a full checkout at the pinned commit
 //! passed with `--checkouts`; this command never clones or fetches, and runs
 //! cargo offline, so fetch a checkout's dependencies (`cargo fetch`) first.
+//! It does not sandbox the subject's own build scripts or tests.
 
 use super::verdict_corpus::{
     CORPUS_DIR, Case, Corpus, EditKind, MutantOutcome, Subject, SubjectOrigin, TruthState,
@@ -29,7 +30,11 @@ use std::time::Duration;
 const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v1";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
 const DEFAULT_SEED: &str = "ripr-verdict-corpus";
-const UNREPLAYABLE_CARGO_FLAGS: &[&str] = &["--manifest-path", "--target-dir", "--config"];
+/// libtest options after `--` that list instead of running, or change the
+/// output format so failing tests can no longer be named.
+const NON_RUNNING_TEST_FLAGS: &[&str] = &["--list", "--format", "-q", "--quiet"];
+const UNREPLAYABLE_CARGO_FLAGS: &[&str] =
+    &["--no-run", "--manifest-path", "--target-dir", "--config"];
 const DEFAULT_REPEAT: usize = 2;
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
@@ -159,6 +164,18 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
             ));
         }
     }
+    if let Some(flag) = rest
+        .iter()
+        .skip_while(|word| word.as_str() != "--")
+        .find(|word| {
+            let flag = word.split('=').next().unwrap_or(word);
+            NON_RUNNING_TEST_FLAGS.contains(&flag)
+        })
+    {
+        return Err(format!(
+            "test command `{command}` passes `{flag}` to the test binary, which hides the per-test results the replay reads"
+        ));
+    }
     Ok(rest)
 }
 
@@ -175,6 +192,9 @@ pub(crate) enum RunOutcome {
         error: String,
     },
     TimedOut,
+    /// The command succeeded but no test executed (`--no-run`, a filter
+    /// matching nothing): a pass with no test is not runtime evidence.
+    NoTestsRan,
 }
 
 impl RunOutcome {
@@ -184,6 +204,7 @@ impl RunOutcome {
             Self::TestsFailed { .. } => "tests_failed",
             Self::BuildFailed { .. } => "build_failed",
             Self::TimedOut => "timed_out",
+            Self::NoTestsRan => "no_tests_ran",
         }
     }
 
@@ -214,7 +235,11 @@ pub(crate) fn classify_run(
         return RunOutcome::TimedOut;
     }
     if success {
-        return RunOutcome::TestsPassed;
+        return if executed_tests(stdout) == 0 {
+            RunOutcome::NoTestsRan
+        } else {
+            RunOutcome::TestsPassed
+        };
     }
     let failing_tests: BTreeSet<String> = stdout
         .lines()
@@ -242,6 +267,22 @@ pub(crate) fn classify_run(
     } else {
         RunOutcome::TestsFailed { failing_tests }
     }
+}
+
+/// Tests executed across every `test result:` line (passed plus failed;
+/// ignored and filtered-out tests did not run).
+pub(crate) fn executed_tests(stdout: &str) -> u64 {
+    stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("test result: "))
+        .flat_map(|rest| rest.split(';'))
+        .filter_map(|part| {
+            let mut words = part.split_whitespace().rev();
+            let kind = words.next()?;
+            let count = words.next()?;
+            matches!(kind, "passed" | "failed").then(|| count.parse::<u64>().ok())?
+        })
+        .sum()
 }
 
 /// A labeled failing test names the observed one when they are equal or one
@@ -339,6 +380,9 @@ pub(crate) fn mutant_drift(
         (RunOutcome::TimedOut, _) => drift.push(format!(
             "case `{case_id}` {what}: timed out; raise --timeout-secs or label it by hand"
         )),
+        (RunOutcome::NoTestsRan, _) => drift.push(format!(
+            "case `{case_id}` {what}: the test command ran no test, so it has no runtime outcome; fix the case's test_command"
+        )),
         (RunOutcome::TestsPassed, MutantOutcome::TestsFailed) => drift.push(format!(
             "case `{case_id}` {what}: labeled tests_failed but the tests pass"
         )),
@@ -372,7 +416,9 @@ pub(crate) fn observed_truth(firsts: &[&RunOutcome]) -> Option<TruthState> {
         match run {
             RunOutcome::TestsFailed { .. } => failed += 1,
             RunOutcome::TestsPassed => {}
-            RunOutcome::BuildFailed { .. } | RunOutcome::TimedOut => return None,
+            RunOutcome::BuildFailed { .. } | RunOutcome::TimedOut | RunOutcome::NoTestsRan => {
+                return None;
+            }
         }
     }
     Some(match failed {
@@ -481,7 +527,7 @@ fn prepare_tree(
                     subject.subject_id
                 )
             })?;
-            copy_checkout(&checkout, &tree)?;
+            copy_checkout(&checkout, &tree, &tracked_files(&checkout)?)?;
         }
     }
     detach_from_enclosing_workspace(&tree)?;
@@ -549,6 +595,8 @@ fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<Pa
         checkout.to_string_lossy().into_owned(),
         "status".to_string(),
         "--porcelain".to_string(),
+        // Explicit, so a user's status.showUntrackedFiles cannot hide them.
+        "--untracked-files=all".to_string(),
     ];
     let dirty = run_output_owned("git", &args)?;
     if !dirty.trim().is_empty() {
@@ -560,52 +608,66 @@ fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<Pa
     Ok(Some(checkout))
 }
 
-/// Copy a checkout's working tree, leaving out `.git` and `target`.
-pub(crate) fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
+/// The checkout's tracked paths, as git lists them. Only these are copied,
+/// so ignored local files (a `.cargo/config.toml`, a stray lockfile) cannot
+/// change the replay.
+fn tracked_files(checkout: &Path) -> Result<Vec<PathBuf>, String> {
+    let args = vec![
+        "-C".to_string(),
+        checkout.to_string_lossy().into_owned(),
+        "ls-files".to_string(),
+        "-z".to_string(),
+    ];
+    let listed = run_output_owned("git", &args)?;
+    Ok(listed
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect())
+}
+
+/// Copy the listed paths of a checkout. A listed directory is a submodule,
+/// whose content git does not pin here, so it is refused.
+pub(crate) fn copy_checkout(from: &Path, to: &Path, files: &[PathBuf]) -> Result<(), String> {
     let root =
         fs::canonicalize(from).map_err(|err| format!("resolve {}: {err}", normalize_path(from)))?;
-    let mut stack = vec![PathBuf::new()];
-    while let Some(rel) = stack.pop() {
-        let source = from.join(&rel);
-        fs::create_dir_all(to.join(&rel))
-            .map_err(|err| format!("create {}: {err}", normalize_path(&to.join(&rel))))?;
-        let entries = fs::read_dir(&source)
-            .map_err(|err| format!("read {}: {err}", normalize_path(&source)))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| format!("read {}: {err}", normalize_path(&source)))?;
-            let name = entry.file_name();
-            if rel.as_os_str().is_empty() && (name == ".git" || name == "target") {
-                continue;
+    for rel in files {
+        let source = from.join(rel);
+        let target = to.join(rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", normalize_path(parent)))?;
+        }
+        let kind = fs::symlink_metadata(&source)
+            .map_err(|err| format!("stat {}: {err}", normalize_path(&source)))?
+            .file_type();
+        if kind.is_symlink() {
+            let link = fs::read_link(&source)
+                .map_err(|err| format!("read link {}: {err}", normalize_path(&source)))?;
+            // A link out of the checkout would let edits and mutants write
+            // through the copy into files the run does not own. Resolve it
+            // for real, since a chain of links can each look contained. A
+            // link that does not resolve (dangling, a loop, unreadable)
+            // cannot be shown to stay inside, so it is refused.
+            let resolved_inside =
+                fs::canonicalize(&source).is_ok_and(|resolved| resolved.starts_with(&root));
+            let dir = rel.parent().unwrap_or(Path::new(""));
+            if !resolved_inside || !link_stays_inside(dir, &link) {
+                return Err(format!(
+                    "{} links outside the checkout or does not resolve ({}); refusing to replay it",
+                    normalize_path(&source),
+                    normalize_path(&link)
+                ));
             }
-            let child = rel.join(&name);
-            let kind = entry
-                .file_type()
-                .map_err(|err| format!("stat {}: {err}", normalize_path(&from.join(&child))))?;
-            if kind.is_dir() {
-                stack.push(child);
-            } else if kind.is_symlink() {
-                let link = fs::read_link(from.join(&child)).map_err(|err| {
-                    format!("read link {}: {err}", normalize_path(&from.join(&child)))
-                })?;
-                // A link out of the checkout would let edits and mutants
-                // write through the copy into files the run does not own.
-                // Resolve it for real, since a chain of links can each look
-                // contained. A link that does not resolve (dangling, a loop,
-                // unreadable) cannot be shown to stay inside, so it is refused.
-                let resolved_inside = fs::canonicalize(from.join(&child))
-                    .is_ok_and(|resolved| resolved.starts_with(&root));
-                if !resolved_inside || !link_stays_inside(&rel, &link) {
-                    return Err(format!(
-                        "{} links outside the checkout or does not resolve ({}); refusing to replay it",
-                        normalize_path(&from.join(&child)),
-                        normalize_path(&link)
-                    ));
-                }
-                symlink(&link, &to.join(&child))?;
-            } else {
-                fs::copy(from.join(&child), to.join(&child))
-                    .map_err(|err| format!("copy {}: {err}", normalize_path(&to.join(&child))))?;
-            }
+            symlink(&link, &target)?;
+        } else if kind.is_dir() {
+            return Err(format!(
+                "{} is a submodule; its content is not pinned by the subject commit",
+                normalize_path(&source)
+            ));
+        } else {
+            fs::copy(&source, &target)
+                .map_err(|err| format!("copy {}: {err}", normalize_path(&target)))?;
         }
     }
     Ok(())
@@ -879,6 +941,11 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let mut not_replayed = Vec::new();
     let mut replayable = Vec::new();
     for case in &corpus.cases {
+        // An explicit selection inspects only its own checkouts, so a stale
+        // checkout of an unrelated subject cannot block it.
+        if !args.cases.is_empty() && !args.cases.contains(&case.case_id) {
+            continue;
+        }
         let Some(owner) = subject(&case.subject_id) else {
             return Err(format!("case `{}` names an unknown subject", case.case_id));
         };

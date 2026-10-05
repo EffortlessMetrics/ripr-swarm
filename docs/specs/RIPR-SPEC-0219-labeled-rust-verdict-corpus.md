@@ -170,35 +170,42 @@ differs from `expected/report.md`. It refuses an
   It fails when an outcome or the named failing test drifts from the label,
   when the replayed outcomes derive a different truth, when a mutant does not
   compile, times out, or equals the edited line, when repeated runs disagree,
-  and when `rustc --version` differs from the labeled toolchain. Authored
-  subjects replay offline. Upstream excerpts replay only from a full checkout
-  at the pinned commit, with no local changes or untracked files, under
-  `--checkouts <dir>/<subject_id>`; without one they are listed as not
-  replayed, never counted as passing. Cargo runs with
-  `CARGO_NET_OFFLINE=true`, so a checkout's dependencies must already be in
-  the cargo cache (`cargo fetch`), and with the caller's `RUSTC`, wrapper,
-  `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables cleared; the empty
-  `RUSTFLAGS` family also overrides config-file rustflags. A checkout
-  symlink that resolves outside the checkout, followed through any chain of
-  links, or that does not resolve at all, is refused, and the test command may not pass
-  `--manifest-path`, `--target-dir`, `--config`, or a short flag bundling
-  `-Z` or `-C` before `--`;
-  `validate` refuses such a command too. `--sample` picks a deterministic
-  subset, for the same set of checkouts, ordered by sha256 of the seed and
-  case id, so a scheduled run can rotate seeds through the corpus. It writes
-  `relabel.json` and never clones, fetches, or edits the corpus. Subject
-  trees live under a per-process directory, so concurrent runs sharing a
-  `--work-dir` do not clear each other's trees.
+  when `rustc --version` differs from the labeled toolchain, and when a
+  run that exits zero executed no test. Upstream excerpts replay only from a
+  full checkout at the pinned commit, with no local changes or untracked
+  files, under `--checkouts <dir>/<subject_id>`; without one they are listed
+  as not replayed, never counted as passing. Only the checkout's tracked
+  files (`git ls-files`) are copied, so ignored local files cannot change a
+  replay; a tracked symlink that resolves outside the checkout, through any
+  chain of links, or that does not resolve, is refused, and so is a
+  submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
+  so a checkout's dependencies must already be in the cargo cache (`cargo
+  fetch`); the command adds no network access of its own, but a subject's
+  build scripts and tests run unsandboxed. The caller's `RUSTC`, wrappers,
+  `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables are cleared, and the
+  empty `RUSTFLAGS` family also overrides config-file rustflags. The test
+  command may not pass `--manifest-path`, `--target-dir`, `--config`,
+  `--no-run`, or a short flag bundling `-Z` or `-C` before `--`, nor
+  `--list`, `--format`, or `--quiet` to the test binary; `validate` refuses
+  such a command too. `--sample` picks a deterministic subset, for the same
+  set of checkouts, ordered by sha256 of the seed and case id, so a
+  scheduled run can rotate seeds through the corpus; `--case` inspects only
+  the selected cases' checkouts. It writes `relabel.json` and never clones,
+  fetches, or edits the corpus. Subject trees live under a per-process
+  directory, so concurrent runs sharing a `--work-dir` do not clear each
+  other's trees.
+
   Known limits: failing-test names match by `::` suffix across all test
-  binaries; a binary that aborts (a stack overflow, `process::exit`) names no
-  failing test, so only its failed outcome is checked; cargo stops at the first failing binary, so a labeled test in a
-  later binary reads as not failing (fail-closed); a doctest name contains
-  spaces and cannot be a `failing_test`; the short-flag check also refuses
-  an attached value containing `Z` or `C` (`-pZstd`), so use the long form; and the default `--work-dir` sits
-  under this repository's `target`, so this repository's `.cargo/config.toml`
-  applies to subject builds; other caller `CARGO_*` settings such as
-  `CARGO_PROFILE_*` overflow checks still reach the subject build; and a
-  killed run leaves its per-process tree directory behind.
+  binaries; a binary that aborts (a stack overflow, `process::exit`) names
+  no failing test, so only its failed outcome is checked; cargo stops at the
+  first failing binary, so a labeled test in a later binary reads as not
+  failing (fail-closed); a doctest name contains spaces and cannot be a
+  `failing_test`; the short-flag check also refuses an attached value
+  containing `Z` or `C` (`-pZstd`), so use the long form; the default
+  `--work-dir` sits under this repository's `target`, so this repository's
+  `.cargo/config.toml` applies to subject builds; other caller `CARGO_*`
+  settings such as `CARGO_PROFILE_*` overflow checks still reach the subject
+  build; and a killed run leaves its per-process tree directory behind.
 
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
@@ -233,8 +240,8 @@ the distinct codes seen in that case's run.
 
 - Running mutation testing, `cargo test`, or network access from `report`
   or `check`. Truth was established at labeling and is recorded; only
-  `relabel` runs the test commands, on demand, and it never touches the
-  network.
+  `relabel` runs the test commands, on demand, with cargo offline; it does
+  not sandbox the subject's own build scripts or tests.
 - A population estimate. Rates describe these cases only.
 - Replacing the judged panels or the shared Rust corpus; this corpus draws
   on the shared corpus pins where they exist.

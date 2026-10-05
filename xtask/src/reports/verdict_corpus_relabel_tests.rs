@@ -74,6 +74,20 @@ fn test_command_args_accepts_only_plain_cargo_test() -> Result<(), String> {
     assert!(test_command_args("make test").err().is_some());
     assert!(test_command_args("cargo test; rm -rf /").err().is_some());
     assert!(test_command_args("cargo test | tee log").err().is_some());
+    // Commands that exit 0 without running a test cannot carry a label.
+    assert!(test_command_args("cargo test --no-run").err().is_some());
+    assert!(test_command_args("cargo test -- --list").err().is_some());
+    assert!(
+        test_command_args("cargo test -- --format terse")
+            .err()
+            .is_some()
+    );
+    assert!(
+        test_command_args("cargo test -- --format=json")
+            .err()
+            .is_some()
+    );
+    assert!(test_command_args("cargo test -- -q").err().is_some());
     for escape in [
         "cargo test --manifest-path /elsewhere/Cargo.toml",
         "cargo test --target-dir=/tmp/x",
@@ -100,7 +114,7 @@ fn classify_run_separates_test_failures_from_build_failures() {
         failing(&["tests::b"])
     );
     assert_eq!(
-        classify_run(true, false, "test result: ok.", ""),
+        classify_run(true, false, "test result: ok. 2 passed; 0 failed", ""),
         RunOutcome::TestsPassed
     );
     // A compile error prints no test lines at all.
@@ -122,6 +136,25 @@ fn classify_run_separates_test_failures_from_build_failures() {
         failing(&[])
     );
     assert_eq!(classify_run(false, true, failed, ""), RunOutcome::TimedOut);
+    // A success that executed nothing (a filter matching no test) is not a pass.
+    assert_eq!(
+        classify_run(
+            true,
+            false,
+            "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out\n",
+            ""
+        ),
+        RunOutcome::NoTestsRan
+    );
+    assert_eq!(
+        classify_run(
+            true,
+            false,
+            "test result: ok. 0 passed; 0 failed; 0 ignored\ntest result: ok. 3 passed; 0 failed; 1 ignored\n",
+            ""
+        ),
+        RunOutcome::TestsPassed
+    );
     let should_panic = "running 1 test\ntest checks::tests::over - should panic ... FAILED\n\ntest result: FAILED.";
     assert_eq!(
         classify_run(false, false, should_panic, ""),
@@ -374,13 +407,29 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
         Path::new(""),
         Path::new("sub/up/sub/up/..")
     ));
-    let escaped = copy_checkout(&checkout, &base.join("copy"));
+    let listed = |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
+    let escaped = copy_checkout(
+        &checkout,
+        &base.join("copy"),
+        &listed(&["lib.rs", "sub/up", "esc"]),
+    );
     fs::remove_file(checkout.join("esc")).map_err(io)?;
     // A dangling link cannot be shown to stay inside.
     symlink("sub/up/sub/up/../missing", checkout.join("dangling")).map_err(io)?;
-    let dangling = copy_checkout(&checkout, &base.join("copy-dangling"));
+    let dangling = copy_checkout(
+        &checkout,
+        &base.join("copy-dangling"),
+        &listed(&["lib.rs", "dangling"]),
+    );
     fs::remove_file(checkout.join("dangling")).map_err(io)?;
-    let contained = copy_checkout(&checkout, &base.join("copy-ok"));
+    // Only listed paths are copied; an unlisted file stays behind.
+    fs::write(checkout.join("ignored.toml"), "").map_err(io)?;
+    let contained = copy_checkout(
+        &checkout,
+        &base.join("copy-ok"),
+        &listed(&["lib.rs", "sub/up"]),
+    );
+    let ignored_copied = base.join("copy-ok/ignored.toml").exists();
     fs::remove_dir_all(&base).map_err(io)?;
     assert!(
         escaped
@@ -396,5 +445,6 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
             .is_some_and(|err| err.contains("does not resolve")),
         "{dangling:?}"
     );
+    assert!(!ignored_copied, "an unlisted file reached the copy");
     contained
 }
