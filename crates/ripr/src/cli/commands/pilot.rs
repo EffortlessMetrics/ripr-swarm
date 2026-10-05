@@ -9,6 +9,7 @@ use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::core_error::CoreError;
 use crate::output;
+use crate::output::human::terminal_safe;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -188,6 +189,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             python_first_use: None,
             language_routes: None,
             current_change: None,
+            seam_limit: None,
         };
         write_pilot_file(
             &artifacts.pilot_summary_json,
@@ -228,11 +230,22 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         current_change.keeps_past_budget(entry)
     })?;
     let pilot_budget_truncated = pilot_budget_info.is_some();
+    // The summary's disclosure counts from the outermost population: when
+    // both caps fired, the pilot budget's total is the already-capped
+    // inventory, which would hide the seams the inventory limit dropped.
+    let summary_limit = match (&pilot_budget_info, &inventory_limit_info) {
+        (Some(budget), Some(inventory)) => Some(analysis::SeamLimitInfo {
+            analyzed: budget.analyzed,
+            total: inventory.total,
+            source: budget.source.clone(),
+        }),
+        (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
+    };
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
-        eprintln!("ripr pilot: {warning}");
+        eprintln!("{}", terminal_safe(format!("ripr pilot: {warning}")));
     }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
@@ -259,6 +272,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
+        seam_limit: summary_limit.as_ref(),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -377,8 +391,12 @@ fn load_pilot_current_change(
             // then would silently drop uncommitted edits from the change.
             from_working_tree =
                 analysis::probe_working_tree_tracked_changes_within(&input.root, git_timeout)
-                    .ok()
-                    .ok_or("git status failed")?;
+                    .map_err(|err| {
+                        current_change_unavailable_reason(
+                            &CoreError::from(err),
+                            "git status failed",
+                        )
+                    })?;
             if from_working_tree {
                 analysis::load_worktree_diff_with_effective_base_core(
                     &input.root,

@@ -29,6 +29,9 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// The current change (see `PilotCurrentChange`). `None` when it was not
     /// collected (the timeout summary).
     pub(crate) current_change: Option<&'a super::PilotCurrentChange>,
+    /// Set when a seam limit (pilot budget or inventory limit) cut the
+    /// classified seams before ranking, so counts over them are lower bounds.
+    pub(crate) seam_limit: Option<&'a crate::analysis::SeamLimitInfo>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
