@@ -9,8 +9,34 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- CI: ub-review selects RIPR's companion configuration and Rust repository
+  identity, and requests resolved-candidate receipts under the same PR-specific
+  artifact name used for upload. Review remains advisory; artifact retrieval
+  requires the existing token's Actions access and exact-revision reuse checks
+  still apply (#6337).
+
+- MCP wire names unified on `canonical_id` (same spelling the evidence
+  documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
+  `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
+  resource templates are `ripr://gap/{canonical_id}` and
+  `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
+  `resources/templates/list` adapt automatically; in-flight callers passing `gap_id`
+  get `invalid params` (#5209).
 ### Added
 
+- Bounded repair states its inline-test boundary as permanent scope:
+  repositories whose only tests are inline `#[cfg(test)]` modules in
+  non-test-surface files are out of repair scope
+  (`docs/REPAIR_ATTEMPT.md` Boundary, `ripr agent repair --help`), and
+  the CLI, pilot, and MCP refusals name it so no surface promises what
+  another refuses (#5210).
+- `ripr check --help` now chooses one `--format` per task (eye review,
+  drill-in listing, machine JSON, Actions annotations, code scanning,
+  README badge, PR/CI badge, repo inventory, agent packets) above the
+  full group list, so a newcomer maps their job to a format without
+  re-reading the 22 values (#5211).
 - `ripr check --format json` caps the rendered `findings` array at
   `RIPR_CHECK_FINDINGS_BYTES` emitted bytes (default 1,000,000; `0` removes
   the cap). A bounded document renders the deterministic first-finding prefix
@@ -29,6 +55,38 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
+  JSON through the same product importer as `ripr calibrate cargo-mutants`.
+  A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
+  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
+  is no longer read as all-unknown (#5374).
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
+  error path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
+- Repair attempts preserve literal Unix backslashes in the canonical root
+  stored by the before producer. Newly published manifests reopen in the
+  selected repository while authentic copies in another root remain refused
+  (#5744).
+- Repo-exposure snapshots retain native Unix repository root characters for
+  artifact admission, including literal filename backslashes (#5744).
+- Agent verify preserves native Unix characters in its before/after input
+  paths so receipt admission can reopen the selected snapshots (#5744).
+- CLI/MCP: selected failed or open-gap repair attempts preserve literal Unix
+  backslashes in the restart command's `--root` argument. Such a directory no
+  longer redirects restart advice to the corresponding slash path (#5608).
+- CLI: `ripr doctor --profile source-build` warns when the workspace's
+  `.cargo/config.toml` redirects linker temp variables (`TEMP`, `TMP`,
+  `TMPDIR`) into a workspace-relative directory that does not exist. ripr's
+  own config force-redirects them into `target/` (PR #397), so a fresh
+  `git worktree add` building with an isolated `CARGO_TARGET_DIR` failed
+  MSVC linking with an opaque `LNK1104 ... target\lnk{GUID}.tmp` until the
+  directory was hand-created; the advisory names the redirect and the
+  `mkdir` repair. The redirect stays — it protects full system temp drives —
+  and the constraint is now documented in
+  `docs/agent-context/validation.md` (#5280).
 - Repair attempts: concurrent `ripr agent repair --phase after` invocations
   against one attempt no longer lose a verdict to a last-writer-wins
   manifest replace. Manifest commits serialize on a short-held exclusive
@@ -217,9 +275,21 @@ are scoped or reviewed.
   limitations text no longer claims a cancelled attempt is never
   committed; and superseded-attempt tombstones are capped so long
   sessions stay bounded (#5254 items 2, 3, 4, 5, 7).
+- LSP: `ripr lsp` exits 2 when the `exit` notification arrives without a
+  prior `shutdown` request, per LSP §exit. `shutdown` then `exit` still
+  exits 0, as do stdin EOF and malformed-frame termination (#5249).
+
+- `ripr explain` and `ripr context` explain `file:line` syntax after a malformed
+  location misses and retain the scoped listing command for recovery. Finding
+  IDs remain opaque; selection and exit status are unchanged (#5581, #5252).
 
 ### Changed
 
+- The install route is now timed as its own scoreboard metric,
+  `first_run.install_seconds` with a rise rule that needs a committed baseline sample and a nightly first-run ingest before it can fail anything (#5311, #5983). The README, quickstart
+  and install-channel notes state the measured source-build time of a 0.11
+  development build (about 11 minutes against about 2 for 0.10.0) and that no
+  prebuilt 0.11 archive exists until 0.11.0 is published.
 - Performance: cold `ripr pilot` parses each production file once for
   new-test placement instead of twice per seam, and a run that passes the
   default 30s deadline keeps going instead of restarting. On a 4-core Linux
