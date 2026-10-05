@@ -547,7 +547,11 @@ fn remove_replaced_generation_files(
     let retained_prefix = format!("g{retained_publication_id}/");
     for shard in &previous.shards {
         // Only generation files are ours to delete; a listed manifest path is hostile.
-        if shard.file.starts_with(&retained_prefix) || !shard.file.starts_with('g') {
+        let in_generation_dir = shard
+            .file
+            .split_once('/')
+            .is_some_and(|(dir, rest)| dir.starts_with('g') && !rest.is_empty());
+        if shard.file.starts_with(&retained_prefix) || !in_generation_dir {
             continue;
         }
         if let Ok(path) = resolve_sharded_cache_file(sharded_dir, &shard.file) {
@@ -1799,6 +1803,43 @@ mod tests {
             orphan.exists(),
             "an unreadable manifest must keep every generation"
         );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_generation_cleanup_only_deletes_files_inside_generation_directories()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-scope");
+        ignore_remove_dir_all(&dir);
+        let generation = dir.join("g1-1-0");
+        std::fs::create_dir_all(&generation).map_err(|err| err.to_string())?;
+        std::fs::write(generation.join("shard-00000.json"), b"old")
+            .map_err(|err| err.to_string())?;
+        for sibling in ["gfoo.json", "manifest.json"] {
+            std::fs::write(dir.join(sibling), b"keep").map_err(|err| err.to_string())?;
+        }
+        let refs = ["g1-1-0/shard-00000.json", "gfoo.json", "manifest.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 3, 3, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "2-2-0");
+        assert!(
+            !generation.join("shard-00000.json").exists(),
+            "a replaced generation file is removed"
+        );
+        for sibling in ["gfoo.json", "manifest.json"] {
+            assert!(
+                dir.join(sibling).exists(),
+                "{sibling} is outside any g*/ directory"
+            );
+        }
         ignore_remove_dir_all(&dir);
         Ok(())
     }
