@@ -245,6 +245,11 @@ struct GuardedMatchShape {
     callee: String,
     /// Whether an `Ok(`-headed arm exists (classic form vs pure routing).
     has_ok_arm: bool,
+    /// Total number of arms in the match block, of every head kind.
+    arm_count: usize,
+    /// Ok-arm pattern slices, including a trailing `if <guard>` when the
+    /// arm carries one (#6673: the asserted-Err form refuses a guard).
+    ok_patterns: Vec<String>,
     /// Trimmed Ok-arm bodies, one per Ok arm: the observation surface the
     /// fact's `ok_value_observed` decision reads (#3731).
     ok_bodies: Vec<String>,
@@ -366,6 +371,8 @@ fn parse_guarded_result_match(rest: &str) -> Option<GuardedMatchShape> {
         path: path.to_string(),
         callee,
         has_ok_arm: !ok_arms.is_empty(),
+        arm_count: arms.len(),
+        ok_patterns: ok_arms.iter().map(|(pattern, _)| pattern.clone()).collect(),
         ok_bodies: ok_arms.iter().map(|(_, body)| body.clone()).collect(),
         err_patterns: err_arms
             .iter()
@@ -454,6 +461,18 @@ fn balanced_block(text: &str) -> Option<&str> {
 /// Build the oracle fact for a recognized guarded Result match, or `None`
 /// when no Err arm carries a recognized, terminating discriminator.
 fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<OracleFact> {
+    // RIPR-SPEC-0175 asserted-Err form (#6673): an exhaustive two-arm match
+    // whose Ok arm diverges and whose Err arm is one exact equality or
+    // `matches!` assertion on the arm's own error binding. The test passes
+    // only when the owner returns that exact error.
+    if let Some(pin) = asserted_err_arm_pin(shape) {
+        return Some(guarded_match_fact(
+            shape,
+            line,
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Strong,
+        ));
+    }
     // Every Err arm must fail loudly on its own text. A guarded accept arm
     // (`Err(e) if <pin> => {}`) is terminal only when it can route: it has
     // a guard, its body is trivial, and every catch-all arm fails loudly.
@@ -590,6 +609,17 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         // payload text (#3709 fail-closed).
         return None;
     };
+    Some(guarded_match_fact(shape, line, pin_text, strength))
+}
+
+/// The synthesized guarded-match oracle fact for one recognized shape and
+/// its pin text.
+fn guarded_match_fact(
+    shape: &GuardedMatchShape,
+    line: usize,
+    pin_text: String,
+    strength: OracleStrength,
+) -> OracleFact {
     let text = if shape.has_ok_arm {
         format!(
             "match {}(..) {{ Ok(..) => .., Err(..) => {pin_text} }}",
@@ -603,14 +633,135 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             shape.path
         )
     };
-    Some(OracleFact {
+    OracleFact {
         line,
         observed_tokens: extract_identifier_tokens(&text),
         kind: OracleKind::GuardedResultMatch,
         strength,
         text,
         ok_value_observed: Some(ok_arms_observe_value(&shape.ok_bodies)),
-    })
+    }
+}
+
+/// The exact error pin of the RIPR-SPEC-0175 asserted-Err form (#6673):
+///
+/// ```text
+/// match owner(..) {
+///     Ok(<pattern>) => <diverges>,
+///     Err(<binding>) => assert_eq!(<binding>, Type::Variant),
+/// }
+/// ```
+///
+/// Every condition is required, so the test passes exactly when the
+/// owner's result is `Err(Type::Variant)`:
+/// - the block holds exactly two arms, one `Ok(..)` and one `Err(..)`,
+///   neither guarded — with no catch-all arm, the compiler's
+///   exhaustiveness check makes both patterns irrefutable;
+/// - the Ok arm terminates under the same bounded divergence grammar as a
+///   terminal Err arm ([`arm_terminates`]), so a success result fails;
+/// - the Err arm binds a bare identifier and its whole body is ONE
+///   statement: `assert_eq!(<binding>, <unit variant path>)` in either
+///   operand order (a trailing message is allowed), or
+///   `assert!(matches!(<binding>, <variant pattern>))` with no `|`
+///   alternation and no `if` guard in the pattern.
+///
+/// Anything else — a quiet Ok arm (`Ok(_) => {}`), a catch-all arm, a
+/// guard, an assertion on another value, a second statement, a payload
+/// variant compared by value — returns `None`, and the shape keeps its
+/// existing meaning.
+fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
+    if shape.arm_count != 2
+        || shape.ok_patterns.len() != 1
+        || shape.ok_bodies.len() != 1
+        || shape.err_patterns.len() != 1
+        || shape.err_bodies.len() != 1
+        || !shape.catch_all_bodies.is_empty()
+    {
+        return None;
+    }
+    if split_pattern_guard(&shape.ok_patterns[0]).1.is_some()
+        || !arm_terminates(&shape.ok_bodies[0])
+    {
+        return None;
+    }
+    let (err_pattern, err_guard) = split_pattern_guard(&shape.err_patterns[0]);
+    if err_guard.is_some() {
+        return None;
+    }
+    let binding = err_arm_binding_identifier(err_pattern)?;
+    let statement = single_arm_statement(&shape.err_bodies[0])?;
+    if let Some(arguments) = macro_arguments(statement, "assert_eq!") {
+        let (left, right) = (arguments.first()?.trim(), arguments.get(1)?.trim());
+        let pin = if left == binding && is_variant_path(right) {
+            right
+        } else if right == binding && is_variant_path(left) {
+            left
+        } else {
+            return None;
+        };
+        return Some(pin.to_string());
+    }
+    let arguments = macro_arguments(statement, "assert!")?;
+    let inner = macro_arguments(arguments.first()?.trim(), "matches!")?;
+    let [scrutinee, pattern] = inner.as_slice() else {
+        return None;
+    };
+    if scrutinee.trim() != binding {
+        return None;
+    }
+    let pattern = compact_whitespace(pattern.trim());
+    let head: String = pattern
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
+        })
+        .collect();
+    let alternation_or_guard = pattern.contains('|') || split_pattern_guard(&pattern).1.is_some();
+    (is_variant_path(&head) && !alternation_or_guard).then_some(pattern)
+}
+
+/// The single statement of an arm body: an expression body, or a
+/// brace-wrapped block holding exactly one non-empty top-level statement.
+fn single_arm_statement(body: &str) -> Option<&str> {
+    let body = body.trim();
+    let inner = if body.starts_with('{') {
+        let inner = balanced_block(body)?;
+        if body.len() != inner.len() + 2 {
+            return None;
+        }
+        inner
+    } else {
+        body
+    };
+    let statements: Vec<&str> = top_level_statements(inner)
+        .into_iter()
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .collect();
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    Some(statement)
+}
+
+/// The depth-0 comma-separated arguments of `<name>(..)` when that one
+/// invocation covers the whole statement; `None` otherwise.
+fn macro_arguments<'a>(statement: &'a str, name: &str) -> Option<Vec<&'a str>> {
+    if !invocation_covers_statement(statement, name) {
+        return None;
+    }
+    let open = statement.find('(')?;
+    let inner = statement[open + 1..].trim_end().strip_suffix(')')?;
+    let mut arguments = Vec::new();
+    let mut start = 0usize;
+    while let Some(comma) = top_level_comma(inner, start) {
+        arguments.push(&inner[start..comma]);
+        start = comma + 1;
+    }
+    if !inner[start..].trim().is_empty() {
+        arguments.push(&inner[start..]);
+    }
+    Some(arguments)
 }
 
 /// Whether any Ok arm of a guarded Result match observes the unwrapped
@@ -4034,5 +4185,95 @@ mod multibyte_guard_tests {
         // multibyte char must advance by that char's width, not one byte.
         assert!(!references_whole_word("return new_заказ;", "заказ"));
         assert!(references_whole_word("return new_заказ + заказ;", "заказ"));
+    }
+}
+
+/// RIPR-SPEC-0175 asserted-Err form (#6673): an exhaustive two-arm Result
+/// match whose Ok arm diverges and whose Err arm exactly pins its binding.
+#[cfg(test)]
+mod asserted_err_arm_tests {
+    use super::guarded_result_match_scan;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    fn scan_one(arms: &str) -> Vec<OracleFact> {
+        let body =
+            format!("#[test]\nfn routes() {{\n    match withdraw(10, 20) {{\n{arms}\n    }}\n}}\n");
+        guarded_result_match_scan(&body, 1).oracles
+    }
+
+    #[test]
+    fn diverging_ok_arm_and_assert_eq_err_arm_pin_the_variant() {
+        let oracles = scan_one(
+            "        Ok(left) => panic!(\"overdraw left {left}\"),\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+        );
+        assert_eq!(oracles.len(), 1, "{oracles:?}");
+        assert_eq!(oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(oracles[0].strength, OracleStrength::Strong);
+        assert_eq!(
+            oracles[0].text,
+            "match withdraw(..) { Ok(..) => .., Err(..) => PayError::Insufficient }"
+        );
+    }
+
+    #[test]
+    fn mirrored_operands_braced_bodies_and_matches_form_also_pin() {
+        let mirrored = scan_one(
+            "        Ok(_) => { unreachable!(); }\n        Err(error) => { assert_eq!(PayError::Limit, error, \"wrong error\"); }",
+        );
+        assert_eq!(mirrored.len(), 1, "{mirrored:?}");
+        assert!(mirrored[0].text.ends_with("Err(..) => PayError::Limit }"));
+        let matches_form = scan_one(
+            "        Ok(v) => panic!(\"{v}\"),\n        Err(e) => assert!(matches!(e, PayError::Wrap(_))),",
+        );
+        assert_eq!(matches_form.len(), 1, "{matches_form:?}");
+        assert!(
+            matches_form[0]
+                .text
+                .ends_with("Err(..) => PayError::Wrap(_) }"),
+            "{}",
+            matches_form[0].text
+        );
+    }
+
+    #[test]
+    fn quiet_or_guarded_ok_arms_never_pin() {
+        for arms in [
+            // A quiet Ok arm accepts success: the error is not required.
+            "        Ok(_) => {}\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+            // An Ok arm that asserts its payload does not diverge.
+            "        Ok(left) => assert_eq!(left, 0),\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+            // A guarded Ok arm is not the whole success side.
+            "        Ok(left) if left > 0 => panic!(\"left\"),\n        Ok(_) => {}\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
+    }
+
+    #[test]
+    fn catch_all_guards_and_loose_err_bodies_never_pin() {
+        for arms in [
+            // A quiet catch-all swallows whatever it matches.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(e, PayError::Insufficient),\n        _ => {}",
+            // A catch-all in place of the Ok arm.
+            "        Err(e) => assert_eq!(e, PayError::Insufficient),\n        _ => {}",
+            // A guarded Err arm.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) if flag => assert_eq!(e, PayError::Insufficient),",
+            // The assertion compares another value.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(other, PayError::Insufficient),",
+            // assert_ne! does not pin.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_ne!(e, PayError::Insufficient),",
+            // A second statement in the Err arm.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => { log(&e); assert_eq!(e, PayError::Insufficient); }",
+            // matches! alternation and guards are not one exact variant.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert!(matches!(e, PayError::Limit | PayError::Insufficient)),",
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert!(matches!(e, PayError::Wrap(n) if n > 1)),",
+            // A wildcard Err binding has nothing to compare.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(_) => assert_eq!(e, PayError::Insufficient),",
+            // A payload variant compared by value is not a unit-variant pin.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(e, PayError::Wrap(1)),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
     }
 }

@@ -9,6 +9,7 @@ Created: 2026-06-14
 Linked issues:
 
 - #1168
+- #6695 (`ok_or(Variant)?` propagation, Part C)
 
 Linked PRs:
 
@@ -118,6 +119,52 @@ Implementation:
   `RequiredDiscriminator::ErrorVariant { variant }` on the seam and the
   oracle assertion text and rejects a mismatch.
 
+### Part C — `ok_or(Variant)?` returns the variant from the owner (#6695)
+
+A changed statement `let d = helper(c).ok_or(Type::Variant)?;` (or
+`.ok_or_else(|| Type::Variant)?`) returns `Err(Type::Variant)` from the
+owner when the helper yields `None`. The changed error's identity is that
+variant, exactly as for `return Err(Type::Variant)`:
+
+- `text::question_mark_error_variant` reads the variant only when the
+  line holds exactly one `.ok_or(`/`.ok_or_else(` call at delimiter depth
+  zero, its `?` directly follows the call and ends the statement, no `|`
+  sits at depth zero before it, and the argument is one qualified variant
+  path (upper-case final segment, optional single payload) — for
+  `ok_or_else`, the body of a parameterless `||` thunk. Every other shape
+  (a call or `.into()` argument, a bare imported variant name, a second
+  conversion on the line, `?.field`, a closure head) reads `None`.
+- The ErrorPath flow sink becomes `Result::Err(Type::Variant)` only when
+  `flow::question_mark_returns_from_owner` confirms, over the masked
+  owner body, that the line is the changed expression and that no
+  enclosing delimiter between the owner's body brace and the line opens
+  a closure (`|`), an `async`/`try`/`move`/`gen` block, a nested item
+  (`fn`/`impl`/`mod`/..), a macro body (`!`), or a call argument list —
+  in each of those the `?` returns from something other than the owner.
+- With that sink, the propagation witness edge is established and
+  complete (the `||` thunk is the argument's own constant, not an opaque
+  path), so an exact `Err(Type::Variant)` pin on the owner call can read
+  `exposed`.
+- Part B applies to the same variant: reveal's `error_path_variant_token`
+  falls back to `question_mark_error_variant`, so a test pinning a
+  sibling variant (`Err(Type::Other)`) does not confirm the line.
+
+The predicate probe that the same `?` line also produces keeps reading
+`infection_unknown` ("no literal boundary was visible"): the `?` branches
+on `None`, which has no literal boundary to pair with a test input. That
+is a non-actionable unknown, not a gap, and this part does not change it.
+
+Part B also covers the turbofish constructor: `exact_error_variant`
+reads `Err::<T, E>(Type::Variant)` like `Err(Type::Variant)`, and the
+witness compares error identities with the turbofish removed. Before,
+that spelling carried no variant, so a sibling-variant pin from another
+test of the same owner could confirm it and read `exposed`.
+
+A related honesty fix: the witness's opaque-path check names an FFI
+boundary only for an `ffi` identifier word (`std::ffi::CStr`, `ffi_call`),
+not for the letters `ffi` inside a word, which refused every witness for
+variants such as `PayError::Insufficient` (#6673).
+
 ## Non-Goals
 
 - Does NOT recognize `expect_err` in a middle position (only at the end of the
@@ -216,6 +263,12 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `is_unwrap_err_bound_error_assertion_upgrades_named_variant` | Fixture 1 positive |
 | `generic_assertion_on_bound_var_not_upgraded` | Fixture 3 generic |
 | `sibling_variant_assertion_does_not_match_tool_large_probe` | Fixture 2 sibling |
+| `question_mark_error_variant_reads_ok_or_and_ok_or_else` | Part C recognition |
+| `question_mark_error_variant_refuses_every_other_shape` | Part C fail-closed shapes |
+| `question_mark_ok_or_in_the_owner_body_is_a_complete_error_witness` | Part C propagation |
+| `question_mark_ok_or_inside_a_closure_or_async_block_is_not_owner_propagation` | Part C enclosure negatives |
+| `ffi_boundary_is_an_identifier_word_not_a_substring` | Part C opaque-path fix |
+| `exact_error_variant_reads_turbofish_and_qualified_constructors` | Part B turbofish binding |
 
 ## Acceptance Examples
 
@@ -261,6 +314,9 @@ Evidence
 | Sibling-variant guard — diff-mode | `crates/ripr/src/analysis/classify/reveal.rs` |
 | Sibling-variant guard — repo-exposure | `crates/ripr/src/analysis/test_grip_evidence.rs` |
 | `enum_variant_values`, `exact_error_variant` re-exported | `crates/ripr/src/analysis/classify/mod.rs` |
+| Part C `question_mark_error_variant` | `crates/ripr/src/analysis/classify/text/error_variant.rs` |
+| Part C owner-enclosure gate and error sink | `crates/ripr/src/analysis/classify/flow.rs` |
+| Part C established witness edge, FFI word check | `crates/ripr/src/analysis/classify/propagation_witness.rs` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 

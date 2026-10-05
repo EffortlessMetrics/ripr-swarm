@@ -560,8 +560,11 @@ fn analyze_related_assertions(
 /// matching to the changed expression's specific variant, preventing
 /// sibling-variant over-credit.
 fn error_path_variant_token(expression: &str) -> Option<String> {
-    use super::text::exact_error_variant;
-    let variant_path = exact_error_variant(expression)?;
+    use super::text::{exact_error_variant, question_mark_error_variant};
+    // #6695: `.ok_or(Type::Variant)?` constructs that exact error too, so a
+    // sibling-variant assertion must not confirm it either.
+    let variant_path =
+        exact_error_variant(expression).or_else(|| question_mark_error_variant(expression))?;
     // Last component after the final `::`.
     let last = variant_path.rsplit("::").next()?;
     if last

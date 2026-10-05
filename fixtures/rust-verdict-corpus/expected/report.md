@@ -80,7 +80,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `ledger-sku-family-end` | authored | discriminated | credited | limited | infection_unknown | abstained | no | none |
 | `accounts-balance-add` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `accounts-trailer-crc` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
+| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
 | `accounts-last-byte-unchecked` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
@@ -88,7 +88,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-fee-err-return-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
+| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
 | `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
