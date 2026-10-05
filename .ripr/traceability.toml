@@ -1689,6 +1689,8 @@ tests = [
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_rejects_a_blocked_gap_ledger_with_producer_warnings",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_accepts_a_warning_free_blocked_gap_ledger_as_zero",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_keeps_delta_debt_under_a_failed_gap_ledger",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_when_items_exceed_a_nonzero_count",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_reports_unknown_when_a_nonzero_count_carries_no_items",
   "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_surfaces_a_failed_gate_decision",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_parses_option_surface",
   "crates/ripr/src/cli/commands.rs::tests::ripr_zero_status_requires_inputs_and_rejects_unknown_args",

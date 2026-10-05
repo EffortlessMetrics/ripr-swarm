@@ -230,6 +230,7 @@ struct ReviewMetadata {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct GateParse {
     blocking_candidates: usize,
+    failed: bool,
     warnings: Vec<String>,
 }
 
@@ -286,6 +287,7 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     let status = if delta.status == ParseStatus::Loaded
         && !partial_denominator
         && !delta.counts_items_mismatch
+        && !gate.failed
     {
         "advisory"
     } else {
@@ -313,8 +315,9 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
         "baseline_debt_delta"
     };
     // Contradictory inputs can never yield a verdict, and a partial
-    // denominator can never yield bare achieved — but visible debt keeps its
-    // not_yet signal, disclosed by the parse warnings (#5251 Z2/Z3/Z4).
+    // denominator or a failed gate evaluation can never yield bare achieved
+    // — but visible debt keeps its not_yet signal, disclosed by the parse
+    // warnings (#5251 Z2/Z3/Z4/Z5).
     let all_clear = visible_unresolved == 0
         && delta.counts.stale == 0
         && delta.counts.invalid == 0
@@ -322,6 +325,7 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     let state = if delta.status != ParseStatus::Loaded
         || delta.counts_items_mismatch
         || (all_clear && partial_denominator)
+        || (all_clear && gate.failed)
     {
         "unknown"
     } else if all_clear {
@@ -689,50 +693,66 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             incomplete_analysis_outcome_kind(&value)
         ));
     }
-    // Counts and items must reconcile (#5251 Z3): items in a bucket whose
-    // count reads zero contradict the counts, so the document cannot yield a
-    // verdict. Unclassifiable items contradict an otherwise clear document:
-    // their debt classification is unknown, so they block `achieved` exactly
-    // when the counts would otherwise clear it. Historical `resolved` and
-    // accepted `suppressed` counts never mask them (#6095 review); against
-    // visible unresolved, stale, invalid, or missing-input counts the
-    // document is already `not_yet`, so they add no new contradiction.
+    // Counts and items must reconcile (#5251 Z3): the check below
+    // requires exact bucket cardinalities, since the producer aggregates
+    // counts from the emitted items.
     let clear_counts_zero = counts.still_present == 0
         && counts.new_policy_eligible == 0
         && counts.acknowledged == 0
         && counts.stale == 0
         && counts.invalid == 0
         && counts.missing_input == 0;
-    let mut counts_items_mismatch = false;
+    // The producer aggregates every bucket count from the emitted items, so
+    // in a faithful document each bucket cardinality equals its count
+    // exactly. Any deviation is a self-contradictory document, which cannot
+    // yield a verdict (#5251 Z3, #6095 review). Buckets outside the
+    // producer's eight carry no count to contradict, so they block
+    // `achieved` only when the counts would otherwise clear it: against
+    // visible debt the document is already `not_yet`. Historical `resolved`
+    // and accepted `suppressed` counts never mask them.
+    let mut bucket_items: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut unknown_bucket_items = 0usize;
     for item in &items {
-        let bucket_count: Option<usize> = match item.bucket.as_str() {
-            "still_present" => Some(counts.still_present),
-            "resolved" => Some(counts.resolved),
-            "new_policy_eligible" => Some(counts.new_policy_eligible),
-            "acknowledged" => Some(counts.acknowledged),
-            "suppressed" => Some(counts.suppressed),
-            "stale_baseline_entry" => Some(counts.stale),
-            "invalid_baseline_entry" => Some(counts.invalid),
-            _ => None,
-        };
-        match bucket_count {
-            Some(0) => {
-                counts_items_mismatch = true;
-                break;
+        match item.bucket.as_str() {
+            "still_present"
+            | "resolved"
+            | "new_policy_eligible"
+            | "acknowledged"
+            | "suppressed"
+            | "stale_baseline_entry"
+            | "invalid_baseline_entry"
+            | "missing_current_input" => {
+                *bucket_items.entry(item.bucket.as_str()).or_insert(0) += 1;
             }
-            Some(_) => {}
-            None => {
-                if clear_counts_zero {
-                    counts_items_mismatch = true;
-                    break;
-                }
+            _ => {
+                unknown_bucket_items += 1;
             }
         }
     }
-    if counts_items_mismatch {
+    let bucket_counts = [
+        ("still_present", counts.still_present),
+        ("resolved", counts.resolved),
+        ("new_policy_eligible", counts.new_policy_eligible),
+        ("acknowledged", counts.acknowledged),
+        ("suppressed", counts.suppressed),
+        ("stale_baseline_entry", counts.stale),
+        ("invalid_baseline_entry", counts.invalid),
+        ("missing_current_input", counts.missing_input),
+    ];
+    let mut counts_items_mismatch = false;
+    for (bucket, count) in bucket_counts {
+        let carried = bucket_items.get(bucket).copied().unwrap_or(0);
+        if carried != count {
+            counts_items_mismatch = true;
+            warnings.push(format!(
+                "required baseline debt delta input {path} bucket {bucket} reports count {count} but carries {carried} item(s); contradictory items and counts cannot yield a verdict"
+            ));
+        }
+    }
+    if unknown_bucket_items > 0 && clear_counts_zero {
+        counts_items_mismatch = true;
         warnings.push(format!(
-            "required baseline debt delta input {path} carries {} item(s) against zero counts; contradictory items and counts cannot yield a verdict",
-            items.len()
+            "required baseline debt delta input {path} carries {unknown_bucket_items} item(s) outside the producer buckets against zero counts; contradictory items and counts cannot yield a verdict"
         ));
     }
     DeltaParse {
@@ -863,9 +883,10 @@ fn parse_gate(path: Option<&str>, text: Option<Result<String, String>>) -> GateP
     };
     // A failed gate evaluation is surfaced, never silently zeroed (#5251
     // Z5): its blocking count is meaningless because evaluation did not
-    // complete.
+    // complete, so it is forced to 0 and the failure feeds the verdict.
     let mut gate_warnings = warnings_from_value(&value);
-    if string_field(value.get("status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR) {
+    let failed = string_field(value.get("status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR);
+    if failed {
         let config_error_count = value
             .get("config_errors")
             .and_then(Value::as_array)
@@ -875,7 +896,12 @@ fn parse_gate(path: Option<&str>, text: Option<Result<String, String>>) -> GateP
         ));
     }
     GateParse {
-        blocking_candidates: usize_path(&value, &["summary", "blocking"]),
+        blocking_candidates: if failed {
+            0
+        } else {
+            usize_path(&value, &["summary", "blocking"])
+        },
+        failed,
         warnings: gate_warnings,
     }
 }
@@ -2183,7 +2209,9 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let report = build_ripr_zero_status_report(RiprZeroStatusInput {
             root: ".".to_string(),
@@ -2456,7 +2484,10 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
         }"#;
         let report = build_ripr_zero_status_report(RiprZeroStatusInput {
             root: ".".to_string(),
@@ -2534,7 +2565,9 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let gap_ledger = r#"{
           "run_status": "limited_partial_scope",
@@ -2584,7 +2617,9 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let gap_ledger = r#"{
           "status": "blocked",
@@ -2640,7 +2675,9 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let gap_ledger = r#"{
           "status": "blocked",
@@ -2745,14 +2782,16 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let gate = r#"{
           "schema_version": "0.1",
           "kind": "gate_decision",
           "status": "config_error",
           "config_errors": ["gate evaluate requires --pr-guidance <path> or --gap-ledger <path>"],
-          "summary": {"blocking": 0}
+          "summary": {"blocking": 2}
         }"#;
         let report = build_ripr_zero_status_report(RiprZeroStatusInput {
             root: ".".to_string(),
@@ -2775,8 +2814,110 @@ mod tests {
             rendered.contains("reports status config_error (1 config errors)"),
             "{rendered}"
         );
+        // A failed gate evaluation is meaningless blocking evidence: the
+        // count is forced to 0 and a zero-count delta reports unknown, never
+        // achieved (#6095 review).
         assert!(
             rendered.contains("\"blocking_candidates\": 0"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"status\": \"incomplete\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_when_items_exceed_a_nonzero_count() -> Result<(), String> {
+        // The producer aggregates counts from the emitted items, so a
+        // still_present count of 1 carrying 2 items is a contradictory
+        // document, which cannot yield a verdict (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 1,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("bucket still_present reports count 1 but carries 2 item(s)"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_when_a_nonzero_count_carries_no_items() -> Result<(), String>
+    {
+        // A positive count with no items is the same contradiction from the
+        // other side: the counts cannot be trusted, so no verdict (#6095
+        // review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 1,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("bucket still_present reports count 1 but carries 0 item(s)"),
             "{rendered}"
         );
         Ok(())
