@@ -58,7 +58,10 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             guard_condition_tail = Some((condition_end_line, tail));
         }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
-            collect_multiline_assertion(&mut trimmed, &mut lines);
+            let admitted = is_assertion_line(&trimmed);
+            if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
+                continue;
+            }
             trimmed = without_discarded_matcher_computations(&trimmed);
             if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
                 continue;
@@ -2066,6 +2069,35 @@ where
     }
 }
 
+/// An opening block is only a collection hint. Commit cloned lookahead after
+/// establishing that the first complete statement owns a discarded matcher;
+/// unrelated block observers must retain the original row traversal.
+fn collect_owned_observer_statement<'a, I>(
+    statement: &mut String,
+    lines: &mut std::iter::Peekable<I>,
+    admitted_observer: bool,
+) -> bool
+where
+    I: Iterator<Item = (usize, &'a str)> + Clone,
+{
+    let mut candidate = statement.clone();
+    let mut lookahead = lines.clone();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    if !admitted_observer {
+        let masked = mask_comments_and_strings(&candidate);
+        let statements = top_level_statements(&masked);
+        let Some(first) = statements.first() else {
+            return false;
+        };
+        if discarded_matcher_scrutinee(&candidate[..first.len()]).is_none() {
+            return false;
+        }
+    }
+    *statement = candidate;
+    *lines = lookahead;
+    true
+}
+
 fn delimiter_depth(text: &str) -> i32 {
     let mut depth = 0i32;
     let mut in_string = false;
@@ -2222,7 +2254,10 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
         {
             continue;
         }
-        collect_multiline_assertion(&mut statement, &mut lines);
+        let admitted = is_line_scanned_oracle(&statement);
+        if !collect_owned_observer_statement(&mut statement, &mut lines, admitted) {
+            continue;
+        }
         statement = without_discarded_matcher_computations(&statement);
         if !is_line_scanned_oracle(&mask_comments_and_strings(&statement)) {
             continue;

@@ -66,10 +66,9 @@ pub(super) fn is_unguarded_wildcard_assertion(line: &str) -> bool {
         return false;
     };
     let condition = mask_comments_and_strings(&condition);
-    let mut expression = condition.trim();
-    while let Some(inner) = parenthesized_contents(expression) {
-        expression = inner.trim();
-    }
+    let Some(expression) = unwrapped_pure_expression(&condition) else {
+        return false;
+    };
     complete_macro_arguments(expression, "matches!").is_some_and(|arguments| {
         arguments.len() == 2
             && arguments
@@ -183,25 +182,7 @@ pub(super) fn starts_discarded_matcher_computation(statement: &str) -> bool {
 /// asserting its pattern. Its scrutinee may still contain an actual observer.
 pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
     let original = statement;
-    let mut expression = matcher_computation_expression(statement);
-    for _ in 0..16 {
-        if let Some(inner) = parenthesized_contents(expression) {
-            expression = inner.trim();
-        } else if expression.starts_with('{') {
-            let body = delimited_contents_at(expression, 0)?;
-            if !mask_comments_and_strings(&expression[body.len() + 2..])
-                .trim()
-                .is_empty()
-            {
-                return None;
-            }
-            // Keep a borrowed source slice: an owned projection cannot bind
-            // the actual observer's byte offset or line padding below.
-            expression = expression[1..body.len() + 1].trim();
-        } else {
-            break;
-        }
-    }
+    let expression = unwrapped_pure_expression(matcher_computation_expression(statement))?;
     let scrutinee = complete_macro_arguments(expression, "matches!")?
         .into_iter()
         .next()?;
@@ -222,6 +203,33 @@ pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, us
         .filter(|byte| *byte == b'\n')
         .count();
     Some((scrutinee, preceding_lines))
+}
+
+/// Peel only complete parenthesis/block groups without recursion. Each step
+/// removes at least two source bytes, so the walk is bounded by the input.
+/// Macro recognition on
+/// the returned operand still requires the whole inner expression, so a block
+/// with preceding statements cannot become a wildcard pin or discarded tail.
+fn unwrapped_pure_expression(text: &str) -> Option<&str> {
+    let mut expression = text.trim();
+    loop {
+        if let Some(inner) = parenthesized_contents(expression) {
+            expression = inner.trim();
+        } else if expression.starts_with('{') {
+            let body = delimited_contents_at(expression, 0)?;
+            if !mask_comments_and_strings(&expression[body.len() + 2..])
+                .trim()
+                .is_empty()
+            {
+                return None;
+            }
+            // Keep a borrowed source slice: an owned projection cannot bind
+            // the actual observer's byte offset or line padding below.
+            expression = expression[1..body.len() + 1].trim();
+        } else {
+            return Some(expression);
+        }
+    }
 }
 
 /// The contents of one complete executable block, keeping source line padding.

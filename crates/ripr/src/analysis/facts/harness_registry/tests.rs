@@ -4991,14 +4991,11 @@ fn registered_negated_block_and_failure_macro_guards_keep_their_consumed_twins()
             ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
         ] {
             for statement in [
-                format!("assert!(matches!(value, {pattern}));"),
+                format!("assert!({{ matches!(value, {pattern}) }});"),
                 format!("if !{{ matches!(value, {pattern}) }} {{ return Err(\"bad\".into()); }}"),
                 format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
                 format!("if !matches!(value, {pattern}) {{ bail!(\"bad\"); }}"),
             ] {
-                if pattern == "_" && statement.starts_with("if !{") {
-                    continue;
-                }
                 let root = temp_dir("terminal-block-and-failure")?;
                 let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
                 let source = registered_matcher_control_source(&statement, helper_callback);

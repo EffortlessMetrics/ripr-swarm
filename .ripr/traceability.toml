@@ -9590,6 +9590,7 @@ id = "RIPR-SPEC-0154"
 name = "Assertion-form parity"
 spec = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
 tests = [
+  "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::nonmatcher_blocks_keep_their_actual_observer_coordinates",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_cannot_borrow_sibling_observers",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::wrapped_discarded_matchers_retain_actual_scrutinee_observers",
   "crates/ripr/src/analysis/extract/oracles/discarded_matches_tests.rs::terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins",

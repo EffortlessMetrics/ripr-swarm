@@ -818,6 +818,8 @@ fn terminal_panic_and_bail_matcher_guards_equal_their_assertion_twins() -> Resul
     ] {
         for statement in [
             format!("assert!(matches!(value, {pattern}));"),
+            format!("assert!({{ matches!(value, {pattern}) }});"),
+            format!("if !{{ matches!(value, {pattern}) }} {{ return Err(()); }}"),
             format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
             format!("if !matches!(value, {pattern}) {{ bail!(\"bad\"); }}"),
         ] {
@@ -915,6 +917,15 @@ fn wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls
         if std::panic::catch_unwind(|| discard(value)).is_err() {
             return Err("discarded boolean unexpectedly failed".to_string());
         }
+        let wildcard_guard = || -> Result<(), &'static str> {
+            if !{ matches!(value, _) } {
+                return Err("wildcard rejected a value");
+            }
+            Ok(())
+        };
+        if wildcard_guard().is_err() {
+            return Err("a whole wildcard block unexpectedly discriminated".to_string());
+        }
     }
     if consumed(2).is_err() || consumed(3).is_ok() {
         return Err("resolved bail control did not discriminate 2 from 3".to_string());
@@ -925,6 +936,39 @@ fn wrapped_discarded_boolean_and_consumed_twin_have_independent_runtime_controls
     let wrong = std::panic::catch_unwind(|| assert!(matches!(wrong_value, 2)));
     if original.is_err() || wrong.is_ok() {
         return Err("consumed assertion twin did not discriminate 2 from 3".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn nonmatcher_blocks_keep_their_actual_observer_coordinates() -> Result<(), String> {
+    for helper_route in [false, true] {
+        let observer = if helper_route {
+            "ensure!(unrelated.is_ok());"
+        } else {
+            "assert_eq!(value, 2);"
+        };
+        let body = format!("let held = {{\n{observer}\nfalse\n}};");
+        let facts = if helper_route {
+            extract_line_scanned_oracles(&body, 10)
+        } else {
+            extract_assertions(&body, 10)
+        };
+        let [fact] = facts.as_slice() else {
+            return Err(format!(
+                "nonmatcher block lost its actual observer: {facts:?}"
+            ));
+        };
+        let expected_tokens = if helper_route {
+            vec!["ensure", "unrelated"]
+        } else {
+            vec!["value"]
+        };
+        if fact.line != 11 || fact.text != observer || fact.observed_tokens != expected_tokens {
+            return Err(format!(
+                "nonmatcher block shifted or contaminated its observer: {fact:?}"
+            ));
+        }
     }
     Ok(())
 }
