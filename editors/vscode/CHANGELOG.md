@@ -22,6 +22,7 @@
   `master`, as `ripr check` does. An explicit setting is still used as given.
   When no default branch resolves, the status bar now points at
   `ripr.baseRef` instead of the generic retry text.
+
 - Hover prefers a column-precise finding over a line-level one on the same
   line.
 
