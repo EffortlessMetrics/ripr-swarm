@@ -70,7 +70,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
         &cache,
         || match attribution {
             MissAttribution::Named => cache.known_file_paths(),
-            MissAttribution::Skipped => HashSet::new(),
+            MissAttribution::Skipped => KnownFilePaths::default(),
         },
     )
 }
