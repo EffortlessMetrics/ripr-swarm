@@ -9,8 +9,8 @@
 
 use super::{
     CachedRustIndex, LexicalRustSyntaxAdapter, PARSE_BATCH_FILES, RaRustSyntaxAdapter,
-    RepoFileFactCache, RustSyntaxAdapter, build_index, build_index_with_file_fact_cache,
-    uninserted_facts,
+    RepoFileFactCache, RustSyntaxAdapter, build_index, build_index_with_adapters,
+    build_index_with_file_fact_cache, uninserted_facts,
 };
 use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
 use crate::analysis::facts::{FactSlice, FileFacts, FunctionFact};
@@ -21,8 +21,8 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 type TestResult<T> = Result<T, Box<dyn Error>>;
 
@@ -145,6 +145,11 @@ struct ObservingAdapter<'a> {
     cache: &'a RepoFileFactCache,
     fail: BTreeSet<PathBuf>,
     cancel_at: Option<(PathBuf, AnalysisCancellationToken)>,
+    /// A sibling that does not finish parsing until `cancel_at` has fired,
+    /// so its post-parse checkpoint observes the abort whatever order Rayon
+    /// runs the batch in.
+    await_cancel: Option<PathBuf>,
+    awaited_cancel: AtomicBool,
     stored_at_parse: Mutex<Vec<(PathBuf, usize)>>,
 }
 
@@ -154,6 +159,8 @@ impl<'a> ObservingAdapter<'a> {
             cache,
             fail: BTreeSet::new(),
             cancel_at: None,
+            await_cancel: None,
+            awaited_cancel: AtomicBool::new(false),
             stored_at_parse: Mutex::new(Vec::new()),
         }
     }
@@ -177,6 +184,20 @@ impl RustSyntaxAdapter for ObservingAdapter<'_> {
             && target == path
         {
             token.cancel(AnalysisAbortKind::Cancelled);
+        }
+        if let Some((_, token)) = &self.cancel_at
+            && self.await_cancel.as_deref() == Some(path)
+        {
+            // Help the pool run the cancelling file instead of blocking a
+            // worker it may need, so this also holds on a one-thread pool.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while token.abort_kind().is_none() && Instant::now() < deadline {
+                if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                    std::thread::yield_now();
+                }
+            }
+            self.awaited_cancel
+                .store(token.abort_kind().is_some(), Ordering::SeqCst);
         }
         if self.fail.contains(path) {
             return Err(format!("forced parse failure for {}", path.display()));
@@ -350,19 +371,52 @@ fn cancellation_in_a_later_batch_returns_no_index_and_commits_no_part_of_it() ->
 
 #[test]
 fn an_ordinary_worker_failure_is_not_hidden_by_a_sibling_abort() -> TestResult<()> {
-    // #6721: the failing file also cancels the attempt, so its siblings in the
-    // same batch observe the abort at their checkpoints, earlier and later in
-    // input order alike, in whatever order Rayon runs them. The batch must
-    // propagate the ordinary failure, and the token must name the attempt as
-    // that failure rather than the abort a sibling observed.
-    let fixture = BatchFixture::new("failure_over_abort")?;
+    failure_wins_over_sibling_abort(true)
+}
+
+#[test]
+fn an_uncached_worker_failure_is_not_hidden_by_a_sibling_abort() -> TestResult<()> {
+    failure_wins_over_sibling_abort(false)
+}
+
+fn failure_wins_over_sibling_abort(cached: bool) -> TestResult<()> {
+    // #6721: the failing file also cancels the attempt. A sibling earlier in
+    // input order cannot finish parsing until that cancel fires, so it returns
+    // the abort from its post-parse checkpoint (or from its pre-parse one, if
+    // Rayon starts it late), whatever order the batch runs in. The batch must
+    // propagate the later ordinary failure, not the earlier abort, and the
+    // token must name the attempt as that failure.
+    let fixture = BatchFixture::new(if cached {
+        "failure_over_abort"
+    } else {
+        "uncached_failure_over_abort"
+    })?;
     let token = AnalysisCancellationToken::new();
+    let sibling = fixture.files[PARSE_BATCH_FILES + 3].clone();
     let target = fixture.files[PARSE_BATCH_FILES + 10].clone();
     let fail = BTreeSet::from([target.clone()]);
     let mut adapter = ObservingAdapter::new(&fixture.cache);
     adapter.fail = fail.clone();
     adapter.cancel_at = Some((target.clone(), token.clone()));
-    let (result, _, _) = with_token(&token, || fixture.build(&adapter, &RefusingFallback(&fail)))?;
+    adapter.await_cancel = Some(sibling.clone());
+    let fallback = RefusingFallback(&fail);
+    let result = if cached {
+        let (result, _, _) = with_token(&token, || fixture.build(&adapter, &fallback))?;
+        result.map(|_| ())
+    } else {
+        with_token(&token, || {
+            build_index_with_adapters(&fixture.root, &fixture.files, &adapter, &fallback)
+        })
+        .map(|_| ())
+    };
+    let sibling_parsed = adapter
+        .observations()?
+        .iter()
+        .any(|(path, _)| *path == sibling);
+    assert!(
+        !sibling_parsed || adapter.awaited_cancel.load(Ordering::SeqCst),
+        "the earlier sibling must not finish parsing before the cancel"
+    );
     assert_eq!(
         result.err(),
         Some(format!("forced fallback failure for {}", target.display()))
@@ -373,10 +427,12 @@ fn an_ordinary_worker_failure_is_not_hidden_by_a_sibling_abort() -> TestResult<(
         None,
         "the propagated error is the ordinary failure, not a sibling's abort"
     );
-    let expected = fixture.files[..PARSE_BATCH_FILES]
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(fixture.stored_paths(), expected);
+    if cached {
+        let expected = fixture.files[..PARSE_BATCH_FILES]
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(fixture.stored_paths(), expected);
+    }
     Ok(())
 }
