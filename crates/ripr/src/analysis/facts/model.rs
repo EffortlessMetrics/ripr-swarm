@@ -180,7 +180,9 @@ fn filesystem_fingerprint(root: &Path, relative: &Path) -> String {
     // retargeted further along (`a -> b`, `b` moved outside the root) leaves
     // the source entry and the followed file unchanged (#5478).
     match source.canonicalize() {
-        Ok(resolved) => fingerprint.push_str(&format!("=>{};", resolved.display())),
+        // `Debug`, not `display()`: display is lossy for non-UTF-8 names, so
+        // two distinct resolved paths could render the same.
+        Ok(resolved) => fingerprint.push_str(&format!("=>{resolved:?};")),
         Err(error) => fingerprint.push_str(&format!("=>{:?};", error.kind())),
     }
     let mut cursor = source.parent().map(Path::to_path_buf);
@@ -237,7 +239,7 @@ fn append_entry_fingerprint(output: &mut String, path: &Path) {
             output.push_str(&format!("{}:link={is_symlink}", path.display()));
             if is_symlink {
                 match std::fs::read_link(path) {
-                    Ok(target) => output.push_str(&format!(":->{}", target.display())),
+                    Ok(target) => output.push_str(&format!(":->{target:?}")),
                     Err(error) => output.push_str(&format!(":->{:?}", error.kind())),
                 }
             }
@@ -1533,6 +1535,90 @@ mod tests {
         assert!(
             std::fs::canonicalize(root.join(test))?.starts_with(&outside),
             "fixture must resolve outside the root"
+        );
+
+        assert!(!authority.validates_target(test, source, test_source));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_lookalike_resolution_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::ffi::OsStrExt;
+
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-authority-non-utf8-{}-{stamp}",
+            std::process::id()
+        ));
+        // Two names that `display()` renders identically ("r\u{FFFD}").
+        let root = base.join(std::ffi::OsStr::from_bytes(b"r\xff"));
+        let outside = base.join(std::ffi::OsStr::from_bytes(b"r\xfe"));
+        let _cleanup = FixtureCleanup(base.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::create_dir_all(outside.join("pkg/src"))?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let test_source = "#[test]\nfn source_test() { assert_eq!(1, 1); }\n";
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (PathBuf::from("pkg/tests/lib.rs"), test_source),
+        ];
+        std::fs::write(root.join(&sources[0].0), sources[0].1)?;
+        let real = root.join("pkg/src/real.rs");
+        std::fs::write(&real, test_source)?;
+        let intermediate = root.join("pkg/src/intermediate.rs");
+        std::os::unix::fs::symlink(&real, &intermediate)?;
+        std::os::unix::fs::symlink(&intermediate, root.join(&sources[1].0))?;
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, test_source));
+
+        // Same inode, size and mtime; the resolved path differs only in a
+        // byte that `display()` hides.
+        let moved = outside.join("pkg/src/real.rs");
+        std::fs::rename(&real, &moved)?;
+        std::fs::remove_file(&intermediate)?;
+        std::os::unix::fs::symlink(&moved, &intermediate)?;
+        let resolved = std::fs::canonicalize(root.join(test))?;
+        assert!(
+            resolved.starts_with(&outside),
+            "fixture must resolve outside the root"
+        );
+        assert_eq!(
+            resolved.display().to_string(),
+            std::fs::canonicalize(&root)?
+                .join("pkg/src/real.rs")
+                .display()
+                .to_string(),
+            "fixture must render like the in-root path"
         );
 
         assert!(!authority.validates_target(test, source, test_source));
