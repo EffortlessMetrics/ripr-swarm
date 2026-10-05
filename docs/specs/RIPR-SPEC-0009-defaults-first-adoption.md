@@ -186,6 +186,14 @@ close with that route instead of the Rust before/after snapshot commands. When
 Rust seams exist, the human output is unchanged and other languages are listed
 only in `pilot-summary.json` `language_routes` (#3906).
 
+When a seam limit (the repo-exposure inventory limit or the pilot seam budget)
+cut the classified seams before ranking, `pilot-summary.md` must say so under
+"What Was Inspected": it names how many seams were ranked out of the outermost
+total (the inventory total when both limits cut), reads the actionable count as
+"at least N", and reads each "Also in this function" count as "at least N",
+because seams past the cut were never counted (#6602). Without a limit, the
+wording is unchanged.
+
 The pilot command must remain advisory. It should not edit source files,
 generate tests, run mutation testing, or enable CI blocking policy.
 It should also be bounded for interactive first runs: if analysis exceeds the
