@@ -13780,12 +13780,14 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
 /// A Python preview gap reaches `agent packet` through a check-output gap
 /// ledger. That packet stays blocked (check output carries no snapshot
-/// identity), and its `refresh_commands` are the only next step it names.
-/// They used to rewrite `check.json` with the Rust-only repo-exposure route
-/// and rebuild the ledger from it, which dropped every Python record, so the
-/// same packet command then failed with "gap_id ... was not found". Pasting
-/// the printed refresh from another directory must keep the check-output
-/// route, the recorded base and the Python gap.
+/// identity), and it used to print a runnable refresh route that could not
+/// reproduce the recorded run (#5985): check output does not record whether
+/// its scope came from `--diff`, so a rerun rebuilt the ledger at a
+/// different scope, and the emitted redirect truncated the recorded check
+/// output whenever the first command failed. The packet now types the route
+/// as not replayable (`refresh_replayable: false`, empty
+/// `refresh_commands`) and names the manual rerun-with-same-`--diff` route,
+/// leaving the recorded check output and the ledger untouched.
 #[cfg(all(unix, feature = "lang-python"))]
 #[test]
 fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), String> {
@@ -13891,6 +13893,15 @@ fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), Stri
             && !reason.contains("repo-exposure"),
         "the blocked reason must name the usable route and the unreplayable --diff scope, not the Rust-only route: {reason}"
     );
+    assert!(
+        reason.contains("ripr reports gap-ledger --check-output"),
+        "the blocked reason must carry the manual ledger route: {reason}"
+    );
+    assert_eq!(
+        currentness["refresh_replayable"],
+        serde_json::Value::Bool(false),
+        "a check-output route must type itself as not replayable: {currentness}"
+    );
     let refresh: Vec<String> = currentness["refresh_commands"]
         .as_array()
         .map(|commands| {
@@ -13900,47 +13911,34 @@ fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), Stri
                 .collect()
         })
         .unwrap_or_default();
-    assert_eq!(refresh.len(), 2, "{refresh:?}");
     assert!(
-        refresh[0].contains("--base origin/main")
-            && refresh[0].contains("--json >")
-            && refresh[1].contains("gap-ledger --check-output"),
-        "refresh must replay the check-output route with its recorded base: {refresh:?}"
+        refresh.is_empty(),
+        "a not-replayable route must not offer runnable commands: {refresh:?}"
     );
-    assert!(
-        refresh
-            .iter()
-            .all(|command| !command.contains("repo-exposure")),
-        "refresh must not route a check-output ledger through repo-exposure: {refresh:?}"
+    assert_eq!(
+        packet["blocked_candidate"]["refresh_commands"],
+        serde_json::Value::Array(Vec::new()),
+        "the blocked packet projection must not carry a runnable refresh either: {packet}"
     );
 
-    // Paste the printed refresh from an unrelated directory, `ripr` resolving
-    // to the binary under test.
-    let elsewhere = unique_temp_workspace("python-packet-refresh-elsewhere");
-    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create elsewhere: {err}"))?;
-    for command in &refresh {
-        let script = format!("ripr() {{ \"$0\" \"$@\"; }}; {command}");
-        let run = run_command(
-            "bash",
-            Some(&elsewhere),
-            &["-c", &script, env!("CARGO_BIN_EXE_ripr")],
-        )
-        .map_err(|err| format!("run refresh `{command}`: {err}"))?;
-        assert_success(&run);
-    }
+    // The blocked report is advisory: reading it ran no refresh, so the
+    // recorded check output and the ledger it derived must be untouched.
+    let recorded = std::fs::read_to_string(&check_path)
+        .map_err(|err| format!("the recorded check output must survive: {err}"))?;
+    serde_json::from_str::<serde_json::Value>(&recorded)
+        .map_err(|err| format!("the recorded check output must stay valid JSON: {err}"))?;
     assert_eq!(
         python_gap_ids(&ledger_path)?,
         before_ids,
-        "the refreshed ledger must keep the Python records"
+        "the ledger must keep the Python records while the route is blocked"
     );
-    let refreshed = packet_for(&gap_id)?;
+    let re_read = packet_for(&gap_id)?;
     assert_eq!(
-        refreshed["source_currentness"]["source_kind"], "check_output",
-        "{refreshed}"
+        re_read["source_currentness"]["source_kind"], "check_output",
+        "{re_read}"
     );
 
     ignore_remove_dir_all(&root);
-    ignore_remove_dir_all(&elsewhere);
     Ok(())
 }
 
@@ -21462,6 +21460,17 @@ fn plus_help_exits_cleanly() {
         stdout.contains("--gap-ledger"),
         "help must mention --gap-ledger:\n{stdout}"
     );
+    for kept in [
+        "ripr-plus.last-good.json",
+        "ripr-plus.last-good.md",
+        "may be stale",
+        "keeps no last-good copy",
+    ] {
+        assert!(
+            stdout.contains(kept),
+            "help must name the kept last-good receipt and its staleness ({kept}):\n{stdout}"
+        );
+    }
 }
 
 /// An exposure-only counter is not a complete, current RIPR+ quality result.
