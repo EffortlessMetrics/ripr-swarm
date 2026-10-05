@@ -459,7 +459,11 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
         "first_run.walk_secs" => items(receipt, "cases")
             .iter()
             .map(|case| {
-                steps_of(case)
+                let steps = steps_of(case);
+                if steps.is_empty() {
+                    return None;
+                }
+                steps
                     .iter()
                     .map(|s| field(s, "secs").as_f64())
                     .sum::<Option<f64>>()
@@ -678,7 +682,14 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
             }
         }
         if status == Status::NotMeasured || status == Status::Failed {
-            basis = unmeasured_reason(metric);
+            let reason = unmeasured_reason(metric);
+            // A derived metric has no producer reason; keep what it was derived from
+            // and say why the number is missing.
+            basis = if is_derived && status == Status::NotMeasured {
+                format!("{basis}: an untimed or empty step list leaves no total")
+            } else {
+                reason
+            };
             if status == Status::Failed {
                 basis = format!("instrument failed: {basis}");
             }
@@ -1068,7 +1079,12 @@ fn unmeasured_reason(metric: &Value) -> String {
             .filter(|d| !d.trim().is_empty())
             .collect();
     }
-    details.dedup();
+    let mut seen = Vec::new();
+    details.retain(|d| {
+        let fresh = !seen.contains(d);
+        seen.push(d.clone());
+        fresh
+    });
     if details.is_empty() {
         "the receipt records no reason".to_string()
     } else {
@@ -1965,6 +1981,35 @@ mod tests {
         }
         assert!(removed, "fixture has no timed step to remove");
         assert!(status_of(&receipts)? == Status::NotMeasured);
+        let bar = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.id == "first_run.walk_secs")
+            .ok_or_else(|| "no first_run.walk_secs bar".to_string())?;
+        assert!(
+            bar.basis.contains("first-run receipts") && bar.basis.contains("untimed or empty"),
+            "basis was {:?}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_walk_is_not_measured_not_zero_seconds() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        if let Some(cases) = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+        {
+            for case in cases {
+                case["steps"] = serde_json::json!([]);
+            }
+        }
+        let bar = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.id == "first_run.walk_secs")
+            .ok_or_else(|| "no first_run.walk_secs bar".to_string())?;
+        assert!(bar.status == Status::NotMeasured);
         Ok(())
     }
 

@@ -11,7 +11,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Receipt | Measures | Revision | Detail |
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (c6ccf9d) | runner `local-linux-x86_64-4cpu` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.7 | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.8 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -34,7 +34,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **29.4%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 147 cases: 32.6%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **29.4%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 35.5%) |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
@@ -58,8 +58,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 10 of 20 whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 32 of 52 (61.5%).
-- **Mostly unsure.** On real-repository changes it abstained on 19 of 34 cases (55.9%); on the authored cases, 25 of 113 (22.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 10 of 20 whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 56 of 86 (65.1%).
+- **Mostly unsure.** On real-repository changes it abstained on 19 of 34 cases (55.9%); on the authored cases, 39 of 169 (23.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
@@ -116,7 +116,7 @@ False-gap examples, as recorded:
 
 ## Verdict corpus
 
-147 hand-labeled changes (corpus 2026-10-04.7, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+203 hand-labeled changes (corpus 2026-10-04.8, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
@@ -124,13 +124,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 48/147 (32.6%) | 10/34 (29.4%) | 38/113 (33.6%) |
-| False actionable (of discriminated) | 42/72 (58.3%) | 10/20 (50.0%) | 32/52 (61.5%) |
-| False exposed (of not fully discriminated) | 6/75 (8.0%) | 0/14 (0.0%) | 6/61 (9.8%) |
-| False silent (of not fully discriminated) | 0/75 (0.0%) | 0/14 (0.0%) | 0/61 (0.0%) |
-| Ideal verdict | 55/147 (37.4%) | 5/34 (14.7%) | 50/113 (44.2%) |
-| Abstained (limited or silent where acceptable) | 44/147 (29.9%) | 19/34 (55.9%) | 25/113 (22.1%) |
-| Findings with a contradiction | 2/198 (1.0%) | not split by origin | not split by origin |
+| False verdicts (all cases) | 72/203 (35.5%) | 10/34 (29.4%) | 62/169 (36.7%) |
+| False actionable (of discriminated) | 66/106 (62.3%) | 10/20 (50.0%) | 56/86 (65.1%) |
+| False exposed (of not fully discriminated) | 6/97 (6.2%) | 0/14 (0.0%) | 6/83 (7.2%) |
+| False silent (of not fully discriminated) | 0/97 (0.0%) | 0/14 (0.0%) | 0/83 (0.0%) |
+| Ideal verdict | 73/203 (36.0%) | 5/34 (14.7%) | 68/169 (40.2%) |
+| Abstained (limited or silent where acceptable) | 58/203 (28.6%) | 19/34 (55.9%) | 39/169 (23.1%) |
+| Findings with a contradiction | 2/278 (0.7%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -281,6 +281,62 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-boundary-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-boundary-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-boundary-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-boundary-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-boundary-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-equality-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-equality-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-equality-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
+| `grid-equality-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-equality-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-arith-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `grid-arith-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-arith-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-arith-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-arith-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-bool-exact` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `grid-bool-table` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `grid-bool-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
+| `grid-bool-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `grid-bool-none` | authored | not_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
+| `grid-returns-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `grid-returns-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-returns-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-returns-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-returns-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-delete-exact` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `grid-delete-table` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `grid-delete-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `grid-delete-helper` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `grid-delete-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `grid-match-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `grid-match-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-match-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-match-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-match-guard` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `grid-loop-exact` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `grid-loop-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-loop-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `grid-loop-helper` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `grid-loop-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `grid-early-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-early-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-early-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-early-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-early-none` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-try-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-try-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-try-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-try-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-iter-exact` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |
+| `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
+| `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 
 What the corpus does not claim:
 
