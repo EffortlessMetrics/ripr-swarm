@@ -43,7 +43,7 @@ filing the analyzer follow-up.
 
 A finding lists the related tests ripr examined (up to a bounded number),
 including ones whose assertions did not match. Each line gives the test file, line and name, then why that
-test would not notice the change being wrong:
+test did not count as noticing the change being wrong, or what ripr could not confirm about it:
 
 ```text
 related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has no assertion
