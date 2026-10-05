@@ -9449,6 +9449,8 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::moved_expression_resolves_moved_or_renamed",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::added_probe_keeps_new_side_line_and_resolves_candidate_current",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_is_candidate_current_only_for_an_observed_changed_line",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_through_a_symlink_out_of_the_root_stays_unresolved",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9458,6 +9460,7 @@ code = [
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/output/json/report.rs",
 ]
 outputs = [
@@ -12347,6 +12350,18 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_unconfirmed_observation_stays_on_its_own_row",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_advisory_row_with_strong_oracle_keeps_no_miss",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_actionability_blocked_packet_explains_no_row",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_exposed_finding_credits_the_discriminate_stage",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_advisory_and_deferred_relation_kinds_keep_no_miss",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_direct_row_without_a_strong_owner_oracle_keeps_no_miss",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_limited_and_unknown_packets_explain_no_row",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_unconfirmed_miss_follows_row_identity_not_position",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_packet_array_order_and_metadata_do_not_move_reasons",
+  "crates/ripr/src/output/related_test_miss.rs::tests::perl_packet::perl_packet_backed_rows_agree_across_report_surfaces",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_related_test_miss_is_the_only_field_the_rule_writes",
+  "crates/ripr/src/output/related_test_miss.rs::tests::perl_packet::perl_packet_backed_miss_changes_no_projected_decision",
+  "crates/ripr/src/output/human.rs::tests::perl_packet_backed_digest_reason_follows_the_named_row",
+  "crates/ripr/src/lsp/tests.rs::perl_packet_backed_rows_agree_in_hover_related_information_and_data",
+  "crates/ripr/src/mcp/gaps.rs::tests::perl_packet_backed_rows_agree_in_gap_evidence",
   "crates/ripr/src/output/human/explain.rs::tests::an_unconfirmed_observation_is_not_labelled_a_miss",
   "crates/ripr/src/lsp/tests.rs::hover_keeps_oracle_kind_on_a_matched_row_that_still_misses",
 ]

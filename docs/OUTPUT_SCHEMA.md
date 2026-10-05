@@ -1127,7 +1127,7 @@ The evidence-first fields are additive in schema `0.2`:
   actionable profile, SARIF results, GitHub annotations, and PR severe-gap
   counts exclude non-current findings while denominators keep everything;
   TS/JS/Python findings now resolve `candidate_current` from their
-  head-side probes and Perl stays the explicit unknown.
+  head-side probes, and Perl resolves it from the observed change (below).
   - `base_deleted` — the expression was removed on the candidate side. The
     retained evidence is base-side and the finding is not a candidate edit
     target; `probe.line` still records the projected new-side coordinate in
@@ -1137,14 +1137,23 @@ The evidence-first fields are additive in schema `0.2`:
     candidate file, but the producer cannot prove the exact candidate
     identity of the source; not a candidate edit target.
   - `unresolved_subject` — the producing surface does not resolve source
-    currentness (preview-language findings today); the explicit unknown, and
+    currentness (preview-language findings whose producer has no observed
+    change); the explicit unknown, and
     the backward-compatibility value when reading artifacts written before
     the field existed.
   For Rust diff findings the disposition is resolved from the diff evidence
-  that seeded the probe; repo-mode findings are `candidate_current` by
-  construction (they seed from the current tree). In this slice the field is
-  informational for consumers: gate and actionability policy follow in the
-  #3212 projection slice.
+  that seeded the probe. A Perl fact-packet finding is `candidate_current`
+  only when its source is on disk under the root after resolving symlinks
+  (its digest verified at ingestion; an unreadable source rejects the packet)
+  and the diff adds a line inside the packet change's range whose text
+  matches the source at that line;
+  otherwise it stays `unresolved_subject` (#6586). Like candidate-current
+  Python and TypeScript findings, such a Perl finding reaches SARIF results,
+  GitHub annotations, `finding_alignment` items and the diff badge's
+  exposure-gap count; repo-mode findings are `candidate_current` by
+  construction (they seed from the current tree). Beyond the
+  `is_candidate_actionable` filters, gate and actionability policy follow in
+  the #3212 projection slice.
 - `repair_placement` is an additive optional object for preview-language
   findings that can statically name a bounded test location and command before
   full repair-card projection. It currently appears for direct weak Python

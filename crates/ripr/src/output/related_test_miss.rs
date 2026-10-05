@@ -215,4 +215,244 @@ mod tests {
             Some("no assertion pins `CalcError::TooLarge`")
         );
     }
+
+    /// #5510: packet-backed Perl findings through every report surface this
+    /// module's callers own. The findings come from frozen packets through
+    /// the production Perl mapper (`analysis::perl_*` test exports).
+    #[cfg(feature = "lang-perl")]
+    mod perl_packet {
+        use super::*;
+        use crate::domain::Finding;
+
+        fn report_with(findings: Vec<Finding>) -> crate::app::CheckOutput {
+            crate::app::CheckOutput {
+                harness_projections: Vec::new(),
+                schema_version: "0.2".to_string(),
+                tool: "ripr".to_string(),
+                mode: crate::app::Mode::Draft,
+                root: PathBuf::from("."),
+                base: None,
+                summary: crate::domain::Summary::default(),
+                findings,
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+            }
+        }
+
+        /// The JSON row named `name` among `rows`.
+        fn json_row<'a>(
+            rows: &'a serde_json::Value,
+            name: &str,
+        ) -> Result<&'a serde_json::Map<String, serde_json::Value>, String> {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_object)
+                .find(|row| row.get("name").and_then(serde_json::Value::as_str) == Some(name))
+                .ok_or_else(|| format!("no JSON row for `{name}` in {rows}"))
+        }
+
+        /// The one line of `text` that names `name` and starts with `prefix`.
+        fn line_naming<'a>(text: &'a str, prefix: &str, name: &str) -> Result<&'a str, String> {
+            let mut lines = text
+                .lines()
+                .filter(|line| line.trim_start().starts_with(prefix) && line.contains(name));
+            match (lines.next(), lines.next()) {
+                (Some(line), None) => Ok(line),
+                _ => Err(format!(
+                    "expected one `{prefix}` line for `{name}` in:\n{text}"
+                )),
+            }
+        }
+
+        /// Surface parity: the finding rows, the check JSON, the context
+        /// packet, `human-full` and `ripr explain` carry the same row, token
+        /// and shared sentence; the advisory row carries none. The human
+        /// digest, LSP and MCP checks sit beside their private projections.
+        #[test]
+        fn perl_packet_backed_rows_agree_across_report_surfaces() -> Result<(), String> {
+            let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+            let [direct, advisory] = finding.related_tests.as_slice() else {
+                return Err(format!("expected two rows: {:?}", finding.related_tests));
+            };
+            assert_eq!(direct.miss, Some(RelatedTestMiss::ObservationUnconfirmed));
+            assert_eq!(advisory.miss, None);
+            let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+                .ok_or("the direct row should have a reason")?;
+            assert_eq!(
+                related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+                None
+            );
+            let label = related_test_miss_label(direct);
+            let output = report_with(vec![finding.clone()]);
+
+            let json: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render(&output))
+                    .map_err(|error| format!("parse check JSON: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(&finding, 8))
+                    .map_err(|error| format!("parse context packet: {error}"))?;
+            for rows in [
+                &json["findings"][0]["related_tests"],
+                &context["related_tests"],
+            ] {
+                let row = json_row(rows, &direct.name)?;
+                assert_eq!(
+                    row.get("miss").and_then(serde_json::Value::as_str),
+                    Some("observation_unconfirmed")
+                );
+                assert_eq!(
+                    row.get("why").and_then(serde_json::Value::as_str),
+                    Some(why.as_str())
+                );
+                let row = json_row(rows, &advisory.name)?;
+                assert!(!row.contains_key("miss") && !row.contains_key("why"));
+            }
+
+            let full = crate::render_check(&output, &crate::OutputFormat::HumanFull)?;
+            let explain = crate::output::human::render_finding_with_context_command(
+                &finding,
+                &crate::config::RiprConfig::default(),
+                "ripr explain probe",
+            );
+            let (evidence, verdict) = explain
+                .split_once("Why this verdict")
+                .ok_or("explain should add the verdict section")?;
+            for (text, prefix, separator) in [
+                (full.as_str(), "- related test", "; "),
+                (evidence, "- related test", "; "),
+                (verdict, "- t/app.t", ": "),
+            ] {
+                let line = line_naming(text, prefix, &direct.name)?;
+                assert!(
+                    line.ends_with(&format!("{separator}{label}: {why}")),
+                    "{line}"
+                );
+                let line = line_naming(text, prefix, &advisory.name)?;
+                assert!(
+                    !line.contains(&why) && !line.contains(&format!("{label}:")),
+                    "{line}"
+                );
+            }
+            Ok(())
+        }
+
+        /// Verdict invariance, consumer side: across the packet-backed
+        /// matrix, clearing every row's miss leaves each projected decision
+        /// unchanged — the check JSON and context packet once `miss`/`why`
+        /// are dropped, the diagnostic witness (fix site), preview
+        /// actionability and card, the reconciled next step, the oracle rows,
+        /// and `human-full` once the shared reason suffix is removed. This
+        /// proves these consumers do not read `miss`; strict actionability
+        /// reads the packet, not the finding, and is not covered here. The
+        /// producer side is the Perl test
+        /// `perl_related_test_miss_is_the_only_field_the_rule_writes`.
+        #[test]
+        fn perl_packet_backed_miss_changes_no_projected_decision() -> Result<(), String> {
+            fn without_miss_keys(value: &mut serde_json::Value) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        map.remove("miss");
+                        map.remove("why");
+                        map.values_mut().for_each(without_miss_keys);
+                    }
+                    serde_json::Value::Array(items) => items.iter_mut().for_each(without_miss_keys),
+                    _ => {}
+                }
+            }
+            fn decisions(finding: &Finding) -> Result<String, String> {
+                let mut report: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render(&report_with(vec![
+                        finding.clone(),
+                    ])))
+                    .map_err(|error| format!("parse check JSON: {error}"))?;
+                without_miss_keys(&mut report);
+                let mut context: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render_context_packet(finding, 8))
+                        .map_err(|error| format!("parse context packet: {error}"))?;
+                without_miss_keys(&mut context);
+                // The currentness-filtered projections (#6586): SARIF results,
+                // GitHub annotations and the diff badge only see
+                // candidate-current findings.
+                let output = report_with(vec![finding.clone()]);
+                let config = crate::config::RiprConfig::default();
+                let mut sarif: serde_json::Value = serde_json::from_str(
+                    &crate::output::sarif::render_findings_sarif(&output, &config, &[]),
+                )
+                .map_err(|error| format!("parse SARIF: {error}"))?;
+                without_miss_keys(&mut sarif);
+                Ok(format!(
+                    "{report}\n{context}\n{sarif}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}",
+                    crate::output::github::render_with_config(&output, &config),
+                    crate::output::badge::ripr_badge_summary(
+                        &output,
+                        crate::output::badge::BadgePolicy::default()
+                    ),
+                    crate::domain::DiagnosticWitness::from_finding(finding),
+                    crate::output::preview_actionability::preview_actionability_for(finding),
+                    crate::output::perl_preview_card::perl_preview_card_json(finding),
+                    crate::output::next_step::reconcile_next_step(finding),
+                    finding
+                        .oracle_related_tests()
+                        .map(|test| &test.name)
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            let mut explained_rows = 0;
+            // Every matrix finding is checked as the fixture-only unknown and
+            // as the candidate-current finding an observed change produces.
+            let findings = crate::analysis::perl_miss_matrix_findings()?;
+            let current = findings.iter().cloned().map(|mut finding| {
+                finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+                finding
+            });
+            let findings = findings
+                .clone()
+                .into_iter()
+                .chain(current)
+                .collect::<Vec<_>>();
+            for finding in findings {
+                let mut cleared = finding.clone();
+                for row in &mut cleared.related_tests {
+                    row.miss = None;
+                }
+                assert_eq!(decisions(&finding)?, decisions(&cleared)?);
+                // Not vacuous: the currentness-filtered SARIF projection emits a
+                // result exactly for the candidate-current copies.
+                let sarif: serde_json::Value =
+                    serde_json::from_str(&crate::output::sarif::render_findings_sarif(
+                        &report_with(vec![finding.clone()]),
+                        &crate::config::RiprConfig::default(),
+                        &[],
+                    ))
+                    .map_err(|error| format!("parse SARIF: {error}"))?;
+                let results = sarif["runs"][0]["results"]
+                    .as_array()
+                    .map_or(0, |results| results.len());
+                assert_eq!(results > 0, finding.is_candidate_actionable(), "{sarif}");
+
+                let mut full = crate::output::human::render_finding(&finding);
+                for row in &finding.related_tests {
+                    if let Some(why) =
+                        related_test_miss_reason(row, &finding.activation.missing_discriminators)
+                    {
+                        explained_rows += 1;
+                        full =
+                            full.replace(&format!("; {}: {why}", related_test_miss_label(row)), "");
+                    }
+                }
+                assert_eq!(full, crate::output::human::render_finding(&cleared));
+            }
+            // Not vacuous: five of the six findings carry one explained row,
+            // checked under both currentness values.
+            assert_eq!(explained_rows, 10);
+            Ok(())
+        }
+    }
 }
