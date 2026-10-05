@@ -130,7 +130,14 @@ fn keep_last_good_receipt(repo: &Path) -> String {
         RIPR_PLUS_LAST_GOOD_JSON,
         previous,
     );
-    let markdown_result = keep_matching_last_good_markdown(repo, &value);
+    // Markdown is kept only beside JSON this call actually saved. Copying a
+    // matching canonical `.md` after a failed JSON write can pair it with a
+    // leftover last-good JSON from another run.
+    let markdown_result = if json_result.is_ok() {
+        keep_matching_last_good_markdown(repo, &value)
+    } else {
+        Ok(false)
+    };
     match (json_result, markdown_result) {
         (Ok(()), Ok(markdown_kept)) => {
             let kept_at = if markdown_kept {
@@ -1412,36 +1419,41 @@ mod tests {
     }
 
     #[test]
-    fn surviving_markdown_copy_is_named_when_the_json_copy_fails() -> Result<(), String> {
+    fn markdown_is_not_kept_when_the_json_copy_fails() -> Result<(), String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("clock failed: {err}"))?
             .as_nanos();
         let repo = std::env::temp_dir().join(format!(
-            "ripr-plus-md-only-kept-{}-{nanos}",
+            "ripr-plus-json-copy-fails-{}-{nanos}",
             std::process::id()
         ));
         let reports = repo.join("target/ripr/reports");
         fs::create_dir_all(&reports)
             .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
-        fs::write(repo.join(RIPR_PLUS_JSON), r#"{"status":"pass"}"#)
-            .map_err(|err| format!("seed json: {err}"))?;
-        let matching_md = matching_markdown(r#"{"status":"pass"}"#)?;
+        let json = r#"{"status":"pass"}"#;
+        let matching_md = matching_markdown(json)?;
+        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
         fs::write(repo.join(RIPR_PLUS_MD), &matching_md)
             .map_err(|err| format!("seed md: {err}"))?;
-        // A directory where the saved JSON belongs makes only that copy fail.
+        fs::write(repo.join(RIPR_PLUS_LAST_GOOD_MD), "leftover run-a markdown")
+            .map_err(|err| format!("seed leftover md: {err}"))?;
+        // A directory where the saved JSON belongs makes that copy fail.
         fs::create_dir_all(repo.join(RIPR_PLUS_LAST_GOOD_JSON))
             .map_err(|err| format!("block saved json: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
-        let md = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let leftover = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
         let _ = fs::remove_dir_all(&repo);
-        assert!(kept.contains("only partly kept"), "{kept}");
+        assert!(kept.contains("could not be kept"), "{kept}");
         assert!(
-            kept.contains("Kept: target/ripr/reports/ripr-plus.last-good.md."),
-            "{kept}"
+            !kept.contains("ripr-plus.last-good.md"),
+            "Markdown must not be named as kept when JSON was not saved: {kept}"
         );
-        assert!(kept.contains("may be stale for the current HEAD"), "{kept}");
-        assert_eq!(md.map_err(|err| err.to_string())?, matching_md);
+        assert_eq!(
+            leftover.map_err(|err| err.to_string())?,
+            "leftover run-a markdown",
+            "leftover last-good Markdown must not be replaced when JSON was not saved"
+        );
         Ok(())
     }
 
