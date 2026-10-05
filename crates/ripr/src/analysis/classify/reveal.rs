@@ -379,6 +379,19 @@ fn analyze_related_assertions(
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
         let credits_oracle = !(reach_bearing_related && name_only(*reason));
+        // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
+        // that every function handling the enum shares, so unlike a
+        // return-value token it does not tie an assertion to the owner (the
+        // arm's string literals are already scoped to owner calls for the same
+        // reason). When another related test reaches the owner by a call, a
+        // test related only by proximity (same file or module) still credits
+        // strength but cannot confirm the arm. A same-file
+        // `matches!(Unit::from_str(..), Ok(Unit::Fortnight))` confirmed the
+        // `seconds` arm, so the arm's verdict followed edits to a test that
+        // never runs `seconds`.
+        let confirms_observation = !(matches!(probe.family, ProbeFamily::MatchArm)
+            && reach_bearing_related
+            && is_proximity_only(*reason));
         let assertions: Vec<_> = test
             .assertions
             .iter()
@@ -456,11 +469,12 @@ fn analyze_related_assertions(
                 });
             } else if matched {
                 let observation_confirmed = !confirm_required
-                    || collection_observer_confirms(&probe.expression, assertion)
-                    || (direct_collection_mutation_receiver(&probe.expression).is_none()
-                        && (has_token_match
-                            || (is_effect_family(&probe.family)
-                                && effect_observer_confirms(assertion))));
+                    || (confirms_observation
+                        && (collection_observer_confirms(&probe.expression, assertion)
+                            || (direct_collection_mutation_receiver(&probe.expression).is_none()
+                                && (has_token_match
+                                    || (is_effect_family(&probe.family)
+                                        && effect_observer_confirms(assertion))))));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -5374,6 +5388,62 @@ return Err(\"typed pin\".into());
             "summary must name the reason: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// #6297: a same-file test that names the arm's variant through another
+    /// function cannot confirm the arm while a test that calls the owner is
+    /// related, so editing that same-file test cannot move the verdict.
+    #[test]
+    fn match_arm_proximity_test_cannot_confirm_beside_reaching_test() {
+        let probe = probe(ProbeFamily::MatchArm, "Unit::Fortnight => 1_209_600,");
+        let reaching = test_with_assertions(
+            "seconds_total",
+            vec![oracle(
+                "assert_eq!(total, 1_814_400);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let token_matches = |assertion: &str| {
+            test_with_assertions(
+                "from_str_fortnight",
+                vec![oracle(
+                    assertion,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            )
+        };
+        let naming = token_matches(
+            r#"assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight)));"#,
+        );
+        let not_naming = token_matches(
+            r#"assert_eq!(Unit::from_str("fortnight").map(|u| u == Unit::Week), Ok(false));"#,
+        );
+
+        let (_, with_token, _) = reveal_evidence(
+            &probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&naming, RelationReason::SameTestFile),
+            ],
+        );
+        let (_, without_token, _) = reveal_evidence(
+            &probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&not_naming, RelationReason::SameTestFile),
+            ],
+        );
+
+        assert_eq!(with_token.state, StageState::Weak, "{}", with_token.summary);
+        assert_eq!(with_token.state, without_token.state);
+        assert_eq!(with_token.summary, without_token.summary);
+
+        // Alone, the same-file test still confirms: proximity keeps crediting
+        // when no related test reaches the owner by a call.
+        let (_, alone, _) = reveal_evidence(&probe, &[(&naming, RelationReason::SameTestFile)]);
+        assert_eq!(alone.state, StageState::Yes, "{}", alone.summary);
     }
 
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.
