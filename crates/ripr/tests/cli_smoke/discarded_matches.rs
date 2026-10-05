@@ -84,7 +84,6 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     source,
                     "{id}: canonical input must retain the independent original/wrong stimulus"
                 );
-                let patch = fixture.join("diff.patch");
                 assert_eq!(
                     std::fs::read_to_string(fixture_path.join("diff.patch"))
                         .map_err(|error| error.to_string())?,
