@@ -7374,6 +7374,13 @@ language = "rust"
         let packet_source = include_str!("commands/ci_packet.rs");
         let surface = format!("{workflow}\n{packet}\n{packet_source}");
 
+        // The DX bar from #5409: a workflow an adopter can read in one sitting.
+        let line_count = workflow.lines().count();
+        assert!(
+            line_count <= 150,
+            "generated workflow is {line_count} lines; #5409 keeps it at 150 or fewer"
+        );
+
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
         // The install downloads the prebuilt release binary instead of
         // compiling ripr, so the job sets up no Rust toolchain or cargo

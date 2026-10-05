@@ -236,3 +236,29 @@ fn a_skipped_update_does_not_post_a_summary_review() {
     assert!(requests.requests.is_empty());
     assert_eq!(requests.notes.len(), 1);
 }
+
+#[test]
+fn a_keep_only_or_empty_plan_sends_nothing() {
+    let keep_only = json!({
+        "summary": {"safe_to_publish": true, "publishable": 1},
+        "operations": [
+            {"operation": "keep", "safe_to_publish": true, "dedupe_key": "kept", "body": "x"},
+            {"operation": "keep", "safe_to_publish": false, "dedupe_key": "held", "body": "x"}
+        ]
+    });
+    let requests = publish_requests(&keep_only, "7", "abc");
+    assert!(requests.requests.is_empty());
+    assert_eq!(
+        requests.notes,
+        vec!["RIPR inline comment already current: kept".to_string()]
+    );
+
+    for empty in [
+        json!({"summary": {"safe_to_publish": true}, "operations": []}),
+        json!({"summary": {"safe_to_publish": true}}),
+    ] {
+        let requests = publish_requests(&empty, "7", "abc");
+        assert!(requests.requests.is_empty(), "{empty}");
+        assert!(requests.notes.is_empty(), "{empty}");
+    }
+}
