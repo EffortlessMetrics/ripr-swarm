@@ -27,7 +27,9 @@
 //!   whose metavariable count matches the invocation's top-level arguments
 //!   (an `ident`, `literal`, `block` or `tt` argument must also have that
 //!   shape);
-//! - the selected transcriber contains `#[test]` and no repetition.
+//! - the selected transcriber contains `#[test]` and no repetition;
+//! - no `use` in the file imports the generator's name, and the expansion
+//!   carries no `cfg` (other than `cfg(test)`) or `cfg_attr` attribute.
 //!
 //! Each metavariable is replaced by its argument's source text (an `expr`
 //! argument of more than one element is wrapped in parentheses to keep its
@@ -70,6 +72,7 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
     if definitions.is_empty() {
         return Vec::new();
     }
+    let imported = imported_names(root.syntax());
     let lines = LineIndex::new(source);
     let mut expanded = Vec::new();
     for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
@@ -86,6 +89,7 @@ pub(crate) fn expand_local_test_macros(source: &str) -> Vec<ExpandedLocalTestMac
         // module or the file decides whether rustc compiles the generated
         // test at all; refuse rather than index a test that may not exist.
         if !in_definition_scope(&call, definition)
+            || imported.contains(&name)
             || call.attrs().next().is_some()
             || !supported_item_context(call.syntax())
         {
@@ -401,7 +405,9 @@ fn expand(
         // Arguments are spliced in too, so a local macro named or passed
         // in an argument is refused the same way.
         let text = substitute(&transcriber, &variables, arguments)?;
-        return (!text_invokes_local_macro(&text, local_macros)).then_some(text);
+        return (!text_invokes_local_macro(&text, local_macros)
+            && !text_has_conditional_attribute(&text))
+        .then_some(text);
     }
     None
 }
@@ -421,6 +427,56 @@ fn text_invokes_local_macro(text: &str, local_macros: &BTreeSet<String>) -> bool
     tokens.windows(2).any(|window| {
         window[1].kind() == SyntaxKind::BANG && local_macros.contains(window[0].text())
     })
+}
+
+/// Whether the expansion carries a `cfg` or `cfg_attr` attribute other
+/// than `cfg(test)`. Whether a `#[cfg(any())] #[test] fn` or a cfg'd
+/// generated module exists in a test build is a configuration question
+/// this expander does not answer, so such an expansion indexes nothing.
+fn text_has_conditional_attribute(text: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attr| {
+            let text: String = attr
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let inner = text
+                .trim_start_matches("#!")
+                .trim_start_matches('#')
+                .trim_start_matches('[')
+                .trim_end_matches(']');
+            inner.starts_with("cfg_attr") || (inner.starts_with("cfg") && inner != "cfg(test)")
+        })
+}
+
+/// Names a `use` item in the file brings into scope. A named import of a
+/// generator's name makes the invocation ambiguous for rustc (E0659), so
+/// the expander does not guess which macro runs.
+fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
+    root.descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|tree| {
+            if let Some(rename) = tree.rename() {
+                return rename.name().map(|name| name.text().to_string());
+            }
+            if tree.use_tree_list().is_some() || tree.star_token().is_some() {
+                return None;
+            }
+            tree.path()
+                .and_then(|path| path.segment())
+                .map(|segment| segment.syntax().text().to_string())
+        })
+        .collect()
 }
 
 fn substitute(
@@ -585,5 +641,41 @@ mod tests {
     fn an_earlier_arm_outside_the_shape_refuses() {
         let source = "macro_rules! case {\n    (@inner $name:ident) => { fn $name() {} };\n    ($name:ident) => { #[test] fn $name() { f(); } };\n}\ncase!(one);\n";
         assert!(expand_local_test_macros(source).is_empty());
+    }
+
+    #[test]
+    fn conditional_attributes_in_the_expansion_and_imported_names_refuse() {
+        let emits = |body: &str| {
+            format!("macro_rules! case {{\n    ($name:ident) => {{ {body} }};\n}}\ncase!(one);\n")
+        };
+        assert_eq!(
+            expand_local_test_macros(&emits("#[cfg(test)] #[test] fn $name() { f(); }")).len(),
+            1,
+            "cfg(test) is the test build itself"
+        );
+        for body in [
+            "#[cfg(any())] #[test] fn $name() { f(); }",
+            "#[cfg(any())] mod $name { #[test] fn t() { f(); } }",
+            "#[cfg_attr(miri, ignore)] #[test] fn $name() { f(); }",
+        ] {
+            assert!(expand_local_test_macros(&emits(body)).is_empty(), "{body}");
+        }
+        let generator =
+            "macro_rules! case {\n    ($name:ident) => { #[test] fn $name() { f(); } };\n}\n";
+        for import in [
+            "mod m {\n    use crate::foreign::case;\n    case!(one);\n}\n",
+            "use crate::foreign::other as case;\ncase!(one);\n",
+        ] {
+            assert!(
+                expand_local_test_macros(&format!("{generator}{import}")).is_empty(),
+                "{import}"
+            );
+        }
+        let glob = format!("{generator}mod m {{\n    use super::*;\n    case!(one);\n}}\n");
+        assert_eq!(
+            expand_local_test_macros(&glob).len(),
+            1,
+            "a glob import keeps the generator"
+        );
     }
 }

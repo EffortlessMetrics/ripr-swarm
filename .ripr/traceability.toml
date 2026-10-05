@@ -8099,6 +8099,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_macro_without_a_test_attribute_is_not_expanded",
   "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::cfg_context_local_macros_and_uncertain_fragments_refuse",
   "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::an_earlier_arm_outside_the_shape_refuses",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::conditional_attributes_in_the_expansion_and_imported_names_refuse",
   "crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations",
   "crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test",
   "crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test",

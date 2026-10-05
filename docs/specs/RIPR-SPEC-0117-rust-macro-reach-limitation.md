@@ -128,7 +128,10 @@ otherwise indexes nothing for it:
   metavariable count matches the invocation's top-level arguments, and an
   `ident`, `literal`, `block` or `tt` argument must have that shape;
 - the selected transcriber contains `#[test]`, no repetition and no call to
-  another macro defined in the file, and no argument invokes one.
+  another macro defined in the file, and no argument invokes one;
+- no `use` in the file imports the generator's name (rustc rejects that
+  invocation as ambiguous), and the expansion carries no `cfg` other than
+  `cfg(test)` and no `cfg_attr`.
 
 Each metavariable is replaced by its argument's source text and `$crate` by
 `crate`; an `expr` or `literal` argument of more than one element (`-1`) is
