@@ -103,22 +103,27 @@ fn normalize_indexed_file_test_styles(
         cancellation::checkpoint()?;
         let function = &mut functions[id];
         let existing = existing_tests.remove(&(function.start_line, function.name.clone()));
-        let has_test_attribute = match lexical_lines.as_deref() {
+        let (defines_test, compiled_out) = match lexical_lines.as_deref() {
             Some(lines) => {
                 let attributes = lexical_attributes_before(lines, function.start_line);
-                attributes_define_test(attributes.iter().copied())
-                    && !attributes_compile_out_in_test_build(attributes.iter().copied())
+                (
+                    attributes_define_test(attributes.iter().copied()),
+                    attributes_compile_out_in_test_build(attributes.iter().copied()),
+                )
             }
-            None => {
-                attributes_define_test(function.attrs.iter().map(String::as_str))
-                    && !attributes_compile_out_in_test_build(
-                        function.attrs.iter().map(String::as_str),
-                    )
-            }
+            None => (
+                attributes_define_test(function.attrs.iter().map(String::as_str)),
+                attributes_compile_out_in_test_build(function.attrs.iter().map(String::as_str)),
+            ),
         };
-        let preserve_cfg_test_role = !has_test_attribute
-            && function.source_role.is_evidence_role()
-            && is_inside_cfg_test_module(&facts.source, function.start_line);
+        let has_test_attribute = defines_test && !compiled_out;
+        // A test under a cfg that is false in a test build never runs and
+        // never compiles (#6293): evidence-only, so it is neither an
+        // executable test nor a production probe subject.
+        let preserve_cfg_test_role = (defines_test && compiled_out)
+            || (!has_test_attribute
+                && function.source_role.is_evidence_role()
+                && is_inside_cfg_test_module(&facts.source, function.start_line));
         let promotion_claimed_expansion =
             function.source_role == FunctionSourceRole::ParameterizedExpansion;
         function.source_role = if has_test_attribute {
