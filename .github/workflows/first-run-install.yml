@@ -16,6 +16,9 @@ name: First-run install
 # Wall-time metrics compare only against a baseline from the same runner class.
 # While ungated, a failed install still leaves the job green (the receipt records
 # the failed row); only the gated run fails the job on it.
+# Known limit (#6803): the install runs under the default CARGO_HOME that building
+# xtask already warmed, so install_seconds understates a truly cold install. Do
+# not commit a baseline from this lane until that is isolated.
 
 on:
   workflow_dispatch:
