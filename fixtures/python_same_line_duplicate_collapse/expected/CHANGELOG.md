@@ -359,3 +359,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — python_same_line_duplicate_collapse (10)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless python_same_line_duplicate_collapse --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

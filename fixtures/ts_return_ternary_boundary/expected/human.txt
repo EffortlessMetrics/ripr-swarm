@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/ts_return_ternary_boundary/input --diff fixtures/ts_return_ternary_boundary/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:3208e659
-  ripr context --root fixtures/ts_return_ternary_boundary/input --diff fixtures/ts_return_ternary_boundary/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:3208e659
+  ripr explain --root <cwd>/fixtures/ts_return_ternary_boundary/input --diff fixtures/ts_return_ternary_boundary/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:3208e659
+  ripr context --root <cwd>/fixtures/ts_return_ternary_boundary/input --diff fixtures/ts_return_ternary_boundary/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:3208e659
 
 More:
   Full evidence: rerun with --format human-full

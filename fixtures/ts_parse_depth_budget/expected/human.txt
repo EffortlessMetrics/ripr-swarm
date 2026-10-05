@@ -29,8 +29,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/ts_parse_depth_budget/input --diff fixtures/ts_parse_depth_budget/diff.patch --mode fast probe:src_deep_under_budget.ts:typescript_preview:85293064
-  ripr context --root fixtures/ts_parse_depth_budget/input --diff fixtures/ts_parse_depth_budget/diff.patch --mode fast --at probe:src_deep_under_budget.ts:typescript_preview:85293064
+  ripr explain --root <cwd>/fixtures/ts_parse_depth_budget/input --diff fixtures/ts_parse_depth_budget/diff.patch --mode fast probe:src_deep_under_budget.ts:typescript_preview:85293064
+  ripr context --root <cwd>/fixtures/ts_parse_depth_budget/input --diff fixtures/ts_parse_depth_budget/diff.patch --mode fast --at probe:src_deep_under_budget.ts:typescript_preview:85293064
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

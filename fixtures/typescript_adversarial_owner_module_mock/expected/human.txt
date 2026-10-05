@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_adversarial_owner_module_mock/input --diff fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
-  ripr context --root fixtures/typescript_adversarial_owner_module_mock/input --diff fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_module_mock/input --diff fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
+  ripr context --root <cwd>/fixtures/typescript_adversarial_owner_module_mock/input --diff fixtures/typescript_adversarial_owner_module_mock/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
 
 More:
   Full evidence: rerun with --format human-full

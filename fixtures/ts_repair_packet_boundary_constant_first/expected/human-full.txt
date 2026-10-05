@@ -89,8 +89,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `DISCOUNT_THRESHOLD == amount`; the repair packet is complete and delegatable (advisory).
 Drill in:
-  ripr explain --root fixtures/ts_repair_packet_boundary_constant_first/input --diff fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:f12d3569
-  ripr context --root fixtures/ts_repair_packet_boundary_constant_first/input --diff fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:f12d3569
+  ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_constant_first/input --diff fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:f12d3569
+  ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_constant_first/input --diff fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:f12d3569
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

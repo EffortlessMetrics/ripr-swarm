@@ -33,8 +33,8 @@ Evidence
   - source enum variant value AuthError::RevokedToken at line 5
   - source function argument value token = "" at line 5
 Drill in:
-  ripr explain --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
-  ripr context --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  ripr explain --root <cwd>/fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
+  ripr context --root <cwd>/fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 
 INFO fixtures/strong_error_oracle/input/src/lib.rs:7
   id: probe:src_lib.rs:return_value:e21dcccc
@@ -62,5 +62,5 @@ Evidence
   - source enum variant value AuthError::RevokedToken at line 5
   - source function argument value token = "" at line 5
 Drill in:
-  ripr explain --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
-  ripr context --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc
+  ripr explain --root <cwd>/fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
+  ripr context --root <cwd>/fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc

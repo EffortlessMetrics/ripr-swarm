@@ -32,8 +32,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b
-  ripr context --root fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.py:python_preview:69ed856b
+  ripr explain --root <cwd>/fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b
+  ripr context --root <cwd>/fixtures/python_return_comparison_boundary/input --diff fixtures/python_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.py:python_preview:69ed856b
 
 More:
   Full evidence: rerun with --format human-full

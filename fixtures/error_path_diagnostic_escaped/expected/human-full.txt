@@ -40,8 +40,8 @@ Weakness
 Next step
   Assert the exact error variant or payload instead of only is_err().
 Drill in:
-  ripr explain --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
 NOTE fixtures/error_path_diagnostic_escaped/input/src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
@@ -81,5 +81,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
-  ripr context --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
+  ripr explain --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
+  ripr context --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

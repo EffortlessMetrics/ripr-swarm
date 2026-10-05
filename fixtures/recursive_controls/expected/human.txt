@@ -23,10 +23,10 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/recursive_controls/input --diff fixtures/recursive_controls/diff.patch --mode fast probe:src_lib.rs:predicate:326a2e10
-  ripr context --root fixtures/recursive_controls/input --diff fixtures/recursive_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:326a2e10
+  ripr explain --root <cwd>/fixtures/recursive_controls/input --diff fixtures/recursive_controls/diff.patch --mode fast probe:src_lib.rs:predicate:326a2e10
+  ripr context --root <cwd>/fixtures/recursive_controls/input --diff fixtures/recursive_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:326a2e10
 Write a test for it:
-  ripr agent stub --root fixtures/recursive_controls/input --at src/lib.rs:12
+  ripr agent stub --root <cwd>/fixtures/recursive_controls/input --at src/lib.rs:12
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

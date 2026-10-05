@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/ts_repair_packet_boundary_unreachable/input --diff fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast probe:src_auth.ts:typescript_preview:23e9836b
-  ripr context --root fixtures/ts_repair_packet_boundary_unreachable/input --diff fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:23e9836b
+  ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast probe:src_auth.ts:typescript_preview:23e9836b
+  ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:23e9836b
 
 More:
   Full evidence: rerun with --format human-full

@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_adversarial_list_element_sibling_index/input --diff fixtures/python_adversarial_list_element_sibling_index/diff.patch --mode fast probe:src_routes.py:python_preview:fa537c61
-  ripr context --root fixtures/python_adversarial_list_element_sibling_index/input --diff fixtures/python_adversarial_list_element_sibling_index/diff.patch --mode fast --at probe:src_routes.py:python_preview:fa537c61
+  ripr explain --root <cwd>/fixtures/python_adversarial_list_element_sibling_index/input --diff fixtures/python_adversarial_list_element_sibling_index/diff.patch --mode fast probe:src_routes.py:python_preview:fa537c61
+  ripr context --root <cwd>/fixtures/python_adversarial_list_element_sibling_index/input --diff fixtures/python_adversarial_list_element_sibling_index/diff.patch --mode fast --at probe:src_routes.py:python_preview:fa537c61
 
 More:
   Full evidence: rerun with --format human-full

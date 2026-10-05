@@ -1,5 +1,5 @@
 use super::{CheckInput, Mode};
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::{bound_root, shell_arg};
 use std::path::Path;
 
 /// Copy-pasteable sibling commands for a selected finding.
@@ -88,7 +88,7 @@ pub(crate) fn finding_navigation_with_worktree(
         list_prefix: format!("ripr check {list_args}"),
         stub_prefix: format!(
             "ripr agent stub --root {}",
-            shell_arg(&input.root.display().to_string())
+            shell_arg(&bound_root(&input.root.display().to_string()))
         ),
     }
 }
@@ -99,9 +99,12 @@ fn navigation_args(
     mode_explicit: bool,
     worktree: bool,
 ) -> String {
+    // The drill-in is pasted after the listing, often from another directory,
+    // so it names the repository the check resolved, not the typed relative
+    // spelling (#3948).
     let mut args = vec![format!(
         "--root {}",
-        shell_arg(&input.root.display().to_string())
+        shell_arg(&bound_root(&input.root.display().to_string()))
     )];
 
     if let Some(artifact_path) = artifact_path {
@@ -150,6 +153,12 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The `--root` value a drill-in prints for a typed root: the resolved
+    /// repository, quoted for the shell.
+    fn bound(root: &str) -> String {
+        shell_arg(&bound_root(root))
+    }
+
     #[test]
     fn finding_navigation_preserves_diff_and_quotes_dynamic_values() {
         let input = CheckInput {
@@ -159,13 +168,18 @@ mod tests {
         };
         let navigation = finding_navigation(&input, None, false);
 
+        let root = bound("repo root");
         assert_eq!(
             navigation.explain_command("probe:src/lib.rs:error_path:abc123"),
-            "ripr explain --root 'repo root' --diff 'change set.diff' probe:src/lib.rs:error_path:abc123"
+            format!(
+                "ripr explain --root {root} --diff 'change set.diff' probe:src/lib.rs:error_path:abc123"
+            )
         );
         assert_eq!(
             navigation.context_command("probe:src/lib.rs:error_path:abc123"),
-            "ripr context --root 'repo root' --diff 'change set.diff' --at probe:src/lib.rs:error_path:abc123"
+            format!(
+                "ripr context --root {root} --diff 'change set.diff' --at probe:src/lib.rs:error_path:abc123"
+            )
         );
     }
 
@@ -181,7 +195,10 @@ mod tests {
 
         assert_eq!(
             navigation.explain_command("probe:id"),
-            "ripr explain --root repo --from 'saved artifact.json' --mode ready probe:id"
+            format!(
+                "ripr explain --root {} --from 'saved artifact.json' --mode ready probe:id",
+                bound("repo")
+            )
         );
     }
 
@@ -196,28 +213,40 @@ mod tests {
         let navigation = finding_navigation_with_worktree(&input, None, false, true);
         assert_eq!(
             navigation.explain_command("src/calc.py:5"),
-            "ripr explain --root . --base HEAD --worktree src/calc.py:5"
+            format!(
+                "ripr explain --root {} --base HEAD --worktree src/calc.py:5",
+                bound(".")
+            )
         );
         assert_eq!(
             navigation.context_command("src/calc.py:5"),
-            "ripr context --root . --base HEAD --worktree --at src/calc.py:5"
+            format!(
+                "ripr context --root {} --base HEAD --worktree --at src/calc.py:5",
+                bound(".")
+            )
         );
         // A selector miss lists ids from the same worktree scope.
         assert_eq!(
             navigation.list_command(),
-            "ripr check --root . --base HEAD --worktree --json"
+            format!(
+                "ripr check --root {} --base HEAD --worktree --json",
+                bound(".")
+            )
         );
         // An artifact already records the worktree diff; `--from` wins.
         let from_artifact =
             finding_navigation_with_worktree(&input, Some(Path::new("wt.json")), false, true);
         assert_eq!(
             from_artifact.explain_command("probe:id"),
-            "ripr explain --root . --from wt.json probe:id"
+            format!("ripr explain --root {} --from wt.json probe:id", bound("."))
         );
         // `ripr check` has no `--from`: the listing re-runs the worktree scope.
         assert_eq!(
             from_artifact.list_command(),
-            "ripr check --root . --base HEAD --worktree --json"
+            format!(
+                "ripr check --root {} --base HEAD --worktree --json",
+                bound(".")
+            )
         );
     }
 
@@ -233,7 +262,45 @@ mod tests {
 
         assert_eq!(
             navigation.explain_command("probe:id"),
-            "ripr explain --root . --base origin/main --mode draft probe:id"
+            format!(
+                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                bound(".")
+            )
         );
+    }
+
+    /// #3948: a relative typed root must not be repeated as typed. Pasted from
+    /// another directory it would name whatever sits at that relative path
+    /// there, so every drill-in (explain, context, list, stub) carries the
+    /// resolved repository.
+    #[test]
+    fn finding_navigation_binds_a_relative_root_for_every_drill_in() {
+        let input = CheckInput {
+            root: PathBuf::from("nested/repo"),
+            base: Some("HEAD".to_string()),
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation(&input, None, false);
+        let resolved = bound_root("nested/repo");
+        assert!(
+            Path::new(&resolved).is_absolute(),
+            "bound root must be absolute: {resolved}"
+        );
+        let root_arg = format!("--root {}", shell_arg(&resolved));
+        for command in [
+            navigation.explain_command("probe:id"),
+            navigation.context_command("probe:id"),
+            navigation.list_command(),
+            navigation.stub_command("src/lib.rs", 5),
+        ] {
+            assert!(
+                command.contains(&root_arg),
+                "drill-in must carry the resolved root: {command}"
+            );
+            assert!(
+                !command.contains("--root nested/repo"),
+                "drill-in repeated the typed relative root: {command}"
+            );
+        }
     }
 }

@@ -23,10 +23,10 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast probe:src_lib.rs:predicate:a39d316d
-  ripr context --root fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast --at probe:src_lib.rs:predicate:a39d316d
+  ripr explain --root <cwd>/fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast probe:src_lib.rs:predicate:a39d316d
+  ripr context --root <cwd>/fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast --at probe:src_lib.rs:predicate:a39d316d
 Write a test for it:
-  ripr agent stub --root fixtures/assertion_shaped_control_production_caller/input --at src/lib.rs:8
+  ripr agent stub --root <cwd>/fixtures/assertion_shaped_control_production_caller/input --at src/lib.rs:8
 
 More:
   Full evidence: rerun with --format human-full

@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (3)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

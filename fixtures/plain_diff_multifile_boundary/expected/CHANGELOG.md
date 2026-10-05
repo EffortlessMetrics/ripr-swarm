@@ -291,3 +291,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — plain_diff_multifile_boundary (10)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless plain_diff_multifile_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

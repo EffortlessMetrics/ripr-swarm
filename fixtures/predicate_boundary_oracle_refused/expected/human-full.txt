@@ -45,5 +45,5 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions.
 Drill in:
-  ripr explain --root fixtures/predicate_boundary_oracle_refused/input --diff fixtures/predicate_boundary_oracle_refused/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_boundary_oracle_refused/input --diff fixtures/predicate_boundary_oracle_refused/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_boundary_oracle_refused/input --diff fixtures/predicate_boundary_oracle_refused/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_boundary_oracle_refused/input --diff fixtures/predicate_boundary_oracle_refused/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

@@ -312,3 +312,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — typescript_reexport_no_false_credit (11)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless typescript_reexport_no_false_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

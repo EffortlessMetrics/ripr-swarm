@@ -160,3 +160,15 @@ Updated:
 ## #5051 plain no-path guidance
 
 Only the selected untyped no-path safe-action sentence changes. Static-limited state, selection, classification, full output and JSON remain unchanged.
+
+## Pending — unsafe_boundary_probe (14)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

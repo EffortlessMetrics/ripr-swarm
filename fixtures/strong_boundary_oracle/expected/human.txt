@@ -20,8 +20,8 @@ Start here:
     - 16 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/strong_boundary_oracle/input --diff fixtures/strong_boundary_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/strong_boundary_oracle/input --diff fixtures/strong_boundary_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/strong_boundary_oracle/input --diff fixtures/strong_boundary_oracle/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/strong_boundary_oracle/input --diff fixtures/strong_boundary_oracle/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 
 More:
   Full evidence: rerun with --format human-full

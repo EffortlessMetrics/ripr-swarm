@@ -20,8 +20,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast probe:crates_a_src_lib.rs:return_value:94e6eef7
-  ripr context --root fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast --at probe:crates_a_src_lib.rs:return_value:94e6eef7
+  ripr explain --root <cwd>/fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast probe:crates_a_src_lib.rs:return_value:94e6eef7
+  ripr context --root <cwd>/fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast --at probe:crates_a_src_lib.rs:return_value:94e6eef7
 
 More:
   Full evidence: rerun with --format human-full

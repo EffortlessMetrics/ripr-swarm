@@ -2213,6 +2213,18 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         ));
     }
 
+    // #3948: the drill-in names the resolved repository, not the typed `.`, so
+    // pasting it from another directory analyzes the same repository.
+    let printed_root = explain_args
+        .iter()
+        .position(|arg| *arg == "--root")
+        .and_then(|at| explain_args.get(at + 1))
+        .copied()
+        .ok_or_else(|| format!("explain command omitted --root:\n{explain_line}"))?;
+    assert!(
+        std::path::Path::new(printed_root).is_absolute(),
+        "drill-in repeated the typed relative root instead of the resolved one: {printed_root}"
+    );
     let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&explain);
     let selector = explain_args
@@ -2222,7 +2234,7 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&context);
     if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {root} --diff {diff} --at {selector}"
+        "Next: ripr context --root {printed_root} --diff {diff} --at {selector}"
     )) {
         return Err("explain output omitted its scope-preserving context command".to_string());
     }

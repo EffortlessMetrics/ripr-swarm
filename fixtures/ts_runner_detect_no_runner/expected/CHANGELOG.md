@@ -262,3 +262,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — ts_runner_detect_no_runner (10)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

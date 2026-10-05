@@ -29,8 +29,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_t_wrong_receiver_no_oracle/input --diff fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast probe:src_score.ts:typescript_preview:af44236d
-  ripr context --root fixtures/typescript_t_wrong_receiver_no_oracle/input --diff fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:af44236d
+  ripr explain --root <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/input --diff fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast probe:src_score.ts:typescript_preview:af44236d
+  ripr context --root <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/input --diff fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:af44236d
 
 More:
   Full evidence: rerun with --format human-full

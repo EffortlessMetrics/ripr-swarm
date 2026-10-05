@@ -23,10 +23,10 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/infection_expected_value_literal/input --diff fixtures/infection_expected_value_literal/diff.patch --mode fast probe:src_lib.rs:predicate:14f80bce
-  ripr context --root fixtures/infection_expected_value_literal/input --diff fixtures/infection_expected_value_literal/diff.patch --mode fast --at probe:src_lib.rs:predicate:14f80bce
+  ripr explain --root <cwd>/fixtures/infection_expected_value_literal/input --diff fixtures/infection_expected_value_literal/diff.patch --mode fast probe:src_lib.rs:predicate:14f80bce
+  ripr context --root <cwd>/fixtures/infection_expected_value_literal/input --diff fixtures/infection_expected_value_literal/diff.patch --mode fast --at probe:src_lib.rs:predicate:14f80bce
 Write a test for it:
-  ripr agent stub --root fixtures/infection_expected_value_literal/input --at src/lib.rs:19
+  ripr agent stub --root <cwd>/fixtures/infection_expected_value_literal/input --at src/lib.rs:19
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -25,10 +25,10 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/currentness_matrix_reuse/input --diff fixtures/currentness_matrix_reuse/diff.patch --mode fast probe:src_lib.rs:predicate:3ec5d7c6
-  ripr context --root fixtures/currentness_matrix_reuse/input --diff fixtures/currentness_matrix_reuse/diff.patch --mode fast --at probe:src_lib.rs:predicate:3ec5d7c6
+  ripr explain --root <cwd>/fixtures/currentness_matrix_reuse/input --diff fixtures/currentness_matrix_reuse/diff.patch --mode fast probe:src_lib.rs:predicate:3ec5d7c6
+  ripr context --root <cwd>/fixtures/currentness_matrix_reuse/input --diff fixtures/currentness_matrix_reuse/diff.patch --mode fast --at probe:src_lib.rs:predicate:3ec5d7c6
 Write a test for it:
-  ripr agent stub --root fixtures/currentness_matrix_reuse/input --at src/lib.rs:7
+  ripr agent stub --root <cwd>/fixtures/currentness_matrix_reuse/input --at src/lib.rs:7
 
 More:
   Full evidence: rerun with --format human-full

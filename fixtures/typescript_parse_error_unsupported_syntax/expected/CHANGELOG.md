@@ -538,3 +538,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — typescript_parse_error_unsupported_syntax (12)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

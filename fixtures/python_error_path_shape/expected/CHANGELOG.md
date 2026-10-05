@@ -455,3 +455,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — python_error_path_shape (10)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

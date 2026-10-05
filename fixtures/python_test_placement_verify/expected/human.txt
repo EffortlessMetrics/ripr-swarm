@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_test_placement_verify/input --diff fixtures/python_test_placement_verify/diff.patch --mode fast probe:src_pricing.py:python_preview:b6c16437
-  ripr context --root fixtures/python_test_placement_verify/input --diff fixtures/python_test_placement_verify/diff.patch --mode fast --at probe:src_pricing.py:python_preview:b6c16437
+  ripr explain --root <cwd>/fixtures/python_test_placement_verify/input --diff fixtures/python_test_placement_verify/diff.patch --mode fast probe:src_pricing.py:python_preview:b6c16437
+  ripr context --root <cwd>/fixtures/python_test_placement_verify/input --diff fixtures/python_test_placement_verify/diff.patch --mode fast --at probe:src_pricing.py:python_preview:b6c16437
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).

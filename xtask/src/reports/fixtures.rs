@@ -1008,11 +1008,25 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = value.replace('\\', "/");
+    let normalized = project_renderer_cwd(&value.replace('\\', "/"));
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
+}
+
+/// The `check` drill-in commands bind `--root` to the resolved repository
+/// (#3948), so a rendered fixture carries the renderer's working directory.
+/// Checked-in goldens hold the machine-independent `<cwd>/` placeholder
+/// instead, the same projection the library tests use.
+fn project_renderer_cwd(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        // An unreadable working directory leaves the text unprojected, so a
+        // comparison fails loudly instead of passing on machine paths.
+        return text.to_string();
+    };
+    let prefix = format!("{}/", normalize_path(&cwd));
+    text.replace(&prefix, "<cwd>/")
 }
 
 fn fixture_name(path: &Path) -> Result<String, String> {

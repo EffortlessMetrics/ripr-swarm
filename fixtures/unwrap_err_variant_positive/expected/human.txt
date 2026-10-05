@@ -20,8 +20,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
-  ripr context --root fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

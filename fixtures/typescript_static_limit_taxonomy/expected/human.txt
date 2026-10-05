@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_static_limit_taxonomy/input --diff fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast probe:src_dispatch.ts:typescript_preview:dd0f8848
-  ripr context --root fixtures/typescript_static_limit_taxonomy/input --diff fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast --at probe:src_dispatch.ts:typescript_preview:dd0f8848
+  ripr explain --root <cwd>/fixtures/typescript_static_limit_taxonomy/input --diff fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast probe:src_dispatch.ts:typescript_preview:dd0f8848
+  ripr context --root <cwd>/fixtures/typescript_static_limit_taxonomy/input --diff fixtures/typescript_static_limit_taxonomy/diff.patch --mode fast --at probe:src_dispatch.ts:typescript_preview:dd0f8848
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 1, JavaScript preview: 2).

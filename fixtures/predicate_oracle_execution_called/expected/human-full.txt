@@ -35,5 +35,5 @@ Evidence
   - source function argument value amount == discount_threshold at line 14
   - source function argument value discount_threshold = 100 at line 14
 Drill in:
-  ripr explain --root fixtures/predicate_oracle_execution_called/input --diff fixtures/predicate_oracle_execution_called/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_oracle_execution_called/input --diff fixtures/predicate_oracle_execution_called/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_oracle_execution_called/input --diff fixtures/predicate_oracle_execution_called/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_oracle_execution_called/input --diff fixtures/predicate_oracle_execution_called/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

@@ -29,8 +29,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_commonjs_require/input --diff fixtures/typescript_commonjs_require/diff.patch --mode fast probe:src_format.ts:typescript_preview:c6becef2
-  ripr context --root fixtures/typescript_commonjs_require/input --diff fixtures/typescript_commonjs_require/diff.patch --mode fast --at probe:src_format.ts:typescript_preview:c6becef2
+  ripr explain --root <cwd>/fixtures/typescript_commonjs_require/input --diff fixtures/typescript_commonjs_require/diff.patch --mode fast probe:src_format.ts:typescript_preview:c6becef2
+  ripr context --root <cwd>/fixtures/typescript_commonjs_require/input --diff fixtures/typescript_commonjs_require/diff.patch --mode fast --at probe:src_format.ts:typescript_preview:c6becef2
 
 More:
   Full evidence: rerun with --format human-full
