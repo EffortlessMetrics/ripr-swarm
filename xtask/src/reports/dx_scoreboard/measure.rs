@@ -6,7 +6,7 @@
 //! and the warm check reuses that same cache.
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
-use crate::run::{MeasuredOutput, capture_output_measured};
+use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -485,16 +485,37 @@ pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
     }
 }
 
+/// Repository-location overrides a caller can leave in the environment (a git
+/// hook sets `GIT_DIR`, for one). Corpus commands must resolve the corpus
+/// checkout itself, never the caller's repository.
+const GIT_ENV_REMOVE: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+];
+
 pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
     let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-    let measured = capture_output_measured("git", &owned, cwd, &[], GIT_TIMEOUT, "git")?;
-    if exited_zero(&measured) {
-        Ok(measured.output.stdout)
+    let output = capture_bytes_in_dir_with_timeout(
+        Path::new("git"),
+        &owned,
+        cwd.unwrap_or_else(|| Path::new(".")),
+        &[],
+        &GIT_ENV_REMOVE,
+        GIT_TIMEOUT,
+        "git",
+    )?;
+    if !output.timed_out && output.status.is_some_and(|status| status.success()) {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         Err(format!(
             "git {} failed: {}",
             args.join(" "),
-            measured.output.stderr.trim()
+            String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
 }
