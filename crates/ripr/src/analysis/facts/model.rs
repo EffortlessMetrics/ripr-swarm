@@ -232,7 +232,8 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
 /// (#5478). The link target covers a symlink retargeted to another symlink
 /// where no file identity is available (Windows); ctime cannot be set by a
 /// user and changes when a freed inode number is reused, or when the file is
-/// rewritten in place.
+/// rewritten in place in a later timestamp tick (kernels before Linux 6.13
+/// advance ctime per jiffy, so a rewrite within the same tick still matches).
 ///
 /// Windows limit (#6755): std exposes no stable change time or file id there,
 /// so a file rewritten in place with the same length and a restored mtime
@@ -1491,14 +1492,29 @@ mod tests {
         let source = Path::new("pkg/src/lib.rs");
         assert!(authority.validates_target(test, source, test_source));
 
+        use std::os::unix::fs::MetadataExt;
         let file = root.join(test);
-        let modified = std::fs::metadata(&file)?.modified()?;
-        std::fs::write(&file, rewritten)?;
-        std::fs::File::options()
-            .write(true)
-            .open(&file)?
-            .set_modified(modified)?;
-        let after = std::fs::metadata(&file)?;
+        let before = std::fs::metadata(&file)?;
+        let modified = before.modified()?;
+        let ctime = |metadata: &std::fs::Metadata| (metadata.ctime(), metadata.ctime_nsec());
+        // Kernels before Linux 6.13 advance ctime once per jiffy (1-10 ms) and
+        // HFS+ once per second, so a rewrite in the same tick keeps it; repeat
+        // until the tick has moved, for up to three seconds.
+        let mut after = before.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            std::fs::write(&file, rewritten)?;
+            std::fs::File::options()
+                .write(true)
+                .open(&file)?
+                .set_modified(modified)?;
+            after = std::fs::metadata(&file)?;
+            if ctime(&after) != ctime(&before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_ne!(ctime(&after), ctime(&before), "fixture must move ctime");
         assert_eq!(after.modified()?, modified, "fixture must keep the mtime");
         assert_eq!(after.len(), test_source.len() as u64);
 
