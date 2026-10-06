@@ -7090,7 +7090,9 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged": [],
@@ -7257,6 +7259,13 @@ Field contract:
 - `related_test_delta` — count movement for related-test evidence.
 - `no_movement_reason` — explicit static reason for unchanged seams with no
   rendered evidence movement.
+- `after_missing_discriminators` — the after-side missing-discriminator list,
+  so consumers can tell a satisfied discriminator from a still-open one when
+  the class did not move.
+- `after_open_legs` — the after-side RIPR legs that are not `yes`, each with
+  its recorded state (for example `discriminate (weak)`); a leg absent from
+  the after record renders as `stage (not recorded)` — an unknown gate, not
+  a satisfied one.
 - `new[]` / `removed[]` — seam identity and grip class for seam IDs present in
   only one input.
 - `review_receipt` — an additive reviewer packet derived from the same
@@ -7360,7 +7369,9 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged_seams": [],
@@ -7427,8 +7438,9 @@ Field contract:
 - `changed_seams[]` / `unchanged_seams[]` carry the same additive
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, `gap_movement`, and
-  `no_movement_reason`.
+  movement, related-test count movement, `gap_movement`,
+  `no_movement_reason`, `after_missing_discriminators`, and
+  `after_open_legs`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -7728,7 +7740,8 @@ JSON shape:
     "change": "improved",
     "evidence_delta": [
       "missing discriminator no longer reported: discount_threshold (equality boundary)"
-    ]
+    ],
+    "guidance_note": null
   },
   "test_changed": "discounted_total_boundary_discriminator",
   "verification": {
@@ -7816,6 +7829,13 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
+- `seam.guidance_note` - refined guidance for an `unchanged` seam whose
+  evidence moved, read from the verify row's `after_missing_discriminators`
+  and `after_open_legs`. When the discriminators are satisfied it names the
+  gating after-side leg instead of repeating the add-discriminator
+  instruction; when discriminators are still missing it names the first one.
+  It is `null` for other buckets, for true no-movement, and for verify
+  documents that predate the after-side signals.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
   takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
@@ -7834,7 +7854,11 @@ Field contract:
   guidance derived from the verify bucket. It does not claim runtime
   confirmation. When `status` is not `advisory`, `next_recommendation` instead
   states that the receipt is not review evidence, with the status, the
-  analysis-outcome reason, and the recovery.
+  analysis-outcome reason, and the recovery. For an `advisory` receipt over
+  an `unchanged` seam whose discriminators are satisfied but whose class
+  did not move, both `next_recommendation` and `next_action.recommended_action`
+  carry the refined `seam.guidance_note` plus an investigate-the-gate step
+  instead of the static add-discriminator lines.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,

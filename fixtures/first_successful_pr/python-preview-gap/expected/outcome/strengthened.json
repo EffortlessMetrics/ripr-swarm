@@ -38,6 +38,14 @@
     {
       "activate_delta": null,
       "after": "weakly_gripped",
+      "after_missing_discriminators": [
+        "amount == threshold (equality boundary not observed)"
+      ],
+      "after_open_legs": [
+        "propagate (weak)",
+        "observe (weak)",
+        "discriminate (weak)"
+      ],
       "before": "ungripped",
       "direction": "improved",
       "discriminate_delta": {

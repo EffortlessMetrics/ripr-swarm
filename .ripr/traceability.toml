@@ -956,6 +956,8 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_prefers_evidence_record_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_records_no_movement_reason",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_movement_carries_after_side_signals",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_movement_marks_unrecorded_after_legs_unknown",
   "crates/ripr/tests/cli_smoke.rs::outcome_prints_markdown_receipt_by_default",
   "crates/ripr/tests/cli_smoke.rs::outcome_writes_json_receipt_when_requested",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
@@ -1117,6 +1119,10 @@ tests = [
   "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_ranked_seam_summary",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_v2_normalizes_windows_related_test_paths",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam",
+  "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_unchanged_class_satisfied_discriminator_names_gate",
+  "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_unchanged_class_missing_discriminator_keeps_add_discriminator_guidance",
+  "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_unchanged_class_without_after_signals_stays_generic",
+  "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_note_stays_null_outside_unchanged_with_movement",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
   "crates/ripr/tests/cli_smoke.rs::editor_agent_loop_fixture_outputs_match_expected"
 ]

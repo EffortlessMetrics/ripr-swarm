@@ -189,6 +189,13 @@ pub(crate) struct TargetedTestOutcomeMovement {
     oracle_strength_delta: Option<String>,
     related_test_delta: isize,
     no_movement_reason: Option<String>,
+    /// #5250: the after-side missing list and the after-side legs that are
+    /// not `yes`, so receipt guidance can name the remaining gate instead
+    /// of repeating a satisfied discriminator instruction when the class did
+    /// not move but the evidence did. Legs absent from the after record
+    /// render as `stage (not recorded)` rather than being silently dropped.
+    after_missing_discriminators: Vec<String>,
+    after_open_legs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -726,6 +733,8 @@ fn targeted_test_outcome_movement(
         missing_discriminators_reopened,
         oracle_strength_delta,
         related_test_delta,
+        after_missing_discriminators: after.missing_discriminators.clone(),
+        after_open_legs: after_open_legs(after),
         no_movement_reason,
     }
 }
@@ -1157,6 +1166,21 @@ fn related_test_delta(before: &StaticSeamRecord, after: &StaticSeamRecord) -> is
         (Ok(after_total), Ok(before_total)) => after_total - before_total,
         _ => 0,
     }
+}
+
+/// #5250: the after-side RIPR legs that are not `yes`, in canonical order,
+/// each with its recorded state. A leg absent from the after record is an
+/// unknown gate, not a satisfied one, so it renders as `stage (not
+/// recorded)` instead of being dropped.
+fn after_open_legs(after: &StaticSeamRecord) -> Vec<String> {
+    EVIDENCE_STAGES
+        .iter()
+        .filter_map(|stage| match after.evidence_path.get(*stage) {
+            Some(entry) if entry.state == "yes" => None,
+            Some(entry) => Some(format!("{stage} ({})", entry.state)),
+            None => Some(format!("{stage} (not recorded)")),
+        })
+        .collect()
 }
 
 fn no_movement_reason(
@@ -2485,6 +2509,67 @@ mod tests {
         assert_eq!(
             movement.no_movement_reason.as_deref(),
             Some("grip class and legacy_fields evidence were unchanged")
+        );
+    }
+
+    fn evidence_stage(state: &str) -> StaticEvidenceStage {
+        StaticEvidenceStage {
+            state: state.to_string(),
+            confidence: "high".to_string(),
+            summary: format!("{state} leg"),
+        }
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_carries_after_side_signals() {
+        // #5250: the receipt's refined guidance reads these fields; an
+        // unchanged class with satisfied discriminators must still name
+        // the gating after-side leg.
+        let mut before = targeted_static_seam("same", "weakly_gripped");
+        before.missing_discriminators = vec!["threshold equality".to_string()];
+        let mut after = targeted_static_seam("same", "weakly_gripped");
+        for stage in ["reach", "activate", "propagate", "observe"] {
+            after
+                .evidence_path
+                .insert(stage.to_string(), evidence_stage("yes"));
+        }
+        after
+            .evidence_path
+            .insert("discriminate".to_string(), evidence_stage("weak"));
+
+        let movement = targeted_test_outcome_movement(&before, &after);
+
+        assert_eq!(movement.direction, "unchanged");
+        assert!(movement.after_missing_discriminators.is_empty());
+        assert_eq!(
+            movement.after_open_legs,
+            vec!["discriminate (weak)".to_string()]
+        );
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_marks_unrecorded_after_legs_unknown() {
+        // #5250: a leg absent from the after record is an unknown gate,
+        // not a satisfied one.
+        let before = targeted_static_seam("same", "weakly_gripped");
+        let mut after = targeted_static_seam("same", "weakly_gripped");
+        after.missing_discriminators = vec!["threshold equality".to_string()];
+
+        let movement = targeted_test_outcome_movement(&before, &after);
+
+        assert_eq!(
+            movement.after_missing_discriminators,
+            vec!["threshold equality".to_string()]
+        );
+        assert_eq!(
+            movement.after_open_legs,
+            vec![
+                "reach (not recorded)".to_string(),
+                "activate (not recorded)".to_string(),
+                "propagate (not recorded)".to_string(),
+                "observe (not recorded)".to_string(),
+                "discriminate (not recorded)".to_string(),
+            ]
         );
     }
 

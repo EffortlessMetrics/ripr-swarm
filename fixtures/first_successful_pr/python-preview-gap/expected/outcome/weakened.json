@@ -40,6 +40,15 @@
     {
       "activate_delta": null,
       "after": "ungripped",
+      "after_missing_discriminators": [
+        "amount == threshold (equality boundary not observed)"
+      ],
+      "after_open_legs": [
+        "reach (no)",
+        "propagate (weak)",
+        "observe (missing)",
+        "discriminate (missing)"
+      ],
       "before": "weakly_gripped",
       "direction": "regressed",
       "discriminate_delta": {
