@@ -691,12 +691,37 @@ fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
         // computed branch (`qty / 2`) can equal the other at the boundary.
         (Some(then_raw), Some(else_raw)) => {
             match (strict_literal(then_raw), strict_literal(else_raw)) {
-                (Some(then_value), Some(else_value)) => then_value != else_value,
+                (Some(then_value), Some(else_value)) => {
+                    literal_values_differ(&then_value, &else_value)
+                }
                 _ => false,
             }
         }
         _ => false,
     }
+}
+
+/// Whether two `strict_literal` texts denote different values (#6780
+/// review round 2). Integers compare by value (`05` equals `5`); a string
+/// or char literal with an escape may spell another literal's value
+/// (`"\x61"` is `"a"`), so it never counts as distinct (fail closed).
+fn literal_values_differ(left: &str, right: &str) -> bool {
+    let is_integer = |text: &str| text.chars().all(|ch| ch.is_ascii_digit());
+    if is_integer(left) && is_integer(right) {
+        let value = |text: &str| {
+            let digits = text.trim_start_matches('0');
+            if digits.is_empty() {
+                "0".to_string()
+            } else {
+                digits.to_string()
+            }
+        };
+        return value(left) != value(right);
+    }
+    if left.contains('\\') || right.contains('\\') {
+        return false;
+    }
+    left != right
 }
 
 /// Whether `body` (a caller's full text) rebinds or assigns `parameter`
@@ -766,7 +791,12 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
     // bind it (`Some(qty) if .. =>`, `Foo { qty } =>`).
     for (at, _) in inner.match_indices("=>") {
         let start = match_arm_start(&inner[..at]);
-        if mentions(match_arm_pattern(&inner[start..at])) {
+        let arm = &inner[start..at];
+        // A comma-less block arm before this one (`None => if f { 1 } else
+        // { 2 } Some(qty) =>`) leaves its own `=>` and `if` in the arm
+        // text, which could cut this arm's pattern away (#6780 review
+        // round 2): answer "rebinds" (fail closed).
+        if has_top_level_arrow(arm) || mentions(match_arm_pattern(arm)) {
             return true;
         }
     }
@@ -805,6 +835,20 @@ fn match_arm_start(before: &str) -> usize {
         }
     }
     0
+}
+
+/// Whether `text` holds a `=>` outside any bracket.
+fn has_top_level_arrow(text: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 && text[at..].starts_with("=>") => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The pattern part of a match arm: `arm` before its last `if` keyword
@@ -1067,6 +1111,9 @@ mod tests {
             "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
             "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+            // Controls for the value comparison: distinct values forward.
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
+            "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"b\" } else { \"a\" }\n}",
         ] {
             let callee = if body.contains("is_bulk") {
                 "is_bulk"
@@ -1092,6 +1139,9 @@ mod tests {
             "pub fn w(qty: u32) -> bool {\n    if qty == 10 { true } else { is_bulk(qty) }\n}",
             // equal branches never reveal the helper's result
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 5 }\n}",
+            // #6780 review round 2: equal by value, distinct by text
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"\\x61\" } else { \"a\" }\n}",
             // compound condition
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) && qty > 99 { 5 } else { 0 }\n}",
             // else-if chain
@@ -1163,6 +1213,9 @@ mod tests {
             "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) if qty > 3 => qty, _ => 0 } }",
             "fn w(qty: Line) -> u32 { match qty { Line { qty } => qty } }",
             "fn w(qty: u32, n: Line) -> u32 { match n { Line { qty, .. } if qty > 1 => qty, _ => 0 } }",
+            // #6780 review round 2: a comma-less block arm before the
+            // binding arm must not hide `Some(qty)`.
+            "fn w(qty: Option<u32>, f: bool) -> bool { match qty { None => if f { 1 } else { 2 } Some(qty) => is_bulk(qty) } }",
         ] {
             assert!(caller_rebinds_parameter(body, "qty"), "{body}");
         }

@@ -39,14 +39,23 @@ can only hint that a caller "may lead here" without changing anything.
   caller keeps its proximity reason.
 - Hop propagation (#6780): when the related tests reach the owner only
   through the chain (some `HelperOwnerCall`, no `DirectOwnerCall`), the
-  owner's result must reach the entry's return through every hop: the
-  caller has no `return` or `?`, does not rebind or assign a parameter it
-  forwards, and its tail is the hop call itself or `if <call> { L1 } else
-  { L2 }` / `if !<call> ..` with distinct literals `L1`, `L2`. Otherwise
-  the propagation stage is `unknown` (`helper_result_not_forwarded`), so
-  the finding abstains instead of crediting the entry's oracle or
-  reporting a gap. Arithmetic or let-bound use of the result is not
-  followed in V1.
+  owner's result must be forwarded unchanged through every hop up to the
+  highest hop whose caller a `HelperOwnerCall` test calls directly (the
+  maximum across those tests); hops above it are not checked, because no
+  related test observes their result. When any such test's directly
+  called hop cannot be found, the whole chain is checked (fail closed).
+  A hop forwards when its caller has no `return` or `?`, does not rebind
+  or assign a parameter it forwards, and its tail is the hop call itself
+  or `if <call> { L1 } else { L2 }` / `if !<call> ..` with literals `L1`,
+  `L2` of distinct value. Otherwise the propagation stage is `unknown`
+  (`helper_result_not_forwarded`), so the finding abstains instead of
+  crediting the entry's oracle or reporting a gap. Arithmetic or
+  let-bound use of the result is not followed in V1.
+- Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
+  recomputed from the asserting test, and requires the assertion's
+  subject to hold exactly one entry call whose arguments are each a whole
+  literal, identifier or path; a scalar buried in a compound argument
+  (`entry(std::cmp::max(10, 50))`, `entry(10 * 2)`) does not pair.
 - A hop argument that is a caller parameter the caller rebinds or assigns
   (`let qty = qty * 2;`, `qty += 1`, a `let`/`for`/closure/match pattern
   naming it) stops the row transfer like a computed argument.

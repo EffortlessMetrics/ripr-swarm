@@ -10,13 +10,15 @@
   (#6694).
 - When tests reach a changed helper only through a wrapper that drops,
   binds, transforms or branches past its result, or that rebinds the
-  forwarded parameter, the finding reads `propagation_unknown`
+  forwarded parameter, propagation is unknown
   (`helper_result_not_forwarded`) instead of crediting the wrapper's
   assertion or reporting a gap; such a parameter also no longer carries the
   test's input into the helper's activation rows.
 - The wrapper pairing above reads only boundary rows from the asserting
   test itself, so a same-line boundary input in another test file no longer
-  pairs with an unrelated wrapper assertion; a match guard that only reads
+  pairs with an unrelated wrapper assertion, and a scalar buried in a
+  compound wrapper argument (`order_discount(std::cmp::max(10, 50))`,
+  `order_discount(10 * 2)`) no longer pairs with the boundary; a match guard that only reads
   the forwarded parameter (`n if n > qty =>`) no longer counts as rebinding
   it.
 - A test that calls a forwarding intermediate caller of a changed helper is

@@ -287,6 +287,13 @@ fn return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop() -> Resul
         UNIT_DIFF,
         "return_value",
     )?;
+    assert_eq!(finding["probe"]["line"], 2, "{finding}");
+    assert_eq!(finding["probe"]["expression"], "qty * 4", "{finding}");
+    assert_eq!(
+        relation_of(&finding, "two_units_cost_eight_cents"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
     assert!(
         !finding["ripr"]["propagate"]["summary"]
             .as_str()
@@ -390,5 +397,56 @@ fn intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper() -> Result<
         BULK_DIFF,
     )?;
     assert_not_forwarded(&outer);
+    Ok(())
+}
+
+// #6780 review round 2: activation binds the first scalar buried in a
+// compound wrapper argument, so `order_discount(std::cmp::max(10, 50))` or
+// `order_discount(10 * 2)` must not pair the `10 <= qty` boundary.
+#[test]
+fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
+    for pin in [
+        "        assert_eq!(order_discount(std::cmp::max(10, 50)), 5);",
+        "        assert_eq!(order_discount(10 * 2), 5);",
+    ] {
+        let tests = format!("{pin}\n        assert_eq!(order_discount(3), 0);");
+        let finding = predicate_finding(&bulk_source(FORWARDING, &tests), BULK_DIFF)?;
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{pin}: {finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{pin}: {finding}");
+        assert!(
+            discriminate_summary(&finding).contains("same_test_pairing_missing"),
+            "{pin}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+// #6780 review round 2: a direct owner call with a weak oracle plus a
+// non-forwarding wrapper with an exact oracle. The direct call lifts the
+// helper-only abstention, so the wrapper's exact oracle must still not be
+// credited for the owner's return-value change. End to end the direct test
+// is itself a caller of the helper, so the chain stops at the multi-caller
+// edge and the wrapper test keeps its file-proximity relation.
+#[test]
+fn mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper() -> Result<(), String> {
+    let source = "fn unit_cents(qty: u32) -> u32 {\n    qty * 4\n}\n\npub fn order_cents(qty: u32) -> u32 {\n    unit_cents(qty) + 1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn unit_cents_is_positive() {\n        assert!(unit_cents(2) > 0);\n    }\n\n    #[test]\n    fn two_units_cost_nine_cents() {\n        assert_eq!(order_cents(2), 9);\n    }\n}\n";
+    let finding = family_finding(source, UNIT_DIFF, "return_value")?;
+    assert_eq!(finding["probe"]["expression"], "qty * 4", "{finding}");
+    assert_eq!(
+        relation_of(&finding, "unit_cents_is_positive"),
+        Some("direct_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(
+        relation_of(&finding, "two_units_cost_nine_cents"),
+        Some("same_test_file"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     Ok(())
 }

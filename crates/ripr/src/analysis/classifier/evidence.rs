@@ -148,7 +148,7 @@ impl ClassifiedProbeEvidence {
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Propagation unknown: the related tests reach `{}` only through a caller that does not return its result directly ({HELPER_RESULT_NOT_FORWARDED})",
+                        "Propagation unknown: the related tests reach `{}` only through a caller that does not forward its result unchanged ({HELPER_RESULT_NOT_FORWARDED})",
                         owner.name
                     ),
                 )

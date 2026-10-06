@@ -138,41 +138,51 @@ fn test_pairs_boundary_input_with_oracle(
     })
 }
 
+/// The assertion's subject is one call of the chain's entry whose arguments
+/// are whole literals, identifiers or paths, and the assertion names
+/// neither the owner nor a second entry call.
 fn assertion_names_one_entry_call(
     owner: &FunctionSummary,
     entry: &str,
     assertion: &OracleFact,
 ) -> bool {
     let subject = assertion_subject(&assertion.text);
-    owner_call_count(&subject, entry) == 1
+    let entry_calls = owner_call_argument_lists(&subject, entry);
+    // #6780 review round 2: activation binds the first scalar buried in a
+    // compound argument (`order_discount(std::cmp::max(10, 50))`,
+    // `order_discount(10 * 2)`), so every entry argument must be a whole
+    // literal, identifier or path, as on the owner-call path.
+    entry_calls.len() == 1
+        && entry_calls[0]
+            .iter()
+            .all(|argument| argument_is_activation_fallback_shape(argument.trim()))
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
 }
 
-/// The assertion's subject is one call of the chain's entry, the assertion
-/// names neither the owner nor a second entry call, and activation already
-/// recorded a boundary `==` row bound down the chain from this assertion's
-/// line (the transferred row carries the entry call's text). `activation`
-/// must hold only rows recomputed from the assertion's own test.
+/// Activation already recorded a boundary `==` row bound down the chain
+/// from this assertion's line (the transferred row carries the entry call's
+/// text). Callers check `assertion_names_one_entry_call` first, before
+/// computing the test's own rows. `activation` must hold only rows
+/// recomputed from the assertion's own test.
 fn assertion_observes_boundary_entry_call(
     owner: &FunctionSummary,
     entry: &str,
     assertion: &OracleFact,
     activation: &ActivationEvidence,
 ) -> bool {
-    assertion_names_one_entry_call(owner, entry, assertion)
-        && activation.observed_values.iter().any(|fact| {
-            // The transferred row's provenance starts with the entry call's
-            // line text. That line must hold this assertion, exactly one
-            // entry call, and no direct owner call (#6780 review N1): a
-            // same-line `is_bulk(10)` row must not pair a far wrapper pin.
-            let call_line = fact.text.split(" | ").next().unwrap_or_default();
-            fact.line == assertion.line
-                && fact.value.contains(" == ")
-                && call_line.contains(&assertion.text)
-                && owner_call_count(call_line, entry) == 1
-                && owner_call_count(call_line, &owner.name) == 0
-        })
+    activation.observed_values.iter().any(|fact| {
+        // The transferred row's provenance starts with the entry call's
+        // line text. That line must hold this assertion, exactly one
+        // entry call, and no direct owner call (#6780 review N1): a
+        // same-line `is_bulk(10)` row must not pair a far wrapper pin.
+        let call_line = fact.text.split(" | ").next().unwrap_or_default();
+        fact.line == assertion.line
+            && fact.value.contains(" == ")
+            && call_line.contains(&assertion.text)
+            && owner_call_count(call_line, entry) == 1
+            && owner_call_count(call_line, &owner.name) == 0
+    })
 }
 
 fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
@@ -1820,6 +1830,23 @@ mod tests {
             &transferred_boundary_row(1, names_owner),
             FORWARDING_WRAPPER,
         ));
+        // #6780 review round 2: a scalar buried in a compound entry
+        // argument is not the input the wrapper receives.
+        for buried in [
+            "assert_eq!(order_discount(std::cmp::max(10, 50)), 5);",
+            "assert_eq!(order_discount(10 * 2), 5);",
+            "assert_eq!(order_discount(10 + extra), 5);",
+            "assert_eq!(order_discount(10.max(cap)), 5);",
+        ] {
+            assert!(
+                !pairs_through_forwarding_wrapper(
+                    buried,
+                    &transferred_boundary_row(1, buried),
+                    FORWARDING_WRAPPER,
+                ),
+                "{buried} must not pair"
+            );
+        }
         // Control: the plain pin pairs.
         let plain = "assert_eq!(order_discount(10), 5);";
         assert!(pairs_through_forwarding_wrapper(
