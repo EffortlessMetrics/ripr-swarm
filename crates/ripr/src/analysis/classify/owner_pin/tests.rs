@@ -1164,6 +1164,46 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
         (with_start_type("Point", manual_point), false),
         (with_start_type("Unknown", ""), false),
         (with_start_type("Vec<Unknown>", ""), false),
+        // #6773 review: a standard base name must be the standard type. A
+        // path rooted outside std/core/alloc, or a declaring file that
+        // imports, globs, renames or aliases the name from elsewhere, may
+        // bind a foreign type whose `==` ignores the value.
+        (with_start_type("String", ""), true),
+        (with_start_type("std::string::String", ""), true),
+        (with_start_type("Vec<u8>", "use std::vec::Vec;\n"), true),
+        (
+            with_start_type(
+                "String",
+                "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+            ),
+            true,
+        ),
+        (with_start_type("foreign::String", ""), false),
+        (with_start_type("other::Vec<u8>", ""), false),
+        (with_start_type("crate::String", ""), false),
+        (with_start_type("Vec<u8>", "use foreign::Vec;\n"), false),
+        (
+            with_start_type("Vec<u8>", "use foreign::{Other, Vec};\n"),
+            false,
+        ),
+        (
+            with_start_type("String", "use x::Thing as String;\n"),
+            false,
+        ),
+        (with_start_type("String", "use foreign::*;\n"), false),
+        (
+            with_start_type("String", "use crate::text::String;\n"),
+            false,
+        ),
+        (with_start_type("String", "type String = Loose;\n"), false),
+        (
+            with_start_type("std::string::String", "extern crate other as std;\n"),
+            false,
+        ),
+        (
+            with_start_type("Point", &format!("{derived_point}use foreign::Point;\n")),
+            false,
+        ),
         (
             WINDOW_LIB.replace(
                 "    start: u32,\n",
@@ -1185,8 +1225,8 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
 fn a_clone_field_pin_needs_a_receiver_built_without_the_clone() {
     let lib = WINDOW_LIB.replace(
         "impl Window {\n",
-        "impl Window {\n    pub fn copied(other: &Window) -> Self {\n        other.clone()\n    }\n",
-    ) + "impl Default for Window {\n    fn default() -> Self {\n        Window::new(0, 0)\n    }\n}\nimpl From<u32> for Window {\n    fn from(start: u32) -> Self {\n        Window::new(start, start)\n    }\n}\n";
+        "impl Window {\n    pub fn copied(other: &Window) -> Self {\n        other.clone()\n    }\n    pub fn built(start: u32, end: u32) -> Self {\n        copy_of(&Window { start, end })\n    }\n",
+    ) + "fn copy_of(window: &Window) -> Window {\n    window.clone()\n}\nimpl Default for Window {\n    fn default() -> Self {\n        Window::new(0, 0)\n    }\n}\nimpl From<u32> for Window {\n    fn from(start: u32) -> Self {\n        Window::new(start, start)\n    }\n}\n";
     let test = |body: &str| {
         format!(
             "use demo::Window;\n\n#[test]\nfn compares() {{\n{body}\n    assert_eq!(w.clone(), w);\n}}\n"
@@ -1212,6 +1252,45 @@ fn a_clone_field_pin_needs_a_receiver_built_without_the_clone() {
             "    let mut w = Window::new(3, 9);\n    reset(&mut w);",
             false,
         ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w.start = w.end;",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    let start = &mut w.start;\n    *start = 9;",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w.set_start(9);",
+            false,
+        ),
+        ("    let mut w = Window::new(3, 9);", false),
+        ("    let mut\tw = Window::new(3, 9);", false),
+        // #6773 review: a helper, a local or an update base may carry a
+        // wrong clone's output into the receiver; only literals and
+        // constants are independent.
+        ("    let w = Window::new(u32::MAX, 9 as u32);", true),
+        ("    let w = Window { start: LIMIT, end: 9 };", true),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window::new(make(&base), 9);",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: helper(&base), end: 9 };",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: base.start, end: 9 };",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: 3, ..base };",
+            false,
+        ),
+        ("    let s = 3;\n    let w = Window::new(s, 9);", false),
+        ("    let w = Window::new(*START, 9);", false),
+        ("    let w = Window::new(start!(), 9);", false),
+        ("    let w = Window::built(3, 9);", false),
         ("    let w = Window::default();", false),
         ("    let w = Window::from(3);", false),
         ("    let w = Window::copied(&Window::new(3, 9));", false),

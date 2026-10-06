@@ -11,4 +11,7 @@
   checks `assert_eq!(value.clone(), value)` and the type's `PartialEq` is
   derived, with a field type that compares by value. A hand-written
   `PartialEq`, `assert_ne!` or a comparison with another value still gets no
-  credit (#6692).
+  credit. The compared value must be built from literals or constants (no
+  helper call, local or `let mut` binding), the field type must be the
+  standard or workspace type it names, and a test related only by name gives
+  no credit next to a test that reaches the change (#6692).

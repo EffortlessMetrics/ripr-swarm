@@ -800,14 +800,40 @@ fn has_matching_added_line(
 /// text as its `before`. Only the static-unknown catch-all is suppressed
 /// this way; a removed line with a concrete family keeps the existing
 /// family-and-token pairing.
+///
+/// The character comparison reads only plain `".."` strings: a line with a
+/// raw string (`r#"a" b"#`) or a `'"'` char literal is never read as a
+/// reorder (fail closed: the removed probe stays).
 fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
+    if has_unpaired_quote_literal(&removed_line.text) {
+        return false;
+    }
     let removed = sorted_code_characters(&removed_line.text);
     !removed.is_empty()
         && changed.added_lines.iter().any(|line| {
             let run_start = added_run_start(line.new_side_line, changed);
             (lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 || lines_are_adjacent(removed_line.new_side_line, run_start))
+                && !has_unpaired_quote_literal(&line.text)
                 && sorted_code_characters(&line.text) == removed
+        })
+}
+
+/// Whether a line holds a literal whose `"` the plain string scan of
+/// [`sorted_code_characters`] would misread: a raw string (`r".."`,
+/// `r#".."#`, `br".."`, `cr".."`) or a char literal `'"'`.
+fn has_unpaired_quote_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.contains("'\"'")
+        || bytes.iter().enumerate().any(|(offset, byte)| {
+            *byte == b'r'
+                && matches!(bytes.get(offset + 1), Some(b'"' | b'#'))
+                && (offset == 0
+                    || !(bytes[offset - 1].is_ascii_alphanumeric() || bytes[offset - 1] == b'_')
+                    || (matches!(bytes[offset - 1], b'b' | b'c')
+                        && (offset == 1
+                            || !(bytes[offset - 2].is_ascii_alphanumeric()
+                                || bytes[offset - 2] == b'_'))))
         })
 }
 
@@ -1925,6 +1951,20 @@ mod tests {
                     && probe.family == ProbeFamily::StaticUnknown),
             "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
         );
+        // A raw string's inner `"` would flip the plain string scan: the
+        // swap of `"a" b` and `b "a"` inside one is content, never a reorder.
+        let raw = "f(r#\"a\" b\"#) | y";
+        let raw_swapped = swap(raw, "y | f(r#\"b \"a\"#)");
+        assert!(
+            raw_swapped
+                .removed_lines
+                .first()
+                .is_some_and(|line| !has_adjacent_reordered_added_line(line, &raw_swapped)),
+            "a raw-string line is never read as a reorder"
+        );
+        assert!(has_unpaired_quote_literal("x == '\"' | y"));
+        assert!(has_unpaired_quote_literal("br\"a\" | y"));
+        assert!(!has_unpaired_quote_literal("bar(\"x\") | y"));
         // Whitespace inside a string literal is content, not layout.
         let spaced = "log(\"a b\", x) | y";
         assert_ne!(

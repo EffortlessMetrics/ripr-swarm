@@ -3,7 +3,7 @@ use crate::analysis::classify::{
     activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
     current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
     local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
@@ -151,7 +151,7 @@ impl ClassifiedProbeEvidence {
                 )
             })
         };
-        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
+        let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
             &context.related_tests,
@@ -163,21 +163,21 @@ impl ClassifiedProbeEvidence {
                 assertion_admitted: &assertion_admitted,
             },
         );
+        let (observe, discriminate, related_tests, matched_total) = (
+            reveal.observe,
+            reveal.discriminate,
+            reveal.related,
+            reveal.related_total,
+        );
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
-        // missing-field fact below no longer stands for this probe. Only the
-        // owner pin's own gates clear it; a token match never does.
+        // missing-field fact below no longer stands for this probe. Only an
+        // owner pin that reveal credited clears it, after reveal's own
+        // gates (a name-only relation next to a reach-bearing test, a
+        // foreign same-name import, a cross-package same-name definition);
+        // a token match never does.
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
-            && owner_return_pin.is_some()
-            && test_summaries.iter().any(|test| {
-                test.assertions.iter().any(|assertion| {
-                    matches!(
-                        assertion.kind,
-                        OracleKind::ExactValue | OracleKind::WholeObjectEquality
-                    ) && assertion_admitted(test, assertion)
-                        && owner_pin_admits(test, assertion)
-                })
-            })
+            && reveal.owner_pin_credited
         {
             activation.missing_discriminators.retain(|fact| {
                 fact.flow_sink

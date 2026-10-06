@@ -600,7 +600,10 @@ fn has_field_shape(text: &str) -> bool {
 /// statement.
 fn let_binding_initializer(text: &str) -> Option<Option<String>> {
     let text = text.trim_start();
-    if !text.starts_with("let ") {
+    if !text
+        .strip_prefix("let")
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+    {
         return None;
     }
     let masked = mask_comments_and_strings(text);
@@ -768,6 +771,8 @@ mod tests {
             "let Point { x, y }: Point = origin;",
             "let total: u64;",
             "let label: &str = \"a: b\"; // note: c",
+            "let\tvalue: u8 = 0;",
+            "let\n    value: u8 = 0;",
         ] {
             let families = classify_changed_line(text);
             assert!(
@@ -791,6 +796,7 @@ mod tests {
             "start: self.start,",
             "let window: Window = Window { start: lo, end: hi };",
             "let mut w = Window { start: lo };",
+            "let\tw = Window { start: lo };",
         ] {
             let families = classify_changed_line(text);
             assert!(

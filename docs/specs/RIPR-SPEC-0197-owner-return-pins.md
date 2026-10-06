@@ -217,7 +217,18 @@ rule only for an assertion whose context was admitted.
    rules recursively). The value-type list extends RIPR-SPEC-0225 rule 4
    with `Box`, `Rc`, `Arc`, `VecDeque`, the `BTreeMap`/`BTreeSet`/`HashMap`/
    `HashSet` collections and the float types; a workspace type with generic
-   arguments fails closed. The changed line must be one whole field
+   arguments fails closed. A standard name must denote the standard type: a
+   multi-segment type path must be rooted in `std`, `core` or `alloc`
+   (`foreign::String` and `crate::String` are refused, and so is any root a
+   workspace file renames to, `extern crate other as std;`), and the file
+   declaring the field's type may not rename an item to the base name
+   (`use x::Thing as String;`), alias it (`type String = ..;`), or name it
+   or glob in a `use` rooted elsewhere (`use foreign::Vec;`,
+   `use foreign::*;`). A `crate`/`self`/`super` or own-package `use` may
+   bring only a workspace-declared type of that name, and a workspace glob
+   counts only while no workspace file re-exports the name or a glob from
+   elsewhere, renames to it or aliases it. The scan is file-wide, not
+   per-module. The changed line must be one whole field
    initializer at the literal's own brace depth: a field of a nested literal
    or an argument of a call within a field (`start: f(Raw { start: .. })`)
    is not the outer field's value. No workspace `trait Clone` may exist, the
@@ -226,18 +237,35 @@ rule only for an assertion whose context was admitted.
    two changes: the non-owner operand must be exactly the clone call's
    receiver, and that receiver must be built without the clone under test.
    Every `let` of it initializes it with a `T { .. }` or `T(..)` literal or
-   a call to `T`'s one inherent constructor whose body clones nothing; no
-   initializer mentions `clone`, `clone_from`, `cloned` or `to_owned`
+   a call to `T`'s one inherent constructor, and every field initializer or
+   argument is a trivial expression: literals, `true`/`false`, constants and
+   variants named by a path whose last segment starts uppercase
+   (`u32::MAX`, `Kind::A`), `as` casts to primitives, and arithmetic,
+   comparison and bitwise operators. A call, method, macro, index, block,
+   closure, deref, range, `..base` update or local binding refuses
+   (`Window::new(make(&base), 9)`, `Window { start: helper(&base), .. }`,
+   `Window::new(s, 9)`): any of them may carry a wrong clone's output. The
+   constructor's body must be nothing but a `Self`/`T` literal of trivial
+   items over its parameters (field shorthand allowed); a body that calls a
+   helper (`copy_of(&Window { start, end })`) is refused. No initializer
+   mentions `clone`, `clone_from`, `cloned` or `to_owned`
    (`let w: Window = base.clone();` is refused, since an idempotent wrong
    field would survive the comparison); `Default`/`From` constructors are not
-   read; and the test may not reassign the receiver or borrow it `&mut`.
+   read; and the test may not reassign the receiver, and no `mut` may
+   precede its name (`let mut w`, `&mut w`, `ref mut w`): a field write
+   (`w.start = w.end`), a `&mut w.start` borrow or a `&mut self` method call
+   (`w.set_start(9)`) all need a `let mut` binding, so one alone refuses.
    Anything ripr cannot read fails closed: a lexical-fallback owner file, a
    duplicate declaration of `T`, generic arguments on a workspace field
    type, a UFCS `Clone::clone(&w)` call, or a receiver bound some other way.
    `assert_ne!`, a comparison with any other value
    (`assert_eq!(w.clone(), Window::new(3, 9))`) and a hand-written
    `PartialEq` give no credit. A confirmed clone pin clears the
-   `FieldValue` missing discriminator for that probe, so the finding may
+   `FieldValue` missing discriminator for that probe only when reveal
+   credits it: the pinning assertion matched in a test that may supply the
+   oracle (not a name-only relation next to a reach-bearing test) and the
+   pin survived the foreign same-name import and cross-package same-name
+   defeats (`RevealOutcome::owner_pin_credited`). The finding may then
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
 
@@ -580,8 +608,10 @@ assertions. This repair shares the existing callback without that larger migrati
   and `bitwise_pipe_reading_distinguishes_operand_position`.
 - Clone field pins (#6692): `a_clone_compared_with_its_own_receiver_pins_its_fields`,
   `a_clone_field_pin_needs_derived_equality_and_the_returned_literal` and
-  `a_clone_field_pin_needs_a_field_type_that_compares_by_value` in the same
-  test module; the public-API controls in
+  `a_clone_field_pin_needs_a_field_type_that_compares_by_value` and
+  `a_clone_field_pin_needs_a_receiver_built_without_the_clone` in the same
+  test module; `a_clone_field_owner_pin_is_credited_only_through_reveals_gates`
+  in `analysis/classify/reveal.rs`; the public-API controls in
   `crates/ripr/tests/clone_field_whole_equality.rs`.
 - CFG authority (`analysis/facts/cfg_predicates/tests.rs`):
   `test_build_availability_preserves_unknown_and_boolean_identity` and
