@@ -226,10 +226,15 @@ A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
 bitwise, or shift operator (`order_discount(base + 1)`, `.amount(base + 10)`,
 `1 << 4`, `16usize - 1`; a sign is a float exponent only directly after the
-`e`/`E` of a decimal mantissa such as `1e-5`) or repeats an array element (`&[b'f'; 16]`, whose
-`16` is a length) yields no input value, and a comparison operand that does so
-(`CURRENT - 2 > version`, `s.len() < 2 + 2`) contributes no boundary literal,
-so `CURRENT - 2` is never read as the boundary `2`. A compound condition
+`e`/`E` of a decimal mantissa such as `1e-5`; an operand may end in a call,
+index, block or `?`, as in `name.len() + 10`, `{ x } + 1` or `parse(s)? - 1`)
+or repeats an array element (`&[b'f'; 16]`, whose `16` is a length) yields no
+input value. A table-row or builder line is split at top-level commas with
+full `()`/`[]`/`{}` depth, and a char or byte literal such as `','` or `b'('`
+is one value, never a delimiter, so `(',', true)` passes `','`. A comparison
+operand that computes its value (`CURRENT - 2 > version`, `s.len() < 2 + 2`)
+contributes no boundary literal, so `CURRENT - 2` is never read as the
+boundary `2`. A compound condition
 (`&&`, `||`) is read one top-level comparison at a time, so a literal inside a
 computed operand of one comparison is not the boundary of the whole condition.
 
@@ -357,6 +362,8 @@ Fixture coverage:
 - `literal_kind_filter_reads_only_the_spelled_boundary_literals`
 - `suffixed_or_shifted_arguments_are_computed_end_to_end`
 - `table_and_builder_lines_skip_computed_arguments`
+- `char_literal_table_rows_are_owner_inputs_end_to_end`
+- `computed_builder_argument_is_not_credited_end_to_end`
 - `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`

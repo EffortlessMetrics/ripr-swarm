@@ -10,10 +10,13 @@
   ([#6674](https://github.com/EffortlessMetrics/ripr-swarm/issues/6674),
   [#6693](https://github.com/EffortlessMetrics/ripr-swarm/issues/6693)).
 - A computed test argument such as `order_discount(base + 1)`,
-  `.amount(base + 10)`, `16usize - 1`, `1 << 4` or `&[b'f'; 16]` is no
-  longer read as one of its literals; a boundary whose compared parameter receives one with a definite value (its variables bound
-  to exact test values or constants), directly or through a helper hop such
-  as `score(y + 1)`, stays unresolved instead of a missing input
+  `.amount(base + 10)`, `.amount(name.len() + 10)`, `parse(s)? - 1`,
+  `16usize - 1`, `1 << 4` or `&[b'f'; 16]` is no longer read as one of its
+  literals. A boundary whose compared parameter receives one with a definite
+  value (its variables bound to exact test values or constants), directly or
+  through a helper hop such as `score(y + 1)`, stays unresolved instead of a
+  missing input. Table rows and builder lines are split at top-level commas,
+  and a char literal such as `','` stays one input value
   ([#6672](https://github.com/EffortlessMetrics/ripr-swarm/issues/6672)).
 - A computed boundary operand such as `CURRENT - 2` or `2 + 2`, including one
   inside an `&&`/`||` condition, is no longer read as the literal it contains.

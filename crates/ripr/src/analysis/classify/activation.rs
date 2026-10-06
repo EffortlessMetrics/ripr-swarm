@@ -2167,6 +2167,8 @@ pub(in crate::analysis) fn literal_operand_value(operand: &str) -> Option<String
 /// length, not an element value). The literals inside such an expression
 /// are its operands, not its value, so RIPR-SPEC-0001's rule that a
 /// computed binding is not an exact input value applies (#6672, #6671).
+/// An operand may end in `)`, `]`, `}` (`{ x } + 1`) or `?`
+/// (`parse(s)? - 1`).
 /// String and char literal contents are skipped; a unary minus (`-5`,
 /// `f(-5)`), a reference (`&x`), a dereference (`*x`), and an
 /// exponent sign (`1e-5`) are not binary operators.
@@ -2195,7 +2197,7 @@ pub(in crate::analysis) fn is_computed_value_expression(text: &str) -> bool {
         }
         let after = chars.get(idx + 1).copied();
         let operand_before = previous.is_some_and(|prev| {
-            prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']' | '\'')
+            prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']' | '}' | '?' | '\'')
         });
         match ch {
             '[' => bracket_depth += 1,
@@ -2436,37 +2438,154 @@ fn split_top_level_args(text: &str) -> Vec<String> {
 }
 
 /// `scalar_values` of a table-row or builder line, skipping every
-/// argument that computes its value (`.amount(base + 10)` passes neither
-/// `10` nor `base`; `[b'f'; 16]`'s `16` is a length), the same
-/// RIPR-SPEC-0001 rule owner-call arguments follow (#6672). The line is
-/// cut at `,`, `(`, `)`, `{` and `}`; a bracketed `[...]` stays whole.
+/// argument that computes its value, the same RIPR-SPEC-0001 rule
+/// owner-call arguments follow (#6672). The line is split at top-level
+/// commas with full `()`/`[]`/`{}` depth; a char or byte literal (`','`,
+/// `b'('`) and a string are one unit, never a delimiter. An argument is
+/// computed when the text outside its groups is (`.amount(base.len() +
+/// 10)` passes neither 10 nor `base`, `(a + 1) * 2` passes neither 1 nor
+/// 2) or when it is an array repeat (`[b'f'; 16]`'s 16 is a length);
+/// otherwise its own scalar is read and its groups (`Some(5)`, `(',',
+/// true)`, `Case { n: 1 }`) are read as argument lists in turn.
 fn spelled_scalar_values(line: &str) -> Vec<String> {
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
     let mut values = Vec::new();
-    let mut bracket_depth = 0usize;
+    collect_spelled_values(line, &mut values);
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn collect_spelled_values(text: &str, values: &mut Vec<String>) {
+    let structure = structural_bytes(text);
+    for (start, end) in top_level_comma_ranges(&structure) {
+        let (Some(argument), Some(argument_structure)) =
+            (text.get(start..end), structure.get(start..end))
+        else {
+            continue;
+        };
+        if argument.trim().is_empty() {
+            continue;
+        }
+        let shape = argument_shape(argument, argument_structure);
+        if shape.array_repeat || is_computed_value_expression(&shape.outside) {
+            continue;
+        }
+        values.extend(scalar_values(&shape.outside));
+        for group in shape.groups {
+            collect_spelled_values(group, values);
+        }
+    }
+}
+
+/// The bytes of `text` with comments, string contents and char/byte
+/// literals blanked, so only real delimiters remain. Byte offsets match
+/// `text`.
+fn structural_bytes(text: &str) -> Vec<u8> {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let chars = masked.char_indices().collect::<Vec<_>>();
+    let mut bytes = masked.into_bytes();
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        if chars[idx].1 == '\''
+            && let Some(close) = char_literal_close(&chars, idx)
+        {
+            let end = chars[close].0 + 1;
+            if let Some(span) = bytes.get_mut(chars[idx].0..end) {
+                span.fill(b' ');
+            }
+            idx = close + 1;
+            continue;
+        }
+        idx += 1;
+    }
+    bytes
+}
+
+/// The index of the quote closing a char literal opened at `open`
+/// (`'x'`, `'\n'`, `'\''`, `'\x41'`, `'\u{1F600}'`); `None` for a
+/// lifetime (`'a`).
+fn char_literal_close(chars: &[(usize, char)], open: usize) -> Option<usize> {
+    match chars.get(open + 1)?.1 {
+        '\'' => None,
+        '\\' => {
+            if chars.get(open + 2)?.1 == '\'' {
+                return (chars.get(open + 3)?.1 == '\'').then_some(open + 3);
+            }
+            (open + 3..chars.len().min(open + 13)).find(|&idx| chars[idx].1 == '\'')
+        }
+        _ => (chars.get(open + 2)?.1 == '\'').then_some(open + 2),
+    }
+}
+
+/// Byte ranges of the top-level comma-separated arguments of `structure`.
+fn top_level_comma_ranges(structure: &[u8]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut depth = 0usize;
     let mut start = 0usize;
-    let mut segments = Vec::new();
-    for (offset, byte) in masked.bytes().enumerate() {
+    for (offset, byte) in structure.iter().enumerate() {
         match byte {
-            b'[' => bracket_depth += 1,
-            b']' => bracket_depth = bracket_depth.saturating_sub(1),
-            b',' | b'(' | b')' | b'{' | b'}' if bracket_depth == 0 => {
-                segments.push(line.get(start..offset).unwrap_or_default());
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                ranges.push((start, offset));
                 start = offset + 1;
             }
             _ => {}
         }
     }
-    segments.push(line.get(start..).unwrap_or_default());
-    for segment in segments {
-        if segment.trim().is_empty() || is_computed_value_expression(segment) {
-            continue;
+    ranges.push((start, structure.len()));
+    ranges
+}
+
+struct ArgumentShape<'a> {
+    /// The argument with each top-level group's contents removed
+    /// (`Some(base) + 1` → `Some() + 1`).
+    outside: String,
+    /// The contents of each top-level `()`, `[]` and `{}` group.
+    groups: Vec<&'a str>,
+    /// A top-level `[value; length]`.
+    array_repeat: bool,
+}
+
+fn argument_shape<'a>(argument: &'a str, structure: &[u8]) -> ArgumentShape<'a> {
+    let mut outside = String::new();
+    let mut groups = Vec::new();
+    let mut array_repeat = false;
+    let mut depth = 0usize;
+    let mut cursor = 0usize;
+    let mut group_start = 0usize;
+    let mut opener = b'(';
+    for (offset, byte) in structure.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                if depth == 0 {
+                    outside.push_str(argument.get(cursor..=offset).unwrap_or_default());
+                    group_start = offset + 1;
+                    opener = *byte;
+                }
+                depth += 1;
+            }
+            b')' | b']' | b'}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    groups.push(argument.get(group_start..offset).unwrap_or_default());
+                    cursor = offset;
+                }
+            }
+            b';' if depth == 1 && opener == b'[' => array_repeat = true,
+            _ => {}
         }
-        values.extend(scalar_values(segment));
     }
-    values.sort();
-    values.dedup();
-    values
+    if depth == 0 {
+        outside.push_str(argument.get(cursor..).unwrap_or_default());
+    } else {
+        groups.push(argument.get(group_start..).unwrap_or_default());
+    }
+    ArgumentShape {
+        outside,
+        groups,
+        array_repeat,
+    }
 }
 
 fn scalar_values(text: &str) -> Vec<String> {
@@ -2658,7 +2777,7 @@ mod tests {
 
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
-    use crate::analysis::rust_index::{CallFact, OracleFact};
+    use crate::analysis::rust_index::{CallFact, LiteralFact, OracleFact};
     use std::path::PathBuf;
 
     #[test]
@@ -4297,6 +4416,9 @@ assert_eq!(input.amount, 100);"#
             "2isize + 1",
             "0xFE - 1",
             "0x1E-1",
+            "x? + 1",
+            "parse(s)? - 1",
+            "{ x } + 1",
             "1 << 4",
             "x >> 1",
         ] {
@@ -4459,6 +4581,98 @@ assert_eq!(input.amount, 100);"#
             scalar_values("(10, Some(-5), \"a, b\"),")
         );
         assert_eq!(spelled_scalar_values(".amount(10)"), vec!["10".to_string()]);
+
+        // Exact-head review on #6796: a char literal is one unit, never a
+        // delimiter.
+        let strings = |values: &[&str]| values.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            spelled_scalar_values("(',', true),"),
+            strings(&["','", "true"])
+        );
+        assert_eq!(
+            spelled_scalar_values("('(', Token::LParen),"),
+            strings(&["'('"])
+        );
+        assert_eq!(spelled_scalar_values("('{', 1),"), strings(&["'{'", "1"]));
+        assert_eq!(
+            spelled_scalar_values("(b')', '\\''),"),
+            // `scalar_values` reads the byte literal `b')'` as its char.
+            strings(&["')'", "'\\''"])
+        );
+
+        // A binary operator after a group computes the argument: none of
+        // its literals is a passed value.
+        for computed in [
+            ".amount(base.len() + 10)",
+            ".amount(f(x) - 1)",
+            ".amount((a + 1) * 2)",
+            ".amount(parse(s)? - 1)",
+            ".amount({ x } + 1)",
+        ] {
+            assert!(spelled_scalar_values(computed).is_empty(), "{computed}");
+        }
+        assert_eq!(spelled_scalar_values("(x.len() - 1, 9),"), strings(&["9"]));
+        assert_eq!(
+            spelled_scalar_values("(Some(base) + 1, 7),"),
+            strings(&["7"])
+        );
+        assert_eq!(
+            spelled_scalar_values("Case { input: 5, expected: Some(-3) },"),
+            strings(&["-3", "5"])
+        );
+        assert_eq!(
+            spelled_scalar_values("[(1, true), (2, false)],"),
+            strings(&["1", "2", "false", "true"])
+        );
+    }
+
+    #[test]
+    fn char_literal_table_rows_are_owner_inputs_end_to_end() {
+        // Exact-head review on #6796: `(',', true)` once split inside the
+        // char literal, lost `','`, and read the boundary as present only
+        // outside the owner's inputs.
+        let owner = function("pub fn is_comma(ch: char) -> bool {\n    ch == ','\n}");
+        let body = "let rows = [\n(',', true),\n('x', false),\n];\nfor (ch, expected) in rows { assert_eq!(is_comma(ch), expected); }";
+        let mut test = test_with_body_calls(body, &[]);
+        test.literals = ["','", "'x'", "true", "false"]
+            .iter()
+            .map(|value| LiteralFact {
+                line: 11,
+                value: (*value).to_string(),
+            })
+            .collect();
+        let probe = probe(ProbeFamily::Predicate, "ch == ','");
+        let gathered = boundary_input(&owner, &probe, &[&test]);
+        let infection = super::super::infection::infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &gathered.activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
+        assert_eq!(infection.state, StageState::Yes, "{}", infection.summary);
+    }
+
+    #[test]
+    fn computed_builder_argument_is_not_credited_end_to_end() {
+        // Exact-head review on #6796: `.amount(name.len() + 10)` passes
+        // no 10, so the boundary `amount > 10` is not credited.
+        let owner = function("pub fn score(amount: u32) -> bool {\n    amount > 10\n}");
+        let body = "let request = Request::builder()\n.amount(name.len() + 10)\n.build();\nassert!(score(request.amount));";
+        let mut test = test_with_body_calls(body, &[]);
+        test.literals = vec![LiteralFact {
+            line: 11,
+            value: "10".to_string(),
+        }];
+        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        let gathered = boundary_input(&owner, &probe, &[&test]);
+        assert!(owner_input_values(&gathered.activation).is_empty());
+        let infection = super::super::infection::infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &gathered.activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
+        assert_ne!(infection.state, StageState::Yes, "{}", infection.summary);
     }
 
     #[test]
