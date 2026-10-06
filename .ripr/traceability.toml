@@ -7135,6 +7135,16 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::question_mark_ok_or_inside_a_closure_or_async_block_is_not_owner_propagation",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::ffi_boundary_is_an_identifier_word_not_a_substring",
   "crates/ripr/src/analysis/classify/text/error_variant.rs::tests::exact_error_variant_reads_turbofish_and_qualified_constructors",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_variant_exact_value_pin_cannot_confirm_a_changed_error_variant",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::ok_or_question_mark_line_carries_its_variant_into_the_sibling_gate",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::names_only_sibling_variants_requires_a_sibling_path_and_no_changed_path",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::question_mark_ok_or_scan_masks_char_literals_but_keeps_lifetimes",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::ok_or_question_mark_discriminator_stores_the_returned_variant_identity",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::ok_or_question_mark_seam_discriminates_only_the_returned_variant",
+  "crates/ripr/tests/error_path_sibling_variant.rs::sibling_variant_matches_pin_cannot_expose_the_changed_return_err",
+  "crates/ripr/tests/error_path_sibling_variant.rs::sibling_variant_matches_pin_cannot_expose_the_changed_ok_or_else",
+  "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_return_err",
+  "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_ok_or_else",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -7157,6 +7167,7 @@ code = [
   "crates/ripr/src/analysis/classify/text/error_variant.rs",
   "crates/ripr/src/analysis/classify/flow.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0106-error-seam-unwrap-err-variant-binding.md",

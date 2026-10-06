@@ -16,7 +16,7 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
-use super::classify::exact_error_variant;
+use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -2314,7 +2314,10 @@ fn required_discriminator_for(kind: SeamKind, expression: &str) -> RequiredDiscr
             // expression. Activation evidence and route compatibility both
             // speak in terms of the exact error variant. Preserve an
             // unparseable expression so downstream checks remain fail-closed.
-            variant: exact_error_variant(expression).unwrap_or_else(|| expression.to_string()),
+            // `changed_error_variant` is the shared diff/repo identity owner,
+            // so an `ok_or(Type::Variant)?` line (#6695) is variant-gated here
+            // exactly as the diff-mode reveal gate gates it.
+            variant: changed_error_variant(expression).unwrap_or_else(|| expression.to_string()),
         },
         SeamKind::ReturnValue => RequiredDiscriminator::ReturnValue {
             description: expression.to_string(),
@@ -3035,6 +3038,33 @@ pub fn parse(value: &str) -> Result<i32, String> {
             ),
             RequiredDiscriminator::ErrorVariant {
                 variant: "AuthError::RevokedToken".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn ok_or_question_mark_discriminator_stores_the_returned_variant_identity() {
+        // #6695: the repo-mode identity comes from the same shared owner as
+        // the diff-mode reveal gate, so a sibling pin cannot match it.
+        for expression in [
+            "let d = digit(c).ok_or(CodeError::NotDigit)?;",
+            "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;",
+        ] {
+            assert_eq!(
+                required_discriminator_for(SeamKind::ErrorVariant, expression),
+                RequiredDiscriminator::ErrorVariant {
+                    variant: "CodeError::NotDigit".to_string(),
+                },
+                "{expression}"
+            );
+        }
+        // A closure-local `?` names no owner-level variant: the text stays
+        // opaque and downstream variant checks stay fail-closed.
+        let closure = "let f = |c| digit(c).ok_or(CodeError::NotDigit)?;";
+        assert_eq!(
+            required_discriminator_for(SeamKind::ErrorVariant, closure),
+            RequiredDiscriminator::ErrorVariant {
+                variant: closure.to_string(),
             }
         );
     }

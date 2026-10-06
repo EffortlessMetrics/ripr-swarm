@@ -300,15 +300,27 @@ fn analyze_related_assertions(
     // qualifier token — and a `field_construction` probe whose field is an
     // `Err(...)` construction (`outcome: Err(CalcError::TooLarge)`) has the
     // same shared-qualifier exposure.
-    let error_construction_variant = if matches!(
+    let error_construction_path = if matches!(
         probe.family,
         ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
     ) {
-        error_path_variant_token(&probe.expression)
-            .or_else(|| error_path_variant_token(analysis_expression))
+        error_path_variant_path(&probe.expression)
+            .or_else(|| error_path_variant_path(analysis_expression))
     } else {
         None
     };
+    let error_construction_variant = error_construction_path
+        .as_deref()
+        .and_then(|path| path.rsplit("::").next())
+        .map(str::to_string);
+    // The enum segment before the variant (`PayError` in
+    // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
+    // names. See `names_only_sibling_variants`.
+    let error_construction_qualifier = error_construction_path
+        .as_deref()
+        .and_then(|path| path.rsplit("::").nth(1))
+        .filter(|qualifier| !qualifier.is_empty())
+        .map(str::to_string);
     // #3700 (final consolidation): a wrapper error seam
     // (`callee(..).map_err(..)`) whose changed expression carries no
     // parseable variant has no statically establishable variant identity —
@@ -332,6 +344,7 @@ fn analyze_related_assertions(
         match_arm_literals: &match_arm_literals,
         match_arm_guarded,
         error_construction_variant: error_construction_variant.as_deref(),
+        error_construction_qualifier: error_construction_qualifier.as_deref(),
         family: &probe.family,
         wrapper_seam,
         // #3709: the owner's bare name is the segment after the symbol's
@@ -550,32 +563,63 @@ fn analyze_related_assertions(
     }
 }
 
-/// Extracts the variant identifier from a changed expression that constructs
-/// an exact error variant.
+/// Extracts the variant path from a changed expression that constructs an
+/// exact error variant.
 ///
-/// For `return Err(CalcError::TooLarge);` → `Some("TooLarge")`.
+/// For `return Err(CalcError::TooLarge);` → `Some("CalcError::TooLarge")`.
+/// For `let d = digit(c).ok_or(CalcError::TooLarge)?;` → the same (#6695).
 /// For `return Err(anyhow!("..."));` → `None` (no qualified variant).
 ///
-/// Used by RIPR-SPEC-0106 (Part B) to restrict `ExactErrorVariant` assertion
-/// matching to the changed expression's specific variant, preventing
-/// sibling-variant over-credit.
-fn error_path_variant_token(expression: &str) -> Option<String> {
-    use super::text::{exact_error_variant, question_mark_error_variant};
-    // #6695: `.ok_or(Type::Variant)?` constructs that exact error too, so a
-    // sibling-variant assertion must not confirm it either.
-    let variant_path =
-        exact_error_variant(expression).or_else(|| question_mark_error_variant(expression))?;
-    // Last component after the final `::`.
+/// Used by RIPR-SPEC-0106 (Part B) to restrict assertion matching to the
+/// changed expression's specific variant (the final segment), preventing
+/// sibling-variant over-credit. The identity comes from the shared
+/// `changed_error_variant` owner that repo mode reads too.
+fn error_path_variant_path(expression: &str) -> Option<String> {
+    let variant_path = super::text::changed_error_variant(expression)?;
+    // The final component after the last `::` must read as a variant.
     let last = variant_path.rsplit("::").next()?;
-    if last
-        .chars()
+    last.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_uppercase())
-    {
-        Some(last.to_string())
-    } else {
-        None
+        .then_some(variant_path)
+}
+
+/// Whether an assertion names the changed error's enum only through
+/// SIBLING variants (RIPR-SPEC-0106 Part B, PR #6786 review): it spells at
+/// least one `<qualifier>::<Variant>` path, and no such path ends in the
+/// changed `variant`. `assert!(matches!(e, PayError::Limit))` against a
+/// changed `Err(PayError::Insufficient)` shares the `PayError` token with
+/// the changed line, but that qualifier is common to every variant and pins
+/// a different error; it is not an observation of the changed one.
+/// String and comment contents are masked, so a message naming a path is
+/// not an assertion of it. A text that never spells the qualifier as a
+/// path is not decided here.
+fn names_only_sibling_variants(text: &str, qualifier: &str, variant: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut named_any = false;
+    let mut start = 0;
+    while let Some(found) = masked[start..].find(qualifier) {
+        let at = start + found;
+        start = at + qualifier.len();
+        if at > 0 && is_ident(bytes[at - 1]) {
+            continue;
+        }
+        let Some(rest) = masked[start..].trim_start().strip_prefix("::") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let segment_len = rest.bytes().take_while(|byte| is_ident(*byte)).count();
+        if segment_len == 0 {
+            continue;
+        }
+        if &rest[..segment_len] == variant {
+            return false;
+        }
+        named_any = true;
     }
+    named_any
 }
 
 /// Whether an assertion observes an error at all: a typed error oracle, a
@@ -625,6 +669,9 @@ struct RevealMatchContext<'a> {
     /// fails closed until the observed input can be shown to satisfy it.
     match_arm_guarded: bool,
     error_construction_variant: Option<&'a str>,
+    /// The enum segment of the changed error path (`PayError`), when the
+    /// path is qualified. Gates sibling-variant pins of any oracle kind.
+    error_construction_qualifier: Option<&'a str>,
     family: &'a ProbeFamily,
     /// `true` only for #3700 wrapper error seams: the changed expression is a
     /// `map_err` conversion with no parseable variant, so the variant
@@ -1299,6 +1346,7 @@ fn assertion_matches_probe_detail_with_literals(
         match_arm_literals,
         match_arm_guarded,
         error_construction_variant,
+        error_construction_qualifier,
         family,
         wrapper_seam,
         owner_callee,
@@ -1438,6 +1486,26 @@ fn assertion_matches_probe_detail_with_literals(
     } else {
         token_match || effect_literal_match || producer_owned_result || owner_return_pinned
     };
+    // PR #6786 review: an assertion of any other kind (an `exact_value`
+    // `assert!(matches!(e, PayError::Limit))` inside a match arm) that names
+    // the changed error's enum only through sibling variants shares just
+    // the enum qualifier with the changed line. Same outcome as the
+    // ExactErrorVariant gate below with a non-matching variant: an
+    // ErrorPath probe does not match it at all, and no family confirms
+    // observation through it. Guarded matches keep their own variant gate
+    // (`producer_owned_result`) above.
+    if !matches!(
+        assertion.kind,
+        OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+    ) && let (Some(variant), Some(qualifier)) =
+        (error_construction_variant, error_construction_qualifier)
+        && names_only_sibling_variants(&assertion.text, qualifier, variant)
+    {
+        if matches!(family, ProbeFamily::ErrorPath) {
+            return (false, false);
+        }
+        return (token_match || effect_literal_match, false);
+    }
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
     // check below.
@@ -1483,6 +1551,7 @@ fn assertion_matches_probe_detail(
             match_arm_literals,
             match_arm_guarded: false,
             error_construction_variant,
+            error_construction_qualifier: None,
             family,
             wrapper_seam: false,
             owner_callee,
@@ -3415,6 +3484,7 @@ mod tests {
                 match_arm_literals: &pattern_literals,
                 match_arm_guarded: guarded,
                 error_construction_variant: None,
+                error_construction_qualifier: None,
                 family: &family,
                 wrapper_seam: false,
                 owner_callee: Some("route"),
@@ -5563,6 +5633,128 @@ return Err(\"typed pin\".into());
             "variant-confirmed oracle must NOT emit observation_unverified: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// PR #6786 review blocker: an `exact_value` `assert!(matches!(e,
+    /// Sibling))` (the line-level fact inside a match arm) shares only the
+    /// enum qualifier with a changed `Err(PayError::Insufficient)`. It must
+    /// not confirm the changed error path for any variant-carrying family;
+    /// the exact-variant spelling of the same assertion still does.
+    #[test]
+    fn sibling_variant_exact_value_pin_cannot_confirm_a_changed_error_variant() {
+        let sibling = test_with_assertions(
+            "limit_is_pinned",
+            vec![oracle(
+                "assert!(matches!(e, PayError::Limit))",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let exact = test_with_assertions(
+            "insufficient_is_pinned",
+            vec![oracle(
+                "assert!(matches!(e, PayError::Insufficient))",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [
+            ProbeFamily::ErrorPath,
+            ProbeFamily::ReturnValue,
+            ProbeFamily::FieldConstruction,
+        ] {
+            let probe = probe(family.clone(), "return Err(PayError::Insufficient);");
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
+            assert_ne!(
+                discriminate.state,
+                StageState::Yes,
+                "{family:?}: a PayError::Limit pin must not discriminate PayError::Insufficient: {}",
+                discriminate.summary
+            );
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{family:?}: the exact-variant pin stays the positive control: {}",
+                discriminate.summary
+            );
+        }
+    }
+
+    /// #6695 fallback (`error_path_variant_path` → `question_mark_error_variant`
+    /// through `changed_error_variant`): an `ok_or_else(|| Variant)?` line has
+    /// no `Err(` construction, so without the fallback it carried no variant
+    /// identity and a sibling `ExactErrorVariant` pin confirmed it through
+    /// the shared `CodeError` qualifier.
+    #[test]
+    fn ok_or_question_mark_line_carries_its_variant_into_the_sibling_gate() {
+        const LINE: &str = "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;";
+        assert_eq!(
+            error_path_variant_path(LINE).as_deref(),
+            Some("CodeError::NotDigit")
+        );
+        assert_eq!(
+            error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit)?;").as_deref(),
+            Some("CodeError::NotDigit")
+        );
+        assert_eq!(
+            error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit);"),
+            None
+        );
+        let probe = probe(ProbeFamily::ErrorPath, LINE);
+        let sibling = test_with_assertions(
+            "too_long_is_pinned",
+            vec![oracle(
+                "assert_eq!(err, CodeError::TooLong);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "a CodeError::TooLong pin must not discriminate the ok_or NotDigit line: {}",
+            discriminate.summary
+        );
+        let exact = test_with_assertions(
+            "not_digit_is_pinned",
+            vec![oracle(
+                "assert_eq!(err, CodeError::NotDigit);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact NotDigit pin stays the positive control: {}",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn names_only_sibling_variants_requires_a_sibling_path_and_no_changed_path() {
+        let check = |text| names_only_sibling_variants(text, "PayError", "Insufficient");
+        assert!(check("assert!(matches!(e, PayError::Limit))"));
+        assert!(check("assert_eq!(e, crate::PayError :: Limit)"));
+        // The changed variant named through the qualifier is never a sibling pin.
+        assert!(!check("assert!(matches!(e, PayError::Insufficient))"));
+        assert!(!check(
+            "assert!(matches!(e, PayError::Limit | PayError::Insufficient))"
+        ));
+        // No qualified path: not decided by this gate.
+        assert!(!check("assert_eq!(withdraw(1, 2).is_err(), true)"));
+        assert!(!check("assert!(matches!(e, Limit))"));
+        // A longer identifier sharing the qualifier's suffix is not the enum.
+        assert!(!check("assert!(matches!(e, OtherPayError::Limit))"));
+        // Message text is masked.
+        assert!(!check("assert!(e.is_err(), \"PayError::Limit expected\")"));
     }
 
     #[test]

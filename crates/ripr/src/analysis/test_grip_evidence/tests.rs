@@ -13873,6 +13873,94 @@ fn guarded_result_match_discrimination_follows_the_exact_variant() -> Result<(),
     Ok(())
 }
 
+// #6695: an `ok_or(Type::Variant)?` seam reads its variant through the
+// shared `changed_error_variant` owner in repo mode too. The exact pin
+// discriminates; a sibling pin of the same enum does not, on both the
+// error-variant and the return-value comparison.
+#[test]
+fn ok_or_question_mark_seam_discriminates_only_the_returned_variant() {
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
+
+    const LINE: &str = "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;";
+
+    fn oracle(kind: OracleKind, text: &str) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
+        }
+    }
+
+    fn seam(kind: SeamKind, discriminator: RequiredDiscriminator) -> RepoSeam {
+        let sink = if kind == SeamKind::ErrorVariant {
+            ExpectedSink::ErrorChannel
+        } else {
+            ExpectedSink::ReturnValue
+        };
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse_code",
+            kind,
+            7,
+            14,
+            LINE.to_string(),
+            discriminator,
+            sink,
+        )
+    }
+
+    let error_seam = seam(
+        SeamKind::ErrorVariant,
+        RequiredDiscriminator::ErrorVariant {
+            variant: crate::analysis::classify::changed_error_variant(LINE)
+                .unwrap_or_else(|| LINE.to_string()),
+        },
+    );
+    let exact_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::NotDigit }",
+    );
+    let sibling_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::TooLong }",
+    );
+    assert!(oracle_discriminates_seam(&error_seam, &exact_guarded));
+    assert!(!oracle_discriminates_seam(&error_seam, &sibling_guarded));
+    assert!(oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::NotDigit)"
+        )
+    ));
+    assert!(!oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::TooLong)"
+        )
+    ));
+
+    // Return-value comparison: before the shared owner, an `ok_or` seam read
+    // as a success-payload change, so any observing guarded match credited
+    // it, sibling pin included.
+    let return_seam = seam(
+        SeamKind::ReturnValue,
+        RequiredDiscriminator::ReturnValue {
+            description: LINE.to_string(),
+        },
+    );
+    assert!(oracle_discriminates_seam(&return_seam, &exact_guarded));
+    assert!(
+        !oracle_discriminates_seam(&return_seam, &sibling_guarded),
+        "a sibling-variant guard must not discriminate the ok_or variant"
+    );
+}
+
 #[test]
 fn guarded_result_match_on_return_value_seam_compares_the_changed_variant() -> Result<(), String> {
     use crate::analysis::facts::OracleFact;

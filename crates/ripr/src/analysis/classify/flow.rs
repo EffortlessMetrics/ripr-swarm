@@ -823,9 +823,13 @@ fn question_mark_returns_from_owner(probe: &Probe, owner_fn: Option<&FunctionSum
     if offset == 0 {
         return false;
     }
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    // The extract mask also blanks character literals (keeping lifetimes and
+    // loop labels as code): a `'}'` or `')'` inside a closure would
+    // otherwise pop the closure's delimiter and let a closure-local `?`
+    // read as returning from the owner.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
     let lines: Vec<&str> = masked.lines().collect();
-    let expression = crate::analysis::language::mask_rust_comments_and_strings(&probe.expression);
+    let expression = crate::analysis::extract::mask_comments_and_strings(&probe.expression);
     if lines.get(offset).map(|line| line.trim()) != Some(expression.trim()) {
         return false;
     }
@@ -1645,6 +1649,35 @@ mod tests {
             );
             assert_ne!(evidence.state, StageState::Yes, "{body:?}");
         }
+    }
+
+    #[test]
+    fn question_mark_ok_or_scan_masks_char_literals_but_keeps_lifetimes() {
+        // A `'}'` char literal inside a closure must not pop the closure's
+        // delimiter: the `?` still returns from the closure (CodeRabbit,
+        // PR #6786). Without masking, the scan saw every delimiter closed
+        // and emitted an owner-level error sink.
+        let (sinks, evidence) = ok_or_propagation(
+            "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let f = |c: char| -> Result<u32, CodeError> {\n        if c == '}' { return Ok(0); }\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        Ok(d)\n    };\n    f('1')\n}",
+            4,
+        );
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.text != "Result::Err(CodeError::NotDigit)"),
+            "a closure-local `?` after a '}}' literal is not owner propagation: {sinks:?}"
+        );
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+
+        // Positive control: a `'}'` literal and a lifetime/label in the
+        // owner body itself leave the line at owner level.
+        let (sinks, evidence) = ok_or_propagation(
+            "pub fn parse_code<'a>(s: &'a str) -> Result<u32, CodeError> {\n    let close = '}';\n    'outer: for c in s.chars() {\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        if d == 0 { break 'outer; }\n    }\n    Ok(close as u32)\n}",
+            4,
+        );
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].text, "Result::Err(CodeError::NotDigit)");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {

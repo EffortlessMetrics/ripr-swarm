@@ -105,8 +105,9 @@ though both share the `CalcError` qualifier token.
 
 Implementation:
 
-- **Diff-mode** (`classify/reveal.rs`): `error_path_variant_token` extracts the
-  post-`::` uppercase component of the probe's required error expression. In
+- **Diff-mode** (`classify/reveal.rs`): `error_path_variant_path` extracts the
+  probe's required error path; its post-`::` uppercase component is the
+  variant token. In
   `assertion_matches_probe_detail`, when the probe family is `ErrorPath` and the
   assertion kind is `ExactErrorVariant` and `error_path_variant` is `Some`, the
   match is restricted to assertions whose text contains the specific variant
@@ -145,14 +146,29 @@ variant, exactly as for `return Err(Type::Variant)`:
   complete (the `||` thunk is the argument's own constant, not an opaque
   path), so an exact `Err(Type::Variant)` pin on the owner call can read
   `exposed`.
-- Part B applies to the same variant: reveal's `error_path_variant_token`
-  falls back to `question_mark_error_variant`, so a test pinning a
-  sibling variant (`Err(Type::Other)`) does not confirm the line.
+- Part B applies to the same variant in both modes through one identity
+  owner, `text::changed_error_variant` (`exact_error_variant`, falling
+  back to `question_mark_error_variant`). Diff mode: reveal's
+  `error_path_variant_path` reads it, so a test pinning a sibling variant
+  (`Err(Type::Other)`) does not confirm the line. Repo mode:
+  `seam_inventory::required_discriminator_for` stores it as the
+  `ErrorVariant` seam's identity, and
+  `guarded_result_oracle_matches_seam_variant` compares a return-value
+  seam's guarded pins against it, so a sibling pin does not discriminate
+  the seam there either.
+- Part B's sibling gate covers every assertion kind, not only
+  `ExactErrorVariant`: an assertion that spells the changed error's enum
+  only through sibling variant paths (an `exact_value`
+  `assert!(matches!(e, Type::Other))` inside a match arm) shares just the
+  enum qualifier with the changed line. It does not match an `error_path`
+  probe and confirms no variant-carrying family
+  (`reveal::names_only_sibling_variants`, PR #6786 review).
 
-The predicate probe that the same `?` line also produces keeps reading
-`infection_unknown` ("no literal boundary was visible"): the `?` branches
-on `None`, which has no literal boundary to pair with a test input. That
-is a non-actionable unknown, not a gap, and this part does not change it.
+On an `.ok_or_else(|| Type::Variant)?` line the probe extractor also
+emits a `predicate` probe, because it reads the parameterless closure head
+`||` as a logical-OR operator. That probe predates this part. It keeps
+reading `infection_unknown` ("no literal boundary was visible"), which is
+a non-actionable unknown, not a gap, and this part does not change it.
 
 Part B also covers the turbofish constructor: `exact_error_variant`
 reads `Err::<T, E>(Type::Variant)` like `Err(Type::Variant)`, and the

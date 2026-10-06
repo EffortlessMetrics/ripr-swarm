@@ -19,6 +19,21 @@ pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
     (values.len() == 1).then(|| values[0].clone())
 }
 
+/// The exact error variant a changed line produces: an
+/// `Err(Type::Variant)` construction ([`exact_error_variant`]) or a
+/// statement-level `.ok_or(Type::Variant)?` / `.ok_or_else(|| ..)?`
+/// conversion ([`question_mark_error_variant`], #6695).
+///
+/// The single identity owner for the RIPR-SPEC-0106 sibling-variant gate:
+/// the diff-mode reveal gate, the repo-mode seam discriminator, and the
+/// repo-mode oracle comparison all read it, so an `ok_or` line cannot be
+/// variant-gated on one path and opaque on the other. Whether the `?`
+/// returns from the owner (rather than a closure) is a body-level question
+/// this line-level reader does not answer; flow owns it.
+pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
+    exact_error_variant(text).or_else(|| question_mark_error_variant(text))
+}
+
 /// Byte offset of the `(` that opens the argument of the first
 /// `Err::<..>(` turbofish constructor, or `None`.
 fn turbofish_err_open(text: &str) -> Option<usize> {

@@ -16,3 +16,10 @@
   variant like `Err(Type::Variant)`. A test that pins a different variant
   of the same error no longer makes the error-path finding read `exposed`
   (#6673).
+- Rust: an assertion that names only a sibling variant of the changed
+  error's enum (`assert!(matches!(e, PayError::Limit))` against a changed
+  `Err(PayError::Insufficient)`) no longer makes the error-path finding read
+  `exposed` through the shared enum name (#6673).
+- Rust: repository exposure mode reads the variant of an
+  `ok_or(Type::Variant)?` line the same way the diff check does, so only a
+  test that pins that variant credits the seam (#6695).
