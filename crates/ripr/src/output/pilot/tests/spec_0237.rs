@@ -4,6 +4,11 @@
 //! notation, `class file owner line [flags]`, and the expected output is the
 //! spec's `file:line` order. Examples 1–3, 10–12, 19 and 20 are covered by
 //! the tests in the parent module.
+//!
+//! #6774 (#5497) withholds `opaque` and `*_unknown` seams from the ranking
+//! and counts them separately. Examples 4, 5, 15 and 21–23 were written
+//! when pilot ranked those classes last; their tests keep the spec's input
+//! and assert the withheld outcome until RIPR-SPEC-0237 (#6590) is updated.
 
 use super::*;
 use crate::analysis::new_test_target::{
@@ -11,6 +16,7 @@ use crate::analysis::new_test_target::{
 };
 use crate::analysis::{SeamLimitSource, apply_pilot_seam_budget_inner};
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
+use crate::output::pilot::ranking::withheld_static_limitations;
 
 /// A missing-discriminator fact the boundary seam's required discriminator
 /// accepts, so repair-route readiness, and with it the suggested assertion,
@@ -154,7 +160,6 @@ fn ranked_section(md: &str) -> &str {
     md.find("## Ranked Seams").map_or("", |start| &md[start..])
 }
 
-const ONE_MORE: &str = "   - Also in this function: 1 more actionable seam not listed here\n";
 
 const EXAMPLE_13: [&str; 4] = [
     "W src/a.rs f 1",
@@ -173,25 +178,21 @@ fn spec_0237_example_04_full_class_order() -> Result<(), String> {
         "U src/e.rs p 1",
         "W src/f.rs q 1",
     ];
-    // `PU` sorts before `AU` by path: the unknown classes share one rank.
+    // The gap classes keep their order; `O`, `PU` and `AU` are withheld.
     assert_eq!(
         ranked(&input, 6)?,
-        [
-            "src/f.rs:1",
-            "src/e.rs:1",
-            "src/d.rs:1",
-            "src/b.rs:1",
-            "src/c.rs:1",
-            "src/a.rs:1"
-        ]
+        ["src/f.rs:1", "src/e.rs:1", "src/d.rs:1"]
     );
+    assert_eq!(withheld_static_limitations(&spec_seams(&input)?), 3);
     Ok(())
 }
 
 #[test]
 fn spec_0237_example_05_unknown_tie_by_evidence() -> Result<(), String> {
+    // Evidence does not lift an unknown class into the ranking.
     let input = ["AU src/c.rs f 1 m", "PU src/b.rs g 1"];
-    assert_eq!(ranked(&input, 2)?, ["src/c.rs:1", "src/b.rs:1"]);
+    assert_eq!(ranked(&input, 2)?, Vec::<String>::new());
+    assert_eq!(withheld_static_limitations(&spec_seams(&input)?), 2);
     Ok(())
 }
 
@@ -326,10 +327,8 @@ fn spec_0237_example_15_unknown_classes_share_a_round_space() -> Result<(), Stri
         "PU src/a.rs f 2 m",
         "DU src/b.rs g 3 m",
     ];
-    assert_eq!(
-        ranked(&input, 3)?,
-        ["src/a.rs:1", "src/b.rs:3", "src/a.rs:2"]
-    );
+    assert_eq!(ranked(&input, 3)?, Vec::<String>::new());
+    assert_eq!(withheld_static_limitations(&spec_seams(&input)?), 3);
     Ok(())
 }
 
@@ -407,6 +406,21 @@ fn assert_note_under_first(md: &str, listed: &[&str], note: &str) {
     assert!(first < note_at && note_at < second, "{md}");
 }
 
+/// Asserts the Markdown lists `listed` in order, names no unlisted seam in
+/// any function (withheld seams are not "more to do" there), and discloses
+/// `withheld` withheld seams.
+fn assert_withheld_not_counted(md: &str, listed: &[&str], withheld: usize) {
+    assert_eq!(md_places(md), listed, "{md}");
+    assert!(!md.contains("Also in this function"), "{md}");
+    let noun = if withheld == 1 { "seam" } else { "seams" };
+    assert_eq!(
+        md.matches(&format!("- Withheld: {withheld} {noun} ("))
+            .count(),
+        1,
+        "{md}"
+    );
+}
+
 #[test]
 fn spec_0237_example_21_opaque_is_counted() -> Result<(), String> {
     let entries = spec_seams(&[
@@ -417,27 +431,23 @@ fn spec_0237_example_21_opaque_is_counted() -> Result<(), String> {
     ])?;
     assert_eq!(
         places(&top_actionable_seams(&entries, 3, None)),
-        ["src/a.rs:1", "src/b.rs:1", "src/a.rs:2"]
+        ["src/a.rs:1", "src/b.rs:1"]
     );
-    let md = summary_md(&entries, 3);
-    assert_note_under_first(&md, &["src/a.rs:1", "src/b.rs:1", "src/a.rs:2"], ONE_MORE);
+    assert_withheld_not_counted(&summary_md(&entries, 3), &["src/a.rs:1", "src/b.rs:1"], 2);
     Ok(())
 }
 
 #[test]
 fn spec_0237_example_22_opaque_counted_when_unlisted() -> Result<(), String> {
     let entries = spec_seams(&["W src/a.rs f 1", "O src/a.rs f 9", "W src/b.rs g 1"])?;
-    let md = summary_md(&entries, 2);
-    assert_note_under_first(&md, &["src/a.rs:1", "src/b.rs:1"], ONE_MORE);
+    assert_withheld_not_counted(&summary_md(&entries, 2), &["src/a.rs:1", "src/b.rs:1"], 1);
     Ok(())
 }
 
 #[test]
 fn spec_0237_example_23_unknown_classes_are_counted_singular() -> Result<(), String> {
     let entries = spec_seams(&["W src/a.rs f 1", "PU src/a.rs f 5", "W src/b.rs g 1"])?;
-    let md = summary_md(&entries, 2);
-    assert_note_under_first(&md, &["src/a.rs:1", "src/b.rs:1"], ONE_MORE);
-    assert!(!md.contains("more actionable seams not listed"), "{md}");
+    assert_withheld_not_counted(&summary_md(&entries, 2), &["src/a.rs:1", "src/b.rs:1"], 1);
     Ok(())
 }
 
