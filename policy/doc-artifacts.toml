@@ -1261,6 +1261,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #6026 records the oracle-credit bound: a related test whose equality assertion statically contradicts the seam owner's constant fold keeps at most weak oracle strength, keeps the seam's gap open, and names the contradiction in the evidence summary, while a not-evaluable owner retains today's credit and its limitation honestly."
 
 [[artifact]]
+id = "RIPR-SPEC-0239"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0239-ripr-plus-last-good-receipt.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #6295 records which receipt `ripr plus` keeps as last good when a later run fails to read or compose: one a run composed (any status but indeterminate, or indeterminate with cause quality_evidence_incomplete), never an earlier error receipt, no copy when --check fails after composition, and never presented as current evidence (#5310)."
+
+[[artifact]]
 id = "RIPR-SPEC-0221"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0221-agent-surface-benchmark.md"

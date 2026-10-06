@@ -21602,13 +21602,131 @@ fn plus_help_exits_cleanly() {
         "ripr-plus.last-good.json",
         "ripr-plus.last-good.md",
         "may be stale",
-        "keeps no last-good copy",
+        "makes no last-good copy",
+        "stays until a later failure replaces it",
+        "error receipt is never kept",
+        "(only after a read or compose failure)",
     ] {
         assert!(
             stdout.contains(kept),
             "help must name the kept last-good receipt and its staleness ({kept}):\n{stdout}"
         );
     }
+}
+
+/// The last good receipt is the last one a run composed (#6295): a read
+/// failure keeps it byte-for-byte, and a --check failure makes no copy and
+/// leaves an earlier one as it was (#6714).
+#[test]
+fn plus_failed_run_keeps_the_composed_receipt_and_check_keeps_none() -> Result<(), String> {
+    let root = unique_temp_workspace("plus-last-good");
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("README.md"), "last-good fixture\n")
+        .map_err(|error| error.to_string())?;
+    run_git(&root, &["add", "README.md"])?;
+    run_git(&root, &["commit", "-m", "candidate"])?;
+    let summary = serde_json::json!({
+        "schema_version": "0.1",
+        "format": "repo-exposure-summary-json",
+        "basis": "canonical_actionable_gap",
+        "metadata": {"head": "abc", "root": "repo"},
+        "metrics": {"unsuppressed_exposure_gaps": 1, "suppressed_exposure_gaps": 0, "raw_seams": 2},
+        "reason_breakdown": {},
+        "top_files": []
+    });
+    std::fs::write(root.join("summary.json"), summary.to_string())
+        .map_err(|error| error.to_string())?;
+    let reports = root.join("target/ripr/reports");
+    let last_good_json = reports.join("ripr-plus.last-good.json");
+    let last_good_md = reports.join("ripr-plus.last-good.md");
+
+    // --check on a valid input writes the composed receipt and keeps no copy
+    // of the receipt it replaced.
+    std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+    std::fs::write(reports.join("ripr-plus.json"), r#"{"status":"pass"}"#)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(reports.join("ripr-plus.md"), "older pass")
+        .map_err(|error| error.to_string())?;
+    let checked = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json", "--check"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(checked.status.code(), Some(2));
+    assert!(
+        !last_good_json.exists(),
+        "--check must keep no last-good json"
+    );
+    assert!(!last_good_md.exists(), "--check must keep no last-good md");
+
+    let composed = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(
+        composed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let composed_json =
+        std::fs::read(reports.join("ripr-plus.json")).map_err(|error| error.to_string())?;
+    let composed_md =
+        std::fs::read(reports.join("ripr-plus.md")).map_err(|error| error.to_string())?;
+
+    let failed = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--gap-ledger", "missing.json"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(failed.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        stderr.contains("cause `quality_evidence_incomplete`) is kept at"),
+        "{stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&last_good_json).map_err(|error| error.to_string())?,
+        composed_json
+    );
+    assert_eq!(
+        std::fs::read(&last_good_md).map_err(|error| error.to_string())?,
+        composed_md
+    );
+    let canonical: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(reports.join("ripr-plus.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(canonical["machine_readable_cause"], "evaluation_error");
+
+    // A later --check makes no copy of its own: the copy the failure left is
+    // neither replaced by the error receipt nor removed (#6295).
+    let rechecked = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json", "--check"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(rechecked.status.code(), Some(2));
+    assert_eq!(
+        std::fs::read(&last_good_json).map_err(|error| error.to_string())?,
+        composed_json,
+        "--check must leave the earlier last-good json as it was"
+    );
+    assert_eq!(
+        std::fs::read(&last_good_md).map_err(|error| error.to_string())?,
+        composed_md,
+        "--check must leave the earlier last-good md as it was"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
 
 /// An exposure-only counter is not a complete, current RIPR+ quality result.

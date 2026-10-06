@@ -12967,3 +12967,24 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0239"
+name = "ripr plus last-good receipt"
+spec = "docs/specs/RIPR-SPEC-0239-ripr-plus-last-good-receipt.md"
+tests = [
+  "crates/ripr/src/app/ripr_plus.rs::tests::composed_receipt_is_kept_when_a_later_run_fails",
+  "crates/ripr/src/app/ripr_plus.rs::tests::error_receipt_from_an_earlier_failure_is_not_kept",
+  "crates/ripr/src/app/ripr_plus.rs::tests::failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one",
+  "crates/ripr/src/app/ripr_plus.rs::tests::partial_preservation_is_reported_as_partial",
+  "crates/ripr/src/app/ripr_plus.rs::tests::no_surviving_copy_is_reported_as_not_kept",
+  "crates/ripr/tests/cli_smoke.rs::plus_failed_run_keeps_the_composed_receipt_and_check_keeps_none",
+  "crates/ripr/tests/cli_smoke.rs::plus_help_exits_cleanly",
+]
+code = [
+  "crates/ripr/src/app/ripr_plus.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+]
