@@ -6,7 +6,7 @@ use crate::analysis::classify::{
     chain_forwards_to_observed_hops, classify, confidence_score, contains_as_whole_word,
     current_path_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
     infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
@@ -266,7 +266,7 @@ impl ClassifiedProbeEvidence {
                 )
             })
         };
-        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
+        let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
             &context.related_tests,
@@ -286,6 +286,28 @@ impl ClassifiedProbeEvidence {
             },
             arm_selector.as_ref(),
         );
+        let (observe, discriminate, related_tests, matched_total) = (
+            reveal.observe,
+            reveal.discriminate,
+            reveal.related,
+            reveal.related_total,
+        );
+        // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
+        // a derived `PartialEq`) observes the constructed field, so the
+        // missing-field fact below no longer stands for this probe. Only an
+        // owner pin that reveal credited clears it, after reveal's own
+        // gates (a name-only relation next to a reach-bearing test, a
+        // foreign same-name import, a cross-package same-name definition);
+        // a token match never does.
+        if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && reveal.owner_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::StructField)
+            });
+        }
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);

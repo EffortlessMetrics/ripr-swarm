@@ -301,6 +301,22 @@ fn inherent_method_needs_a_receiver_of_its_own_type() {
         let Some(pin) = pin else { return };
         assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{binding}");
     }
+    // #6773 review: a receiver whose name also occurs inside `mut`
+    // (`let mut m`) is read at its whole-word position.
+    for (binding, admitted) in [
+        ("let mut m = Stack::new();", 1),
+        ("let mut m: Stack = Stack::new();", 1),
+        ("let mut m = Vec::<u32>::new();", 0),
+    ] {
+        let tests = format!(
+            "use demo::Stack;\n\n#[test]\nfn depth_counts() {{\n    {binding}\n    assert_eq!(m.depth(), 1);\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "depth", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{binding}");
+    }
 }
 
 #[test]
@@ -529,6 +545,98 @@ fn a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established() {
         gate("fn f(x: i32) -> i32 {\n    remap(x) * 3\n}", "remap(x) * 3"),
         Some(ReturnPathGate::Any)
     ));
+}
+
+/// #6675: a binary bitwise `|` evaluates both operands on every input, like
+/// `+`/`*`, so a bitwise tail establishes the pin path. Every other pipe
+/// (lazy `||`, a closure's parameter list, `|=`) stays conditional.
+#[test]
+fn a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not() {
+    for (body, changed) in [
+        (
+            "fn pack(hi: u8, lo: u8) -> u16 {\n    u16::from(lo) | (u16::from(hi) << 8)\n}",
+            "u16::from(lo) | (u16::from(hi) << 8)",
+        ),
+        (
+            "fn pack(hi: u8, lo: u8) -> u16 {\n    (u16::from(hi) << 8) | u16::from(lo)\n}",
+            "(u16::from(hi) << 8) | u16::from(lo)",
+        ),
+        (
+            "fn flag(base: u8) -> u8 {\n    0x80 | base\n}",
+            "0x80 | base",
+        ),
+        (
+            "fn mix(a: u8, b: u8) -> u8 {\n    (a & 0x0f) ^ (b >> 4) | a\n}",
+            "(a & 0x0f) ^ (b >> 4) | a",
+        ),
+        (
+            "fn bits(xs: &[u8]) -> u8 {\n    xs[0] | first(xs)\n}",
+            "xs[0] | first(xs)",
+        ),
+    ] {
+        assert!(gate(body, changed).is_some(), "{body}");
+    }
+    for (body, changed) in [
+        (
+            "fn f(a: bool, b: u8) -> bool {\n    a || check(b)\n}",
+            "a || check(b)",
+        ),
+        (
+            "fn f(x: Option<u8>) -> u8 {\n    x.map_or(0, |v| v | 1)\n}",
+            "x.map_or(0, |v| v | 1)",
+        ),
+        (
+            "fn f(x: u8) -> u8 {\n    apply(x, |v| v | 1)\n}",
+            "apply(x, |v| v | 1)",
+        ),
+        (
+            "fn f(x: u8) -> u8 {\n    apply(x, move |v| v | 1)\n}",
+            "apply(x, move |v| v | 1)",
+        ),
+        ("fn f(x: u8) -> u8 {\n    run(x, || 1)\n}", "run(x, || 1)"),
+        // Pattern alternatives short-circuit: they are not a bitwise OR.
+        (
+            "fn open(&self) -> bool {\n    matches!(self.kind, Kind::Open | Kind::Pending)\n}",
+            "matches!(self.kind, Kind::Open | Kind::Pending)",
+        ),
+        (
+            "fn known(x: Option<u8>) -> bool {\n    matches!(x, Some(_) | None)\n}",
+            "matches!(x, Some(_) | None)",
+        ),
+        (
+            "fn small(x: u8) -> bool {\n    matches!(x, 1 | 2)\n}",
+            "matches!(x, 1 | 2)",
+        ),
+        // A closure in a struct literal or an array is still a closure.
+        (
+            "fn make() -> Foo {\n    Foo { f: |x| x }\n}",
+            "Foo { f: |x| x }",
+        ),
+        ("fn make() -> [F; 1] {\n    [|x| x]\n}", "[|x| x]"),
+    ] {
+        assert!(gate(body, changed).is_none(), "{body}");
+    }
+}
+
+#[test]
+fn bitwise_pipe_reading_distinguishes_operand_position() {
+    assert!(!has_non_bitwise_pipe("a | b"));
+    assert!(!has_non_bitwise_pipe("f(x) | g[0] | h()?"));
+    assert!(has_non_bitwise_pipe("|x| x + 1"));
+    assert!(has_non_bitwise_pipe("f(|x| x)"));
+    assert!(has_non_bitwise_pipe("move |x| x"));
+    assert!(has_non_bitwise_pipe("return |x| x"));
+    assert!(has_non_bitwise_pipe("a || b"));
+    assert!(has_non_bitwise_pipe("a |= b"));
+    assert!(has_non_bitwise_pipe("{ a } | b"));
+    assert!(has_non_bitwise_pipe("matches!(k, A | B)"));
+    assert!(has_non_bitwise_pipe("f(matches!(k, Some(_) | None))"));
+    assert!(has_non_bitwise_pipe("{ let (A(x) | B(x)) = v; x }"));
+    assert!(!has_non_bitwise_pipe("f(a) | g(b)"));
+    // A multibyte character before the operand must not split a slice.
+    assert!(!has_non_bitwise_pipe("é_flag | b"));
+    assert!(!has_non_bitwise_pipe("(\u{e9}) | b"));
+    assert!(has_non_bitwise_pipe("é in | b"));
 }
 
 const WEIGHT_LIB: &str = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
@@ -1398,6 +1506,428 @@ fn a_trait_receiver_pins_only_through_its_one_constructor() {
         BTreeSet::from(["Meter".to_string()])
     );
     assert!(trait_impl_self_type_names(other_meter, "Gauge").is_empty());
+}
+
+const WINDOW_LIB: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
+
+const WINDOW_TESTS: &str = "use demo::Window;\n\n#[test]\nfn a_clone_equals_its_original() {\n    let window = Window::new(3, 9);\n    let other = Window::new(3, 9);\n    assert_eq!(window.clone(), window);\n    assert_eq!(window, window.clone());\n    assert_ne!(window.clone(), Window::new(0, 0));\n    assert_eq!(window.clone(), other);\n    assert_eq!(window.clone(), Window::new(3, 9));\n}\n";
+
+/// A `field_construction` probe on `start: self.start,` in `Window::clone`.
+fn clone_field_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    clone_field_pin_at(lib, tests, "start: self.start,", "start: self.start,")
+}
+
+/// A `field_construction` probe with `expression` on the (first) line of
+/// `clone` whose trimmed text is `line_text`.
+fn clone_field_pin_at(
+    lib: &str,
+    tests: &str,
+    line_text: &str,
+    expression: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = {
+        let owner = owner(&index, "clone");
+        let line = lib
+            .lines()
+            .enumerate()
+            .position(|(offset, line)| offset + 1 > owner.start_line && line.trim() == line_text)
+            .map_or(0, |offset| offset + 1);
+        assert!(
+            line > owner.start_line,
+            "fixture: the field line must parse"
+        );
+        let mut probe = return_probe(owner, expression);
+        probe.family = ProbeFamily::FieldConstruction;
+        probe.location = SourceLocation::new(owner.file.clone(), line, 1);
+        OwnerReturnPin::establish(&probe, owner, &index)
+    };
+    (index, pin)
+}
+
+/// #6692: `assert_eq!(recv.clone(), recv)` through a derived `PartialEq`
+/// compares every field of a hand-written clone with the original, so it
+/// pins a changed field of the returned literal. `assert_ne!` and a
+/// comparison with any other value do not.
+#[test]
+fn a_clone_compared_with_its_own_receiver_pins_its_fields() {
+    let (index, pin) = clone_field_pin(WINDOW_LIB, WINDOW_TESTS);
+    assert!(pin.is_some(), "the clone field pin must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(window.clone(), window);".to_string(),
+            "assert_eq!(window, window.clone());".to_string(),
+        ]
+    );
+}
+
+/// #6692 negative controls: no derived `PartialEq` (a hand-written one may
+/// ignore fields), a derive behind `cfg_attr`, a workspace `trait Clone`,
+/// another exit, or a field outside the returned literal leaves the pin
+/// unestablished.
+#[test]
+fn a_clone_field_pin_needs_derived_equality_and_the_returned_literal() {
+    let manual_eq = WINDOW_LIB.replace("PartialEq, Eq", "Eq")
+        + "impl PartialEq for Window {\n    fn eq(&self, other: &Self) -> bool { self.end == other.end }\n}\n";
+    let gated_derive = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[cfg_attr(test, derive(Debug, PartialEq, Eq))]",
+    );
+    let local_trait = WINDOW_LIB.to_string() + "pub trait Clone {}\n";
+    let early_exit = WINDOW_LIB.replace(
+        "        Window {\n            start",
+        "        if self.end == 0 {\n            return Window::new(0, 0);\n        }\n        Window {\n            start",
+    );
+    let bound_first = WINDOW_LIB.replace(
+        "        Window {\n            start: self.start,\n            end: self.end,\n        }\n",
+        "        let copy = Window {\n            start: self.start,\n            end: self.end,\n        };\n        Window::new(copy.end, copy.start)\n",
+    );
+    // #6773 review: a manual `PartialEq<Rhs>` beside the derive, a shadowed
+    // `PartialEq` derive (imported from elsewhere, or a qualified derive
+    // path), a derived `Clone` beside the hand-written one, and generic
+    // parameters on the type all fail closed.
+    let manual_rhs_eq = WINDOW_LIB.to_string()
+        + "impl PartialEq<u32> for Window {\n    fn eq(&self, other: &u32) -> bool { self.end == *other }\n}\n";
+    let imported_derive = WINDOW_LIB.to_string() + "use some_crate::PartialEq;\n";
+    let renamed_derive = WINDOW_LIB.to_string() + "use some_crate::Thing as PartialEq;\n";
+    let qualified_derive = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[derive(Debug, some_crate::PartialEq, Eq)]",
+    );
+    let derived_clone = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[derive(Debug, PartialEq, Eq, Clone)]",
+    );
+    let defaulted_generic =
+        WINDOW_LIB.replace("pub struct Window {", "pub struct Window<T = u32> {");
+    // #6773 review: a foreign `Clone` on the owner side.
+    let foreign_clone_path =
+        WINDOW_LIB.replace("impl Clone for Window", "impl dupe::Clone for Window");
+    let foreign_clone_import = WINDOW_LIB.to_string() + "use dupe::Clone;\n";
+    let std_clone_path =
+        WINDOW_LIB.replace("impl Clone for Window", "impl std::clone::Clone for Window");
+    let renamed_std_clone = std_clone_path.clone() + "extern crate dupe as std;\n";
+    for lib in [
+        manual_eq,
+        gated_derive,
+        local_trait,
+        early_exit,
+        bound_first,
+        manual_rhs_eq,
+        imported_derive,
+        renamed_derive,
+        qualified_derive,
+        derived_clone,
+        defaulted_generic,
+        foreign_clone_path,
+        foreign_clone_import,
+        renamed_std_clone,
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Fixture controls: the plain library and a `std`-rooted `Clone` path
+    // still establish.
+    assert!(clone_field_pin(WINDOW_LIB, WINDOW_TESTS).1.is_some());
+    assert!(clone_field_pin(&std_clone_path, WINDOW_TESTS).1.is_some());
+}
+
+/// #6773 review: `struct W<String> { x: String }` names a type parameter
+/// `String`, and `impl Clone for W<Foo>` instantiates it with a type whose
+/// `PartialEq` may ignore the value; a renamed `impl Eq2 for W<Foo>` may
+/// also stand beside the derive. A generic declaration or an instantiated
+/// self type never establishes.
+#[test]
+fn a_clone_field_pin_refuses_generic_types_and_instantiated_impls() {
+    let generic = "#[derive(Debug, PartialEq)]\npub struct W<String> {\n    pub x: String,\n}\n\npub struct Foo;\n\nimpl PartialEq for Foo {\n    fn eq(&self, _: &Self) -> bool {\n        true\n    }\n}\n\nimpl Clone for W<Foo> {\n    fn clone(&self) -> Self {\n        W {\n            x: Foo,\n        }\n    }\n}\n";
+    let renamed_eq = generic.replace(
+        "impl PartialEq for Foo",
+        "use std::cmp::PartialEq as Eq2;\n\nimpl Eq2 for W<Foo> {\n    fn eq(&self, _: &Self) -> bool {\n        true\n    }\n}\n\nimpl PartialEq for Foo",
+    );
+    let tests = "use demo::W;\n\n#[test]\nfn compares() {\n    let w = W { x: demo::Foo };\n    assert_eq!(w.clone(), w);\n}\n";
+    for lib in [generic.to_string(), renamed_eq] {
+        let (_, pin) = clone_field_pin_at(&lib, tests, "x: Foo,", "x: Foo,");
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Same-shape positive control: a non-generic `W` with a value-compared
+    // field establishes and admits the clone comparison.
+    let plain = "#[derive(Debug, PartialEq)]\npub struct W {\n    pub x: u32,\n}\n\nimpl Clone for W {\n    fn clone(&self) -> Self {\n        W {\n            x: self.x,\n        }\n    }\n}\n";
+    let plain_tests = "use demo::W;\n\n#[test]\nfn compares() {\n    let w = W { x: 3 };\n    assert_eq!(w.clone(), w);\n}\n";
+    let (index, pin) = clone_field_pin_at(plain, plain_tests, "x: self.x,", "x: self.x,");
+    assert!(pin.is_some(), "the non-generic control must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
+    }
+}
+
+/// #6692 (RIPR-SPEC-0225 rule 4): the changed field's own type must
+/// compare by value. A workspace field type with derived equality all the
+/// way down credits; one with a hand-written `PartialEq` (which may ignore
+/// the value), an attribute on the field, or an unknown type does not.
+#[test]
+fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
+    let with_start_type = |ty: &str, extra: &str| {
+        WINDOW_LIB.replace("    start: u32,\n", &format!("    start: {ty},\n")) + extra
+    };
+    let derived_point = "#[derive(Debug, PartialEq, Eq, Clone, Copy)]\npub struct Point {\n    x: u32,\n    tag: Option<Vec<String>>,\n}\n";
+    let manual_point = "#[derive(Debug, Eq, Clone, Copy)]\npub struct Point {\n    x: u32,\n}\nimpl PartialEq for Point {\n    fn eq(&self, _: &Self) -> bool { true }\n}\n";
+    for (lib, credits) in [
+        (with_start_type("Point", derived_point), true),
+        (with_start_type("Option<(u8, [u16; 2])>", ""), true),
+        (with_start_type("Point", manual_point), false),
+        (with_start_type("Unknown", ""), false),
+        (with_start_type("Vec<Unknown>", ""), false),
+        // #6773 review: a standard base name must be the standard type. A
+        // path rooted outside std/core/alloc, or a declaring file that
+        // imports, globs, renames or aliases the name from elsewhere, may
+        // bind a foreign type whose `==` ignores the value.
+        (with_start_type("String", ""), true),
+        (with_start_type("std::string::String", ""), true),
+        (with_start_type("Vec<u8>", "use std::vec::Vec;\n"), true),
+        (
+            with_start_type(
+                "String",
+                "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+            ),
+            true,
+        ),
+        (with_start_type("foreign::String", ""), false),
+        (with_start_type("other::Vec<u8>", ""), false),
+        (with_start_type("crate::String", ""), false),
+        (with_start_type("Vec<u8>", "use foreign::Vec;\n"), false),
+        (
+            with_start_type("Vec<u8>", "use foreign::{Other, Vec};\n"),
+            false,
+        ),
+        (
+            with_start_type("String", "use x::Thing as String;\n"),
+            false,
+        ),
+        (with_start_type("String", "use foreign::*;\n"), false),
+        (
+            with_start_type("String", "use crate::text::String;\n"),
+            false,
+        ),
+        (with_start_type("String", "type String = Loose;\n"), false),
+        (
+            with_start_type("std::string::String", "extern crate other as std;\n"),
+            false,
+        ),
+        (
+            with_start_type("Point", &format!("{derived_point}use foreign::Point;\n")),
+            false,
+        ),
+        (
+            WINDOW_LIB.replace(
+                "    start: u32,\n",
+                "    #[derivative(PartialEq = \"ignore\")]\n    start: u32,\n",
+            ),
+            false,
+        ),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+}
+
+/// #6692 review: the receiver must not itself come from the clone under
+/// test (an idempotent wrong field, `start: 0` or `start: self.end`, would
+/// then survive) or be changed after it is bound. A literal or the type's
+/// own non-cloning constructor credits.
+#[test]
+fn a_clone_field_pin_needs_a_receiver_built_without_the_clone() {
+    let lib = WINDOW_LIB.replace(
+        "impl Window {\n",
+        "impl Window {\n    pub fn copied(other: &Window) -> Self {\n        other.clone()\n    }\n    pub fn built(start: u32, end: u32) -> Self {\n        copy_of(&Window { start, end })\n    }\n",
+    ) + "fn copy_of(window: &Window) -> Window {\n    window.clone()\n}\nimpl Default for Window {\n    fn default() -> Self {\n        Window::new(0, 0)\n    }\n}\nimpl From<u32> for Window {\n    fn from(start: u32) -> Self {\n        Window::new(start, start)\n    }\n}\n";
+    let test = |body: &str| {
+        format!(
+            "use demo::Window;\n\n#[test]\nfn compares() {{\n{body}\n    assert_eq!(w.clone(), w);\n}}\n"
+        )
+    };
+    for (body, credits) in [
+        ("    let w = Window::new(3, 9);", true),
+        ("    let w: Window = Window::new(3, 9);", true),
+        ("    let w = Window { start: 3, end: 9 };", true),
+        (
+            "    let base = Window::new(3, 9);\n    let w: Window = base.clone();",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w: Window = base.to_owned();",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w = w.clone();",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    reset(&mut w);",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w.start = w.end;",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    let start = &mut w.start;\n    *start = 9;",
+            false,
+        ),
+        (
+            "    let mut w = Window::new(3, 9);\n    w.set_start(9);",
+            false,
+        ),
+        ("    let mut w = Window::new(3, 9);", false),
+        ("    let mut\tw = Window::new(3, 9);", false),
+        // #6773 review: a helper, a local or an update base may carry a
+        // wrong clone's output into the receiver; only literals and
+        // constants are independent.
+        ("    let w = Window::new(u32::MAX, 9 as u32);", true),
+        ("    let w = Window { start: LIMIT, end: 9 };", true),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window::new(make(&base), 9);",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: helper(&base), end: 9 };",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: base.start, end: 9 };",
+            false,
+        ),
+        (
+            "    let base = Window::new(3, 9);\n    let w = Window { start: 3, ..base };",
+            false,
+        ),
+        ("    let s = 3;\n    let w = Window::new(s, 9);", false),
+        ("    let w = Window::new(*START, 9);", false),
+        ("    let w = Window::new(start!(), 9);", false),
+        ("    let w = Window::built(3, 9);", false),
+        // Assignment detection on its own (no `mut` anywhere).
+        (
+            "    let w = Window::new(3, 9);\n    w = Window::new(0, 0);",
+            false,
+        ),
+        ("    let w = Window::new(3, 9);\n    w += 1;", false),
+        (
+            "    let w = Window::new(3, 9);\n    let w = w.clone();",
+            false,
+        ),
+        ("    let w = Window::default();", false),
+        ("    let w = Window::from(3);", false),
+        ("    let w = Window::copied(&Window::new(3, 9));", false),
+        ("    let w: Window = make_window();", false),
+    ] {
+        let (index, pin) = clone_field_pin(&lib, &test(body));
+        assert!(pin.is_some(), "the clone field pin must establish");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), credits, "{body}");
+    }
+}
+
+/// #6692 review: a changed line inside a nested literal or a call within
+/// the returned literal is not that literal's own field value.
+#[test]
+fn a_clone_field_pin_needs_the_changed_line_at_the_literals_own_depth() {
+    let tail = |fields: &str| {
+        WINDOW_LIB.replace(
+            "        Window {\n            start: self.start,\n            end: self.end,\n        }\n",
+            &format!("        Window {{\n{fields}            end: self.end,\n        }}\n"),
+        )
+    };
+    let nested = tail(
+        "            start: Raw {\n                start: self.start,\n            }\n            .start,\n",
+    );
+    let called = tail(
+        "            start: normalize(Raw {\n                start: self.start,\n            }),\n",
+    );
+    for lib in [nested, called] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let one_line = tail("            start: normalize(Raw { start: self.start }),\n");
+    let (_, pin) = clone_field_pin_at(
+        &one_line,
+        WINDOW_TESTS,
+        "start: normalize(Raw { start: self.start }),",
+        "start: self.start",
+    );
+    assert!(pin.is_none(), "{one_line}");
+    // The outer field itself, written over several lines, is at depth 1 only
+    // on its first line, and that line is not the whole initializer.
+    let (_, pin) = clone_field_pin_at(
+        &one_line,
+        WINDOW_TESTS,
+        "start: normalize(Raw { start: self.start }),",
+        "start: normalize(Raw { start: self.start }),",
+    );
+    assert!(
+        pin.is_none(),
+        "a nested literal on the changed line fails closed"
+    );
+}
+
+/// #6692 review negative controls: a competing `fn clone`, a foreign
+/// `Clone` import in the test's file, a `?` or an unbounded macro in the
+/// clone body, a second declaration of the type, and an equality-changing
+/// type attribute. `Self { .. }` is the returned literal too.
+#[test]
+fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
+    let self_literal = WINDOW_LIB.replace(
+        "        Window {\n            start: self.start,",
+        "        Self {\n            start: self.start,",
+    );
+    let (index, pin) = clone_field_pin(&self_literal, WINDOW_TESTS);
+    assert!(pin.is_some(), "a `Self {{ .. }}` tail establishes the pin");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 2);
+    }
+    let competitor = WINDOW_LIB.to_string()
+        + "pub struct Other;\nimpl Other {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
+    let tried = WINDOW_LIB.replace(
+        "            end: self.end,\n        }\n    }\n}\n",
+        "            end: check(self.end)?,\n        }\n    }\n}\n",
+    );
+    let macro_field = WINDOW_LIB.replace(
+        "            end: self.end,\n        }\n    }\n}\n",
+        "            end: pick!(self.end),\n        }\n    }\n}\n",
+    );
+    let duplicate = WINDOW_LIB.to_string()
+        + "pub mod other {\n    #[derive(Debug, PartialEq, Eq)]\n    pub struct Window {\n        start: u32,\n    }\n}\n";
+    let serde_attr = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]\npub struct Window",
+        "#[derive(Debug, PartialEq, Eq)]\n#[serde(rename_all = \"camelCase\")]\npub struct Window",
+    );
+    for lib in [competitor, tried, macro_field, duplicate, serde_attr] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let foreign_clone = WINDOW_TESTS.replace(
+        "use demo::Window;\n",
+        "use demo::Window;\nuse dupe::Clone;\n",
+    );
+    let (index, pin) = clone_field_pin(WINDOW_LIB, &foreign_clone);
+    assert!(pin.is_some());
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&index, &pin).is_empty(), "{foreign_clone}");
+    }
+}
+
+/// #6692 review: lint-tool attributes (`clippy::`, `rustfmt::`) do not
+/// change equality, so they keep the derived-equality reading.
+#[test]
+fn a_clone_field_pin_allows_lint_tool_attributes_on_the_type() {
+    for attribute in ["#[rustfmt::skip]", "#[clippy::has_significant_drop]"] {
+        let lib = WINDOW_LIB.replace(
+            "#[derive(Debug, PartialEq, Eq)]\npub struct Window",
+            &format!("#[derive(Debug, PartialEq, Eq)]\n{attribute}\npub struct Window"),
+        );
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_some(), "{lib}");
+    }
 }
 
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";

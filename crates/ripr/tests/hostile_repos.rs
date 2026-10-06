@@ -856,6 +856,65 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
         return Err(format!("seam id did not round-trip\n{envelope}"));
     }
 
+    // The repair before-phase announces the root on stderr before it
+    // validates the seam, and the unknown-seam refusal repeats it in a
+    // drill-in command; neither may carry raw control or bidi bytes.
+    let root_abs = root
+        .to_str()
+        .ok_or_else(|| "scratch root is not UTF-8".to_string())?;
+    let repair = ripr(
+        &scratch.path,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_abs,
+            "--seam-id",
+            "67fc764ba37d77bd",
+            "--phase",
+            "before",
+        ],
+        &[],
+    )?;
+    // The seam id is deliberately unknown: the announcement is printed first,
+    // then the command refuses with a typed code (2 or 3), never success or a
+    // panic exit.
+    if !matches!(repair.code, Some(2 | 3))
+        || repair.stderr.contains("panicked")
+        || leaks(&repair.stdout)
+        || leaks(&repair.stderr)
+    {
+        return Err(format!(
+            "repair before did not refuse cleanly (code {:?}) or leaked\n{:?}",
+            repair.code, repair.stderr
+        ));
+    }
+    if !repair
+        .stderr
+        .contains("ripr: agent repair --phase before for seam `67fc764ba37d77bd` at ")
+        || !repair.stderr.contains("\\u{1b}]0;PWN\\u{07}\\u{202e}x")
+    {
+        return Err(format!(
+            "expected the escaped root in the before-phase announcement\n{}",
+            repair.stderr
+        ));
+    }
+    // The refusal's drill-in command carries the hostile root as portable
+    // printf segments, never raw bytes.
+    if !repair.stderr.contains("Run `ripr pilot --root '")
+        || !repair.stderr.contains("\"$(printf '\\033')\"")
+        || !repair.stderr.contains("\"$(printf '\\342\\200\\256')\"")
+        || !repair.stderr.contains("']0;PWN'")
+        || !repair.stderr.contains("\"$(printf '\\007')\"")
+        || !repair.stderr.contains("'x'")
+    {
+        return Err(format!(
+            "expected the refusal's drill-in command to quote the hostile root\n{}",
+            repair.stderr
+        ));
+    }
+
     // A bad ref echoed back by the failure path.
     let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
     assert_sane(&bad_ref, "check with hostile ref")?;
