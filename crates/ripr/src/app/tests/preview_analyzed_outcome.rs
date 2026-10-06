@@ -74,6 +74,7 @@ fn shared_preview_completion_predicate_fails_closed_for_every_non_success_status
         crate::analysis::LanguageRunStatus::Unavailable,
         crate::analysis::LanguageRunStatus::Partial,
         crate::analysis::LanguageRunStatus::Invalid,
+        crate::analysis::LanguageRunStatus::Failed,
     ] {
         let runs = vec![crate::analysis::LanguageRun {
             language: "python".to_string(),
@@ -203,6 +204,131 @@ fn missing_perl_fact_packet_reason_is_user_facing() -> Result<(), String> {
                 "reason must name the flag, not a campaign: {human}"
             ));
         }
+        Ok(())
+    })();
+    let cleanup =
+        fs::remove_dir_all(&root).map_err(|error| format!("remove {}: {error}", root.display()));
+    proof?;
+    cleanup
+}
+
+/// #6828: a *configured* managed Perl facts producer whose invocation fails
+/// must not be reported as the generic "requires a fact packet" state the
+/// user already satisfied. The typed limitation is `producer_failure` with
+/// `inspect_failure` recovery and the `language_runs[]` reason carries the
+/// real exporter failure — the funnel stays fail-closed (no Perl findings,
+/// other languages unaffected).
+///
+/// The failure is made deterministic without spawning anything: the
+/// configured `[perl].cache_dir` points under an existing *file*, so the
+/// exporter cache directory cannot be created and the managed invocation
+/// fails before any process is spawned.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() -> Result<(), String>
+{
+    let root = temp_root("preview-perl-producer-failed")?;
+    let proof = (|| -> Result<(), String> {
+        // An existing file that the configured cache_dir tries to traverse
+        // through, so `create_dir_all` fails deterministically on every host.
+        write(&root.join("blocker.txt"), "not a directory")?;
+        let diff = root.join("perl.diff");
+        write(
+            &diff,
+            "diff --git a/lib/App.pm b/lib/App.pm\n--- /dev/null\n+++ b/lib/App.pm\n@@ -0,0 +1 @@\n+sub discount { return 0 }\n",
+        )?;
+        let config = crate::config::tests_only_parse(
+            "[languages]\nenabled = [\"rust\", \"perl\"]\n\n[perl]\nproducer = \"perl-ripr-facts\"\ncache_dir = \"blocker.txt/cache\"\n",
+        )?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: None,
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+            },
+            &config,
+        )?;
+
+        // language_runs: the run is `failed` and its reason names the real
+        // producer failure, not the already-followed configuration advice.
+        let perl_run = output
+            .language_runs
+            .iter()
+            .find(|run| run.language == "perl")
+            .ok_or_else(|| "missing failed Perl language_run".to_string())?;
+        if perl_run.status != crate::analysis::LanguageRunStatus::Failed {
+            return Err(format!("expected failed Perl run, got {perl_run:?}"));
+        }
+        let reason = perl_run
+            .reason
+            .as_deref()
+            .ok_or_else(|| "failed Perl run must carry a reason".to_string())?;
+        if !reason.contains("failed to create Perl facts cache dir") {
+            return Err(format!(
+                "language_runs reason must carry the real producer failure: {reason}"
+            ));
+        }
+        if reason.contains("requires a fact packet") {
+            return Err(format!(
+                "language_runs reason must not re-advise the configuration the user already \
+                 made: {reason}"
+            ));
+        }
+
+        // Typed outcome limitation: producer_failure + inspect_failure, with
+        // the cause in the bounded detail.
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+            })
+            .ok_or_else(|| {
+                format!(
+                    "expected a producer_failure limitation, got {:?}",
+                    outcome.limitations
+                )
+            })?;
+        if limitation.recovery.kind != crate::analysis_outcome::AnalysisRecoveryKind::InspectFailure
+        {
+            return Err(format!(
+                "producer_failure recovery must be inspect_failure, got {:?}",
+                limitation.recovery
+            ));
+        }
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        if !detail.contains("failed to create Perl facts cache dir") {
+            return Err(format!(
+                "producer_failure limitation detail must carry the exporter failure: {detail}"
+            ));
+        }
+
+        // Fail-closed shape: partial outcome, no Perl findings, Rust intact.
+        if outcome.kind != crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations {
+            return Err(format!(
+                "a failed producer must keep the run partial_with_limitations, got {:?}",
+                outcome.kind
+            ));
+        }
+        if output
+            .findings
+            .iter()
+            .any(|finding| finding.language == Some(crate::domain::LanguageId::Perl))
+        {
+            return Err("a failed producer must not emit Perl findings".to_string());
+        }
+        assert_renderer_agreement(&output, true, false)?;
         Ok(())
     })();
     let cleanup =

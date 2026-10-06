@@ -710,10 +710,14 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 fn render_language_runs(out: &mut String, output: &CheckOutput) {
     for run in &output.language_runs {
         let language = language_display_name(&run.language);
-        let completion = if run.status == crate::analysis::LanguageRunStatus::Partial {
-            "returned a partial result"
-        } else {
-            "analysis did not complete"
+        let completion = match run.status {
+            crate::analysis::LanguageRunStatus::Partial => "returned a partial result",
+            // #6828: a configured producer was invoked and failed; the
+            // reason names the real exporter failure.
+            crate::analysis::LanguageRunStatus::Failed => {
+                "did not complete: the configured fact producer failed"
+            }
+            _ => "analysis did not complete",
         };
         match &run.reason {
             Some(reason) => out.push_str(&format!(
