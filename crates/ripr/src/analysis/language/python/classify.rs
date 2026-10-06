@@ -650,6 +650,13 @@ pub(super) fn classify_change_with_context(
             }
         } else if candidate.relation.uses_oracle() {
             evidence.push(format!("test_oracle_shape: reach_only ({})", test.name));
+            // No recognized assertion is not the same as no assertion: say
+            // which one this row is (#5571).
+            evidence.push(format!(
+                "test_assertion_admission: {} ({})",
+                test.assertion_admission.as_str(),
+                test.name
+            ));
         }
     }
 

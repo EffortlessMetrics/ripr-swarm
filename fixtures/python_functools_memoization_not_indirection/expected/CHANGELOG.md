@@ -60,3 +60,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (6)
+
+Reason:
+RIPR-SPEC-0224: record test_assertion_admission evidence for assertion-free related tests (#5571)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

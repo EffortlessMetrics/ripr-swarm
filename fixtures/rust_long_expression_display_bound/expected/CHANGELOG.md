@@ -292,3 +292,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (14)
+
+Reason:
+RIPR-SPEC-0001: probe now names the changed == 1 predicate, not the unchanged == 0 one on the removed line (#6731); class unchanged; re-blessed on merged main (canonical gap key)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

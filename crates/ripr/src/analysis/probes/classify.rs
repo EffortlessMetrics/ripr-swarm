@@ -1,5 +1,6 @@
 use super::super::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex};
 use super::family::family_for_probe_shape;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FileData;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::ProbeFamily;
@@ -25,6 +26,40 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
     line: usize,
     changed_text: &str,
 ) -> Vec<ParserProbeShape<'a>> {
+    parser_probe_shapes_for_changed_line_against(index, file, line, changed_text, None)
+}
+
+/// Like [`parser_probe_shapes_for_changed_line`], with the removed text the
+/// diff pairs with this line. When several same-family shapes match the line
+/// equally well (`Id { counter: 0x00ab_cdef, version: 0x1 }`), a shape whose
+/// text the removed line already holds as a whole token run is unchanged and
+/// loses to one it does not hold, so the probe names the edited field rather
+/// than its neighbour (#6731). The match category (exact, containing,
+/// contained) still decides first, so an exact shape is never traded for an
+/// enclosing one.
+pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
+    index: &'a RustIndex,
+    file: &Path,
+    line: usize,
+    changed_text: &str,
+    removed_text: Option<&str>,
+) -> Vec<ParserProbeShape<'a>> {
+    let selection_key = |family: &ProbeFamily, shape_text: &str| {
+        shape_match_rank(shape_text, changed_text).map(|(category, distance)| {
+            // Unchanged only when the old line holds every occurrence the new
+            // line has: with two literals on one line, an edited field whose
+            // new text matches the *other* literal's old field is new.
+            let needle = shape_text.trim();
+            let unchanged = removed_text.is_some_and(|removed| {
+                // Only a record field is bounded by `,`/`}`; other families
+                // (calls, predicates) sit inside larger expressions by design.
+                let whole_unit = *family == ProbeFamily::FieldConstruction;
+                let before = token_run_count(removed, needle, whole_unit);
+                before > 0 && before >= token_run_count(changed_text, needle, whole_unit)
+            });
+            (category, unchanged, distance)
+        })
+    };
     let Some(facts) = file_facts(index, file) else {
         return Vec::new();
     };
@@ -68,10 +103,10 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
                 continue;
             }
             let current = &selected[position];
-            let candidate_rank = shape_match_rank(candidate.text, changed_text);
-            let current_rank = shape_match_rank(current.text, changed_text);
-            if candidate_rank < current_rank
-                || (candidate_rank == current_rank && candidate.text < current.text)
+            let candidate_key = selection_key(&candidate.family, candidate.text);
+            let current_key = selection_key(&current.family, current.text);
+            if candidate_key < current_key
+                || (candidate_key == current_key && candidate.text < current.text)
             {
                 selected[position] = candidate;
             }
@@ -230,6 +265,49 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
                 .map(|(_, facts)| facts)
         })
         .map(|facts| facts.data())
+}
+
+/// How often `needle` occurs in `haystack` as code, without an identifier
+/// or digit character on either side, so `b: 2` is not found inside `b: 20`
+/// and a removed line's trailing `// version: 0x2` comment does not make the
+/// edited `version: 0x2` field read as unchanged.
+fn token_run_count(haystack: &str, needle: &str, whole_unit: bool) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    // The mask keeps byte length, so a match position indexes both strings;
+    // an occurrence counts only when it starts on an unmasked code byte.
+    let masked = mask_comments_and_strings(haystack);
+    let masked = masked.as_bytes();
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    haystack
+        .match_indices(needle)
+        .filter(|(start, _)| {
+            let start = *start;
+            let starts_in_code = masked
+                .get(start)
+                .is_some_and(|byte| !byte.is_ascii_whitespace());
+            if !starts_in_code {
+                return false;
+            }
+            let before = haystack[..start].chars().next_back();
+            let after = haystack[start + needle.len()..].chars().next();
+            let open_start = needle.chars().next().is_none_or(|ch| !is_word(ch))
+                || before.is_none_or(|ch| !is_word(ch));
+            let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
+                || after.is_none_or(|ch| !is_word(ch));
+            // A record field must be a whole syntactic unit, not the head or
+            // tail of a longer expression: `flag: foo` inside the old
+            // `flag: foo && bar` is not the unchanged field. Rejecting a
+            // match only makes a shape read as changed, which falls back to
+            // the distance tie-break.
+            let next = haystack[start + needle.len()..].trim_start().chars().next();
+            let previous = haystack[..start].trim_end().chars().next_back();
+            let closes = next.is_none_or(|ch| matches!(ch, ',' | '}' | ')' | ']' | ';' | '{'));
+            let opens = previous.is_none_or(|ch| !"&|+-*/%<>=!^.".contains(ch));
+            open_start && open_end && (!whole_unit || (closes && opens))
+        })
+        .count()
 }
 
 fn shape_match_rank(shape_text: &str, changed_text: &str) -> Option<(u8, usize)> {
