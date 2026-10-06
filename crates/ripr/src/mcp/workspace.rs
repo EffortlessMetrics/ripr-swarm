@@ -495,11 +495,6 @@ impl WorkspaceSession {
             super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
 
         let start = window.offset.min(selected_items.len());
-        let mut page = GapPage {
-            offset: start,
-            limit: window.limit,
-            ..GapPage::default()
-        };
         let mut items = Vec::new();
         let mut used = 0usize;
         for item in &selected_items[start..] {
@@ -516,11 +511,84 @@ impl WorkspaceSession {
             used += cost;
             items.push(item.list_summary.clone());
         }
-        page.returned = items.len();
-        page.has_more = start + items.len() < selected_items.len();
-        page.next_offset = page.has_more.then_some(start + items.len());
+
+        // The tool advertises an outputSchema, so a successful result must
+        // carry its structured copy (#6021 review): shrink the byte-fitted
+        // page until the complete double envelope measures under the bound
+        // with margin for the final page fields. Envelope size is monotone
+        // in the page length, so bisect for the largest fitting prefix.
+        if !items.is_empty() {
+            let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
+                let probe_page = GapPage {
+                    offset: window.offset,
+                    limit: window.limit,
+                    returned: count,
+                    has_more: true,
+                    next_offset: Some(start + count),
+                };
+                let probe = self.gap_list_document(
+                    snapshot,
+                    selection,
+                    requested,
+                    items[..count].to_vec(),
+                    &probe_page,
+                )?;
+                crate::mcp::protocol::structured_envelope_overflows(&probe)
+                    .map(|overflows| !overflows)
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })
+            };
+            // Probe with the final-page field margin reserved.
+            let mut low = 1usize;
+            let mut high = items.len();
+            let mut fitting = 0usize;
+            while low <= high {
+                let mid = (low + high) / 2;
+                if structured_fit(mid)? {
+                    fitting = mid;
+                    low = mid + 1;
+                } else {
+                    high = mid.saturating_sub(1);
+                }
+            }
+            if fitting == 0 {
+                // Even one summary cannot fit beside the shell in the
+                // structured envelope; keep one so the page still makes
+                // progress and tool_result best-fits the wire form.
+                items.truncate(1);
+            } else {
+                items.truncate(fitting);
+            }
+        }
+
+        let page = GapPage {
+            // The window echoes the requested offset; a past-end request is
+            // an empty disclosed page at that offset, not a renumbered one.
+            offset: window.offset,
+            limit: window.limit,
+            returned: items.len(),
+            has_more: start + items.len() < selected_items.len(),
+            next_offset: (start + items.len() < selected_items.len())
+                .then_some(start + items.len()),
+        };
 
         let document = self.gap_list_document(snapshot, selection, requested, items, &page)?;
+        // A listing whose non-pageable shell (for example an omission
+        // disclosure alone) outgrows the ceiling cannot be narrowed by
+        // paging; fail closed naming the identity route (#6021).
+        let bytes = document_bytes(&document)?;
+        if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
+            return Err(AttemptFailure::new(
+                CODE_RESULT_TOO_LARGE,
+                format!(
+                    "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
+                    super::MAX_TOOL_DOCUMENT_BYTES
+                ),
+                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
         bounded_document(document)
     }
 
@@ -538,9 +606,16 @@ impl WorkspaceSession {
             "resource_template": "ripr://gap/{canonical_id}",
         });
         if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity: a refresh
+            // between pages fails closed with stale_snapshot instead of
+            // silently resuming at the old offset over a new selection
+            // (#6021 review).
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
-                "arguments": { "offset": next_offset },
+                "arguments": {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "offset": next_offset,
+                },
             });
         }
         Ok(json!({
@@ -1386,7 +1461,10 @@ mod tests {
             .list_gaps(None, GapListWindow::default())
             .map_err(|failure| failure.detail)?;
 
-        // The page itself must fit the wire envelope end to end.
+        // The page itself must fit the wire envelope end to end, with the
+        // advertised structured copy intact: the tool declares an
+        // outputSchema, so a paged success may not drop structuredContent
+        // (#6021 review).
         let envelope = crate::mcp::protocol::tool_result(document.clone())
             .map_err(|error| format!("paged listing must ship: {error}"))?;
         let envelope_bytes = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
@@ -1395,6 +1473,13 @@ mod tests {
                 "the paged envelope must fit the wire bound, got {} bytes",
                 envelope_bytes.len()
             ));
+        }
+        if envelope.get("structuredContent").is_none() {
+            return Err(
+                "a paged listing must keep its structured result; the page trim must size the \
+                 double envelope, not fall back to text-only"
+                    .to_string(),
+            );
         }
         // A byte-filled page must actually sit at the tool document ceiling.
         let document_bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
@@ -1442,6 +1527,23 @@ mod tests {
             != Some("ripr_list_gaps")
         {
             return Err("a partial page must name the next-page route".to_string());
+        }
+        // The generated next-page route pins the snapshot identity, so a
+        // refresh between pages fails closed with stale_snapshot instead of
+        // silently mixing snapshots (#6021 review).
+        let snapshot_id = document
+            .pointer("/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "list lost its snapshot identity".to_string())?
+            .to_string();
+        if document
+            .pointer("/continuation/next_page/arguments/snapshot_id")
+            .and_then(Value::as_str)
+            != Some(snapshot_id.as_str())
+        {
+            return Err(format!(
+                "next_page must pin the snapshot identity {snapshot_id}: {document}"
+            ));
         }
 
         // Walking next_offset covers the selection exactly once, in order,
@@ -1516,12 +1618,15 @@ mod tests {
                 "an explicit limit must cap and disclose: {limited}"
             ));
         }
-        // An offset past the selection is an empty disclosed page, not an error.
+        // An offset past the selection is an empty disclosed page, not an
+        // error, and the window echoes the requested offset rather than the
+        // clamped slice start (#6021 review).
+        let requested_offset = selected as usize + 5;
         let beyond = session
             .list_gaps(
                 None,
                 GapListWindow {
-                    offset: selected as usize + 5,
+                    offset: requested_offset,
                     limit: None,
                 },
             )
@@ -1533,9 +1638,11 @@ mod tests {
             != Some(false)
             || beyond.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
             || beyond.pointer("/page/next_offset") != Some(&Value::Null)
+            || beyond.pointer("/page/offset").and_then(Value::as_u64)
+                != Some(requested_offset as u64)
         {
             return Err(format!(
-                "an offset past the selection must be an empty final page: {beyond}"
+                "an offset past the selection must be an empty final page echoing the request: {beyond}"
             ));
         }
         Ok(())

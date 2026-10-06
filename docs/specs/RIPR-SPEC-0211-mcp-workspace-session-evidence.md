@@ -134,9 +134,14 @@ official SDK transport:
   would exceed the wire-calibrated tool-document ceiling (half the
   response bound, the worst-case escaping budget), the default call
   returns the first wire-fitting page and discloses the window through
-  `page` (`offset`, `limit` when the caller set it, `returned`,
-  `has_more`, `next_offset`); walking `next_offset` covers the selection
-  exactly once. Only a listing that cannot fit even one page — for
+  `page` (`offset` echoing the request, `limit` when the caller set it,
+  `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
+  selection exactly once. Pages are sized so the complete double-carry
+  envelope measures under the response bound: a paged success always
+  carries `structuredContent`, as the tool's advertised `outputSchema`
+  requires. The generated `next_page` route pins the snapshot identity, so
+  a refresh between pages fails closed with `stale_snapshot` instead of
+  mixing snapshots. Only a listing that cannot fit even one page — for
   example an omission disclosure alone over the ceiling — fails closed
   with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
   identity route.

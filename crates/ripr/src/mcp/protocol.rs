@@ -307,6 +307,22 @@ fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
     Ok(writer.0)
 }
 
+/// Whether the complete double-carry envelope for `document` measures over
+/// the response bound — the point where `tool_result` would ship the
+/// text-only fallback without `structuredContent`. Paging callers shrink
+/// their page until this is `false`, so a tool that advertises an
+/// `outputSchema` always returns a structured result (#6021 review).
+pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, String> {
+    let text = serde_json::to_string(document)
+        .map_err(|error| format!("render tool document: {error}"))?;
+    let structured = json!({
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": document,
+        "isError": false,
+    });
+    Ok(envelope_bytes(&structured)? > super::MAX_RESPONSE_BYTES)
+}
+
 /// A typed tool failure envelope: standard `isError` semantics with the
 /// failure as structured content and one recovery sentence in text form.
 pub(super) fn tool_failure(

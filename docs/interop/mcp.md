@@ -61,7 +61,7 @@ a time through the tool or the resource.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (no arguments) | `ripr_refresh` |
-| Tool (`snapshot_id?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `limit?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -141,13 +141,18 @@ selected items in snapshot order, disclosed through the `page` window
 (`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
-`ripr_list_gaps` call that resumes the walk; walking `next_offset` covers
-the selection exactly once. Only a listing that cannot fit even one page
-fails closed with `result_too_large`. Tool responses carry the document once
-at full fidelity: `content[0].text` is the compact JSON serialization, and
+`ripr_list_gaps` call that resumes the walk — pinned to the snapshot
+identity, so a refresh between pages fails closed with `stale_snapshot`
+instead of silently mixing snapshots; walking `next_offset` covers the
+selection exactly once. Pages are sized so the complete structured result
+(`structuredContent`, per the tool's advertised `outputSchema`) measures
+under the 128-KiB response bound. Only a listing that cannot fit even one
+page — an omission disclosure alone over the ceiling — fails closed with
+`result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
+route. Other tool responses carry the document once at full fidelity:
+`content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it only while the complete envelope stays under
-the 128-KiB response bound — a large page ships as compact text instead of
-failing after budget approval.
+the response bound.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
