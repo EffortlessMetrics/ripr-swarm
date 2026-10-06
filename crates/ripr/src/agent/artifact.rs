@@ -1590,6 +1590,56 @@ mod tests {
         assert!(result.is_ok(), "unexpected rejection: {result:?}");
     }
 
+    // #5301 item 7: the preparsed commitment path must agree with the
+    // checked path on every well-formed input. Malformed JSON is out of
+    // contract for the preparsed entry point (its caller parses first),
+    // so the battery below is well-formed only; malformed inputs stay
+    // covered by the checked-path tests above.
+    #[test]
+    fn preparsed_commitment_matches_checked_path() {
+        let zeroes = "0".repeat(64);
+        let valid = format!(r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let duplicate = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let escaped = format!(
+            r#"{{"artifact":{{"note":"see \"content_sha256\" in the schema","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let missing = r#"{"artifact":{}}"#.to_string();
+        let wrong_path = format!(r#"{{"other":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let non_string = r#"{"artifact":{"content_sha256":123}}"#.to_string();
+        let non_hex = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{g}"}}}}"#,
+            g = "g".repeat(64)
+        );
+        for raw in [
+            &valid,
+            &duplicate,
+            &escaped,
+            &missing,
+            &wrong_path,
+            &non_string,
+            &non_hex,
+        ] {
+            assert_eq!(
+                content_sha256_with_placeholder(raw),
+                content_sha256_with_placeholder_preparsed(raw),
+                "preparsed path must agree with the checked path on {raw}"
+            );
+        }
+        assert!(
+            content_sha256_with_placeholder_preparsed(&valid).is_ok(),
+            "valid artifact must be accepted through the preparsed path"
+        );
+        assert!(
+            matches!(
+                content_sha256_with_placeholder_preparsed(&duplicate),
+                Err(ContentCommitmentRejection::Duplicate)
+            ),
+            "duplicate commitment must stay a Duplicate rejection on the preparsed path"
+        );
+    }
+
     fn comparable_artifact() -> ValidatedArtifact {
         ValidatedArtifact {
             currentness: ArtifactCurrentness::Current,

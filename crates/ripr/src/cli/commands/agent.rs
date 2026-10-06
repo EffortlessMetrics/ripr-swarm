@@ -384,8 +384,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &after_json,
         agent_identity_path(&options.before),
         agent_identity_path(&options.after),
-        Some(before_identity.repository_head.clone()),
-        Some(after_identity.repository_head.clone()),
+        Some(before_identity.repository_head),
+        Some(after_identity.repository_head),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
