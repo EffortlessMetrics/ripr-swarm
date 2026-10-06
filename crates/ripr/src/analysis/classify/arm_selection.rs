@@ -415,17 +415,29 @@ impl ArmSelector {
         })
     }
 
+    /// Whether the test names the owner at all. A test that reaches the
+    /// owner only through other functions passes no input this selector
+    /// reads, so selection has nothing to outrank there (#6297). An alias
+    /// the test's file imports the owner under (`use m::flip as f;`) is a
+    /// mention, and so is anything in a file whose imports were not read.
+    pub(in crate::analysis) fn mentioned_by(&self, test: &TestSummary) -> bool {
+        if !whole_word_offsets(&mask_comments_and_strings(&test.body), &self.owner).is_empty() {
+            return true;
+        }
+        let Some(test_imports) = &self.test_imports else {
+            return false;
+        };
+        test_imports.get(&test.file).is_none_or(|paths| {
+            paths.iter().any(|import| {
+                import.alias.is_some() && import.path.rsplit("::").next() == Some(&self.owner)
+            })
+        })
+    }
+
     /// Every direct owner call in a test body, judged against this arm.
     /// `None` when the body names the owner anywhere other than a call
     /// this module can read (a function pointer, a multi-line call, a
     /// differently shaped call), since such a use may select any arm.
-    /// Whether the test names the owner at all. A test that reaches the
-    /// owner only through other functions passes no input this selector
-    /// reads, so selection has nothing to outrank there (#6297).
-    pub(in crate::analysis) fn mentioned_by(&self, test: &TestSummary) -> bool {
-        !whole_word_offsets(&mask_comments_and_strings(&test.body), &self.owner).is_empty()
-    }
-
     pub(in crate::analysis) fn observed_inputs(
         &self,
         test: &TestSummary,
@@ -1937,6 +1949,35 @@ mod tests {
         removed.before = Some("Kind::Delta => 2,".to_string());
         removed.after = None;
         assert!(ArmSelector::establish(&removed, &owner(body, "kind")).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_test_names_the_owner_through_its_body_or_an_imported_alias() -> Result<(), String> {
+        let body = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n    }\n}\n";
+        let mut selector =
+            ArmSelector::establish(&arm_probe("Kind::Beta => 2,", 4), &owner(body, "kind"))
+                .ok_or_else(|| "premise: the Beta arm is readable".to_string())?;
+        let wrapper_only = test_with("fn t() {\n    assert_eq!(f(Kind::Alpha), 1);\n}\n");
+        assert!(selector.mentioned_by(&test_with(
+            "fn t() {\n    assert_eq!(kind(Kind::Beta), 2);\n}\n"
+        )));
+        assert!(!selector.mentioned_by(&wrapper_only));
+        let mut with_imports = |source: &str| {
+            selector.test_imports = Some(
+                [(wrapper_only.file.clone(), flattened_use_paths(source))]
+                    .into_iter()
+                    .collect(),
+            );
+            selector.mentioned_by(&wrapper_only)
+        };
+        // `f` is the owner under another name, so the test calls it.
+        assert!(with_imports("use crate::{Kind, kind as f};\n"));
+        // A plain import of the owner is not a call through another name.
+        assert!(!with_imports("use crate::{Kind, kind};\n"));
+        // A file whose imports were not read may alias the owner.
+        selector.test_imports = Some(Default::default());
+        assert!(selector.mentioned_by(&wrapper_only));
         Ok(())
     }
 

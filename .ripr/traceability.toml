@@ -12730,6 +12730,7 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_bare_variant_imported_from_another_enum_is_not_read",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_test_names_the_owner_through_its_body_or_an_imported_alias",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_change_pairs_with_its_own_removed_arm",
   "crates/ripr/src/output/related_test_miss.rs::tests::an_unselected_arm_miss_names_the_arm_as_a_missing_input",
   "crates/ripr/src/output/human/explain.rs::tests::an_unselected_arm_is_an_input_to_select_not_an_assertion_to_make",

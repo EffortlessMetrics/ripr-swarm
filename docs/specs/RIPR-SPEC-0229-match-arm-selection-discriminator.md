@@ -220,7 +220,10 @@ Implemented:
 - selection outranks tokens whenever the scrutinee is a direct owner input.
   A test that never names the owner (it reaches it only through a wrapper)
   passes no input to read, so its assertion tokens confirm as they did
-  before selection (#6297, `match_arm_proximity_wrapper_confirms`).
+  before selection (#6297, `match_arm_proximity_wrapper_confirms`). An
+  owner imported under an alias in the test's file, or a file whose imports
+  were not read, counts as naming it. A wrapper-only test whose expected
+  side names a sibling variant therefore still confirms, as on main.
 
 Not yet implemented (each reads as not provable):
 
