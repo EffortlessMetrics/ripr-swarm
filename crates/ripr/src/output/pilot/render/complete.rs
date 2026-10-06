@@ -16,6 +16,7 @@ use crate::output::pilot::commands::{
 };
 use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
+    withheld_static_limitations,
 };
 use crate::output::pilot::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute, PilotLanguageRoutes,
@@ -116,6 +117,10 @@ pub(crate) fn render_pilot_summary_json(
         "  \"actionable_seams_total\": {},\n",
         actionable_total
     ));
+    out.push_str(&format!(
+        "  \"withheld_static_limitations_total\": {},\n",
+        withheld_static_limitations(classified)
+    ));
     out.push_str("  \"top_actionable_seams\": [");
     for (idx, entry) in top.iter().enumerate() {
         if idx == 0 {
@@ -147,8 +152,13 @@ pub(crate) fn render_pilot_summary_json(
     ));
     // An unanalyzed-only workspace has no seam to snapshot or measure, so
     // offering the follow-up commands would send the reader into a loop.
-    // A Rust exclusion likewise emptied the ranking (#5205).
-    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() {
+    // A Rust exclusion likewise emptied the ranking (#5205), and so did
+    // withholding every seam as a static limitation with no Python card to
+    // offer instead (#5497): there is no gap to snapshot or measure.
+    let withheld_only = top.is_empty()
+        && withheld_static_limitations(classified) > 0
+        && python_top_repair_card(context.python_first_use).is_none();
+    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
         out.push_str("    \"after_snapshot_command\": null,\n");
         out.push_str("    \"outcome_command\": null,\n");
     } else {
@@ -216,6 +226,14 @@ pub(crate) fn render_pilot_summary_md(
             actionable_total, context.max_seams
         ));
     }
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "- Withheld: {} ({WITHHELD_REASON}; listed in `{}`)\n",
+            withheld_count_label(withheld, context.seam_limit),
+            display_path(&context.artifacts.repo_exposure_md)
+        ));
+    }
     out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
@@ -236,6 +254,12 @@ pub(crate) fn render_pilot_summary_md(
             out.push_str(&format!(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
                 unanalyzed_label(unanalyzed)
+            ));
+        } else if withheld > 0 {
+            out.push_str(&format!(
+                "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
+                withheld_count_label(withheld, context.seam_limit),
+                display_path(&context.artifacts.repo_exposure_md)
             ));
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
@@ -418,6 +442,13 @@ pub(crate) fn render_pilot_summary_md(
             out.push('\n');
             return out;
         }
+        // #5497: with every seam withheld there is no gap to test, so the
+        // snapshot pair would only measure an edit nobody was asked to make.
+        (None, None) if top.is_empty() && withheld > 0 => {
+            out.push_str(&withheld_only_next(context.seam_limit));
+            out.push('\n');
+            return out;
+        }
         (None, None) => {
             match top.first() {
                 Some(entry)
@@ -496,6 +527,21 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
     if let Some(scope) = scope_line(context, false) {
         out.push_str(&format!("  scope: {scope}\n"));
+    }
+    // #5497: the terminal is where most users read the empty ranking, so it
+    // states the seam limit too; a gap past the cut was never classified.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "  seam limit: ranked the first {} of {} seams\n",
+            limit.analyzed, limit.total
+        ));
+    }
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "  withheld: {} ({WITHHELD_REASON})\n",
+            withheld_count_label(withheld, context.seam_limit)
+        ));
     }
     out.push('\n');
 
@@ -580,6 +626,14 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!(
             "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
             unanalyzed_label(unanalyzed)
+        ));
+        false
+    } else if withheld > 0 {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  none ranked: {} {WITHHELD_ONLY_VERDICT}\n  inspect: {}\n\n",
+            withheld_count_label(withheld, context.seam_limit),
+            display_path(&context.artifacts.repo_exposure_md)
         ));
         false
     } else {
@@ -677,6 +731,11 @@ pub(crate) fn render_pilot_terminal(
     }
     if unanalyzed_only(context).is_some() {
         out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
+        return out;
+    }
+    if top.is_empty() && withheld > 0 {
+        out.push_str(&withheld_only_next(context.seam_limit));
         out.push('\n');
         return out;
     }
@@ -830,6 +889,50 @@ const NO_LANGUAGE_ROUTE_COMMAND: &str =
 /// Why an empty ranking is a non-claim when pilot found only source in
 /// languages no ripr adapter reads.
 const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages ripr does not analyze, so the empty ranking is not a clean result. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews.";
+
+/// Why pilot withheld seams from its ranking (#5497): their class is
+/// `opaque` or an `*_unknown` class, so ripr's static evidence could not
+/// establish whether a test discriminates them.
+const WITHHELD_REASON: &str =
+    "static evidence is unknown or opaque, so they are static limitations, not gaps";
+
+/// Why an empty ranking with withheld seams is not a clean result.
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result.";
+
+/// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
+/// pair to compare.
+const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
+
+/// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
+/// classified: those may hold gaps, so "no gap to test" would claim an
+/// absence the run did not establish, and raising the limit is the step.
+fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> String {
+    match seam_limit {
+        Some(limit) => format!(
+            "No gap ranked among the {} seams pilot analyzed, but the seam limit left {} of {} seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. Each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.",
+            limit.analyzed,
+            limit.total.saturating_sub(limit.analyzed),
+            limit.total
+        ),
+        None => WITHHELD_ONLY_NEXT.to_string(),
+    }
+}
+
+fn seam_count_label(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+}
+
+/// Withheld seams counted over the kept seams only are a lower bound once a
+/// seam limit cut the list (#6602).
+fn withheld_count_label(
+    count: usize,
+    seam_limit: Option<&crate::analysis::SeamLimitInfo>,
+) -> String {
+    match seam_limit {
+        Some(_) => format!("at least {}", seam_count_label(count)),
+        None => seam_count_label(count),
+    }
+}
 
 /// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.
 const NO_ANALYZED_LANGUAGE_COMMAND: &str =
