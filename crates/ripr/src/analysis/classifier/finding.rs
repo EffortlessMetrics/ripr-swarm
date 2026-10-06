@@ -1,4 +1,4 @@
-use super::evidence::ClassifiedProbeEvidence;
+use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
@@ -36,39 +36,27 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    let recommended_next_step = if class == ExposureClass::WeaklyExposed
-        && exact_oracle_covers_direct_sink
-    {
-        None
-    } else if class == ExposureClass::StaticUnknown
-        && evidence.reach.state == StageState::No
-        && !context.owner_assertion_shaped
-    {
-        // A new function no test calls yields several unclassifiable lines;
-        // "escalate to real mutation" is useless while no test reaches
-        // the owner at all. The class stays static_unknown.
-        Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
-    } else if class == ExposureClass::ReachableUnrevealed
-        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-        && !context.owner_assertion_shaped
-    {
-        Some(match &evidence.assertion_refusal {
-            Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
-                "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
-                note.location
-            ),
-            // #6903: an ignored, cfg-off, conditional or rebound assertion is
-            // not a limit of ripr's reading, so offering a static-limit
-            // reading would let the reader dismiss a real gap.
-            Some(note) if note.calls_owner => format!(
-                "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`.",
-                note.location
-            ),
-            _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
-        })
-    } else {
-        recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
-    };
+    let recommended_next_step =
+        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+            None
+        } else if class == ExposureClass::StaticUnknown
+            && evidence.reach.state == StageState::No
+            && !context.owner_assertion_shaped
+        {
+            // A new function no test calls yields several unclassifiable lines;
+            // "escalate to real mutation" is useless while no test reaches
+            // the owner at all. The class stays static_unknown.
+            Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
+        } else if class == ExposureClass::ReachableUnrevealed
+            && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            && !context.owner_assertion_shaped
+        {
+            Some(refused_assertion_next_step(
+                evidence.assertion_refusal.as_ref(),
+            ))
+        } else {
+            recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
+        };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
@@ -470,6 +458,24 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
     actual
         .windows(expected.len())
         .any(|window| window == expected)
+}
+
+/// The next step for a gap whose oracle rests on a refused `assert_eq!`.
+fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
+    match note {
+        Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
+            "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+            note.location
+        ),
+        // #6903: an ignored, cfg-off, conditional or rebound assertion is
+        // not a limit of ripr's reading, so offering a static-limit
+        // reading would let the reader dismiss a real gap.
+        Some(note) if note.calls_owner => format!(
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+            note.location
+        ),
+        _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -954,5 +960,39 @@ mod tests {
             Some("calculate"),
             "let err = calculate(5).unwrap_err();",
         ));
+    }
+
+    #[test]
+    fn refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal() {
+        use super::{AssertionRefusalNote, refused_assertion_next_step};
+        let note = |calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            location: "`assert_eq!` in t at tests/t.rs:3".to_string(),
+            reason: "reason".to_string(),
+            calls_owner,
+            is_analyzer_limit,
+        };
+        let limit = refused_assertion_next_step(Some(&note(true, true)));
+        assert!(
+            limit.contains("this is a static limit, not a missing test"),
+            "{limit}"
+        );
+
+        // #6903: an `#[ignore]`d, cfg-off, conditional or rebound assertion.
+        let not_limit = refused_assertion_next_step(Some(&note(true, false)));
+        assert!(
+            not_limit.contains("this is not a static limit"),
+            "{not_limit}"
+        );
+        assert!(
+            !not_limit.contains("static limit, not a missing test"),
+            "{not_limit}"
+        );
+
+        for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
+            assert!(
+                refused_assertion_next_step(unrelated.as_ref())
+                    .starts_with("Establish that the test is collected")
+            );
+        }
     }
 }

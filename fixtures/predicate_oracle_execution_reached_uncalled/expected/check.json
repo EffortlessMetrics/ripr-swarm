@@ -157,8 +157,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`.",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

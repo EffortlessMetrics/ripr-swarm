@@ -21,7 +21,7 @@ Start here:
   Next step: ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15;
     the "not credited" note says why. That shape can keep the assertion from checking the change, so
     this is not a static limit: make the check run on every default test run, as the standard
-    `assert_eq!`.
+    `assert_eq!`, in a test expected to pass.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach discounted_total: equality_threshold_discounts
     - infection yes: Detected related test input at the changed boundary

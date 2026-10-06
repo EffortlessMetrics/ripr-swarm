@@ -38,7 +38,7 @@ Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
 
 Next step
-  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`.
+  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.
 Drill in:
   ripr explain --root fixtures/error_path_oracle_execution_shadowed/input --diff fixtures/error_path_oracle_execution_shadowed/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root fixtures/error_path_oracle_execution_shadowed/input --diff fixtures/error_path_oracle_execution_shadowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836

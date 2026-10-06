@@ -115,7 +115,7 @@ pub(in crate::analysis) fn infection_evidence(
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Related tests pass only {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
+                        "The only literals ripr reads in related tests are {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
                         literal_kinds_label(&other_kind_literals),
                         other_kind_literals.join(", "),
                         literal_kinds_label(&probe_literals),
@@ -183,17 +183,17 @@ fn literal_kind(literal: &str) -> (bool, bool) {
 /// The kinds present in `literals`, in a fixed order: `numeric`, `char`,
 /// `byte`, joined with `/`.
 fn literal_kinds_label(literals: &[String]) -> String {
-    let kinds = literals
-        .iter()
-        .map(|literal| literal_kind(literal))
-        .collect::<Vec<_>>();
     [
         ((false, false), "numeric"),
         ((true, false), "char"),
         ((true, true), "byte"),
     ]
     .iter()
-    .filter(|(kind, _)| kinds.contains(kind))
+    .filter(|(kind, _)| {
+        literals
+            .iter()
+            .any(|literal| literal_kind(literal) == *kind)
+    })
     .map(|(_, label)| *label)
     .collect::<Vec<_>>()
     .join("/")
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests pass only char/byte literals ['x', b','], which ripr does not compare with the changed numeric boundary [1]; activation/infection is unknown"
+            "The only literals ripr reads in related tests are char/byte literals ['x', b','], which ripr does not compare with the changed numeric boundary [1]; activation/infection is unknown"
         );
 
         // A byte boundary counts byte literals only, not the char `'x'`.
