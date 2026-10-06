@@ -431,6 +431,12 @@ const POWERSHELL_RESTORE_ENCODING: &str =
 /// executes the translated lines under a real `pwsh` on the Windows lane,
 /// where a missing `pwsh` fails closed instead of skipping.
 pub(crate) fn powershell_command(command: &str) -> Option<String> {
+    let (command, lifted) = lift_control_arguments(command)?;
+    let line = powershell_command_lifted(&command)?;
+    restore_control_arguments(line, &lifted)
+}
+
+fn powershell_command_lifted(command: &str) -> Option<String> {
     if is_compound_bash_command(command) {
         return None;
     }
@@ -452,6 +458,158 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         ));
     }
     Some(invoke_quoted_program(&command))
+}
+
+/// Placeholder for an argument carrying control or bidi characters while the
+/// rest of the command is translated. Alphanumeric, so every boundary check
+/// treats it as an ordinary bare word.
+const CONTROL_ARGUMENT_PLACEHOLDER: &str = "RIPRCONTROLARG";
+
+/// `shell_arg` spells control and bidi characters as adjacent
+/// `"$(printf '\ooo')"` segments between `'...'` runs, which PowerShell would
+/// evaluate as subexpressions. Each such argument is lifted out before the
+/// rest of the command is translated and comes back as a parenthesized
+/// expression, `('' + 'run' + [char]0x1b + 'run')`, which PowerShell passes to
+/// the native program as one argument holding the same characters. The leading
+/// `''` keeps the `+` a string concatenation even when the argument starts
+/// with a control character. An argument this function does not recognise
+/// exactly (an unexpected segment, invalid UTF-8) withholds the translation
+/// instead of guessing, and so does a control argument in program position or
+/// as a redirect target.
+fn lift_control_arguments(command: &str) -> Option<(String, Vec<String>)> {
+    const MARKER: &str = "\"$(printf '";
+    if !command.contains(MARKER) {
+        return Some((command.to_string(), Vec::new()));
+    }
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = String::new();
+    let mut lifted = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        // A token runs to the next whitespace outside quotes.
+        let start = index;
+        let mut in_single = false;
+        let mut in_double = false;
+        while index < chars.len() {
+            let ch = chars[index];
+            if in_single {
+                in_single = ch != '\'';
+            } else if in_double {
+                in_double = ch != '"';
+            } else if ch.is_whitespace() {
+                break;
+            } else if ch == '\\' && chars.get(index + 1) == Some(&'\'') {
+                // The `'\''` idiom: an escaped apostrophe between two runs.
+                index += 2;
+                continue;
+            } else {
+                in_single = ch == '\'';
+                in_double = ch == '"';
+            }
+            index += 1;
+        }
+        let token: String = chars[start..index].iter().collect();
+        if token.contains(MARKER) {
+            if start == 0 {
+                return None;
+            }
+            let expression = control_argument_expression(&token)?;
+            out.push_str(&format!("{CONTROL_ARGUMENT_PLACEHOLDER}{}X", lifted.len()));
+            lifted.push(expression);
+        } else {
+            out.push_str(&token);
+        }
+        while index < chars.len() && chars[index].is_whitespace() {
+            out.push(chars[index]);
+            index += 1;
+        }
+    }
+    Some((out, lifted))
+}
+
+/// Translate one argument made only of `'...'` runs and
+/// `"$(printf '\ooo...')"` segments; anything else is not `shell_arg` output.
+fn control_argument_expression(token: &str) -> Option<String> {
+    let chars: Vec<char> = token.chars().collect();
+    let mut parts = vec!["''".to_string()];
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '\'' {
+            // A `'...'` run; `'\''` inside it is a literal apostrophe.
+            let mut literal = String::new();
+            index += 1;
+            loop {
+                match chars.get(index)? {
+                    '\'' => {
+                        if chars.get(index + 1) == Some(&'\\')
+                            && chars.get(index + 2) == Some(&'\'')
+                            && chars.get(index + 3) == Some(&'\'')
+                        {
+                            literal.push_str("''");
+                            index += 4;
+                        } else {
+                            index += 1;
+                            break;
+                        }
+                    }
+                    ch => {
+                        literal.push(*ch);
+                        if is_powershell_single_quote_lookalike(*ch) {
+                            literal.push(*ch);
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            if !literal.is_empty() {
+                parts.push(format!("'{literal}'"));
+            }
+        } else {
+            let rest: String = chars[index..].iter().collect();
+            let rest = rest.strip_prefix("\"$(printf '")?;
+            let end = rest.find("')\"")?;
+            let mut bytes = Vec::new();
+            for escape in rest[..end].split('\\').skip(1) {
+                if escape.len() != 3 {
+                    return None;
+                }
+                bytes.push(u8::from_str_radix(escape, 8).ok()?);
+            }
+            if rest[..end].split('\\').next() != Some("") || bytes.is_empty() {
+                return None;
+            }
+            for ch in String::from_utf8(bytes).ok()?.chars() {
+                parts.push(if (ch as u32) <= 0xffff {
+                    format!("[char]0x{:x}", ch as u32)
+                } else {
+                    format!("[char]::ConvertFromUtf32(0x{:x})", ch as u32)
+                });
+            }
+            index += "\"$(printf '".chars().count() + rest[..end].chars().count() + "')\"".len();
+        }
+    }
+    Some(format!("({})", parts.join(" + ")))
+}
+
+/// Put each lifted argument back in place of its placeholder. A placeholder
+/// that did not survive as a bare word (it landed in a quoted artifact path)
+/// withholds.
+fn restore_control_arguments(line: String, lifted: &[String]) -> Option<String> {
+    let mut line = line;
+    for (position, expression) in lifted.iter().enumerate() {
+        let placeholder = format!("{CONTROL_ARGUMENT_PLACEHOLDER}{position}X");
+        let found = line.find(&placeholder)?;
+        let before = line[..found].chars().next_back();
+        let after = line[found + placeholder.len()..].chars().next();
+        if matches!(before, Some('\'') | Some('"'))
+            || matches!(after, Some('\'') | Some('"'))
+            || line.matches(&placeholder).count() != 1
+        {
+            return None;
+        }
+        line = line.replacen(&placeholder, expression, 1);
+    }
+    Some(line)
 }
 
 /// PowerShell's tokenizer treats U+2018-U+201B as single-quote characters and
@@ -1012,13 +1170,40 @@ mod tests {
     }
 
     #[test]
-    fn powershell_command_withholds_ansi_c_quoted_arguments() {
-        // `shell_arg` spells control characters as `"$(printf '\033')"`; PowerShell has no
-        // translation for that form, so no variant is offered (#6309).
+    fn powershell_command_rebuilds_control_arguments_as_one_expression() {
+        // `shell_arg` spells control characters as `"$(printf '\033')"`; the
+        // translation rebuilds the same argument as one parenthesized string
+        // expression (#6309).
         assert_eq!(
-            powershell_command("ripr explain --root 'esc'\"$(printf '\\033')\"'dir' --base main"),
-            None
+            powershell_command("ripr explain --root 'esc'\"$(printf '\\033')\"'dir' --base main")
+                .as_deref(),
+            Some("ripr explain --root ('' + 'esc' + [char]0x1b + 'dir') --base main")
         );
+        // Multi-byte bidi characters decode from their UTF-8 octets, a leading
+        // control character keeps the concatenation string-typed, and an
+        // apostrophe inside a run doubles.
+        assert_eq!(
+            powershell_command("ripr x \"$(printf '\\342\\200\\256')\"'it'\\''s'").as_deref(),
+            Some("ripr x ('' + [char]0x202e + 'it''s')")
+        );
+    }
+
+    #[test]
+    fn powershell_command_withholds_control_arguments_it_cannot_rebuild_exactly() {
+        for command in [
+            // program position
+            "\"$(printf '\\033')\"ripr x",
+            // not an octal escape
+            "ripr x 'a'\"$(printf '%s' x)\"'b'",
+            // invalid UTF-8
+            "ripr x \"$(printf '\\377')\"",
+            // a control argument as the redirect target
+            "ripr x > 'out'\"$(printf '\\033')\"'.json'",
+            // trailing junk after a segment
+            "ripr x \"$(printf '\\033')\"y",
+        ] {
+            assert_eq!(powershell_command(command), None, "{command}");
+        }
     }
 
     #[test]
@@ -1527,9 +1712,19 @@ fn main() -> ExitCode {
                 .to_str()
                 .ok_or_else(|| "recorder path is not UTF-8".to_string())?,
         );
-        // Positive controls: spaces, apostrophe, Unicode, empty, and
-        // shell-special data plus one plain token.
-        let args = ["--gap", "it's", "café", "", "--verify=x;y", "plain"];
+        // Positive controls: spaces, apostrophe, Unicode, empty,
+        // shell-special and control-character data plus one plain token.
+        // The ESC/BEL/bidi argument is the `shell_arg` control-character form
+        // (#6309): bash rebuilds it with `printf`, PowerShell with `[char]`.
+        let args = [
+            "--gap",
+            "it's",
+            "café",
+            "",
+            "--verify=x;y",
+            "plain",
+            "esc\u{1b}]0;x\u{7}\u{202e}it's\u{2019}end",
+        ];
         let mut bash = recorder_arg.clone();
         for arg in args {
             bash.push(' ');
