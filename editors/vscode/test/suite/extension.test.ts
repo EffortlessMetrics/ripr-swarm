@@ -1863,6 +1863,46 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('limited partial scope renders the server retry recovery over the canned refresh tail (#5999)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited_partial_scope',
+        attempt_id: 'run-partial-retry-recovery',
+        snapshot_id: 'snapshot:run-partial-retry-recovery',
+        // #5999: the server declares this run retry-unlifted, so the client
+        // must render the raise + restart route instead of a same-process
+        // refresh that provably re-runs the identical partition.
+        retry_command: null,
+        retry_recovery: {
+          kind: 'increase_configured_limit',
+          detail: 'ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server so the raised environment is read; raise further if this document is still reported not_analyzed'
+        }
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server'),
+        tooltip
+      );
+      // The canned tail prescribes a refresh after raising the budget; the
+      // running sidecar still reads the old environment, so it must be gone.
+      assert.ok(
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('limited status fails closed to the canned step for a malformed components payload (#5004)', async () => {
     const context = createControllerTestContext({});
     try {

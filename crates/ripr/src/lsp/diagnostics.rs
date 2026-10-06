@@ -802,24 +802,64 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
 /// concrete enable route — a bare `recovery: null` gives an agent consumer
 /// no path to the switch, which only `ripr lsp --help` prose names. The
 /// message names the actual blocking condition so the recovery string is
-/// never a guess about which switch is off.
+/// never a guess about which switch is off, and the route follows the
+/// effective source of the blocked value: a session override (editor
+/// setting / initialization option) outranks `ripr.toml`, so a repository
+/// edit could not lift it (#6853 review).
 fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOutcome {
+    let session_controlled = |key: &str| {
+        matches!(
+            config
+                .session_value_sources()
+                .get(key)
+                .and_then(|source| source.as_str()),
+            Some("pulled") | Some("initialization")
+        )
+    };
     if config.diagnostic_profile != LspDiagnosticProfile::Full {
+        let (message, recovery) = if session_controlled("diagnostic_profile") {
+            (
+                format!(
+                    "seam diagnostics require the full diagnostic profile (current: {}, \
+                     from a session setting)",
+                    config.diagnostic_profile.as_str()
+                ),
+                "set the diagnosticProfile session setting (VS Code setting \
+                 ripr.diagnosticProfile) to full, then run ripr.refresh",
+            )
+        } else {
+            (
+                format!(
+                    "seam diagnostics require the full diagnostic profile (current: {})",
+                    config.diagnostic_profile.as_str()
+                ),
+                "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
+            )
+        };
         ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            format!(
-                "seam diagnostics require the full diagnostic profile (current: {})",
-                config.diagnostic_profile.as_str()
-            ),
-            "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
+            message,
+            recovery,
         )
     } else if !config.enable_seam_diagnostics {
+        let (message, recovery) = if session_controlled("seam_diagnostics") {
+            (
+                "seam diagnostics are disabled by a session setting",
+                "set the seamDiagnostics session setting (VS Code setting \
+                 ripr.seamDiagnostics) to true, then run ripr.refresh",
+            )
+        } else {
+            (
+                "seam diagnostics are disabled by configuration",
+                "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
+            )
+        };
         ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            "seam diagnostics are disabled by configuration",
-            "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
+            message,
+            recovery,
         )
     } else {
         ComponentOutcome::unavailable_recoverable(
@@ -5162,6 +5202,31 @@ mod diagnostic_policy_tests {
         if !recovery.contains("rust") {
             return Err(format!(
                 "rust-disabled recovery must name the language switch: {recovery}"
+            ));
+        }
+
+        // A session override (editor setting / initialization option) ranks
+        // above ripr.toml, so the recovery must name the session route: a
+        // repository edit could not lift the override (#6853 review).
+        let config = LspAnalysisConfig {
+            session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
+            ..LspAnalysisConfig::default()
+        };
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let recovery = payload["recovery"].as_str().unwrap_or_default();
+        if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
+            return Err(format!(
+                "session-override recovery must name the session route: {recovery}"
+            ));
+        }
+        let Some(message) = payload["message"].as_str() else {
+            return Err(format!(
+                "message must name the blocking condition: {payload}"
+            ));
+        };
+        if !message.contains("session setting") {
+            return Err(format!(
+                "message must attribute the override to the session layer: {message}"
             ));
         }
         Ok(())

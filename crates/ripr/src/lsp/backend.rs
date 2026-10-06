@@ -2097,16 +2097,10 @@ impl Backend {
         // — refresh genuinely lifts `seams_deferred` and `stale` snapshots.
         let run_status = health.run_status();
         let budget_recovery = if run_status == crate::analysis::PartialDiffScope::RUN_STATUS {
-            let detail = match partial_scope.as_ref() {
-                Some(scope) => format!(
-                    "{}, then restart the language server so the raised environment is read",
-                    scope.budget_raise_instruction()
-                ),
-                None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or \
-                             RIPR_PARTIAL_DIFF_LINE_BUDGET, then restart the language server so \
-                             the raised environment is read"
-                    .to_string(),
-            };
+            // One wording owner for the raise + restart route (#6853 review):
+            // the run-level recovery and the per-document recovery must not
+            // drift apart.
+            let detail = outside_partition_recovery(partial_scope.as_ref());
             Some(serde_json::json!({
                 "kind": "increase_configured_limit",
                 "detail": format!(
@@ -6904,17 +6898,19 @@ fn workspace_status_receipt_summary(
 /// partition carries on the workspace status payload. Refreshing inside the
 /// session re-runs the identical limited partition, so the route names the
 /// budget override the selector computed plus the sidecar restart that makes
-/// it effective — the same route the run-level disclosures name (#5999).
+/// it effective — the same route the run-level disclosures name (#5999). The
+/// selector minimum admits the next excluded file, not necessarily every
+/// unselected document, so the route says to raise further when the document
+/// is still reported not_analyzed (#6853 review).
 fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDiffScope>) -> String {
-    match partial_scope {
-        Some(scope) => format!(
-            "{}, then restart the language server so the raised environment is read",
-            scope.budget_raise_instruction()
-        ),
-        None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET, then \
-                 restart the language server so the raised environment is read"
-            .to_string(),
-    }
+    let raise = match partial_scope {
+        Some(scope) => scope.budget_raise_instruction(),
+        None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET".to_string(),
+    };
+    format!(
+        "{raise}, then restart the language server so the raised environment is read; \
+         raise further if this document is still reported not_analyzed"
+    )
 }
 
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {

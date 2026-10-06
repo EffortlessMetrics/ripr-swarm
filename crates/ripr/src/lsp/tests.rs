@@ -19197,10 +19197,13 @@ async fn workspace_status_reports_outside_partition_document_not_analyzed() -> R
     let recovery = beyond["not_analyzed_recovery"]
         .as_str()
         .ok_or_else(|| format!("outside-partition state must carry a recovery: {beyond}"))?;
-    if !recovery.contains("RIPR_PARTIAL_DIFF_FILE_BUDGET") || !recovery.contains("restart") {
-        return Err(format!(
-            "recovery must name the budget override and the restart: {recovery}"
-        ));
+    // The selector minimum admits the next excluded file, not necessarily
+    // every unselected document, so the route must say to raise further
+    // when the document is still reported not_analyzed (#6853 review).
+    for needle in ["RIPR_PARTIAL_DIFF_FILE_BUDGET", "restart", "raise further"] {
+        if !recovery.contains(needle) {
+            return Err(format!("recovery must name {needle:?}: {recovery}"));
+        }
     }
 
     // A changed-file partition never covers an unchanged opened document:
