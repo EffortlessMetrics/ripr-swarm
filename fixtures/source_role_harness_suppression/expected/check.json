@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:34000fd8",
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:amount==threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:amount==threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "price",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==threshold"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:34000fd8",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/source_role_harness_suppression/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= threshold"
        },

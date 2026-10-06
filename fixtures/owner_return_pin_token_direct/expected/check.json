@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:6ea804bb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:weight:return_value:return_value:input*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:weight:return_value:return_value:input*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "weight",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "input*3"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:6ea804bb",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_token_direct/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input * 3"
        },

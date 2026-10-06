@@ -230,7 +230,11 @@ pub(crate) fn render_human_triage(
         }
     }
     if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(finding, config));
+        out.push_str(&render_finding_digest_with_config(
+            finding,
+            config,
+            &output.root,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("\nNext: drill into the top finding:\n");
             for command in [

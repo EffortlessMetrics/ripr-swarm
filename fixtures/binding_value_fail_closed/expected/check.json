@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:d9aa811b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_map_or_else",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "let_end=input.rfind_delim_.map_or_else_1_idx_idx"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:d9aa811b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);"
        },
@@ -100,6 +112,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:23bb9cc9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_shifted_closure:predicate_boundary:predicate:end==start",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_shifted_closure:predicate_boundary:predicate:end==start",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_shifted_closure",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "end==start"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -107,7 +131,7 @@
         "id": "probe:src_lib.rs:predicate:23bb9cc9",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "if end == start {"
        },
@@ -189,6 +213,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:276aa001",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_dynamic_needle:predicate_boundary:predicate:end==start",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_dynamic_needle:predicate_boundary:predicate:end==start",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_dynamic_needle",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "end==start"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -196,7 +232,7 @@
         "id": "probe:src_lib.rs:predicate:276aa001",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 25,
         "expression": "end == start"
        },
@@ -205,13 +241,13 @@
         "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach via_dynamic_needle: dynamic_needle_boundary_stays_unresolved", "infection unknown: Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/controls.rs:14 dynamic_needle_boundary_stays_unresolved uses weak relational check oracle: assert!(via_dynamic_needle(\"ax\", 'x'));", "source function argument value delim = 'x' at line 15", "source function argument value input = \"ax\" at line 15"],
+      "evidence_path": ["reach yes: Related tests appear to reach via_dynamic_needle: dynamic_needle_boundary_stays_unresolved", "infection unknown: Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/controls.rs:14 dynamic_needle_boundary_stays_unresolved uses strong relational check oracle: assert!(via_dynamic_needle(\"ax\", 'x'));", "source function argument value delim = 'x' at line 15", "source function argument value input = \"ax\" at line 15"],
       "flow_sinks": [
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach via_dynamic_needle: dynamic_needle_boundary_stays_unresolved", "binding_predicate_relation: changed binding `end` initializer `input.rfind(needle.as_str()).map_or(0, |idx| idx)` -> `input.rfind(needle.as_str()).map_or(1, |idx| idx)` flows into predicate operand at line 25", "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
-      "missing": ["Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate", "No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach via_dynamic_needle: dynamic_needle_boundary_stays_unresolved", "Strong oracle found: exact value or pattern assertion", "binding_predicate_relation: changed binding `end` initializer `input.rfind(needle.as_str()).map_or(0, |idx| idx)` -> `input.rfind(needle.as_str()).map_or(1, |idx| idx)` flows into predicate operand at line 25", "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "15": "assert!(via_dynamic_needle(\"ax\", 'x'));"
       },
@@ -251,7 +287,7 @@
           "name": "dynamic_needle_boundary_stays_unresolved",
           "file": "tests/controls.rs",
           "line": 14,
-          "oracle_strength": "weak",
+          "oracle_strength": "strong",
           "oracle_kind": "relational_check",
           "oracle": "assert!(via_dynamic_needle(\"ax\", 'x'));",
           "relation_reason": "direct_owner_call",
@@ -260,7 +296,7 @@
       ],
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "relational_check",
-      "oracle_strength": "weak",
+      "oracle_strength": "strong",
       "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",

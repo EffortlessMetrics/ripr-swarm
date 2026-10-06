@@ -1,9 +1,19 @@
 # ADR 0022: MCP is a bounded projection over shared RIPR authority
 
-- Status: Accepted
+- Status: Accepted (Slice B cancellation sentence corrected; see Correction Note)
 - Date: 2026-08-27
 - Related: #1599, #3087, #3088, #3094, #3089 (slice B: status, refresh,
   bounded gap lists, and evidence resources)
+
+## Correction Note
+
+The Slice B contract below first said a cancelled attempt is never committed.
+That was wrong: the server runs a refresh attempt to a terminal state and
+commits it when it finishes even when the client cancelled the MCP request
+(#5254 item 2, pinned by
+`refresh_limitations_distinguish_cancel_commit_from_teardown_abandon`). Only
+transport teardown abandons an attempt before it commits; a superseded attempt
+is never committed. The bullet below now states the corrected contract.
 
 ## Context
 
@@ -139,7 +149,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Fragmented message | Retained FrameReader and split public initialize controls |
 | Oversize discard/recovery | Retained bounded FrameReader cap/recovery control |
 | Over-cap response keeps known ID | Typed bounded writer fallback control |
-| Unreadable ID becomes null | SDK typed unknown-ID omission control; no arbitrary Value ID in production |
+| Unreadable ID becomes null | Transport null-id Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3); SDK omission retained for dispatched errors, no arbitrary Value ID in production |
 
 All three original public stdio controls remain: legacy status/tool-resource
 equality, rejection arms, and discovery metadata/ping/unavailable recovery.
@@ -163,8 +173,10 @@ shared RIPR authority:
   model-provider authority as none.
 - The session keeps one in-memory completed snapshot (content-addressed
   `snapshot:sha256:` identity over the typed `AnalysisOutcome` and the
-  canonical item identities). A cancelled or superseded attempt is never
-  committed; a failed attempt never replaces the last-known-good snapshot.
+  canonical item identities). A cancelled attempt still commits as a
+  completed snapshot when it finishes and only transport teardown abandons
+  one before it commits, while a superseded attempt is never committed; a
+  failed attempt never replaces the last-known-good snapshot.
 - `ripr_list_gaps` serves the snapshot's stored shared diagnostic-budget
   selection (`lsp::diagnostic_budget`); the adapter never re-ranks and
   discloses every omitted identity and reason.
@@ -173,8 +185,11 @@ shared RIPR authority:
   (`repair_packet_ready: false`); bounded repair surfaces, CommandSpec
   routes, and repair-attempt resources belong to #3090, and the
   repair-attempt link stays an explicit null.
-- Project-local configuration stays detected-not-loaded; refresh runs with
-  built-in defaults. No LSP protocol object is parsed and no VS Code
+- Project-local analysis configuration is honored from #6825 on: refresh
+  resolves the workspace's own `ripr.toml` through `config::load_for_root`
+  (loaded with its identity, built-in defaults when absent,
+  `config_invalid` fail-closed when unparseable — see the amendment below).
+  No LSP protocol object is parsed and no VS Code
   artifact is read as authority: MCP and LSP remain peers over the same
   producers.
 
@@ -205,7 +220,9 @@ transport. The server remains a bounded adapter over shared RIPR authority:
   no receipt, and never upgrades a transaction it did not verify.
 - The wire vocabulary gains `attempt_not_found` and `attempt_invalid`; the
   reserved `superseded` code is reachable for session transactions bound to
-  a non-current snapshot.
+  a non-current snapshot, while superseded tombstones older than the
+  64-entry session bound read `attempt_not_found` instead (oldest-first
+  eviction, #5254 item 7).
 - Authority declarations are unchanged: source-edit, verification
   execution, mutation execution, and model provider remain none; the
   adapter edits nothing, launches nothing, and executes nothing a returned
@@ -248,3 +265,21 @@ The server remains a bounded adapter over shared RIPR authority:
   execution, mutation execution, and model provider remain none; the
   adapter edits nothing, launches nothing, and executes nothing a returned
   route names.
+
+## Analysis-configuration loading (#6825)
+
+The read-only boundary is about authority, not ignorance: the adapter never
+edits source, launches processes, or loads *provider* configuration (model
+endpoints, credentials, executables). Honoring the workspace's own analysis
+configuration is CLI parity, not authority growth. `ripr_refresh` and the
+session profile now resolve the analyzed root's configuration through the
+same `config::load_for_root` the CLI uses: a loadable `ripr.toml` is consumed
+(the status and session profile disclose `loaded` with its text-fingerprint
+`config_identity` and the enabled languages), a root without one keeps
+built-in defaults including the zero-config marker-based language
+auto-enable, and a present-but-unreadable or unparseable `ripr.toml` fails
+the refresh attempt closed with the promoted `config_invalid` code instead of
+silently analyzing a different language profile than the CLI. The repair-card
+producers consume the same resolved configuration as the snapshot's findings
+(#6825 review), so one committed snapshot cannot disagree with itself across
+the two producers, and the card discloses the config identity posture.

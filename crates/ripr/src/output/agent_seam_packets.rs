@@ -190,6 +190,26 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     )
 }
 
+/// The pilot packet names the repository pilot analyzed, so its loop
+/// commands bind that root instead of `.`; a portable `--root .` whose
+/// redirect anchors at the renderer's working directory sends every
+/// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
+pub(crate) fn render_agent_seam_packets_json_for_root(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    causal_projection: Option<&CausalDeltaArtifact>,
+    root: &str,
+) -> String {
+    render_agent_seam_packets_json_with_root(
+        classified,
+        limit_info,
+        causal_projection,
+        None,
+        false,
+        PacketCommandContext::Standalone { root },
+    )
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum PacketCommandContext<'a> {
     Portable,

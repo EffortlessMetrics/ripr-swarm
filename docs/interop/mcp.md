@@ -80,12 +80,16 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the `ripr-workspace-status-v1` workspace block (resolved once at startup,
   never re-resolved): root validation state, discovery source, repository
   markers, a root `error_code` when unavailable, and a hashed host-local
-  `identity` — the absolute path is never returned; configuration presence
-  (`ripr.toml` is detected, not loaded); `trust` and `authority` facts with
+  `identity` — the absolute path is never returned; the configuration
+  posture (`loaded` with its `project_config_identity` when the root's
+  `ripr.toml` resolves, `detected_not_loaded` when one is present but
+  cannot be read or parsed, `built_in_defaults_only` when none does);
+  `trust` and `authority` facts with
   source edit, verification execution, mutation execution, and model provider
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
-  diff against the default branch, draft mode, built-in defaults), the current
+  diff against the default branch, draft mode, the workspace's own
+  configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
   the last completed refresh (`current_at_last_refresh`, or
@@ -107,9 +111,16 @@ root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
-an attempt back or manufactures a snapshot, and a cancelled or superseded
-attempt is never committed. Project-local `ripr.toml` stays
-detected-not-loaded: refresh runs with built-in defaults.
+an attempt back or manufactures a snapshot. A cancelled attempt still commits
+as a completed snapshot when it finishes and only transport teardown abandons
+one before it commits, while a superseded attempt is never committed.
+The workspace's own `ripr.toml` is honored (#6825): refresh resolves it
+through the same `load_for_root` the CLI uses — a loaded config runs (the
+session profile discloses `loaded` with its `config_identity` and enabled
+languages), a config-less root runs built-in defaults including the
+zero-config language auto-enable, and a present-but-unreadable or unparseable
+config fails the attempt closed with `config_invalid`. Provider
+configuration stays unloaded.
 
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
 `total` / `eligible` / `selected` / `omitted` counts, selected and complete
@@ -258,7 +269,9 @@ identity_unnameable    budget_overflow
 Before the first successful refresh the evidence tools fail with
 `no_snapshot` and the repair-attempt / receipt reads fail with
 `attempt_not_found`; `superseded` is reachable for a session transaction
-bound to a snapshot that is no longer current; `attempt_invalid` reports a
+bound to a snapshot that is no longer current, while superseded tombstones
+older than the 64-entry session bound read `attempt_not_found` instead
+(oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
 `identity_unnameable`, and `budget_overflow` are reachable on the repair-card
 read (an item no seam owner-discriminated binds, an unnameable portable
@@ -301,13 +314,17 @@ what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
 official Rust SDK owns negotiation, dispatch, correlation and cancellation.
 Syntax-invalid JSON is ignored; well-formed messages with invalid typed
 shapes receive Invalid Request and the transport can read the next frame.
-Unknown request IDs are omitted in SDK error responses; readable IDs remain
-correlated. Messages are capped at 256 KiB and responses, including their
-delimiter, at 128 KiB; the bound is enforced on the final serialized
-envelope — the document is measured again after the tool or resource wrapper
-adds its text and structured-content representations — so an over-bound
-response fails closed with `result_too_large` before the wire cap is
-reached. If even a
+Unknown request IDs are omitted in SDK-dispatched error responses, while
+transport-level protocol errors (well-formed messages with invalid typed
+shapes) carry an explicit null id per JSON-RPC; readable IDs remain
+correlated. Messages are capped at 256 KiB and response envelopes at
+128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
+wire frame is at most 128 KiB+1 (pinned by
+`exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
+enforced on the final serialized envelope — the document is measured again
+after the tool or resource wrapper adds its text and structured-content
+representations — so an over-bound response fails closed with
+`result_too_large` before the wire cap is reached. If even a
 correlated fallback cannot fit its readable ID, the service terminates with
 the bounded stderr reason `MCP output limit`, without substituting an ID.
 Partial reads and writes retain their state across cancellation. EOF closes

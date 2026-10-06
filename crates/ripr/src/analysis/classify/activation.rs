@@ -785,6 +785,18 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    if matches!(probe.family, ProbeFamily::MatchArm)
+        && let Some(fact) = missing_match_arm_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            index,
+            workspace_complete,
+        )
+    {
+        missing.push(fact);
+    }
     if missing.is_empty()
         && observed_values
             .iter()
@@ -1165,6 +1177,165 @@ fn missing_error_variant_discriminator(
     })
 }
 
+/// Opens the reason of a match-arm missing discriminator; infection reads
+/// it to keep an unselected arm from counting as activated.
+pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
+
+/// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
+/// discriminator when every related test calls the owner directly and every
+/// call's scrutinee input provably selects a different arm (`reason(Some(5))`
+/// against `None => 0`). One unreadable use of the owner, one variable or
+/// computed input, one wildcard or refutable alternative, or one related
+/// test that never names the owner leaves the arm unnamed: such a test may
+/// select the arm in a way this reading cannot see.
+fn missing_match_arm_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<MissingDiscriminatorFact> {
+    let owner = owner_fn?;
+    // A same-named function elsewhere makes a direct call ambiguous, and a
+    // partial index cannot show that the name is unique.
+    if related_tests.is_empty()
+        || !workspace_complete
+        || !super::helper_transfer::callee_is_unique(&owner.name, index)
+    {
+        return None;
+    }
+    let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
+        .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Built once per probe: the helper walk below looks names up for every
+    // related test.
+    let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for function in index.functions() {
+        functions_by_name
+            .entry(function.name.as_str())
+            .or_default()
+            .push(function);
+    }
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
+            return None;
+        }
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    let pattern = selector.pattern_text();
+    Some(MissingDiscriminatorFact {
+        value: pattern.to_string(),
+        reason: format!(
+            "{ARM_UNSELECTED_REASON_PREFIX} `{pattern} =>`; observed `{}` values: {}",
+            selector.scrutinee(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        flow_sink: flow_sinks
+            .iter()
+            .find(|sink| sink.kind == FlowSinkKind::MatchArm)
+            .or_else(|| first_visible_flow_sink(flow_sinks))
+            .cloned(),
+    })
+}
+
+/// Whether the test may run the owner through something its own body does
+/// not show: a call to an indexed function whose body names the owner (a
+/// helper such as `check_none()`), or a macro other than the standard
+/// assertion and formatting macros, whose expansion is not read.
+fn may_reach_owner_unread(
+    test: &TestSummary,
+    owner: &str,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+) -> bool {
+    const READ_MACROS: &[&str] = &[
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "vec",
+        "format",
+        "print",
+        "println",
+        "eprint",
+        "eprintln",
+        "dbg",
+        "panic",
+        "matches",
+    ];
+    // Follow helpers transitively: `check_none()` may call `inner(None)`,
+    // which calls the owner. The test's own `fn name()` header reads as a
+    // call to itself; only a different indexed function is a helper.
+    let mut pending = test
+        .body_calls()
+        .map(|call| call.name.as_str())
+        .filter(|name| *name != owner)
+        .collect::<Vec<_>>();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|function| !(function.name == test.name && function.file == test.file))
+        {
+            if super::reveal::contains_as_whole_word(&function.body, owner) {
+                return true;
+            }
+            pending.extend(
+                function
+                    .calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .filter(|callee| *callee != owner),
+            );
+        }
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let bytes = masked.as_bytes();
+    // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
+    // `exercise !()`), so both are skipped before reading the delimiter
+    // and the name.
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let name_end = masked[..offset].trim_end().len();
+        let name_start = masked[..name_end]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &masked[name_start..name_end];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !READ_MACROS.contains(&name)
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
+    })
+}
+
 /// Produce a missing-discriminator fact for a `FieldConstruction` seam whose
 /// `RequiredDiscriminator::FieldValue { field }` has no matching producer-owned
 /// discriminator in the test evidence.
@@ -1399,6 +1570,91 @@ fn call_values_for_owner(
     helper_transferred_rows(&parameters, chain, related_tests)
 }
 
+/// Whether `argument` computes one deterministic value ripr cannot read
+/// (#6672): a computed expression (`base + 1`, `[b'f'; 16]`) whose free
+/// variables are all bound to exact values (`is_exact`), constants
+/// (`LIMIT`), or none at all. Such a call sits at one definite input that
+/// may be the boundary, so the boundary is unresolved. A computation over
+/// a value ripr cannot bind (a loop variable in `can_retire(age + 1)`) is
+/// no more readable than that bare variable, which already yields no
+/// input row without unresolving the boundary, so it is not counted.
+fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bool) -> bool {
+    is_computed_value_expression(argument)
+        && free_identifiers(argument)
+            .iter()
+            .all(|name| is_constant_like(name) || is_exact(name))
+}
+
+fn is_constant_like(name: &str) -> bool {
+    matches!(name, "true" | "false")
+        || (name.chars().any(|ch| ch.is_ascii_uppercase())
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'))
+}
+
+/// The variables an expression reads: identifiers that are not a call or
+/// macro name, a method or field after `.`, a path segment beside `::`, a
+/// type after `as`, a numeric literal or its suffix, or a char/byte
+/// literal's contents. Strings and comments are masked first.
+fn free_identifiers(text: &str) -> Vec<String> {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let chars: Vec<char> = masked.chars().collect();
+    let mut names = Vec::new();
+    let mut previous: Option<char> = None;
+    let mut after_as = false;
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if ch == '\'' {
+            let close = if chars.get(idx + 1) == Some(&'\\') {
+                idx + 3
+            } else {
+                idx + 2
+            };
+            if chars.get(close) == Some(&'\'') {
+                previous = Some('\'');
+                idx = close + 1;
+                continue;
+            }
+        }
+        if ch.is_ascii_digit() {
+            while idx < chars.len() && (chars[idx].is_ascii_alphanumeric() || chars[idx] == '_') {
+                idx += 1;
+            }
+            previous = Some('0');
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let start = idx;
+            while idx < chars.len() && (chars[idx].is_ascii_alphanumeric() || chars[idx] == '_') {
+                idx += 1;
+            }
+            let name: String = chars[start..idx].iter().collect();
+            let next = chars[idx..].iter().find(|ch| !ch.is_whitespace()).copied();
+            let path_next = chars.get(idx) == Some(&':') && chars.get(idx + 1) == Some(&':');
+            let byte_literal = name == "b" && chars.get(idx) == Some(&'\'');
+            let skip = after_as
+                || byte_literal
+                || name == "as"
+                || matches!(next, Some('(' | '!'))
+                || matches!(previous, Some('.' | ':'))
+                || path_next;
+            after_as = name == "as";
+            if !skip && !names.contains(&name) {
+                names.push(name);
+            }
+            previous = Some('a');
+            continue;
+        }
+        if !ch.is_whitespace() {
+            previous = Some(ch);
+        }
+        idx += 1;
+    }
+    names
+}
+
 /// The owner parameters some related test feeds a computed argument
 /// (`order_discount(base + 1)`), read from the same source rows
 /// `call_values_for_owner` uses: direct owner calls when a test calls the
@@ -1427,8 +1683,9 @@ fn computed_input_parameters(
                 };
                 called = true;
                 for (idx, argument) in arguments.iter().enumerate() {
-                    if is_computed_value_expression(argument)
-                        && let Some(parameter) = names.get(idx)
+                    if deterministic_computed_argument(argument, |name| {
+                        !owner_argument_values(test, name).is_empty()
+                    }) && let Some(parameter) = names.get(idx)
                         && !computed.contains(parameter)
                     {
                         computed.push(parameter.clone());
@@ -1448,9 +1705,14 @@ fn computed_input_parameters(
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
-    let (entry_called, mut computed) =
-        computed_for(&entry.caller.name, &function_parameters(&entry.caller));
-    if !entry_called {
+    let entry_parameters = function_parameters(&entry.caller);
+    let (entry_called, mut computed) = computed_for(&entry.caller.name, &entry_parameters);
+    // A hop argument computed from the caller's parameters is one exact
+    // value per row only when the entry calls carry exact rows at all.
+    if !entry_called
+        || owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters)
+            .is_empty()
+    {
         return Vec::new();
     }
     for step in (0..chain.hops.len()).rev() {
@@ -1469,8 +1731,10 @@ fn computed_input_parameters(
             .iter()
             .enumerate()
             .filter(|(_, argument)| {
-                is_computed_value_expression(argument)
-                    || computed.iter().any(|name| name == argument.trim())
+                let caller_parameters = function_parameters(&hop.caller);
+                deterministic_computed_argument(argument, |name| {
+                    caller_parameters.iter().any(|parameter| parameter == name)
+                }) || computed.iter().any(|name| name == argument.trim())
             })
             .filter_map(|(idx, _)| target_parameters.get(idx).cloned())
             .collect();
@@ -1868,7 +2132,7 @@ fn owner_calls_passing_constant(
                 index
                     .files()
                     .get(&test.file)
-                    .map(|facts| facts.data().source.as_str()),
+                    .map(|facts| facts.data().source.as_ref()),
                 &constant.name,
             )
         })
@@ -2466,7 +2730,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 9,
-            body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".to_string(),
+            body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -2483,7 +2747,7 @@ mod tests {
             file: PathBuf::from("tests/split.rs"),
             start_line: 4,
             end_line: 6,
-            body: "split_after(\"ab\", 'x');".to_string(),
+            body: "split_after(\"ab\", 'x');".into(),
             calls: vec![CallFact {
                 name: "split_after".to_string(),
                 line: 5,
@@ -2668,13 +2932,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced() {
+        let unread = |body: &str| {
+            may_reach_owner_unread(
+                &test_with_body_call(body, 11, "reason(Some(5))"),
+                "reason",
+                &std::collections::BTreeMap::new(),
+            )
+        };
+        for spelling in [
+            "exercise!()",
+            "exercise! ()",
+            "exercise !()",
+            "exercise ! [x]",
+        ] {
+            assert!(
+                unread(&format!(
+                    "fn t() {{\n    assert_eq!(reason(Some(5)), 6);\n    {spelling};\n}}\n"
+                )),
+                "{spelling}"
+            );
+        }
+        for read in [
+            "assert_eq! (reason(Some(5)), 6);",
+            "assert!(!(reason(Some(5)) == 0));",
+            "if !(reason(Some(5)) == 0) { return; }",
+            "assert!(reason(Some(5)) != (0));",
+        ] {
+            assert!(!unread(&format!("fn t() {{\n    {read}\n}}\n")), "{read}");
+        }
+    }
+
     fn test_with_body_call(body: &str, call_line: usize, call: &str) -> TestSummary {
         TestSummary {
             name: "score_boundary".to_string(),
             file: PathBuf::from("tests/score.rs"),
             start_line: 10,
             end_line: 10 + body.lines().count(),
-            body: body.to_string(),
+            body: body.into(),
             calls: vec![CallFact {
                 name: "score".to_string(),
                 line: call_line,
@@ -2811,7 +3107,7 @@ mod tests {
         // The owner call's argument is an input; the expected value of an
         // assertion on another function is an oracle value.
         let mut test = test_with_call("score_boundary", "assert!(score(5));");
-        test.body = "assert!(score(5));\nassert_eq!(tax_bps(\"EU\"), 10);".to_string();
+        test.body = "assert!(score(5));\nassert_eq!(tax_bps(\"EU\"), 10);".into();
         test.assertions = vec![oracle_fact(
             "assert_eq!(tax_bps(\"EU\"), 10);",
             OracleKind::ExactValue,
@@ -2919,7 +3215,7 @@ mod tests {
             PathBuf::from("src/lib.rs"),
             crate::analysis::facts::FileFacts {
                 path: PathBuf::from("src/lib.rs"),
-                source: format!("{constant_source}\n{}", owner.body),
+                source: format!("{constant_source}\n{}", owner.body).into(),
                 ..Default::default()
             },
         );
@@ -2927,7 +3223,7 @@ mod tests {
             PathBuf::from("tests/score.rs"),
             crate::analysis::facts::FileFacts {
                 path: PathBuf::from("tests/score.rs"),
-                source: test_file_source.to_string(),
+                source: test_file_source.into(),
                 ..Default::default()
             },
         );
@@ -2983,7 +3279,7 @@ mod tests {
             PathBuf::from("src/lib.rs"),
             crate::analysis::facts::FileFacts {
                 path: PathBuf::from("src/lib.rs"),
-                source: format!("const LIMIT: i32 = 10;\n{}", owner.body),
+                source: format!("const LIMIT: i32 = 10;\n{}", owner.body).into(),
                 ..Default::default()
             },
         );
@@ -3208,7 +3504,7 @@ mod tests {
             body: r#"let rows = [(99, 100), (100, 100)];
 let input = Request::builder().amount(100).token("abc").build();
 assert_eq!(input.amount, 100);"#
-                .to_string(),
+                .into(),
             calls: Vec::new(),
             assertions: vec![oracle_fact(
                 "assert_eq!(input.amount, 100);",
@@ -3254,7 +3550,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/value.rs"),
             start_line: 10,
             end_line: 12,
-            body: "other(AuthError::Ignored);\nscore(AuthError::RevokedToken);".to_string(),
+            body: "other(AuthError::Ignored);\nscore(AuthError::RevokedToken);".into(),
             calls: vec![
                 CallFact {
                     line: 11,
@@ -3306,7 +3602,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/value.rs"),
             start_line: 10,
             end_line: 14,
-            body: body.to_string(),
+            body: body.into(),
             calls,
             assertions: vec![oracle_fact(
                 "assert_eq!(total, 100);",
@@ -3686,7 +3982,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/value.rs"),
             start_line: 10,
             end_line: 12,
-            body: "other(1);\nscore(2);".to_string(),
+            body: "other(1);\nscore(2);".into(),
             calls: vec![
                 CallFact {
                     line: 11,
@@ -3816,7 +4112,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 3,
-            body: body.to_string(),
+            body: body.into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -3836,7 +4132,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/score.rs"),
             start_line: 10,
             end_line: 12,
-            body: call.to_string(),
+            body: call.into(),
             calls: vec![CallFact {
                 name: "score".to_string(),
                 line: 11,
@@ -3856,7 +4152,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/score.rs"),
             start_line: 10,
             end_line: 12,
-            body: assertion.to_string(),
+            body: assertion.into(),
             calls: Vec::new(),
             assertions: vec![oracle_fact(assertion, kind)],
             literals: Vec::new(),
@@ -3909,7 +4205,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/score.rs"),
             start_line: 10,
             end_line: 10 + body.lines().count(),
-            body: body.to_string(),
+            body: body.to_string().into(),
             calls: calls
                 .iter()
                 .map(|(line, text)| CallFact {
@@ -4014,6 +4310,41 @@ assert_eq!(input.amount, 100);"#
             reason.contains("computed argument for `amount`"),
             "got {reason:?}"
         );
+
+        // A computation over a value ripr cannot bind (the loop variable
+        // in `score(age + 1)`) is no more readable than the bare variable:
+        // it is not a definite input, so the exact rows keep the missing
+        // input (grid-boundary-property in the verdict corpus).
+        let looped = test_with_body_calls(
+            "for age in 0..120 {\n    if score(age) {\n        assert!(score(age + 1));\n    }\n}\nassert!(!score(0));\nassert!(score(119));",
+            &[
+                (11, "if score(age) {"),
+                (12, "assert!(score(age + 1));"),
+                (15, "assert!(!score(0));"),
+                (16, "assert!(score(119));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&looped],
+        );
+        assert_eq!(gathered.unresolved_boundary, None);
+        assert_eq!(gathered.activation.missing_discriminators.len(), 1);
+    }
+
+    #[test]
+    fn free_identifiers_name_only_the_variables_an_expression_reads() {
+        assert_eq!(free_identifiers("base + 1"), vec!["base"]);
+        assert_eq!(free_identifiers("&[b'f'; 16]"), Vec::<String>::new());
+        assert_eq!(free_identifiers("cfg.limit + 1"), vec!["cfg"]);
+        assert_eq!(free_identifiers("len(x) * 2u32"), vec!["x"]);
+        assert_eq!(free_identifiers("n as u64 + LIMIT"), vec!["n", "LIMIT"]);
+        assert!(deterministic_computed_argument("LIMIT - 1", |_| false));
+        assert!(deterministic_computed_argument("2 + 2", |_| false));
+        assert!(!deterministic_computed_argument("age + 1", |_| false));
+        assert!(deterministic_computed_argument("age + 1", |name| name == "age"));
+        assert!(!deterministic_computed_argument("age", |_| true));
     }
 
     #[test]
@@ -4122,7 +4453,7 @@ assert_eq!(input.amount, 100);"#
                 PathBuf::from("src/lib.rs"),
                 crate::analysis::facts::FileFacts {
                     path: PathBuf::from("src/lib.rs"),
-                    source: format!("{declaration}\n{}", owner.body),
+                    source: format!("{declaration}\n{}", owner.body).into(),
                     ..Default::default()
                 },
             );

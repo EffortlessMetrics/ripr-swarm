@@ -8,8 +8,9 @@
   [#6693](https://github.com/EffortlessMetrics/ripr-swarm/issues/6693)).
 - A computed test argument such as `order_discount(base + 1)` or
   `&[b'f'; 16]` is no longer read as one of its literals; a boundary whose
-  compared parameter receives one, directly or through a helper hop such as
-  `score(y + 1)`, stays unresolved instead of a missing input
+  compared parameter receives one with a definite value (its variables bound
+  to exact test values or constants), directly or through a helper hop such
+  as `score(y + 1)`, stays unresolved instead of a missing input
   ([#6672](https://github.com/EffortlessMetrics/ripr-swarm/issues/6672)).
 - A computed boundary operand such as `CURRENT - 2` or `2 + 2`, including one
   inside an `&&`/`||` condition, is no longer read as the literal it contains.

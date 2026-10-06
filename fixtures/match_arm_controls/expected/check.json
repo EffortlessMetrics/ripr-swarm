@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:659cd128",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit62657461",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit62657461",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_computed",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit62657461"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:659cd128",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "if final_label == \"beta\" {"
        },
@@ -91,6 +103,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:2d6b188b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_guard:predicate_boundary:predicate:final_label==lit62657461",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_guard:predicate_boundary:predicate:final_label==lit62657461",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_guard",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit62657461"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -98,7 +122,7 @@
         "id": "probe:src_lib.rs:predicate:2d6b188b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 30,
         "expression": "if final_label == \"beta\" {"
        },
@@ -171,6 +195,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:845a474d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_label==lit62657461",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_label==lit62657461",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_bare",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit62657461"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -178,7 +214,7 @@
         "id": "probe:src_lib.rs:predicate:845a474d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 46,
         "expression": "if final_label == \"beta\" {"
        },
@@ -251,6 +287,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:0a147037",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_char:predicate_boundary:predicate:final_label==lit62657461",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_char:predicate_boundary:predicate:final_label==lit62657461",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_char",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit62657461"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -258,7 +306,7 @@
         "id": "probe:src_lib.rs:predicate:0a147037",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 62,
         "expression": "if final_label == \"beta\" {"
        },

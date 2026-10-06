@@ -96,6 +96,24 @@ promote a finding to `exposed` (#5397). Exact patterns and wildcard patterns
 with an explicit guard retain their existing classification. This bounded
 rule does not solve general pattern exhaustiveness or compound conditions.
 
+A standalone `matches!` invocation computes a boolean without failing the
+test. Discarded expression statements and unconsumed bindings therefore
+provide no assertion oracle, whether the pattern is wildcard, exact or
+guarded (#5713). Parser, lexical and registered-harness admission share this
+boundary. Actual asserting wrappers retain their existing classification;
+an unrelated observer on the same line cannot acquire the discarded
+matcher's pattern. The lexical extractor retains a recognized observer
+within its scrutinee, such as smoke credit for `result.unwrap()`.
+The dedicated terminal Result-guard scanner still recognizes matchers that
+participate in its failure decision. This rule does not infer boolean
+dataflow across bindings.
+Lexical projection is bounded to 16 nested matcher/block steps and omits
+oracle credit on exhaustion; parser-rejected deep source cannot recreate an
+unbounded recursive fallback.
+Unrecognized compound computations with a surviving matcher and no supported
+asserting wrapper receive no oracle credit. Existing terminal Err-return and
+guarded Result failure authorities retain consumed matcher evidence.
+
 ## Non-Goals
 
 This spec does not require:
@@ -230,7 +248,13 @@ accumulator such as `count`, `s.len()`, `name.split_whitespace().count()`),
 including when neither operand is readable (`out.len() != data.len() / 2`), or
 when a related test feeds the compared parameter a computed argument, directly
 or through a resolved helper hop whose call-site argument is computed
-(`score(y + 1)`), no input row says which side of the boundary a test reaches. RIPR does not name a
+(`score(y + 1)`), no input row says which side of the boundary a test reaches.
+A computed argument counts only when it is one definite value: its variables
+are all bound to exact values or constants (`base + 1` with `let base = 9;`,
+`[b'f'; 16]`), or, at a hop, to the caller's parameters under exact entry
+rows. A computation over a value RIPR cannot bind (the loop variable in
+`can_retire(age + 1)`) is no more readable than that bare variable, which
+yields no input row without unresolving the boundary. RIPR does not name a
 missing equality discriminator for it; `ripr check` reports `infection
 unknown` with `Changed boundary input is unresolved` and the operand or
 parameter it could not read. Exact inputs that all sit off the boundary keep
@@ -287,6 +311,18 @@ Fixture coverage:
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
+- `discarded_matches_are_not_lexical_oracles`
+- `deeply_nested_discarded_matchers_fail_closed`
+- `discarded_matchers_cannot_supply_an_unrelated_observers_pattern`
+- `repeated_matcher_text_in_type_trivia_cannot_move_the_observer`
+- `discarded_matches_in_a_parsed_owner_test_are_not_oracles`
+- `registered_trials_do_not_credit_discarded_matcher_computations`
+- `asserting_wrappers_keep_consumed_pattern_oracles`
+- `consumed_matcher_failure_guards_keep_their_result_oracle`
+- `consumed_matcher_err_return_guard_keeps_its_exact_oracle`
+- `asserted_bound_matcher_keeps_the_actual_assertion`
+- `matcher_computation_and_asserted_result_have_different_runtime_grip`
+- `discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers`
 - `fixtures/infection_expected_value_literal`
 - `predicate_infection_ignores_boundary_literal_used_only_as_expected_value`
 - `predicate_infection_credits_the_same_literal_when_it_is_an_owner_input`
@@ -308,6 +344,7 @@ Fixture coverage:
 - `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`
 - `given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing`
 - `given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing`
+- `free_identifiers_name_only_the_variables_an_expression_reads`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`
