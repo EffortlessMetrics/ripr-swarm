@@ -13,7 +13,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #6786
 
 Support-tier impact:
 
@@ -142,6 +142,17 @@ variant, exactly as for `return Err(Type::Variant)`:
   a closure (`|`), an `async`/`try`/`move`/`gen` block, a nested item
   (`fn`/`impl`/`mod`/..), a macro body (`!`), or a call argument list —
   in each of those the `?` returns from something other than the owner.
+  The probe line's own statement head (the text since the last `{`, `}`
+  or `;`) must pass the same plain-head test, so a braceless closure head
+  on the previous line (`let f = |c|` with the `?` body below) also
+  refuses. `plain_block_head` rejects any head containing `!`, so a block
+  opened after a macro call on the same head fails closed too. The scan
+  masks comments, strings and char literals (`'}'`), keeping lifetimes
+  and labels as code.
+- The propagation witness takes the owner-checked `ok_or?` sink as an
+  established edge only when the line constructs no literal `Err(..)`:
+  a line with both forms gets the ordinary, unchecked error text sink and
+  the ordinary edge rule.
 - With that sink, the propagation witness edge is established and
   complete (the `||` thunk is the argument's own constant, not an opaque
   path), so an exact `Err(Type::Variant)` pin on the owner call can read
@@ -150,12 +161,15 @@ variant, exactly as for `return Err(Type::Variant)`:
   owner, `text::changed_error_variant` (`exact_error_variant`, falling
   back to `question_mark_error_variant`). Diff mode: reveal's
   `error_path_variant_path` reads it, so a test pinning a sibling variant
-  (`Err(Type::Other)`) does not confirm the line. Repo mode:
-  `seam_inventory::required_discriminator_for` stores it as the
+  (`Err(Type::Other)`) does not confirm the line. Repo mode builds
+  `ErrorPath` seams only from `return` and tail expressions (and calls)
+  (`syntax/ra.rs`), so it covers `return x.ok_or(Type::Variant)?` and a
+  tail `x.ok_or(Type::Variant)?`, not a `let d = ..?;` statement:
+  `seam_inventory::required_discriminator_for` stores the variant as the
   `ErrorVariant` seam's identity, and
   `guarded_result_oracle_matches_seam_variant` compares a return-value
   seam's guarded pins against it, so a sibling pin does not discriminate
-  the seam there either.
+  those seams either.
 - Part B's sibling gate covers every assertion kind, not only
   `ExactErrorVariant`: an assertion that spells the changed error's enum
   only through sibling variant paths (an `exact_value`
@@ -163,6 +177,12 @@ variant, exactly as for `return Err(Type::Variant)`:
   enum qualifier with the changed line. It does not match an `error_path`
   probe and confirms no variant-carrying family
   (`reveal::names_only_sibling_variants`, PR #6786 review).
+  Limits: the gate needs a qualified changed path (`Type::Variant`); a
+  changed error spelled through an alias, `Self::Variant`, or a
+  glob-imported bare variant has no enum qualifier and falls through to
+  the earlier behaviour. An alternation such as
+  `matches!(e, Type::A | Type::Changed)` names the changed variant and
+  counts as naming it.
 
 On an `.ok_or_else(|| Type::Variant)?` line the probe extractor also
 emits a `predicate` probe, because it reads the parameterless closure head

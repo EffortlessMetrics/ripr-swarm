@@ -7329,6 +7329,12 @@ tests = [
   "crates/ripr/tests/error_path_sibling_variant.rs::sibling_variant_matches_pin_cannot_expose_the_changed_ok_or_else",
   "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_return_err",
   "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_ok_or_else",
+  "crates/ripr/tests/error_path_sibling_variant.rs::issue_6673_diverging_ok_arm_and_exact_err_arm_expose_the_changed_error",
+  "crates/ripr/tests/error_path_sibling_variant.rs::issue_6673_quiet_ok_arm_does_not_expose_the_changed_error",
+  "crates/ripr/tests/error_path_sibling_variant.rs::issue_6695_owner_call_pin_exposes_the_changed_ok_or",
+  "crates/ripr/tests/error_path_sibling_variant.rs::issue_6695_sibling_owner_call_pin_does_not_expose_the_changed_ok_or",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::question_mark_ok_or_in_a_braceless_next_line_closure_is_not_owner_propagation",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::question_mark_bypass_refuses_a_line_that_also_constructs_err",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

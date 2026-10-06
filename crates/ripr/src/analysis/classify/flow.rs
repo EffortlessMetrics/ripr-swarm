@@ -874,7 +874,11 @@ fn question_mark_returns_from_owner(probe: &Probe, owner_fn: Option<&FunctionSum
             }
         }
     }
-    owner_body_opened && open.iter().all(|plain| *plain)
+    // The text since the last `{`, `}` or `;` is the head of the probe line's
+    // own statement. A closure head there (`let f = |c|` with its body on
+    // the next line, no brace) makes the `?` return from the closure, so
+    // the head must read as a plain statement start (PR #6786 review).
+    owner_body_opened && open.iter().all(|plain| *plain) && plain_block_head(&head)
 }
 
 /// Whether the text before a `{` opens a block a `?` passes straight
@@ -1678,6 +1682,30 @@ mod tests {
         assert_eq!(sinks.len(), 1, "{sinks:?}");
         assert_eq!(sinks[0].text, "Result::Err(CodeError::NotDigit)");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn question_mark_ok_or_in_a_braceless_next_line_closure_is_not_owner_propagation() {
+        // The closure head ends the previous line and its body is the probe
+        // line, with no brace between them: the `?` returns from the closure.
+        const LINE: &str = "c.ok_or(CodeError::NotDigit)?;";
+        let owner = ok_or_owner(
+            "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let f = |c: Option<Result<u32, CodeError>>|\n        c.ok_or(CodeError::NotDigit)?;\n    Ok(0)\n}",
+        );
+        let probe = probe(ProbeFamily::ErrorPath, LINE, 3);
+        assert!(!question_mark_returns_from_owner(&probe, Some(&owner)));
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.text != "Result::Err(CodeError::NotDigit)"),
+            "{sinks:?}"
+        );
+        // Positive control: the same line directly in the owner body.
+        let owner = ok_or_owner(
+            "pub fn parse_code(c: Option<u32>) -> Result<u32, CodeError> {\n    let total = 1;\n    c.ok_or(CodeError::NotDigit)?;\n    Ok(total)\n}",
+        );
+        assert!(question_mark_returns_from_owner(&probe, Some(&owner)));
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {

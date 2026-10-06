@@ -264,3 +264,153 @@ fn sibling_variant_matches_pin_cannot_expose_the_changed_ok_or_else() -> Result<
     );
     Ok(())
 }
+
+// ---- #6673: the issue's exact asserted-Err match shape -------------------
+
+const ISSUE_6673_SOURCE: &str = r#"#[derive(Debug, PartialEq)]
+pub enum PayError {
+    Insufficient,
+    Limit,
+}
+
+pub fn withdraw(balance: u64, amount: u64) -> Result<u64, PayError> {
+    if amount > 500 { return Err(PayError::Limit); }
+    if amount > balance { return Result::Err(PayError::Insufficient); }
+    Ok(balance - amount)
+}
+"#;
+const ISSUE_6673_CHANGED_LINE: usize = 9;
+const ISSUE_6673_OLD_LINE: &str =
+    "    if amount > balance { return Result::Err(PayError::Limit); }";
+
+fn issue_6673_test(ok_arm: &str) -> String {
+    format!(
+        "use error_path_sibling_variant::{{PayError, withdraw}};\n\n#[test]\nfn overdraw_routes_to_insufficient() {{\n    match withdraw(10, 20) {{\n        {ok_arm},\n        Err(e) => assert_eq!(e, PayError::Insufficient),\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn issue_6673_diverging_ok_arm_and_exact_err_arm_expose_the_changed_error() -> Result<(), String> {
+    let diff = single_line_diff(
+        ISSUE_6673_SOURCE,
+        ISSUE_6673_CHANGED_LINE,
+        ISSUE_6673_OLD_LINE,
+    );
+    let repo = TempRepo::create(
+        ISSUE_6673_SOURCE,
+        &issue_6673_test("Ok(left) => panic!(\"overdraw left {left}\")"),
+        &diff,
+    )?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, ISSUE_6673_CHANGED_LINE, "PayError::Insufficient")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the RIPR-SPEC-0175 asserted-Err form pins the changed error; discriminator={:?}",
+        finding.ripr.reveal.discriminate
+    );
+    Ok(())
+}
+
+#[test]
+fn issue_6673_quiet_ok_arm_does_not_expose_the_changed_error() -> Result<(), String> {
+    let diff = single_line_diff(
+        ISSUE_6673_SOURCE,
+        ISSUE_6673_CHANGED_LINE,
+        ISSUE_6673_OLD_LINE,
+    );
+    let repo = TempRepo::create(ISSUE_6673_SOURCE, &issue_6673_test("Ok(_) => {}"), &diff)?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, ISSUE_6673_CHANGED_LINE, "PayError::Insufficient")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a quiet Ok arm lets a success result pass, so nothing pins the error; discriminator={:?}",
+        finding.ripr.reveal.discriminate
+    );
+    let exposed = exposed_on_line(&output, ISSUE_6673_CHANGED_LINE);
+    assert!(exposed.is_empty(), "{exposed:?}");
+    Ok(())
+}
+
+// ---- #6695: the issue's exact `ok_or(Variant)?` shape --------------------
+
+const ISSUE_6695_SOURCE: &str = r#"#[derive(Debug, PartialEq)]
+pub enum CodeError {
+    NotDigit,
+    Short,
+}
+
+fn digit(c: char) -> Option<u32> {
+    c.to_digit(10)
+}
+
+pub fn parse_code(s: &str) -> Result<u32, CodeError> {
+    if s.len() < 4 {
+        return Err(CodeError::Short);
+    }
+    let mut value = 0;
+    for c in s.chars() {
+        let d = digit(c).ok_or(CodeError::NotDigit)?;
+        value = value * 10 + d;
+    }
+    Ok(value)
+}
+"#;
+const ISSUE_6695_CHANGED_LINE: usize = 17;
+const ISSUE_6695_OLD_LINE: &str = "        let d = digit(c).ok_or(CodeError::Short)?;";
+
+fn issue_6695_test(assertion: &str) -> String {
+    format!(
+        "use error_path_sibling_variant::{{CodeError, parse_code}};\n\n#[test]\nfn a_letter_is_not_a_digit() {{\n    {assertion};\n}}\n"
+    )
+}
+
+#[test]
+fn issue_6695_owner_call_pin_exposes_the_changed_ok_or() -> Result<(), String> {
+    let diff = single_line_diff(
+        ISSUE_6695_SOURCE,
+        ISSUE_6695_CHANGED_LINE,
+        ISSUE_6695_OLD_LINE,
+    );
+    let repo = TempRepo::create(
+        ISSUE_6695_SOURCE,
+        &issue_6695_test("assert_eq!(parse_code(\"12x4\"), Err(CodeError::NotDigit))"),
+        &diff,
+    )?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, ISSUE_6695_CHANGED_LINE, "CodeError::NotDigit")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the owner-call pin observes the error the `?` returns; discriminator={:?} propagate={:?}",
+        finding.ripr.reveal.discriminate,
+        finding.ripr.propagate
+    );
+    Ok(())
+}
+
+#[test]
+fn issue_6695_sibling_owner_call_pin_does_not_expose_the_changed_ok_or() -> Result<(), String> {
+    let diff = single_line_diff(
+        ISSUE_6695_SOURCE,
+        ISSUE_6695_CHANGED_LINE,
+        ISSUE_6695_OLD_LINE,
+    );
+    let repo = TempRepo::create(
+        ISSUE_6695_SOURCE,
+        &issue_6695_test("assert_eq!(parse_code(\"12\"), Err(CodeError::Short))"),
+        &diff,
+    )?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, ISSUE_6695_CHANGED_LINE, "CodeError::NotDigit")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a CodeError::Short pin does not observe the changed NotDigit error; discriminator={:?}",
+        finding.ripr.reveal.discriminate
+    );
+    let exposed = exposed_on_line(&output, ISSUE_6695_CHANGED_LINE);
+    assert!(exposed.is_empty(), "{exposed:?}");
+    Ok(())
+}

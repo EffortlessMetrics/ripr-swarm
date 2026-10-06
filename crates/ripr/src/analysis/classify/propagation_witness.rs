@@ -128,10 +128,16 @@ pub(in crate::analysis) fn current_path_witness(
     // equal sink identity is an established error edge (the closure in
     // `ok_or_else(|| Type::Variant)` is the argument's own constant thunk,
     // not an opaque path).
-    let question_mark_sink = matches!(probe.family, ProbeFamily::ErrorPath)
-        .then(|| super::text::question_mark_error_variant(&probe.expression))
-        .flatten()
-        .map(|variant| format!("Result::Err({variant})"));
+    // Only when the line has no literal `Err(..)` construction: flow emits the
+    // owner-checked `ok_or?` sink exactly then. A line holding both
+    // (`x.map(|_| Err(E::V)).ok_or(E::V)?`) gets the unchecked
+    // `result_error_text` sink with the same text, which must not borrow the
+    // bypass (PR #6786 review).
+    let question_mark_sink = (matches!(probe.family, ProbeFamily::ErrorPath)
+        && super::text::exact_error_variant(&probe.expression).is_none())
+    .then(|| super::text::question_mark_error_variant(&probe.expression))
+    .flatten()
+    .map(|variant| format!("Result::Err({variant})"));
     let is_question_mark_sink = |sink: &FlowSinkFact| {
         sink.kind == FlowSinkKind::ErrorVariant
             && question_mark_sink.as_deref() == Some(normalize_semantic_text(&sink.text).as_str())
@@ -885,6 +891,33 @@ mod tests {
         ] {
             assert!(opaque_path_text(text), "{text}");
         }
+    }
+
+    /// The owner-checked `ok_or?` bypass keys on the probe line having no
+    /// literal `Err(..)`; a line with both must use the ordinary edge rule.
+    #[test]
+    fn question_mark_bypass_refuses_a_line_that_also_constructs_err() {
+        let both = probe(
+            ProbeFamily::ErrorPath,
+            "let v = x.map(|_| Err(E::V)).ok_or(E::V)?;",
+        );
+        let sinks = [sink(FlowSinkKind::ErrorVariant, "Result::Err(E::V)", 10)];
+        let witness = current_path_witness(&both, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_none_or(|witness| witness.edges[0].status != EdgeStatus::Established),
+            "{witness:?}"
+        );
+        // Positive control: the plain `ok_or?` line keeps the bypass.
+        let plain = probe(ProbeFamily::ErrorPath, "let v = x.ok_or(E::V)?;");
+        let witness = current_path_witness(&plain, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_some_and(|witness| witness.edges[0].status == EdgeStatus::Established),
+            "{witness:?}"
+        );
     }
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {

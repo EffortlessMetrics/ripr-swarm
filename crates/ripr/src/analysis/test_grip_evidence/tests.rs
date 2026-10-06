@@ -13881,7 +13881,9 @@ fn ok_or_question_mark_seam_discriminates_only_the_returned_variant() {
     use crate::analysis::facts::OracleFact;
     use crate::domain::OracleStrength;
 
-    const LINE: &str = "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;";
+    // Production-shaped tail seam text (syntax/ra.rs builds ErrorPath seams
+    // from `return` and tail expressions).
+    const LINE: &str = "slot.ok_or_else(|| CodeError::NotDigit)?";
 
     fn oracle(kind: OracleKind, text: &str) -> OracleFact {
         OracleFact {

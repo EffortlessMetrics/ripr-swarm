@@ -3204,30 +3204,64 @@ pub fn parse(value: &str) -> Result<i32, String> {
     }
 
     #[test]
-    fn ok_or_question_mark_discriminator_stores_the_returned_variant_identity() {
-        // #6695: the repo-mode identity comes from the same shared owner as
-        // the diff-mode reveal gate, so a sibling pin cannot match it.
-        for expression in [
-            "let d = digit(c).ok_or(CodeError::NotDigit)?;",
-            "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;",
-        ] {
+    fn ok_or_question_mark_discriminator_stores_the_returned_variant_identity() -> Result<(), String>
+    {
+        // #6695: production builds ErrorPath seams from `return` and tail
+        // expressions (syntax/ra.rs); an `ok_or(Type::Variant)?` in either
+        // position stores that variant through the shared identity owner,
+        // so a sibling pin cannot match it in repo mode.
+        let path = PathBuf::from("src/code.rs");
+        let source = r#"
+pub enum CodeError {
+    NotDigit,
+    TooLong,
+}
+
+pub fn first_code(slot: Option<Result<u32, CodeError>>) -> Result<u32, CodeError> {
+    return slot.ok_or(CodeError::NotDigit)?;
+}
+
+pub fn last_code(slot: Option<Result<u32, CodeError>>) -> Result<u32, CodeError> {
+    slot.ok_or_else(|| CodeError::NotDigit)?
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        let ok_or_seams: Vec<_> = seams
+            .iter()
+            .filter(|seam| {
+                seam.kind() == SeamKind::ErrorVariant && seam.expression().contains(".ok_or")
+            })
+            .collect();
+        if ok_or_seams.len() != 2 {
+            return Err(format!(
+                "expected the return and tail ok_or ErrorVariant seams, got {:?}",
+                seams
+                    .iter()
+                    .map(|seam| format!("{}:{}", seam.kind().as_str(), seam.expression()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        for seam in ok_or_seams {
             assert_eq!(
-                required_discriminator_for(SeamKind::ErrorVariant, expression),
-                RequiredDiscriminator::ErrorVariant {
+                seam.required_discriminator(),
+                &RequiredDiscriminator::ErrorVariant {
                     variant: "CodeError::NotDigit".to_string(),
                 },
-                "{expression}"
+                "{}",
+                seam.expression()
             );
         }
         // A closure-local `?` names no owner-level variant: the text stays
         // opaque and downstream variant checks stay fail-closed.
-        let closure = "let f = |c| digit(c).ok_or(CodeError::NotDigit)?;";
+        let closure = "return |c| digit(c).ok_or(CodeError::NotDigit)?";
         assert_eq!(
             required_discriminator_for(SeamKind::ErrorVariant, closure),
             RequiredDiscriminator::ErrorVariant {
                 variant: closure.to_string(),
             }
         );
+        Ok(())
     }
 
     #[test]

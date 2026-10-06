@@ -20,6 +20,7 @@
   error's enum (`assert!(matches!(e, PayError::Limit))` against a changed
   `Err(PayError::Insufficient)`) no longer makes the error-path finding read
   `exposed` through the shared enum name (#6673).
-- Rust: repository exposure mode reads the variant of an
-  `ok_or(Type::Variant)?` line the same way the diff check does, so only a
-  test that pins that variant credits the seam (#6695).
+- Rust: in repository exposure mode, an error seam built from
+  `return x.ok_or(Type::Variant)?` or a tail `x.ok_or(Type::Variant)?`
+  now carries that variant, so only a test that pins that variant credits
+  the seam (#6695).
