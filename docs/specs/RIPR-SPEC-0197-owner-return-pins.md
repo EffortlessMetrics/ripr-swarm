@@ -205,7 +205,8 @@ rule only for an assertion whose context was admitted.
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is
    `clone` with a `self` receiver in an `impl Clone for T` block whose
    trait is the standard one (bare `Clone`, `std::clone::Clone` or
-   `core::clone::Clone`; `impl dupe::Clone for T` is refused, and so is an
+   `core::clone::Clone`, the latter two only while no workspace file renames
+   an item to `std`/`core`; `impl dupe::Clone for T` is refused, and so is an
    owner file that imports, globs or renames `Clone` from elsewhere) and
    whose self type has no generic arguments (`impl Clone for W<Foo>` is
    refused), and the

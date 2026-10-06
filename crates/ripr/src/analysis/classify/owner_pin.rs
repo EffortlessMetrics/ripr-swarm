@@ -764,6 +764,12 @@ impl OwnerReturnPin {
         ) {
             return None;
         }
+        // `extern crate other as std;` makes `std::clone::Clone` foreign.
+        if let Some((root, _)) = trait_path.split_once("::")
+            && workspace_renames_to(index, root)
+        {
+            return None;
+        }
         let owner_source = index
             .files()
             .get(&owner.file)

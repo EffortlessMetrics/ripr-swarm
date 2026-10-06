@@ -1608,6 +1608,7 @@ fn a_clone_field_pin_needs_derived_equality_and_the_returned_literal() {
     let foreign_clone_import = WINDOW_LIB.to_string() + "use dupe::Clone;\n";
     let std_clone_path =
         WINDOW_LIB.replace("impl Clone for Window", "impl std::clone::Clone for Window");
+    let renamed_std_clone = std_clone_path.clone() + "extern crate dupe as std;\n";
     for lib in [
         manual_eq,
         gated_derive,
@@ -1622,6 +1623,7 @@ fn a_clone_field_pin_needs_derived_equality_and_the_returned_literal() {
         defaulted_generic,
         foreign_clone_path,
         foreign_clone_import,
+        renamed_std_clone,
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert!(pin.is_none(), "{lib}");
@@ -1648,6 +1650,15 @@ fn a_clone_field_pin_refuses_generic_types_and_instantiated_impls() {
     for lib in [generic.to_string(), renamed_eq] {
         let (_, pin) = clone_field_pin_at(&lib, tests, "x: Foo,", "x: Foo,");
         assert!(pin.is_none(), "{lib}");
+    }
+    // Same-shape positive control: a non-generic `W` with a value-compared
+    // field establishes and admits the clone comparison.
+    let plain = "#[derive(Debug, PartialEq)]\npub struct W {\n    pub x: u32,\n}\n\nimpl Clone for W {\n    fn clone(&self) -> Self {\n        W {\n            x: self.x,\n        }\n    }\n}\n";
+    let plain_tests = "use demo::W;\n\n#[test]\nfn compares() {\n    let w = W { x: 3 };\n    assert_eq!(w.clone(), w);\n}\n";
+    let (index, pin) = clone_field_pin_at(plain, plain_tests, "x: self.x,", "x: self.x,");
+    assert!(pin.is_some(), "the non-generic control must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
     }
 }
 
