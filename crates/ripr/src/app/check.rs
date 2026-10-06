@@ -233,9 +233,15 @@ fn check_with_progress_and_origins_with_open_rust_paths(
 
     // Build the language list from config. When --perl-facts is provided,
     // automatically add Perl to the enabled list (the user explicitly opted in
-    // by supplying a packet path). Campaign 31, #1429.
+    // by supplying a packet path). Campaign 31, #1429. A configured producer
+    // whose invocation FAILED (#6828 review) must dispatch Perl too: on
+    // success the produced packet adds Perl, so a failed exporter may not
+    // silently vanish from the typed record — the adapter fails closed with
+    // the `failed` language_runs entry instead.
     let mut languages = config.languages().enabled().to_vec();
-    if options.perl_facts_path.is_some() && !languages.contains(&LanguageId::Perl) {
+    if (options.perl_facts_path.is_some() || options.perl_producer_failure.is_some())
+        && !languages.contains(&LanguageId::Perl)
+    {
         languages.push(LanguageId::Perl);
     }
 

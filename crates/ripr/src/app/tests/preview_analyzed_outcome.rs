@@ -337,6 +337,72 @@ fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() ->
     cleanup
 }
 
+/// #6828 review follow-up: a configured producer whose invocation fails must
+/// reach the typed record even when `[languages].enabled` does NOT name perl.
+/// On success the produced packet adds Perl to the dispatched languages, so a
+/// failed exporter must not make the failure vanish — the run is recorded as
+/// `failed` with the real cause, not silently absent.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn producer_failure_is_recorded_even_when_perl_is_not_enabled() -> Result<(), String> {
+    let root = temp_root("preview-perl-producer-failed-not-enabled")?;
+    let proof = (|| -> Result<(), String> {
+        write(&root.join("blocker.txt"), "not a directory")?;
+        let diff = root.join("perl.diff");
+        write(
+            &diff,
+            "diff --git a/lib/App.pm b/lib/App.pm\n--- /dev/null\n+++ b/lib/App.pm\n@@ -0,0 +1 @@\n+sub discount { return 0 }\n",
+        )?;
+        // Default [languages] (rust only): no perl enablement at all.
+        let config = crate::config::tests_only_parse(
+            "[perl]\nproducer = \"perl-ripr-facts\"\ncache_dir = \"blocker.txt/cache\"\n",
+        )?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: None,
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+            },
+            &config,
+        )?;
+        let perl_run = output
+            .language_runs
+            .iter()
+            .find(|run| run.language == "perl")
+            .ok_or_else(|| {
+                format!(
+                    "a configured producer's failure must be recorded in language_runs even \
+                     without [languages] perl; runs: {:?}",
+                    output.language_runs
+                )
+            })?;
+        if perl_run.status != crate::analysis::LanguageRunStatus::Failed {
+            return Err(format!("expected failed Perl run, got {perl_run:?}"));
+        }
+        let reason = perl_run.reason.as_deref().unwrap_or_default();
+        if !reason.contains("failed to create Perl facts cache dir") {
+            return Err(format!("reason must carry the real failure: {reason}"));
+        }
+        if reason.contains("requires a fact packet") {
+            return Err(format!(
+                "reason must not re-advise the configuration the user already made: {reason}"
+            ));
+        }
+        Ok(())
+    })();
+    let cleanup =
+        fs::remove_dir_all(&root).map_err(|error| format!("remove {}: {error}", root.display()));
+    proof?;
+    cleanup
+}
+
 #[cfg(feature = "lang-typescript")]
 fn typescript_output(enabled: bool) -> Result<(std::path::PathBuf, crate::CheckOutput), String> {
     let root = temp_root(if enabled {
