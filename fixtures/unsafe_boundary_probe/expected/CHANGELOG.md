@@ -197,3 +197,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unsafe_boundary_probe (17)
+
+Reason:
+RIPR-SPEC-0228 #6676: a let binding's type annotation is not a struct-literal field; the changed binding outside the unsafe boundary now renders its static_unknown probe instead of a spurious field_construction probe; classification unchanged (no_static_path). Re-blessed onto main's #5996 workspace-relative locations and #5268 canonical_gap.
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
