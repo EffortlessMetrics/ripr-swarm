@@ -12518,6 +12518,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/assertion_selection_tests.rs::a_test_with_only_wrong_family_assertions_shows_no_oracle",
   "crates/ripr/src/analysis/language/typescript/assertion_selection_tests.rs::strongest_row_matches_the_aggregate_family_result",
   "crates/ripr/src/output/typescript_packet_projection.rs::moved_assertion_selection_is_never_agent_packet_eligible",
+  "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::family_relevant_value_assertion_keeps_its_packet",
+  "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::passed_over_wrong_family_assertion_suppresses_the_packet",
+  "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::wrong_family_only_test_cannot_become_the_packet_target",
 ]
 code = [
   "crates/ripr/src/domain/probe.rs",
