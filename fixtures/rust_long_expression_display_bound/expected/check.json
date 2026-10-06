@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:9b6a6cdb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:blocking_reason:predicate_boundary:predicate:decisions.iter_.filter_d_d.decision==blocking_.count==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:blocking_reason:predicate_boundary:predicate:decisions.iter_.filter_d_d.decision==blocking_.count==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "blocking_reason",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "decisions.iter_.filter_d_d.decision==blocking_.count==0"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

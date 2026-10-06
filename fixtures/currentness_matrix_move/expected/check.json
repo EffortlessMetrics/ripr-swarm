@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:6c1bbc04",
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:value==100",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:value==100",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "price",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "value==100"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -59,6 +71,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:bc4e4027",
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:static_unknown:static_unknown:fn_retired_helper_value_i32->i32",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:price:static_unknown:static_unknown:fn_retired_helper_value_i32->i32",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "price",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "fn_retired_helper_value_i32->i32"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.20,

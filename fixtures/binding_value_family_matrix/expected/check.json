@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:04c35b4b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:body_of:predicate_boundary:predicate:body==fix",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:body_of:predicate_boundary:predicate:body==fix",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "body_of",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "body==fix"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -134,6 +146,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:a54b7c0f",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:open==want",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:open==want",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "open==want"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -225,6 +249,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:703872a1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:within:predicate_boundary:predicate:size==3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:within:predicate_boundary:predicate:size==3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "within",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "size==3"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -316,6 +352,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:04dd15b2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bump:predicate_boundary:predicate:next==4",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bump:predicate_boundary:predicate:next==4",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bump",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "next==4"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -397,6 +445,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:3d37b6f6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:head:predicate_boundary:predicate:first==x",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:head:predicate_boundary:predicate:first==x",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "head",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "first==x"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -532,6 +592,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:33f2d6c2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:tail:predicate_boundary:predicate:last==x",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:tail:predicate_boundary:predicate:last==x",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "tail",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "last==x"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

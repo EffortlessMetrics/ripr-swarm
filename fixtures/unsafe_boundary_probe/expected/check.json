@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:field_construction:ca914e5b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:sum_bytes:field_construction:field_construction:let_mut_total_u8=1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:sum_bytes:field_construction:field_construction:let_mut_total_u8=1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "sum_bytes",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "let_mut_total_u8=1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -70,6 +82,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:bc6c559d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:sum_bytes:static_unknown:static_unknown:unsafe_block",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:sum_bytes:static_unknown:static_unknown:unsafe_block",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "sum_bytes",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "unsafe_block"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -119,6 +143,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:1cd58b38",
+      "canonical_gap_id": "gap:rust:src/lib.rs:read_first:static_unknown:static_unknown:let_value=unsafe*pointer.add_0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:read_first:static_unknown:static_unknown:let_value=unsafe*pointer.add_0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "read_first",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_value=unsafe*pointer.add_0"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,

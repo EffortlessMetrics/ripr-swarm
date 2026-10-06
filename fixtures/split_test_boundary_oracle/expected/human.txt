@@ -13,6 +13,7 @@ Start here:
   File: fixtures/split_test_boundary_oracle/input/src/lib.rs:2
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
   Changed behavior: input >= 10
   Missing discriminator: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
   Related test (1 of 2): tests/split.rs:4 boundary (has no assertion)

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:match_arm:b5edb276",
+      "canonical_gap_id": "gap:rust:src/lib.rs:route:match_arm:match_arm:sensor/*focused-test*/",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:route:match_arm:match_arm:sensor/*focused-test*/",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "route",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "sensor/*focused-test*/"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,

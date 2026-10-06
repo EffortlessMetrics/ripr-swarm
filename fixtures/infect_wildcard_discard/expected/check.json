@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:static_unknown:49492955",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process:static_unknown:static_unknown:let__=compute_fee_amount*9",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process:static_unknown:static_unknown:let__=compute_fee_amount*9",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let__=compute_fee_amount*9"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,
@@ -91,6 +103,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:d0b06139",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process:return_value:return_value:amount",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process:return_value:return_value:amount",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "amount"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

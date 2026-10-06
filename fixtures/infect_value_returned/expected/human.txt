@@ -13,6 +13,7 @@ Start here:
   File: fixtures/infect_value_returned/input/src/lib.rs:4
   Static exposure: unknown (static_unknown, note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
+  Canonical gap: gap:rust:src/lib.rs:score:static_unknown:static_unknown:let_result=helper_amount*multiplier
   Changed behavior: let result = helper(amount * MULTIPLIER);
   Analyzer limit: No strong discriminator was detected
   Related test: tests/score_tests.rs:4 score_uses_multiplier

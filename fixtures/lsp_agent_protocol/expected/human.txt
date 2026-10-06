@@ -13,6 +13,7 @@ Start here:
   File: fixtures/lsp_agent_protocol/input/src/lib.rs:2
   Static exposure: unknown (static_unknown, note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
+  Canonical gap: gap:rust:src/lib.rs:agent_protocol_boundary:static_unknown:static_unknown:value+2
   Changed behavior: value + 2
   Analyzer limit: No strong discriminator was detected
   Related test: src/lib.rs:10 boundary_is_observed

@@ -13,6 +13,7 @@ Start here:
   File: fixtures/rust_constructor_field_wrong_field_observer/input/src/lib.rs:15
   Static exposure: unknown (propagation_unknown, note, confidence 0.66)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Canonical gap: gap:rust:src/lib.rs:lower_statement:return_value:return_value:storage
   Changed behavior: storage,
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/lower.rs:4 lower_ast_only_checks_name

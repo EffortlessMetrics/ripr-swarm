@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:672a64b9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:untested_rounding:return_value:return_value:cents+49/100",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:untested_rounding:return_value:return_value:cents+49/100",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "untested_rounding",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "cents+49/100"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.43,

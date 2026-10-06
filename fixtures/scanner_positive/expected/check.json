@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:93752988",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_state==text",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_state==text",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_state==text"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,

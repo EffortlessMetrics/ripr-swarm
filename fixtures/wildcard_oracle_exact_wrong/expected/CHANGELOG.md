@@ -37,3 +37,16 @@ No blanket bless, class promotion or representative accuracy claim is made.
 Updated:
 - expected/human.txt
 - expected/human-full.txt
+
+## Pending — wildcard_oracle_exact_wrong (1)
+
+Reason:
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_exact_wrong --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
