@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:43b1f2c8",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_observer/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "Status::Idle => 0,"
        },

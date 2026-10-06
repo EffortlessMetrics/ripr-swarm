@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:1b722e32",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/propagate_value_returned/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "return self.persist(amount * 9)"
        },

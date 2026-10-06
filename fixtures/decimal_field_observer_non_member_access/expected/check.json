@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:field_construction:66b24106",
         "family": "field_construction",
         "delta": "value",
-        "file": "fixtures/decimal_field_observer_non_member_access/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "retries: 1,"
        },
@@ -113,7 +113,7 @@
         "id": "probe:src_lib.rs:return_value:4b922ba9",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/decimal_field_observer_non_member_access/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "Config {\n        timeout_secs: 30,\n        retries: 1,\n    }"
        },

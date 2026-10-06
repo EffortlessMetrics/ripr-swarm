@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:6b37a3bc",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "return Err(CalcError::Negative);"
        },
@@ -123,7 +123,7 @@
         "id": "probe:src_lib.rs:return_value:832c68b7",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "return Err(CalcError::Negative);"
        },

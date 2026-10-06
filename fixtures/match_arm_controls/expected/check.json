@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:659cd128",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "if final_label == \"beta\" {"
        },
@@ -134,7 +134,7 @@
         "id": "probe:src_lib.rs:predicate:2d6b188b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 30,
         "expression": "if final_label == \"beta\" {"
        },
@@ -238,7 +238,7 @@
         "id": "probe:src_lib.rs:predicate:845a474d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 46,
         "expression": "if final_label == \"beta\" {"
        },
@@ -342,7 +342,7 @@
         "id": "probe:src_lib.rs:predicate:0a147037",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/match_arm_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 62,
         "expression": "if final_label == \"beta\" {"
        },

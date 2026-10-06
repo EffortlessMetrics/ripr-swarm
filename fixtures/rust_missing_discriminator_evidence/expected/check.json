@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:c1a89389",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/rust_missing_discriminator_evidence/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "Err(PricingError::Other)"
        },
@@ -124,7 +124,7 @@
         "id": "probe:src_lib.rs:error_path:06e60f72",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/rust_missing_discriminator_evidence/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "Err(PricingError::Other)"
        },

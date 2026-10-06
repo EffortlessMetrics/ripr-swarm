@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:a39d316d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/assertion_shaped_control_production_caller/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "let clamped = if value >= 0 { value } else { 0 };"
        },

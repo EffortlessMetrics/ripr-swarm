@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:fdcf38e9",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/propagate_log_message/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "log::info!(\"amount is {}\", amount * 9);"
        },
@@ -114,7 +114,7 @@
         "id": "probe:src_lib.rs:side_effect:8216434e",
         "family": "side_effect",
         "delta": "effect",
-        "file": "fixtures/propagate_log_message/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "log::info!(\"amount is {}\", amount * 9);"
        },

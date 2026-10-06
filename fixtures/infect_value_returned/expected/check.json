@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:static_unknown:134382d4",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/infect_value_returned/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "let result = helper(amount * MULTIPLIER);"
        },
@@ -132,7 +132,7 @@
         "id": "probe:src_lib.rs:return_value:d146b764",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/infect_value_returned/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "result + 1"
        },

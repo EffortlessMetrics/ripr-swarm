@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:e063ad32",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_shared_result_no_promotion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "\"sensor\" =>"
        },

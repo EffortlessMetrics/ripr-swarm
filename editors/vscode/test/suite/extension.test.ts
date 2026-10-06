@@ -21,7 +21,13 @@ import {
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
-  suiteSetup(async () => {
+  suiteSetup(async function (this: Mocha.Context) {
+    // Activation awaits full server start: candidate compatibility probe
+    // (START_TIMEOUT_MS = 10s), client start, and configureTestServer may
+    // await five config updates. A single real-server test below needs 11s+
+    // on this host, so the hook's share of the global 10s budget cannot hold
+    // (#6845); give the hook a generous budget like the real-server tests.
+    this.timeout(120000);
     await cleanupEditorGapSmokeFiles();
     await configureTestServer();
     await activateExtension();
@@ -1380,6 +1386,15 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('disabled or unavailable preview languages stay silent'));
       assert.ok(String(context.status.tooltip).includes('enabled and available in this ripr build'));
       assert.ok(String(context.status.tooltip).includes('Evidence freshness: current saved-workspace status reported by server refresh'));
+      // The zero-diagnostics branch must name the enablement mechanism for
+      // routed-but-disabled preview languages, not just "enabled languages"
+      // generically (#6846).
+      assert.ok(
+        String(context.status.tooltip).includes('routed by the editor but missing from ripr.toml [languages] enabled'),
+        String(context.status.tooltip)
+      );
+      assert.ok(String(context.status.tooltip).includes('typescript and python'), String(context.status.tooltip));
+      assert.ok(String(context.status.tooltip).includes('then run ripr: Restart Server'));
 
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=1, diagnostics=0, files=0, findings=0, seam_diagnostics=0, enabled_languages=0, enabled_language_names=, published_files=0, cleared_files=0'
@@ -1866,6 +1881,46 @@ suite('Extension Smoke', () => {
       // budget remedy must survive composition with the component recovery.
       assert.ok(
         tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited partial scope renders the server retry recovery over the canned refresh tail (#5999)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited_partial_scope',
+        attempt_id: 'run-partial-retry-recovery',
+        snapshot_id: 'snapshot:run-partial-retry-recovery',
+        // #5999: the server declares this run retry-unlifted, so the client
+        // must render the raise + restart route instead of a same-process
+        // refresh that provably re-runs the identical partition.
+        retry_command: null,
+        retry_recovery: {
+          kind: 'increase_configured_limit',
+          detail: 'ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server so the raised environment is read; raise further if this document is still reported not_analyzed'
+        }
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server'),
+        tooltip
+      );
+      // The canned tail prescribes a refresh after raising the budget; the
+      // running sidecar still reads the old environment, so it must be gone.
+      assert.ok(
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
         tooltip
       );
     } finally {

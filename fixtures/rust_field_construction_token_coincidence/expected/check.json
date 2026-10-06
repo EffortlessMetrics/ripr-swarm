@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:field_construction:66b24106",
         "family": "field_construction",
         "delta": "value",
-        "file": "fixtures/rust_field_construction_token_coincidence/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "retries: 1,"
        },
@@ -147,7 +147,7 @@
         "id": "probe:src_lib.rs:return_value:8ed284d1",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_field_construction_token_coincidence/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "retries,"
        },

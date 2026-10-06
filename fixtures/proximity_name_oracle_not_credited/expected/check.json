@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:e01f0ca9",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/proximity_name_oracle_not_credited/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "return Err(ParseError::MalformedSource)"
        },
@@ -159,7 +159,7 @@
         "id": "probe:src_lib.rs:return_value:9a7c99af",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/proximity_name_oracle_not_credited/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "return Err(ParseError::MalformedSource)"
        },

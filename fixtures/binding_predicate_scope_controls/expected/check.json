@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:static_unknown:c075f160",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let end = input.trim_end().len();"
        },
@@ -91,7 +91,7 @@
         "id": "probe:src_lib.rs:static_unknown:14b67539",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "let end = 3;"
        },
@@ -152,7 +152,7 @@
         "id": "probe:src_lib.rs:static_unknown:61eb9e44",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "let mut end = seed + 1;"
        },
@@ -213,7 +213,7 @@
         "id": "probe:src_lib.rs:static_unknown:36cb5bcb",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "let end = delim.len_utf8() + 1;"
        },
@@ -274,7 +274,7 @@
         "id": "probe:src_lib.rs:static_unknown:b52439fa",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 34,
         "expression": "let (end, other) = (pair.0 + 1, pair.1);"
        },

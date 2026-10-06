@@ -201,18 +201,19 @@ pub(crate) struct GapItem {
 }
 
 impl GapItem {
-    /// Project one finding, rendering every served file path relative to the
-    /// analyzed workspace root so gap documents never leak absolute host
-    /// paths (#5254 item 6). A file the root does not contain keeps its
-    /// stable spelling rather than an invented location.
+    /// `root` is the analyzed workspace root: item locations render through
+    /// the shared finding-location owner (#5996), so an MCP item names the
+    /// finding's file with the same workspace-relative string the check,
+    /// context and LSP surfaces emit. Related-test and fix-site files keep
+    /// the repository-relative renderer (#5254 item 6), which additionally
+    /// tolerates verbatim/UNC/case spelling drift.
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
         let canonical_id = finding
             .canonical_gap
             .as_ref()
             .map(|gap| gap.id.clone())
             .unwrap_or_else(|| finding.id.clone());
-        let file =
-            crate::output::path::repository_relative_path_text(root, &finding.probe.location.file);
+        let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding
             .language
@@ -340,10 +341,7 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Resu
         "class": finding.class.as_str(),
         "language": finding.language.as_ref().map(|language| language.as_str()),
         "location": {
-            "file": crate::output::path::repository_relative_path_text(
-                root,
-                &finding.probe.location.file,
-            ),
+            "file": crate::analysis::finding_location_text(root, &finding.probe.location.file),
             "line": finding.probe.location.line,
             "column": finding.probe.location.column,
         },
@@ -557,9 +555,110 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    /// #5996: one finding, one location string on every surface. The MCP
+    /// item file must join byte-for-byte with the check JSON `probe.file`,
+    /// the context packet `probe.file` and the human finding header for the
+    /// same finding — including when the analyzed root is a verbatim Windows
+    /// path (the MCP server's root spelling), which previously leaked the
+    /// raw `//?/` producer join no other surface produced and no editor
+    /// resolves.
+    #[test]
+    fn one_finding_renders_one_location_string_on_every_surface() -> Result<(), String> {
+        // check-local-context forbids drive-letter path literals; assemble
+        // the verbatim root from parts (the `//?/` text lives in the owner's
+        // own unit tests).
+        let drive = "F:";
+        let backslash = '\\';
+        let root = PathBuf::from(format!(
+            "{backslash}{backslash}?{backslash}{drive}{backslash}repo"
+        ));
+        let mut finding = finding()?;
+        finding.probe.location =
+            crate::domain::SourceLocation::new(root.join("src").join("main.rs"), 4, 1);
+        let expected = "./src/main.rs";
+
+        let item = GapItem::from_finding(&finding, &root)?;
+        if item.file != expected {
+            return Err(format!(
+                "MCP item file must be workspace-relative: {}",
+                item.file
+            ));
+        }
+        let location_file = item
+            .evidence_core
+            .get("location")
+            .and_then(|location| location.get("file"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "gap evidence must carry a location file: {}",
+                    item.evidence_core
+                )
+            })?;
+        if location_file != expected {
+            return Err(format!(
+                "MCP gap location file must be workspace-relative: {location_file}"
+            ));
+        }
+
+        let output = crate::app::CheckOutput {
+            schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            harness_projections: Vec::new(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Draft,
+            root: root.clone(),
+            base: None,
+            analysis_outcome: None,
+            summary: crate::domain::Summary::default(),
+            findings: vec![finding.clone()],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            partial_scope: None,
+        };
+        let check_json: Value = serde_json::from_str(&crate::output::json::render(&output))
+            .map_err(|error| format!("parse check JSON: {error}"))?;
+        if check_json
+            .pointer("/findings/0/probe/file")
+            .and_then(Value::as_str)
+            != Some(expected)
+        {
+            return Err(format!("check JSON probe.file must match: {check_json}"));
+        }
+
+        let packet: Value = serde_json::from_str(&crate::output::json::render_context_packet(
+            &finding, 5, &root,
+        ))
+        .map_err(|error| format!("parse context packet: {error}"))?;
+        if packet.pointer("/probe/file").and_then(Value::as_str) != Some(expected) {
+            return Err(format!("context packet probe.file must match: {packet}"));
+        }
+
+        let header = crate::output::human::render_finding_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            &root,
+        );
+        if !header
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains(expected))
+        {
+            return Err(format!(
+                "human header must carry the same location: {header}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]
@@ -576,7 +675,7 @@ mod tests {
             }
         }
 
-        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&finding()?, Path::new("."))?;
         let values = [
             Value::Null,
             json!({}),
@@ -625,7 +724,7 @@ mod tests {
     fn gap_projection_preserves_evidence_length_and_digest() -> Result<(), String> {
         let mut finding = finding()?;
         finding.recommended_next_step = Some("assert \"é😀\"\nwith a \\ escape".to_string());
-        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
         let bytes = serde_json::to_vec(&item.evidence_core).map_err(|error| error.to_string())?;
         assert_eq!(item.evidence_bytes, bytes.len());
         assert_eq!(item.evidence_sha256, format!("{:x}", Sha256::digest(bytes)));
@@ -634,7 +733,7 @@ mod tests {
 
     #[test]
     fn canonical_id_prefers_the_producer_gap_identity() -> Result<(), String> {
-        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&finding()?, Path::new("."))?;
         if item.canonical_id != "gap:test:1" || item.finding_id != "finding:test:1" {
             return Err(format!(
                 "canonical identity must prefer the producer gap id: {item:?}",
@@ -662,7 +761,7 @@ mod tests {
     fn fallback_identity_uses_the_finding_id() -> Result<(), String> {
         let mut finding = finding()?;
         finding.canonical_gap = None;
-        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
         if item.canonical_id != "finding:test:1" {
             return Err(format!(
                 "without a canonical gap the finding id must be the item identity: {}",
@@ -675,8 +774,7 @@ mod tests {
     #[test]
     fn eligibility_follows_the_producer_actionability_predicate() -> Result<(), String> {
         use crate::lsp::diagnostic_budget::DiagnosticBudgetEligibility;
-        let actionable =
-            budget_items(&[GapItem::from_finding(&finding()?, Path::new("/test-root"))?]);
+        let actionable = budget_items(&[GapItem::from_finding(&finding()?, Path::new("."))?]);
         let Some(actionable_item) = actionable.first() else {
             return Err("budget items must not be empty".to_string());
         };
@@ -685,10 +783,7 @@ mod tests {
         }
         let mut base_deleted = finding()?;
         base_deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
-        let filtered = budget_items(&[GapItem::from_finding(
-            &base_deleted,
-            Path::new("/test-root"),
-        )?]);
+        let filtered = budget_items(&[GapItem::from_finding(&base_deleted, Path::new("."))?]);
         let Some(filtered_item) = filtered.first() else {
             return Err("budget items must not be empty".to_string());
         };
@@ -703,7 +798,7 @@ mod tests {
 
     #[test]
     fn evidence_document_reports_producer_repair_readiness() -> Result<(), String> {
-        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&finding()?, Path::new("."))?;
         let document = item.document("snapshot:sha256:abc");
         let readiness = document
             .pointer("/item/readiness/repair_packet_ready")
@@ -749,7 +844,7 @@ mod tests {
     fn readiness_stays_fail_closed_on_missing_producer_facts() -> Result<(), String> {
         let mut no_discriminator = finding()?;
         no_discriminator.canonical_gap = None;
-        let item = GapItem::from_finding(&no_discriminator, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&no_discriminator, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility
                 != Some("discriminator_not_populated_for_language")
@@ -768,7 +863,7 @@ mod tests {
                 flow_sink: None,
             },
         );
-        let item = GapItem::from_finding(&named_missing, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&named_missing, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
@@ -780,7 +875,7 @@ mod tests {
 
         let mut base_deleted = finding()?;
         base_deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
-        let item = GapItem::from_finding(&base_deleted, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&base_deleted, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("not_candidate_actionable")
         {
@@ -794,7 +889,7 @@ mod tests {
         for test in &mut weak_grip.related_tests {
             test.oracle_strength = crate::domain::OracleStrength::Weak;
         }
-        let item = GapItem::from_finding(&weak_grip, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&weak_grip, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("fix_site_not_established")
         {
@@ -843,7 +938,7 @@ mod tests {
         unpopulated.canonical_gap = None;
         unpopulated.missing = Vec::new();
         unpopulated.class = crate::domain::ExposureClass::Exposed;
-        let item = GapItem::from_finding(&unpopulated, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&unpopulated, Path::new("."))?;
         let document = item.document("snapshot:sha256:abc");
         let reason = document
             .pointer("/item/readiness/reason")
@@ -894,7 +989,7 @@ mod tests {
         limited.missing = Vec::new();
         limited.language = Some(crate::domain::LanguageId::Python);
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
-        let item = GapItem::from_finding(&limited, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&limited, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("static_limitation")
         {
@@ -944,7 +1039,7 @@ mod tests {
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
             });
-        let item = GapItem::from_finding(&boundary, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&boundary, Path::new("."))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
@@ -960,7 +1055,7 @@ mod tests {
         boundary.activation.missing_discriminators.clear();
         boundary.missing.clear();
         boundary.class = crate::domain::ExposureClass::Exposed;
-        let item = GapItem::from_finding(&boundary, Path::new("/test-root"))?;
+        let item = GapItem::from_finding(&boundary, Path::new("."))?;
         if !item.repair_readiness.ready {
             return Err(format!(
                 "an exposed Rust finding with a populated gap and nothing missing must pass the discriminator gate: {:?}",
@@ -974,8 +1069,8 @@ mod tests {
     fn complete_and_incomplete_evidence_stay_distinct() -> Result<(), String> {
         let mut with_gap = finding()?;
         with_gap.missing = Vec::new();
-        let complete = GapItem::from_finding(&with_gap, Path::new("/test-root"))?;
-        let incomplete = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
+        let complete = GapItem::from_finding(&with_gap, Path::new("."))?;
+        let incomplete = GapItem::from_finding(&finding()?, Path::new("."))?;
         if complete.evidence_bytes == incomplete.evidence_bytes {
             return Err(
                 "missing-evidence and complete-evidence items must not project identically"
@@ -1055,28 +1150,30 @@ mod tests {
     #[test]
     fn gap_projection_renders_every_served_file_root_relative() -> Result<(), String> {
         // #5254 item 6: the observed wire leak was a canonicalized finding
-        // file served verbatim. Every served file — the item, the list
-        // summary, the evidence location, related tests, and the fix site —
-        // renders relative to the analyzed root. Host-native absolute roots
-        // (no filesystem touch) so the test pins the threading on every
-        // host; the verbatim/case spelling matrix lives portably with the
-        // shared renderer in `output::path`.
+        // file served verbatim. Every served file renders relative to the
+        // analyzed root: the item, the list summary, and the evidence
+        // location through the shared finding-location owner (#5996, with
+        // its `./` prefix), related tests and the fix site through the
+        // repository-relative renderer. Host-native absolute roots (no
+        // filesystem touch) so the test pins the threading on every host;
+        // the verbatim/case spelling matrix lives portably with the
+        // renderer in `output::path`.
         let root = std::env::temp_dir().join("ripr-gap-path-root");
         let mut finding = finding()?;
         finding.probe.location.file = root.join("src/lib.rs");
         finding.related_tests[0].file = root.join("tests/checkout.rs");
 
         let item = GapItem::from_finding(&finding, &root)?;
-        assert_eq!(item.file, "src/lib.rs");
+        assert_eq!(item.file, "./src/lib.rs");
         assert_eq!(
             item.list_summary.pointer("/file").and_then(Value::as_str),
-            Some("src/lib.rs")
+            Some("./src/lib.rs")
         );
         assert_eq!(
             item.evidence_core
                 .pointer("/location/file")
                 .and_then(Value::as_str),
-            Some("src/lib.rs")
+            Some("./src/lib.rs")
         );
         assert_eq!(
             item.evidence_core

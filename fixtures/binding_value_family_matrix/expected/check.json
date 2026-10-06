@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:04c35b4b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if body == \"fix\" {"
        },
@@ -165,7 +165,7 @@
         "id": "probe:src_lib.rs:predicate:a54b7c0f",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "open == want"
        },
@@ -268,7 +268,7 @@
         "id": "probe:src_lib.rs:predicate:703872a1",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 17,
         "expression": "size == 3"
        },
@@ -371,7 +371,7 @@
         "id": "probe:src_lib.rs:predicate:04dd15b2",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 22,
         "expression": "next == 4"
        },
@@ -464,7 +464,7 @@
         "id": "probe:src_lib.rs:predicate:3d37b6f6",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "first == 'x'"
        },
@@ -611,7 +611,7 @@
         "id": "probe:src_lib.rs:predicate:33f2d6c2",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 32,
         "expression": "last == 'x'"
        },

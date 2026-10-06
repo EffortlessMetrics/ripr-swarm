@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:9b6a6cdb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_long_expression_display_bound/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 10,
         "expression": "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0"
        },

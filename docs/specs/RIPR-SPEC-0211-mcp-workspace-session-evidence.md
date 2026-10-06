@@ -118,13 +118,16 @@ official SDK transport:
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.
-- Every served file path (list summaries, gap locations, related-test
-  files, fix sites) renders relative to the analyzed workspace root,
-  tolerating producer spelling drift (canonicalized `\\?\` prefixes,
-  mixed separators, Windows case drift); a file under the root never
-  appears as an absolute host path. A file the root does not contain keeps
-  its full stable spelling. Root-relative evidence is what keeps the snapshot identity
-  portable across checkouts (#5254 item 6).
+- Every served file path renders relative to the analyzed workspace
+  root, so a file under the root never appears as an absolute host path
+  and the snapshot identity stays portable across checkouts (#5254
+  item 6). Finding locations (list summaries, gap locations) render
+  through the shared finding-location owner (#5996) with its `./`
+  prefix, matching the check, context, and LSP surfaces; related-test
+  files and fix sites render through the repository-relative renderer,
+  which additionally tolerates producer spelling drift (canonicalized
+  `\\?\` prefixes, mixed separators, Windows case drift). A file the
+  root does not contain keeps its full stable spelling.
 - `ripr_get_gap` and `ripr://gap/{canonical_id}` return one canonical
   item's complete bounded evidence bound to its snapshot identity:
   identity/location, changed behavior (expression, before/after, delta

@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:c80557eb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/assertion_form_parity_err_guard/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },
@@ -147,7 +147,7 @@
         "id": "probe:src_lib.rs:static_unknown:71494b13",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/assertion_form_parity_err_guard/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "amount - 10"
        },
@@ -250,7 +250,7 @@
         "id": "probe:src_lib.rs:static_unknown:77d2f649",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/assertion_form_parity_err_guard/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "amount"
        },

@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:static_unknown:401a7bb9",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/lsp_agent_protocol/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "value + 2"
        },

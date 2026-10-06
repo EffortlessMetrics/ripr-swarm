@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:162493bf",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_path_sibling_oracle_fake_clean/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 10,
         "expression": "return Err(ParseError::TooLong);"
        },
@@ -134,7 +134,7 @@
         "id": "probe:src_lib.rs:return_value:ae6d1b32",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_path_sibling_oracle_fake_clean/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 10,
         "expression": "return Err(ParseError::TooLong);"
        },

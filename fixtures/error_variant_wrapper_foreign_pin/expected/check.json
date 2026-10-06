@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:07741fa8",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/error_variant_wrapper_foreign_pin/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 39,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },
@@ -102,7 +102,7 @@
         "id": "probe:src_lib.rs:error_path:edac60ec",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_wrapper_foreign_pin/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 39,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },

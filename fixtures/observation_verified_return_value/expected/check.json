@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:bc806f88",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/observation_verified_return_value/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "x * SCALE_FACTOR"
        },
@@ -122,7 +122,7 @@
         "id": "probe:src_lib.rs:static_unknown:35a08f71",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/observation_verified_return_value/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "x + 1"
        },

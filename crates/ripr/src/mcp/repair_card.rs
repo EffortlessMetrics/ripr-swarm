@@ -100,16 +100,24 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
 }
 
 /// Changed-file scope for the card inventory, in the inventory's own
-/// spelling. The discovery corpus is workspace-relative (`discover` strips
-/// the root before pushing), and item files are root-relative on the wire
-/// (#5254 item 6), so they pass through unchanged and the changed-file
-/// intersection matches. Joining the root would absolutize them and lose
-/// every changed seam; an out-of-root item keeps its absolute fallback
-/// spelling and simply matches nothing.
+/// spelling. The discovery corpus is bare workspace-relative (`discover`
+/// strips the root before pushing), while item files render through the
+/// shared finding-location owner with its `./` prefix (#5996), so the
+/// prefix is normalized away and the changed-file intersection matches.
+/// Joining the root would absolutize them and lose every changed seam;
+/// an out-of-root item keeps its absolute fallback spelling and simply
+/// matches nothing.
 fn inventory_changed_files(items: &[GapItem]) -> Vec<PathBuf> {
     items
         .iter()
-        .map(|item| PathBuf::from(item.file.as_str()))
+        .map(|item| {
+            PathBuf::from(
+                item.file
+                    .as_str()
+                    .strip_prefix("./")
+                    .unwrap_or(item.file.as_str()),
+            )
+        })
         .collect()
 }
 
@@ -143,12 +151,13 @@ pub(crate) fn bind_snapshot_card_producers(
         // configuration as the snapshot's findings (#6825 review): a
         // configured oracle strength or harness registration must not
         // classify the card's seams differently from the committed items.
-        // Item files are root-relative on the wire (#5254 item 6), which is
-        // exactly the inventory's corpus spelling (`discover` strips the
-        // root): pass them through unchanged so the changed-file scope
-        // matches. Joining the root here would make them absolute and lose
-        // every changed seam. An out-of-root item keeps its absolute
-        // fallback spelling and simply matches nothing.
+        // Item files are root-relative on the wire (#5254 item 6) with the
+        // shared owner's `./` prefix (#5996); the inventory corpus is bare
+        // (`discover` strips the root), so the prefix is normalized away
+        // and the changed-file scope matches. Joining the root here would
+        // make them absolute and lose every changed seam. An out-of-root
+        // item keeps its absolute fallback spelling and simply matches
+        // nothing.
         let changed_files = inventory_changed_files(&snapshot.items);
         let changed_owner_names = snapshot
             .findings
@@ -591,10 +600,11 @@ mod tests {
 
     #[test]
     fn inventory_changed_files_keep_the_relative_wire_spelling() -> Result<(), String> {
-        // The inventory corpus is workspace-relative, so changed scope must
-        // be too: joining the root would absolutize the scope and lose every
-        // changed seam. An in-root item passes through relative; an
-        // out-of-root item keeps its absolute fallback spelling.
+        // The inventory corpus is bare workspace-relative, so changed scope
+        // must be too: joining the root would absolutize the scope and lose
+        // every changed seam. An in-root item normalizes the `./` wire
+        // prefix away; an out-of-root item keeps its absolute fallback
+        // spelling.
         let root = temp_root()?;
         let mut inside = super::super::gaps::test_finding()?;
         inside.probe.location.file = root.join("src/lib.rs");

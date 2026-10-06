@@ -129,6 +129,39 @@ pub(crate) struct Snapshot {
     pub(crate) card_producers: Option<super::repair_card::SnapshotCardProducers>,
     pub(crate) budget: DiagnosticBudget,
     pub(crate) selection: DiagnosticBudgetResult,
+    /// The producer's RIPR-SPEC-0112 working-tree facts bound at commit time
+    /// (#5995): the analyzed committed default-branch diff ran while routed
+    /// source or test files carried uncommitted edits, so those edits are
+    /// outside this snapshot's scope. `uncommitted_edits` includes untracked
+    /// files (the overlay keeps them in its dirty set); `untracked` names the
+    /// subset neither the committed diff nor `--worktree` can analyze
+    /// (#5258), so the served disclosure can name the real remedy. The facts
+    /// ride the snapshot identity: two otherwise identical snapshots with
+    /// different exclusions are different snapshots.
+    pub(crate) scope: ScopeFacts,
+}
+
+/// The scope-relevant working-tree facts one snapshot was analyzed against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeFacts {
+    pub(crate) uncommitted_edits: bool,
+    pub(crate) untracked: Vec<String>,
+}
+
+impl ScopeFacts {
+    fn from_output(output: &crate::app::CheckOutput) -> Self {
+        Self {
+            uncommitted_edits: output.unanalyzed_working_tree,
+            untracked: output.untracked_working_tree_source_paths.clone(),
+        }
+    }
+
+    fn identity_key(&self) -> Value {
+        json!({
+            "uncommitted_edits": self.uncommitted_edits,
+            "untracked": self.untracked,
+        })
+    }
 }
 
 impl Snapshot {
@@ -191,7 +224,8 @@ impl Snapshot {
             })?;
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
-        let snapshot_id = snapshot_identity(&outcome, &items).map_err(|error| {
+        let scope = ScopeFacts::from_output(output);
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
         })?;
         let profile_identity = format!(
@@ -224,6 +258,7 @@ impl Snapshot {
             card_producers: None,
             budget,
             selection,
+            scope,
         })
     }
 
@@ -243,7 +278,11 @@ fn limitation_summary(outcome: &AnalysisOutcome) -> String {
         .join(", ")
 }
 
-fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<String, String> {
+fn snapshot_identity(
+    outcome: &AnalysisOutcome,
+    items: &[GapItem],
+    scope: &ScopeFacts,
+) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -257,6 +296,10 @@ fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<Str
         "outcome_digest": outcome_digest,
         "items": item_ids,
         "evidence": evidence_digests,
+        // The scope facts change what the served documents disclose, so two
+        // otherwise identical snapshots with different exclusions must not
+        // share an identity (#5995 review).
+        "scope": scope.identity_key(),
     });
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -544,6 +587,11 @@ impl WorkspaceSession {
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
+            "scope": self
+                .last_good
+                .as_ref()
+                .and_then(|snapshot| scope_disclosure(snapshot))
+                .unwrap_or(Value::Null),
             "freshness": {
                 "state": freshness_state(self),
                 "note": "the server does not watch the worktree; the snapshot is current as of its last completed ripr_refresh, a later failed attempt leaves it unverified for that attempt, so refresh again after edits",
@@ -607,6 +655,56 @@ impl Drop for InFlightAttempt {
     }
 }
 
+/// The typed scope disclosure for one committed snapshot (#5995), mirroring
+/// the LSP session's limits-note wording family: the refresh analyzes only
+/// the committed default-branch diff, so when routed source or test files
+/// carried uncommitted edits at analysis time (RIPR-SPEC-0112's producer
+/// fact), those edits are outside every served document — a dirty-tree
+/// `no_scope` with zero findings must never read as all-clear. When
+/// untracked files exist, the note never offers bare `--worktree` as the
+/// remedy: they are invisible to both the committed diff and `--worktree`
+/// (#5258), so the disclosure names staging or an explicit diff instead,
+/// the same contract as the human note. `ripr_refresh` takes no diff-source
+/// argument, so there is no in-protocol expansion to promise.
+fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let scope = &snapshot.scope;
+    if !scope.uncommitted_edits {
+        return None;
+    }
+    const NAMED_PATHS: usize = 3;
+    let named = scope
+        .untracked
+        .iter()
+        .take(NAMED_PATHS)
+        .cloned()
+        .collect::<Vec<_>>();
+    let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
+    if scope.untracked.is_empty() {
+        return Some(json!({
+            "analyzed": "committed default-branch diff",
+            "uncommitted_edits": "outside this analysis",
+            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+        }));
+    }
+    let listing = if more > 0 {
+        format!("{} and {more} more", named.join(", "))
+    } else {
+        named.join(", ")
+    };
+    Some(json!({
+        "analyzed": "committed default-branch diff",
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
+        "untracked_edits": {
+            "files": named,
+            "total": scope.untracked.len(),
+            "more": more,
+            "listing_example": listing,
+            "remedy": "stage them (`git add <paths>`, or `git add -N <paths>`) and rerun `ripr check --worktree`, or pass an explicit diff",
+        },
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -630,6 +728,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
                 .unwrap_or(Value::Null),
         },
         "snapshot": snapshot,
+        "scope": session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| scope_disclosure(snapshot))
+            .unwrap_or(Value::Null),
         "last_known_good": session
             .last_good
             .as_ref()
@@ -1336,6 +1439,178 @@ mod tests {
         Ok(())
     }
 
+    /// #5995: the refresh analyzes only the committed default-branch diff.
+    /// On a dirty tracked file it reports `no_scope` with zero findings
+    /// while `ripr check --worktree` and an LSP session both report the
+    /// finding — so the refresh result and the workspace status must carry
+    /// the producer's unanalyzed-working-tree fact as a typed scope
+    /// disclosure naming the `--worktree` route, and must stay silent on a
+    /// clean tracked tree. Without it, `no_scope` reads as all-clear.
+    #[test]
+    fn dirty_tree_refresh_and_status_disclose_the_committed_diff_scope() -> Result<(), String> {
+        let mut dirty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        // The issue's shape verbatim: `no_scope` with every count zero.
+        dirty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        dirty.unanalyzed_working_tree = true;
+        let snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert!(
+            snapshot.scope.uncommitted_edits,
+            "the producer fact must bind onto the snapshot"
+        );
+        let session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+
+        let refresh = refresh_document(&session);
+        if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!(
+                "refresh must disclose the analyzed scope: {refresh}"
+            ));
+        }
+        if refresh
+            .pointer("/scope/uncommitted_edits")
+            .and_then(Value::as_str)
+            != Some("outside this analysis")
+        {
+            return Err(format!(
+                "refresh must disclose the excluded edits: {refresh}"
+            ));
+        }
+        let note = refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("scope disclosure must name the repair route: {refresh}"))?;
+        if !note.contains("--worktree") {
+            return Err(format!(
+                "scope note must name `ripr check --worktree`: {note}"
+            ));
+        }
+
+        let status = session.session_document(&SessionProfile::built_in());
+        if status.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!("status must disclose the analyzed scope: {status}"));
+        }
+        if !status
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .is_some_and(|note| note.contains("--worktree"))
+        {
+            return Err(format!(
+                "status scope note must name the worktree route: {status}"
+            ));
+        }
+
+        // A clean tracked tree carries no exclusion to disclose.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        if !refresh_document(&clean)["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+        if !clean.session_document(&SessionProfile::built_in())["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+
+        // #5995 review: an untracked-only tree must not receive the bare
+        // `--worktree` remedy — untracked files are invisible to it (#5258).
+        // The disclosure names staging or an explicit diff instead.
+        let mut untracked_only = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        untracked_only.analysis_outcome = dirty.analysis_outcome.clone();
+        untracked_only.unanalyzed_working_tree = true;
+        untracked_only.untracked_working_tree_source_paths =
+            vec!["src/new.rs".to_string(), "src/other_new.rs".to_string()];
+        let untracked_snapshot = Snapshot::from_output(&untracked_only, Some("root:sha256:test"))
+            .map_err(|f| f.detail)?;
+        let untracked_session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(untracked_snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+        let untracked_refresh = refresh_document(&untracked_session);
+        let note = untracked_refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("untracked disclosure must carry a note: {untracked_refresh}")
+            })?;
+        if !note.contains("staged and unstaged tracked edits only") {
+            return Err(format!(
+                "an untracked tree must bound the worktree remedy: {note}"
+            ));
+        }
+        if !note.contains("stage them") {
+            return Err(format!(
+                "an untracked tree must name the staging remedy: {note}"
+            ));
+        }
+        let files = untracked_refresh
+            .pointer("/scope/untracked_edits/files")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("untracked disclosure must name the files: {untracked_refresh}")
+            })?;
+        if files.len() != 2 {
+            return Err(format!(
+                "the disclosure must name both untracked files: {files:?}"
+            ));
+        }
+        if untracked_refresh
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(2)
+        {
+            return Err(format!(
+                "untracked disclosure must carry the total: {untracked_refresh}"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// #5995 review: the scope facts change what the served documents
+    /// disclose, so two otherwise identical snapshots with different
+    /// exclusions must not share a snapshot identity.
+    #[test]
+    fn snapshot_identity_distinguishes_excluded_edit_facts() -> Result<(), String> {
+        let no_scope_outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let mut clean = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        clean.analysis_outcome = Some(no_scope_outcome.clone());
+        let mut dirty = clean.clone();
+        dirty.unanalyzed_working_tree = true;
+        let clean_snapshot =
+            Snapshot::from_output(&clean, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let dirty_snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        if clean_snapshot.snapshot_id == dirty_snapshot.snapshot_id {
+            return Err(
+                "two snapshots differing only in the excluded-edit facts must not share an id"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_ignores_the_concrete_root() -> Result<(), String> {
         let first = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
@@ -1423,7 +1698,8 @@ mod tests {
                 item.evidence_sha256 = sha256_hex(&bytes);
                 lengths.push(bytes.len());
             }
-            let original_id = snapshot_identity(&snapshot.outcome, &original_items)?;
+            let original_id =
+                snapshot_identity(&snapshot.outcome, &original_items, &snapshot.scope)?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
             let session = WorkspaceSession {

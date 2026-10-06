@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:9b2a72c1",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/benches_harness_evidence/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount > 100"
        },

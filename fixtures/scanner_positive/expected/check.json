@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:93752988",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/scanner_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 16,
         "expression": "if final_state == \"text\" {"
        },

@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:3ec5d7c6",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/currentness_matrix_reuse/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "margin > 0"
        },

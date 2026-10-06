@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:e4b7f445",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_single_line/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "return Err(ParseError::TooLong(name.len()))"
        },
@@ -158,7 +158,7 @@
         "id": "probe:src_lib.rs:return_value:11e230b4",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_single_line/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "return Err(ParseError::TooLong(name.len()))"
        },

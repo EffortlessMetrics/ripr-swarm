@@ -7,7 +7,7 @@ Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 3 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 3 probe(s), 3 finding(s).
 
-WARNING fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs:3
+WARNING ./src/lib.rs:3
   id: probe:src_lib.rs:call_deletion:289dd551
 
 Changed
@@ -42,7 +42,7 @@ Drill in:
   ripr explain --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
   ripr context --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
 
-WARNING fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs:8
+WARNING ./src/lib.rs:8
   id: probe:src_lib.rs:call_deletion:3cb7de3e
 
 Changed
@@ -77,7 +77,7 @@ Drill in:
   ripr explain --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:3cb7de3e
   ripr context --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:3cb7de3e
 
-WARNING fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs:8
+WARNING ./src/lib.rs:8
   id: probe:src_lib.rs:predicate:f16a58e4
 
 Changed

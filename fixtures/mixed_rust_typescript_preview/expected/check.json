@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:c80557eb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/mixed_rust_typescript_preview/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },

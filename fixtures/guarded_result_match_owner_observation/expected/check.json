@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:d0871089",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_owner_observation/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 46,
         "expression": "Ok(build_response(expected_id, trimmed.trim())?)"
        },
@@ -146,7 +146,7 @@
         "id": "probe:src_lib.rs:return_value:6daabbf3",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_owner_observation/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 46,
         "expression": "Ok(build_response(expected_id, trimmed.trim())?)"
        },

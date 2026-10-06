@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:9ba3fbb0",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_expected_side_trap/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 10,
         "expression": "Kind::Beta =>"
        },
