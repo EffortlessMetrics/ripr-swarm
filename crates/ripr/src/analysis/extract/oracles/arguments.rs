@@ -1,9 +1,19 @@
 use crate::analysis::extract::mask_comments_and_strings;
 
 pub(crate) fn equality_assertion_arguments(line: &str) -> Option<Vec<String>> {
-    ["assert_eq!", "assert_ne!"]
-        .iter()
-        .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
+    [
+        "assert_eq!",
+        "assert_ne!",
+        // The debug variants carry the same asserted relation in the builds
+        // the repair loop runs; the extraction boundary check would
+        // otherwise reject the macro name embedded after `debug_` and a
+        // statically wrong debug assertion would keep its strong credit
+        // (#6701 review).
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+    ]
+    .iter()
+    .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
 }
 
 /// The semantic operands of known assertion macros, with their macro shape
@@ -66,10 +76,9 @@ pub(super) fn is_unguarded_wildcard_assertion(line: &str) -> bool {
         return false;
     };
     let condition = mask_comments_and_strings(&condition);
-    let mut expression = condition.trim();
-    while let Some(inner) = parenthesized_contents(expression) {
-        expression = inner.trim();
-    }
+    let Some(expression) = unwrapped_pure_expression(&condition) else {
+        return false;
+    };
     complete_macro_arguments(expression, "matches!").is_some_and(|arguments| {
         arguments.len() == 2
             && arguments
@@ -90,20 +99,7 @@ fn is_wildcard_pattern(pattern: &str) -> bool {
 fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
-    let open = masked.find(['(', '[', '{'])?;
-    // Standard macro paths may have trivia between their tokens or a leading
-    // global-path separator. Only the supported complete path is accepted.
-    let path = masked[..open]
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect::<String>();
-    let matches_path = path == macro_name
-        || ["std::", "core::", "::std::", "::core::"]
-            .into_iter()
-            .any(|prefix| path.strip_prefix(prefix) == Some(macro_name));
-    if !matches_path {
-        return None;
-    }
+    let open = macro_argument_open(text, macro_name)?;
     let contents = delimited_contents_at(text, open)?;
     let after = masked.get(open + contents.len() + 2..)?;
     if !matches!(after.trim(), "" | ";") {
@@ -120,6 +116,159 @@ fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>>
         arguments.pop();
     }
     Some(arguments)
+}
+
+fn macro_argument_open(text: &str, macro_name: &str) -> Option<usize> {
+    let masked = mask_comments_and_strings(text);
+    let open = masked.find(['(', '[', '{'])?;
+    // Standard macro paths may have trivia between their tokens or a leading
+    // global-path separator. Only the supported complete path is accepted.
+    let path = masked[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let matches_path = path == macro_name
+        || ["std::", "core::", "::std::", "::core::"]
+            .into_iter()
+            .any(|prefix| path.strip_prefix(prefix) == Some(macro_name));
+    if !matches_path {
+        return None;
+    }
+    Some(open)
+}
+
+fn matcher_computation_expression(statement: &str) -> &str {
+    let statement = statement.trim().trim_end_matches(';').trim();
+    let masked = mask_comments_and_strings(statement);
+    let mut depth = 0usize;
+    let assignment = masked.char_indices().find_map(|(index, character)| {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0
+                && !masked[..index].ends_with(['=', '!', '<', '>'])
+                && !masked[index + 1..].starts_with(['=', '>']) =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+        None
+    });
+    match assignment {
+        Some(index) if masked[..index].trim_start().starts_with("let ") => {
+            statement[index + 1..].trim()
+        }
+        Some(index)
+            if masked[..index].chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || character.is_whitespace()
+                    || matches!(character, '_' | ':' | '.')
+            }) =>
+        {
+            statement[index + 1..].trim()
+        }
+        _ => statement,
+    }
+}
+
+/// Collect a discarded computation's continuation even when its opening line
+/// contains no assertion. This is statement ownership, not oracle admission.
+pub(super) fn starts_discarded_matcher_computation(statement: &str) -> bool {
+    let mut expression = matcher_computation_expression(statement);
+    for _ in 0..16 {
+        let Some(inner) = expression.strip_prefix(['(', '{']) else {
+            return macro_argument_open(expression, "matches!").is_some();
+        };
+        expression = inner.trim_start();
+        if expression.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// A complete standalone, let-bound or assigned matcher computes a boolean without
+/// asserting its pattern. Its scrutinee may still contain an actual observer.
+pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
+    let original = statement;
+    let expression = unwrapped_pure_expression(matcher_computation_expression(statement))?;
+    let scrutinee = complete_macro_arguments(expression, "matches!")?
+        .into_iter()
+        .next()?;
+    let open = mask_comments_and_strings(expression).find(['(', '[', '{'])?;
+    // `expression` is a borrowed source slice. An earlier comment may repeat
+    // its complete text, so substring search cannot establish its position.
+    let expression_start = expression
+        .as_ptr()
+        .addr()
+        .checked_sub(original.as_ptr().addr())?;
+    // The first comma-delimited operand is trimmed, not comment-projected.
+    // Its start therefore follows only this opening delimiter's whitespace.
+    let after_open = &expression[open + 1..];
+    let scrutinee_start =
+        expression_start + open + 1 + after_open.len() - after_open.trim_start().len();
+    let preceding_lines = original[..scrutinee_start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    Some((scrutinee, preceding_lines))
+}
+
+/// Peel only complete parenthesis/block groups without recursion. Each step
+/// removes at least two source bytes, so the walk is bounded by the input.
+/// Macro recognition on
+/// the returned operand still requires the whole inner expression, so a block
+/// with preceding statements cannot become a wildcard pin or discarded tail.
+fn unwrapped_pure_expression(text: &str) -> Option<&str> {
+    let mut expression = text.trim();
+    loop {
+        if let Some(inner) = parenthesized_contents(expression) {
+            expression = inner.trim();
+        } else if expression.starts_with('{') {
+            let body = delimited_contents_at(expression, 0)?;
+            if !mask_comments_and_strings(&expression[body.len() + 2..])
+                .trim()
+                .is_empty()
+            {
+                return None;
+            }
+            // Keep a borrowed source slice: an owned projection cannot bind
+            // the actual observer's byte offset or line padding below.
+            expression = expression[1..body.len() + 1].trim();
+        } else {
+            return Some(expression);
+        }
+    }
+}
+
+/// The contents of one complete executable block, keeping source line padding.
+pub(super) fn complete_block_body(text: &str) -> Option<(String, usize, usize)> {
+    let mut expression = text.trim();
+    while let Some(inner) = parenthesized_contents(expression) {
+        expression = inner.trim();
+    }
+    if !expression.starts_with('{') {
+        return None;
+    }
+    let body = delimited_contents_at(expression, 0)?;
+    if !expression[body.len() + 2..].trim().is_empty() {
+        return None;
+    }
+    let body_start = expression
+        .as_ptr()
+        .addr()
+        .checked_sub(text.as_ptr().addr())?
+        + 1;
+    let before = text[..body_start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    let after = text[body_start + body.len()..]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    Some((body, before, after))
 }
 
 /// The new scalar predicate credit requires an entire outer assertion. The
@@ -178,7 +327,7 @@ fn macro_invocation_arguments_at(
     })
 }
 
-fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
+pub(super) fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
     let masked = mask_comments_and_strings(text);
     let open = masked.as_bytes().get(open_index).copied()?;
     if !matches!(open, b'(' | b'[' | b'{') {

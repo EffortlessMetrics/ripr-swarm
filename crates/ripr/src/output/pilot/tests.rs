@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
-use crate::output::pilot::ranking::top_actionable_seams;
+use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limitations};
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
@@ -84,6 +84,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         artifacts,
         python_first_use: None,
         language_routes: None,
+        current_change: None,
         seam_limit: None,
     }
 }
@@ -162,6 +163,7 @@ fn pilot_context_with_python<'a>(
         artifacts,
         python_first_use: Some(python_first_use),
         language_routes: None,
+        current_change: None,
         seam_limit: None,
     }
 }
@@ -210,7 +212,7 @@ fn pilot_ranking_prefers_actionable_class_order_before_tie_breakers() {
     );
 
     let entries = [ungripped, weak];
-    let ranked = top_actionable_seams(&entries, 5);
+    let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(ranked[0].class, SeamGripClass::WeaklyGripped);
     assert_eq!(ranked[1].class, SeamGripClass::Ungripped);
 }
@@ -247,7 +249,7 @@ fn pilot_ranking_uses_evidence_tie_breakers_then_stable_location() {
     );
 
     let entries = [stable_second, stable_first, no_missing, with_missing];
-    let ranked = top_actionable_seams(&entries, 5);
+    let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(display_path(ranked[0].seam.file()), "src/b.rs");
     assert_eq!(display_path(ranked[1].seam.file()), "src/a.rs");
     assert_eq!(display_path(ranked[2].seam.file()), "src/c.rs");
@@ -298,7 +300,7 @@ fn pilot_ranking_takes_one_seam_per_owner_before_a_second() {
     ];
 
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 3)),
+        ranked_places(&top_actionable_seams(&entries, 3, None)),
         [
             ("a::clone".to_string(), 10),
             ("a::as_str".to_string(), 40),
@@ -307,7 +309,7 @@ fn pilot_ranking_takes_one_seam_per_owner_before_a_second() {
     );
     // Past one round, the owner's remaining seams follow in location order.
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 5))[3..],
+        ranked_places(&top_actionable_seams(&entries, 5, None))[3..],
         [("a::clone".to_string(), 11), ("a::clone".to_string(), 12)]
     );
 }
@@ -322,7 +324,7 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "fmt", 1),
     ];
 
-    let ranked = top_actionable_seams(&entries, 4);
+    let ranked = top_actionable_seams(&entries, 4, None);
     assert_eq!(
         ranked
             .iter()
@@ -340,16 +342,26 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
 #[test]
 fn pilot_ranking_counts_owner_rounds_across_classes() {
     // A function already listed for a weak seam does not get a fresh first
-    // pick among the opaque ones: the other function's two opaque seams lead.
+    // pick among the unrevealed ones: the other function's two lead.
     let entries = [
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1),
-        classified_in_owner(SeamGripClass::Opaque, "src/z.rs", "z::fmt", 9),
-        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 1),
-        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::parse", 2),
+        classified_in_owner(SeamGripClass::ReachableUnrevealed, "src/z.rs", "z::fmt", 9),
+        classified_in_owner(
+            SeamGripClass::ReachableUnrevealed,
+            "src/b.rs",
+            "b::parse",
+            1,
+        ),
+        classified_in_owner(
+            SeamGripClass::ReachableUnrevealed,
+            "src/b.rs",
+            "b::parse",
+            2,
+        ),
     ];
 
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 4)),
+        ranked_places(&top_actionable_seams(&entries, 4, None)),
         [
             ("z::fmt".to_string(), 1),
             ("b::parse".to_string(), 1),
@@ -489,10 +501,188 @@ fn pilot_ranking_excludes_solved_governed_classes() {
         Vec::new(),
     );
 
+    // #5497: opaque is a static limitation, so it is withheld rather than
+    // ranked; the solved and governed classes are neither.
     let entries = [strong, intentional, suppressed, opaque];
-    let ranked = top_actionable_seams(&entries, 5);
-    assert_eq!(ranked.len(), 1);
-    assert_eq!(ranked[0].class, SeamGripClass::Opaque);
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert!(ranked.is_empty());
+    assert_eq!(withheld_static_limitations(&entries), 1);
+}
+
+#[test]
+fn pilot_ranking_admits_gap_classes_only() {
+    // #5497: one seam of every class, each in its own function. Only the
+    // gap classes rank; the classes the classifier reached by stopping on a
+    // stage it could not establish are withheld and counted, and the solved
+    // and governed classes are neither ranked nor withheld.
+    let entries = SeamGripClass::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(idx, class)| classified_in_owner(class, "src/lib.rs", &format!("f{idx}"), idx + 1))
+        .collect::<Vec<_>>();
+
+    let ranked = top_actionable_seams(&entries, entries.len(), None)
+        .iter()
+        .map(|entry| entry.class)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ranked,
+        [
+            SeamGripClass::WeaklyGripped,
+            SeamGripClass::Ungripped,
+            SeamGripClass::ReachableUnrevealed,
+        ]
+    );
+    assert_eq!(withheld_static_limitations(&entries), 5);
+    for class in SeamGripClass::ALL {
+        assert_eq!(
+            entries
+                .iter()
+                .any(|entry| entry.class == class && ranked.contains(&entry.class)),
+            matches!(
+                class,
+                SeamGripClass::WeaklyGripped
+                    | SeamGripClass::Ungripped
+                    | SeamGripClass::ReachableUnrevealed
+            ),
+            "{class:?}"
+        );
+        assert!(
+            !(ranked.contains(&class) && class.is_static_limitation()),
+            "{class:?}"
+        );
+    }
+}
+
+#[test]
+fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
+    // #5497 mixed queue: one ungripped seam and three static limitations.
+    let entries = [
+        classified_in_owner(SeamGripClass::ActivationUnknown, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/a.rs", "a::f", 2),
+        classified_in_owner(SeamGripClass::PropagationUnknown, "src/b.rs", "b::g", 3),
+        classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 4),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+
+    let json = render_pilot_summary_json(&entries, context);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    assert_eq!(value["actionable_seams_total"], 1, "{json}");
+    assert_eq!(value["withheld_static_limitations_total"], 3, "{json}");
+    let top = value["top_actionable_seams"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(top.len(), 1, "{json}");
+    assert_eq!(top[0]["grip_class"], "ungripped", "{json}");
+
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains(
+            "- Withheld: 3 seams (static evidence is unknown or opaque, so they are static limitations, not gaps; listed in `target/ripr/pilot/repo-exposure.md`)\n"
+        ),
+        "{md}"
+    );
+    assert!(md.contains("src/c.rs:4"), "{md}");
+    assert!(!md.contains("src/a.rs:1"), "{md}");
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains(
+            "  withheld: 3 seams (static evidence is unknown or opaque, so they are static limitations, not gaps)\n"
+        ),
+        "{terminal}"
+    );
+    assert!(terminal.contains("src/c.rs:4"), "{terminal}");
+}
+
+#[test]
+fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
+    // #5497: nothing ranks, but the withheld seams are named, not dropped.
+    let entries = [
+        classified_in_owner(SeamGripClass::ActivationUnknown, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::Opaque, "src/b.rs", "b::g", 2),
+    ];
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+
+    let json = render_pilot_summary_json(&entries, context);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    assert_eq!(value["actionable_seams_total"], 0, "{json}");
+    assert_eq!(value["withheld_static_limitations_total"], 2, "{json}");
+    assert_eq!(
+        value["top_actionable_seams"],
+        serde_json::json!([]),
+        "{json}"
+    );
+    assert!(value["next"]["repair_command"].is_null(), "{json}");
+    // No gap to snapshot or measure, so the JSON offers no follow-up pair.
+    assert!(value["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(value["next"]["outcome_command"].is_null(), "{json}");
+
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(
+        md.contains("None ranked: 2 seams were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result. Inspect them in `target/ripr/pilot/repo-exposure.md`.\n"),
+        "{md}"
+    );
+    assert!(!md.contains("No actionable seam was ranked"), "{md}");
+    assert!(!md.contains("After adding one focused test"), "{md}");
+    assert!(md.contains("No gap to test:"), "{md}");
+
+    let terminal = render_pilot_terminal(&entries, context);
+    assert!(
+        terminal.contains("  none ranked: 2 seams were withheld"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("Run after adding the focused test"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("No gap to test:"), "{terminal}");
+
+    // With nothing withheld, the empty ranking keeps its old wording.
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("No actionable seam was ranked by the default pilot policy."),
+        "{md}"
+    );
+    assert!(!md.contains("Withheld"), "{md}");
+
+    // A seam limit cut seams pilot never classified: they may hold gaps, so
+    // the withheld count is a lower bound and "No gap to test" would claim an
+    // absence the run did not establish.
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let mut limited = pilot_context(&artifacts);
+    limited.seam_limit = Some(&limit);
+    let expected_next = "No gap ranked among the 2 seams pilot analyzed, but the seam limit left 7 of 9 seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot.";
+    let md = render_pilot_summary_md(&entries, limited);
+    assert!(
+        md.contains("None ranked: at least 2 seams were withheld"),
+        "{md}"
+    );
+    assert!(md.contains("- Withheld: at least 2 seams ("), "{md}");
+    assert!(md.contains(expected_next), "{md}");
+    assert!(!md.contains("No gap to test:"), "{md}");
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains("  seam limit: ranked the first 2 of 9 seams\n"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("  withheld: at least 2 seams ("),
+        "{terminal}"
+    );
+    assert!(terminal.contains(expected_next), "{terminal}");
+    assert!(!terminal.contains("No gap to test:"), "{terminal}");
 }
 
 #[test]
@@ -520,6 +710,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
+        current_change: None,
         seam_limit: None,
     };
 
@@ -527,7 +718,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         &[entry],
         context,
     ));
-    assert!(json.contains(r#""schema_version": "0.2""#));
+    assert!(json.contains(r#""schema_version": "0.3""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
@@ -741,11 +932,12 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         artifacts: &artifacts,
         python_first_use: None,
         language_routes: None,
+        current_change: None,
         seam_limit: None,
     };
 
     let json = render_pilot_timeout_summary_json(context);
-    assert!(json.contains(r#""schema_version": "0.2""#));
+    assert!(json.contains(r#""schema_version": "0.3""#));
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
@@ -776,6 +968,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         artifacts,
         python_first_use: None,
         language_routes: None,
+        current_change: None,
         seam_limit: None,
     }
 }
@@ -1786,5 +1979,337 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
         md.contains("```bash\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\nripr receipt write --gap g --status not_run\n```"),
         "{md}"
     );
+    Ok(())
+}
+
+/// A `-U0` unified diff that changes `line` of `file`, as the default
+/// `ripr check` diff loader produces it.
+fn one_line_diff(file: &str, line: usize) -> String {
+    format!(
+        "diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -{line} +{line} @@\n-    amount > discount_threshold\n+    amount >= discount_threshold\n"
+    )
+}
+
+fn changed(file: &str, line: usize) -> PilotCurrentChange {
+    PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &one_line_diff(file, line),
+    )
+}
+
+#[test]
+fn seam_budget_keeps_only_actionable_changed_seams() {
+    let change = changed("src/a.rs", 10);
+    let changed_actionable =
+        classified_with(SeamGripClass::WeaklyGripped, "src/a.rs", 10, vec![], vec![]);
+    let changed_solved = classified_with(
+        SeamGripClass::StronglyGripped,
+        "src/a.rs",
+        10,
+        vec![],
+        vec![],
+    );
+    let untouched_actionable =
+        classified_with(SeamGripClass::WeaklyGripped, "src/b.rs", 10, vec![], vec![]);
+    assert!(change.touches(&changed_solved));
+    assert!(change.keeps_past_budget(&changed_actionable));
+    // A solved changed seam must not take a budget slot from an actionable
+    // seam: with budget 1 it would leave pilot nothing to recommend.
+    assert!(!change.keeps_past_budget(&changed_solved));
+    assert!(!change.keeps_past_budget(&untouched_actionable));
+}
+
+#[test]
+fn pilot_ranking_puts_seams_in_the_current_change_first() {
+    // The untouched seam is the better class (weak beats ungripped), so the
+    // repo-wide order puts it first.
+    let untouched = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let touched = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        20,
+        Vec::new(),
+        Vec::new(),
+    );
+    let touched_weaker = classified_with(
+        SeamGripClass::ReachableUnrevealed,
+        "src/b.rs",
+        21,
+        Vec::new(),
+        Vec::new(),
+    );
+    let entries = [untouched, touched_weaker, touched];
+    let order = |ranked: Vec<&ClassifiedSeam>| {
+        ranked
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{}:{}",
+                    display_path(entry.seam.file()),
+                    entry.seam.display_line()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // A diff touching src/b.rs lines 20-21 puts both touched seams first and
+    // keeps the existing class order inside that group.
+    let diff = format!(
+        "{}@@ -21 +21 @@\n-    a\n+    b\n",
+        one_line_diff("src/b.rs", 20)
+    );
+    let change =
+        PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff);
+    assert_eq!(
+        order(top_actionable_seams(&entries, 5, Some(&change))),
+        ["src/b.rs:20", "src/b.rs:21", "src/a.rs:10"]
+    );
+
+    // A change elsewhere, no change, an unavailable diff and no change data
+    // all keep the repo-wide order.
+    let repo_wide = ["src/a.rs:10", "src/b.rs:20", "src/b.rs:21"];
+    for change in [
+        Some(changed("src/other.rs", 20)),
+        Some(PilotCurrentChange::from_diff_text(
+            Path::new("."),
+            Some("origin/main".to_string()),
+            "",
+        )),
+        Some(PilotCurrentChange::from_diff_load(
+            Path::new("."),
+            Err("not a Git work tree"),
+        )),
+        None,
+    ] {
+        assert_eq!(
+            order(top_actionable_seams(&entries, 5, change.as_ref())),
+            repo_wide,
+            "{change:?}"
+        );
+    }
+}
+
+#[test]
+fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
+    let multi_line = ClassifiedSeam {
+        seam: seam("src/b.rs", 20, "amount\n        >= discount_threshold"),
+        ..classified_with(
+            SeamGripClass::Ungripped,
+            "src/b.rs",
+            20,
+            Vec::new(),
+            Vec::new(),
+        )
+    };
+    // The seam's expression spans lines 20-21; a change on 21 touches it,
+    // one on 22 or 19 does not.
+    assert!(changed("src/b.rs", 21).touches(&multi_line));
+    assert!(!changed("src/b.rs", 22).touches(&multi_line));
+    assert!(!changed("src/b.rs", 19).touches(&multi_line));
+    // A pure deletion anchors at the new-side position it was removed from.
+    let deletion = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        None,
+        "diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -30 +29,0 @@\n-    removed();\n",
+    );
+    let at_29 = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        29,
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(deletion.touches(&at_29));
+    // An absolute root is stripped from seam paths before matching.
+    let absolute = PilotCurrentChange::from_diff_text(
+        Path::new("/repo"),
+        None,
+        &one_line_diff("src/b.rs", 20),
+    );
+    let absolute_seam = classified_with(
+        SeamGripClass::Ungripped,
+        "/repo/src/b.rs",
+        20,
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(absolute.touches(&absolute_seam));
+    assert_eq!(absolute.state(), "changed");
+}
+
+#[test]
+fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
+-> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let entries = [classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    )];
+    let render = |change: Option<&PilotCurrentChange>| -> Result<_, String> {
+        let context = PilotSummaryContext {
+            current_change: change,
+            ..pilot_context(&artifacts)
+        };
+        let json = render_pilot_summary_json(&entries, context);
+        let parsed: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+        Ok((
+            render_pilot_terminal(&entries, context),
+            render_pilot_summary_md(&entries, context),
+            parsed["current_change"].clone(),
+        ))
+    };
+
+    // The change touches the top seam.
+    let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
+    assert!(
+        terminal.contains(
+            "Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
+        ),
+        "{terminal}"
+    );
+    assert!(
+        md.contains("- Current change: part of it (this seam is on a line changed since `origin/main`)\n- Inspected seam: "),
+        "{md}"
+    );
+    assert!(
+        md.contains("src/pricing.rs:88 `predicate_boundary` (in your current change)"),
+        "{md}"
+    );
+    assert!(!terminal.contains("not part of it"), "{terminal}");
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "state": "changed",
+            "base": "origin/main",
+            "reason": null,
+            "actionable_seams_in_change": 1,
+            "top_recommendation_in_change": true
+        })
+    );
+
+    // The change exists but no ranked seam is on it.
+    let (terminal, md, json) = render(Some(&changed("src/other.rs", 3)))?;
+    // The named root is bound like every other pilot command, so it pastes
+    // from any directory.
+    let bound = crate::agent::loop_commands::shell_path(
+        &crate::agent::loop_commands::bound_root_path(Path::new(".")),
+    );
+    assert!(
+        terminal.contains(&format!(
+            "  current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since origin/main. For the change itself, run: ripr check --root {bound}\n"
+        )),
+        "{terminal}"
+    );
+    assert!(
+        md.contains(&format!(
+            "- Current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since `origin/main`. For the change itself, run `ripr check --root {bound}`."
+        )),
+        "{md}"
+    );
+    assert!(!md.contains("(in your current change)"), "{md}");
+    assert_eq!(json["state"], "changed");
+    assert_eq!(json["actionable_seams_in_change"], 0);
+    assert_eq!(json["top_recommendation_in_change"], false);
+
+    // An uncommitted change is invisible to plain `ripr check`, which reads
+    // committed history, so the command pilot names selects the working tree.
+    let uncommitted = changed("src/other.rs", 3).with_working_tree(true);
+    let (worktree_terminal, worktree_md, _) = render(Some(&uncommitted))?;
+    assert!(
+        worktree_terminal.contains(&format!(
+            "For the change itself, run: ripr check --root {bound} --worktree\n"
+        )),
+        "{worktree_terminal}"
+    );
+    assert!(
+        worktree_md.contains(&format!(
+            "For the change itself, run `ripr check --root {bound} --worktree`."
+        )),
+        "{worktree_md}"
+    );
+
+    // The Inspected block names the change-first scope when there is a change.
+    assert!(
+        terminal.contains(
+            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n\n"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        md.contains(
+            "- Scope: change-first (Rust seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "{md}"
+    );
+
+    // No change or an unavailable diff: the human output is what pilot printed
+    // before current-change detection existed plus one scope line in the
+    // Inspected block, and the JSON keeps an unavailable diff (with its
+    // reason) distinct from no change. No change data adds no scope line.
+    let (baseline_terminal, baseline_md, baseline_json) = render(None)?;
+    assert_eq!(baseline_json, serde_json::Value::Null);
+    assert!(
+        !baseline_terminal.contains("current change") && !baseline_terminal.contains("scope:"),
+        "{baseline_terminal}"
+    );
+    assert!(
+        !baseline_md.contains("Current change") && !baseline_md.contains("- Scope:"),
+        "{baseline_md}"
+    );
+    for (change, state, base, reason, scope) in [
+        (
+            PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), ""),
+            "no_change",
+            serde_json::json!("origin/main"),
+            serde_json::Value::Null,
+            "whole repository",
+        ),
+        (
+            PilotCurrentChange::from_diff_load(Path::new("."), Err("not a Git work tree")),
+            "unavailable",
+            serde_json::Value::Null,
+            serde_json::json!("not a Git work tree"),
+            "whole repository (current change unavailable: not a Git work tree)",
+        ),
+    ] {
+        let (terminal, md, json) = render(Some(&change))?;
+        assert_eq!(
+            terminal,
+            baseline_terminal.replacen(
+                "  timeout: 30000 ms\n",
+                &format!("  timeout: 30000 ms\n  scope: {scope}\n"),
+                1
+            )
+        );
+        assert_eq!(
+            md,
+            baseline_md.replacen(
+                "- Config: loaded `ripr.toml`\n",
+                &format!("- Config: loaded `ripr.toml`\n- Scope: {scope}\n"),
+                1
+            )
+        );
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "state": state,
+                "base": base,
+                "reason": reason,
+                "actionable_seams_in_change": null,
+                "top_recommendation_in_change": null
+            })
+        );
+    }
     Ok(())
 }
