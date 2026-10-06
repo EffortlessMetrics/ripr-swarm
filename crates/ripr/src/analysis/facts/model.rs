@@ -2559,7 +2559,7 @@ fn checks_helper() {
                     path.clone(),
                     FileFacts {
                         path: path.clone(),
-                        source: (*source).to_string(),
+                        source: (*source).into(),
                         ..FileFacts::default()
                     },
                 )
