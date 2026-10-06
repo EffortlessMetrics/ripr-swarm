@@ -49,7 +49,8 @@ developer who disagreed had to re-derive the analysis.
   `assertion_not_credited` and the name-only `no_call_path` while matching
   assertions; these are facts about the test and can appear under any class.
   The finding builder sets `no_call_path` for `no_static_path`, and
-  `weak_assertion`, `missing_input` (predicate boundary facts only),
+  `weak_assertion`, `missing_input` (predicate boundary facts and
+  RIPR-SPEC-0229 unselected-arm facts),
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
   `exposed` findings and the unknown classes get no class-level miss.
@@ -76,10 +77,11 @@ developer who disagreed had to re-derive the analysis.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
-  documents carry `miss` and `why`; LSP hover prints it in the same row split
-  as human-full (a matched row keeps its oracle strength and kind, only an
-  unmatched row uses `<label>: ...; checked ...`, and a row with no recorded
-  oracle shows only the reason), and diagnostics add up to three
+  documents carry `miss` and `why`; LSP hover uses human-full's label and
+  reason with its own row shapes (a matched row keeps its oracle strength and
+  kind, only an unmatched row uses `<label>: ...; checked ...`, and a row with
+  no recorded oracle shows only the reason, where human-full still prints its
+  `uses none unknown oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
@@ -133,6 +135,16 @@ developer who disagreed had to re-derive the analysis.
   a direct, reachable, strong row without sink alignment is unconfirmed. These
   controls consume frozen packets (#5510); whether the live perl-lsp emitter
   produces complete, unblocked packets is tracked by #3216 and #3223.
+- `crates/ripr/src/analysis/language/perl/tests.rs` (#5510 section) — the
+  packet-backed matrix: advisory, deferred, weak, missing and limited rows keep
+  no miss; the reason follows relation, test and oracle IDs under reordered
+  packet arrays; and the rule writes no field but `miss`.
+- `crates/ripr/src/output/related_test_miss.rs::tests`,
+  `crates/ripr/src/output/human.rs::tests`, `crates/ripr/src/lsp/tests.rs`,
+  `crates/ripr/src/mcp/gaps.rs::tests` — the same packet-backed row, token and
+  shared sentence in check JSON, the context packet, human-full, `ripr
+  explain`, the human digest, LSP hover, related information and diagnostic
+  data, and MCP gap evidence; no projected decision reads `miss`.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.

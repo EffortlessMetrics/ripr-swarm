@@ -190,7 +190,7 @@ impl LanguageAdapter for PerlAdapter {
         &self,
         options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
-        _changed_files: &[ChangedFile],
+        changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
         // Read the packet from the configured path. When absent, return empty
         // (the pipeline's non-abort contract records this as `unavailable`).
@@ -207,7 +207,9 @@ impl LanguageAdapter for PerlAdapter {
         let packet = self.consume_fact_packet(&packet_text, options)?;
 
         // C2: convert the packet into Findings.
-        let findings = packet_to_findings(&packet);
+        let findings = packet_to_findings_with_currentness(&packet, |file, change| {
+            perl_change_currentness(&options.root, changed_files, file, change)
+        });
         let changed_files = packet
             .changes
             .iter()
@@ -371,6 +373,70 @@ fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::Or
 }
 
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
+    packet_to_findings_with_currentness(packet, |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    })
+}
+
+/// #6586: a Perl change is candidate-current only when the consumer observed
+/// it: the file is on disk under the analysis root after resolving symlinks
+/// (so ingestion verified its digest against the packet) and the diff adds a
+/// line inside the change's range whose text matches the source at that line.
+/// Anything else, including fixture-only packets, stale diffs and changes the
+/// diff does not touch, stays the explicit unknown.
+fn perl_change_currentness(
+    root: &std::path::Path,
+    changed_files: &[ChangedFile],
+    file: &FileFact,
+    change: &ChangeFact,
+) -> crate::domain::SourceCurrentness {
+    use crate::domain::SourceCurrentness;
+    // Resolve symlinks before trusting the on-disk source: a packet path whose
+    // directory is a symlink out of the root is not a source ripr observed
+    // under the analysis root.
+    let (Ok(canonical_root), Ok(source)) =
+        (root.canonicalize(), root.join(&file.path).canonicalize())
+    else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    if !source.starts_with(&canonical_root) || !source.is_file() {
+        return SourceCurrentness::UnresolvedSubject;
+    }
+    // The diff's added line must also exist in the digest-verified source at
+    // that coordinate with the same text, so a stale or foreign diff cannot
+    // promote a finding to a candidate edit target.
+    let Ok(text) = std::fs::read_to_string(&source) else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    let source_lines = text.lines().collect::<Vec<_>>();
+    let source_line = |line: usize| {
+        let text = source_lines.get(line.checked_sub(1)?)?;
+        Some(if line == 1 {
+            text.trim_start_matches('\u{feff}')
+        } else {
+            text
+        })
+    };
+    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
+    let added_in_range = changed_files
+        .iter()
+        .filter(|changed| changed.path == std::path::Path::new(&file.path))
+        .flat_map(|changed| &changed.added_lines)
+        .any(|added| {
+            lines.contains(&added.line)
+                && source_line(added.line) == Some(added.text.trim_end_matches('\r'))
+        });
+    if added_in_range {
+        SourceCurrentness::CandidateCurrent
+    } else {
+        SourceCurrentness::UnresolvedSubject
+    }
+}
+
+fn packet_to_findings_with_currentness(
+    packet: &PerlFactPacket,
+    currentness: impl Fn(&FileFact, &ChangeFact) -> crate::domain::SourceCurrentness,
+) -> Vec<crate::domain::Finding> {
     use crate::domain::{
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
         FindingCanonicalGap, LanguageId as DomainLanguageId, LanguageStatus,
@@ -688,11 +754,22 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 propagate: unknown,
                 reveal: RevealEvidence {
                     observe: reach,
-                    discriminate: StageEvidence::new(
-                        StageState::Weak,
-                        RiprConfidence::Medium,
-                        "Missing discriminator from packet",
-                    ),
+                    // #6584: an exposed finding was credited by a sink-aligned
+                    // strong exact oracle, which is the discriminator; saying
+                    // it is missing contradicts the class.
+                    discriminate: if is_already_observed {
+                        StageEvidence::new(
+                            StageState::Yes,
+                            RiprConfidence::Medium,
+                            "Sink-aligned strong exact oracle from packet",
+                        )
+                    } else {
+                        StageEvidence::new(
+                            StageState::Weak,
+                            RiprConfidence::Medium,
+                            "Missing discriminator from packet",
+                        )
+                    },
                 },
             },
             confidence: 0.5,
@@ -743,10 +820,9 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            // Source currentness is resolved by the producer that observed the diff
-            // evidence; this constructor has none, so the disposition stays the
-            // explicit unknown (#3280).
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            // #6586: resolved by the caller from the observed diff; without one
+            // the disposition stays the explicit unknown (#3280).
+            source_currentness: currentness(file, change),
         });
     }
 
@@ -1191,9 +1267,15 @@ impl PerlFactPacket {
             if !on_disk.is_file() {
                 continue;
             }
-            let Ok(digest) = hex_sha256_file(&on_disk) else {
-                continue;
-            };
+            // A source that exists but cannot be read rejects the packet:
+            // currentness treats an on-disk source as digest-verified (#6586),
+            // so an unverified digest must not pass silently.
+            let digest = hex_sha256_file(&on_disk).map_err(|error| {
+                format!(
+                    "ingestion: cannot read file `{}` (`{}`) to verify its digest: {error}",
+                    file.file_id, file.path
+                )
+            })?;
             let recomputed_digest = format!("sha256:{digest}");
             if file.digest != recomputed_digest {
                 return Err(format!(
@@ -3440,3 +3522,7 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests;
+/// Packet-backed findings the output, LSP and MCP projection tests share
+/// (#5510).
+#[cfg(test)]
+pub(crate) use tests::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};

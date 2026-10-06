@@ -1034,6 +1034,304 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     Ok(())
 }
 
+/// #5268 residual e2e, issue scenario 3: an exposed-with-discriminator Rust
+/// fixture — the boundary change is pinned by an existing exact assertion —
+/// must reach the repair transaction over MCP. `ripr_get_gap` names the
+/// producer's canonical gap (`causal_attribution`, language `rust`) with
+/// nothing missing in `discriminator_availability`, `ripr_prepare_repair`
+/// binds a session attempt, and the attempt/receipt reads replay it. The
+/// sibling B2 journey fixture (boundary NOT pinned) must still refuse with
+/// the producer-named `missing_discriminator`: populating the canonical gap
+/// must not weaken the typed refusal.
+#[test]
+fn b4_mcp_rust_canonical_gap_reaches_the_repair_transaction() -> Result<(), String> {
+    // Inline fixture (the manifest pins the B2 input/ tree by hash, so this
+    // scenario cannot live there): same crate shape, plus the equality
+    // boundary pinned by an existing test. main holds `>=`, journey narrows
+    // to `>`; `discounted_total(100, 100) == 90` discriminates the change.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-agentic-bench-mcp-b4-{}-{stamp}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use mcp_journey_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn exact_boundary_gets_the_discount() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])
+        .map_err(|error| format!("fixture git init: {error}"))?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    commit_fixture(&root, "open boundary").map_err(|error| format!("base commit: {error}"))?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])
+        .map_err(|error| format!("fixture git checkout: {error}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount > discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "closed boundary").map_err(|error| format!("journey commit: {error}"))?;
+    let fixture = Fixture { root };
+    let tree_before = snapshot_tree(&fixture.root)?;
+    let mut session = McpSession::spawn(&fixture.root)?;
+    session.initialize()?;
+
+    let tools = session.list_tools("b4-tools")?;
+    let refresh_tool = tool_named(&tools, "ripr_refresh")?;
+    let list_tool = tool_named(&tools, "ripr_list_gaps")?;
+    let gap_tool = tool_named(&tools, "ripr_get_gap")?;
+    let prepare_tool = tool_named(&tools, "ripr_prepare_repair")?;
+    let attempt_tool = tool_named(&tools, "ripr_get_repair_attempt")?;
+    let receipt_tool = tool_named(&tools, "ripr_get_receipt_status")?;
+
+    let reply = session.call("b4-refresh", &refresh_tool, json!({}))?;
+    let refresh = tool_success(&reply, "b4 refresh")?.clone();
+    let (snapshot, findings, total) = require_completed_refresh(&refresh)?;
+    if findings == 0 || total == 0 {
+        return Err(format!(
+            "b4 refresh: the pinned boundary must yield a gap: {refresh}"
+        ));
+    }
+
+    let reply = session.call("b4-list", &list_tool, json!({}))?;
+    let list = tool_success(&reply, "b4 list_gaps")?.clone();
+    require_consistent_counts(&list, &snapshot, total)?;
+    let items = at(&list, "/items", "b4 list_gaps")?
+        .as_array()
+        .ok_or_else(|| format!("b4 list_gaps: `/items` is not an array: {list}"))?;
+    let canonical = items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .ok_or_else(|| format!("b4 list_gaps: no src/lib.rs boundary item: {list}"))?
+        .to_string();
+
+    let reply = session.call("b4-gap", &gap_tool, json!({ "canonical_id": canonical }))?;
+    let gap = tool_success(&reply, "b4 get_gap")?.clone();
+    if as_str(&gap, "/snapshot_id", "b4 get_gap")? != snapshot {
+        return Err(format!("b4 get_gap: snapshot drifted: {gap}"));
+    }
+    // The producer's canonical gap is served on the item document.
+    if as_str(&gap, "/item/causal_attribution/language", "b4 get_gap")? != "rust" {
+        return Err(format!(
+            "b4 get_gap: canonical gap did not name the rust producer: {gap}"
+        ));
+    }
+    if as_str(
+        &gap,
+        "/item/causal_attribution/normalized_discriminator",
+        "b4 get_gap",
+    )? != "amount==discount_threshold"
+    {
+        return Err(format!("b4 get_gap: wrong normalized discriminator: {gap}"));
+    }
+    if as_str(&gap, "/item/causal_attribution/owner", "b4 get_gap")? != "discounted_total" {
+        return Err(format!("b4 get_gap: canonical gap lost its owner: {gap}"));
+    }
+    // Nothing is missing: the boundary is pinned by the existing test.
+    let missing = at(
+        &gap,
+        "/item/discriminator_availability/missing_discriminators",
+        "b4 get_gap",
+    )?
+    .as_array()
+    .ok_or_else(|| format!("b4 get_gap: availability block lost its array: {gap}"))?;
+    if !missing.is_empty() {
+        return Err(format!(
+            "b4 get_gap: the pinned boundary must name no missing discriminator: {missing:?}"
+        ));
+    }
+    if !as_bool(&gap, "/item/readiness/repair_packet_ready", "b4 get_gap")? {
+        return Err(format!(
+            "b4 get_gap: an exposed pinned-boundary finding must be repair-ready: {gap}"
+        ));
+    }
+
+    let reply = session.call(
+        "b4-prepare",
+        &prepare_tool,
+        json!({ "canonical_id": canonical }),
+    )?;
+    let first = tool_success(&reply, "b4 prepare_repair")?.clone();
+    if !as_bool(&first, "/repair_packet_ready", "b4 prepare_repair")? {
+        return Err(format!(
+            "b4 prepare_repair: the ready finding must bind a packet: {first}"
+        ));
+    }
+    let attempt = nonempty_str(&first, "/attempt/attempt_id", "b4 prepare_repair")?.to_string();
+    if !attempt.starts_with("repair-attempt-") {
+        return Err(format!(
+            "b4 prepare_repair: attempt id {attempt:?} lost its grammar: {first}"
+        ));
+    }
+    let first_text = as_str(&reply, "/result/content/0/text", "b4 prepare_repair")?.to_string();
+    let reply = session.call(
+        "b4-prepare-replay",
+        &prepare_tool,
+        json!({ "canonical_id": canonical }),
+    )?;
+    let second = tool_success(&reply, "b4 prepare_repair replay")?.clone();
+    if second != first {
+        return Err("b4 prepare_repair: replay document differs".to_string());
+    }
+    if as_str(&reply, "/result/content/0/text", "b4 prepare_repair replay")? != first_text {
+        return Err("b4 prepare_repair: replay text differs".to_string());
+    }
+
+    let reply = session.call(
+        "b4-attempt",
+        &attempt_tool,
+        json!({ "attempt_id": attempt }),
+    )?;
+    let attempt_doc = tool_success(&reply, "b4 get_repair_attempt")?.clone();
+    if as_str(&attempt_doc, "/attempt_id", "b4 get_repair_attempt")? != attempt {
+        return Err(format!(
+            "b4 get_repair_attempt: attempt drifted: {attempt_doc}"
+        ));
+    }
+    if as_str(&attempt_doc, "/state", "b4 get_repair_attempt")? != "awaiting_edit" {
+        return Err(format!("b4 get_repair_attempt: wrong state: {attempt_doc}"));
+    }
+    if at(&attempt_doc, "/packet", "b4 get_repair_attempt")? != &first {
+        return Err("b4 get_repair_attempt: packet differs from the prepare document".to_string());
+    }
+    let reply = session.call(
+        "b4-receipt",
+        &receipt_tool,
+        json!({ "receipt_id": attempt }),
+    )?;
+    let receipt = tool_success(&reply, "b4 get_receipt_status")?.clone();
+    if as_str(&receipt, "/status", "b4 get_receipt_status")? != "awaiting_edit" {
+        return Err(format!("b4 get_receipt_status: wrong status: {receipt}"));
+    }
+    let reply = session.call(
+        "b4-gap-linked",
+        &gap_tool,
+        json!({ "canonical_id": canonical }),
+    )?;
+    let linked = tool_success(&reply, "b4 get_gap after prepare")?.clone();
+    let expected = format!("ripr://repair-attempt/{attempt}");
+    if as_str(
+        &linked,
+        "/item/links/repair_attempt",
+        "b4 get_gap after prepare",
+    )? != expected
+    {
+        return Err(format!(
+            "b4 get_gap after prepare: repair link did not bind: {linked}"
+        ));
+    }
+
+    let bound = {
+        let reply = session.call("b4-status", "ripr_workspace_status", json!({}))?;
+        response_bound(&tool_success(&reply, "b4 status")?.clone())?
+    };
+    let audit = session.finish(bound)?;
+    if audit.frames == 0 {
+        return Err("b4: session audit is empty".to_string());
+    }
+    let tree_after = snapshot_tree(&fixture.root)?;
+    for (path, hash) in &tree_after {
+        if path.contains("repair-attempt") {
+            return Err(format!(
+                "b4: journey created a repair-attempt artifact at {path}"
+            ));
+        }
+        match tree_before.get(path) {
+            Some(expected) if expected == hash => {}
+            _ if path.starts_with("target/") => {}
+            Some(_) => return Err(format!("b4: journey modified {path} outside target/")),
+            None => return Err(format!("b4: journey added {path} outside target/")),
+        }
+    }
+    for path in tree_before.keys() {
+        if !tree_after.contains_key(path) {
+            return Err(format!("b4: journey deleted {path}"));
+        }
+    }
+    drop(fixture);
+
+    // The typed refusal survives population: on the B2 journey fixture the
+    // boundary is NOT pinned, the producer names the missing discriminator,
+    // and prepare_repair must keep refusing with that reason (never a
+    // successful packet, never a language-gap mislabel).
+    let fixture = install_fixture("b4-nodisc")?;
+    let mut session = McpSession::spawn(&fixture.root)?;
+    session.initialize()?;
+    let reply = session.call("b4b-refresh", "ripr_refresh", json!({}))?;
+    let refresh = tool_success(&reply, "b4b refresh")?.clone();
+    let (_snapshot, _findings, total) = require_completed_refresh(&refresh)?;
+    if total == 0 {
+        return Err(format!(
+            "b4b refresh: the unpinned boundary must yield a gap: {refresh}"
+        ));
+    }
+    let reply = session.call("b4b-list", "ripr_list_gaps", json!({}))?;
+    let list = tool_success(&reply, "b4b list_gaps")?.clone();
+    let items = at(&list, "/items", "b4b list_gaps")?
+        .as_array()
+        .ok_or_else(|| format!("b4b list_gaps: `/items` is not an array: {list}"))?;
+    let canonical = items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .ok_or_else(|| format!("b4b list_gaps: no src/lib.rs boundary item: {list}"))?
+        .to_string();
+    let reply = session.call(
+        "b4b-prepare",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical }),
+    )?;
+    let refused = tool_success(&reply, "b4b prepare_repair")?.clone();
+    if as_bool(&refused, "/repair_packet_ready", "b4b prepare_repair")? {
+        return Err(format!(
+            "b4b prepare_repair: an unpinned boundary must not bind a packet: {refused}"
+        ));
+    }
+    if as_str(&refused, "/ineligibility/reason", "b4b prepare_repair")? != "missing_discriminator" {
+        return Err(format!(
+            "b4b prepare_repair: wrong typed refusal: {refused}"
+        ));
+    }
+    if at(&refused, "/attempt", "b4b prepare_repair")? != &Value::Null {
+        return Err(format!(
+            "b4b prepare_repair: unready packet carries an attempt: {refused}"
+        ));
+    }
+    session.finish(128 * 1024)?;
+    drop(fixture);
+    Ok(())
+}
+
 #[test]
 fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     let fixture = install_fixture("b3a")?;

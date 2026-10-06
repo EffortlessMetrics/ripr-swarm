@@ -11,6 +11,34 @@ are scoped or reviewed.
 
 ### Changed
 
+- LSP scale-degradation disclosures now say what the run actually did at
+  all three surfaces where they previously overclaimed. An opened document
+  whose changed lines sit outside the analyzed partial-diff partition is
+  reported `not_analyzed` with the budget-raise + sidecar-restart recovery
+  by `ripr.collectWorkspaceStatus`, instead of `clean`/`served` (#5998).
+  `ripr/analysisStatus` stops advertising `retry_command: ripr.refresh`
+  for budget-bound `limited_partial_scope` runs — refresh provably re-runs
+  the identical partition — and carries a `retry_recovery` object naming
+  the budget override and the required sidecar restart; the VS Code status
+  renders that route over its canned refresh tail (#5999). The
+  `seam_diagnostics_not_enabled` component outcome carries the concrete
+  enable route (profile, flag, or language switch — following the
+  effective session/repository source) instead of `recovery: null`
+  (#6001).
+- LSP: TypeScript, JavaScript, and Perl preview findings the producer
+  admitted (`delivery_eligible`) now publish as advisory diagnostics in both
+  diagnostic profiles even while the shared repair-packet validator still
+  fails the packet; packet readiness keeps gating the code-action surface
+  only, and `diagnosticProfile = "full"` delivers what it documents
+  (#6847). `ripr/listActionableItems` canonical ids are now the producer
+  identities `ripr.collectContext` resolves — the probe `finding_id` for
+  findings, `seam_id` for seams — instead of the projection-local
+  `finding:<hash>`/canonical gap ids it previously listed and rejected with
+  `-32602`; the envelope adds `seam_evidence_identity` for the seam
+  continuation. RIPR-SPEC-0126's producer-signal precedence is corrected to
+  match: the preview packet verdict gates the repair-packet surface, not
+  diagnostic delivery (#6848).
+
 - Predicate same-test pairing no longer treats a boundary literal buried
   inside an argument expression as a boundary input. `gate(if false { 10 }
   else { 50 })` and `gate(std::cmp::max(10, 50))` fall back to
@@ -39,6 +67,27 @@ are scoped or reviewed.
   machine output are byte-identical; unknown kind strings now fail at
   the decode boundary and the entry takes the corrupt-entry quarantine
   path (#5415).
+
+- `repo-seams-json` artifacts carry the producer identity envelope
+  `repo-exposure-json` already binds (#6609): producer tool/version,
+  repository head/root, worktree state, versioned input identity (the
+  analysis format is part of it, so seams and exposure artifacts on one tree
+  never share an identity), snapshot identity, and a `content_sha256`
+  commitment over the exact bytes. Additive member;
+  `REPO_SEAMS_SCHEMA_VERSION` stays `0.1` per the #2203/#5474 precedents.
+  Consumers parsing the 3-key shape keep working; consumers that persisted
+  repo-seam inventories can now bind them to the commit they describe.
+
+- `repo-badge-json` / `repo-badge-plus-json` stdout runs persist the
+  canonical report their `public_projection.source_report` names
+  (`target/ripr/reports/repo-ripr-badge.json`,
+  `target/ripr/reports/repo-ripr-plus-badge.json`) inside the analyzed
+  workspace via the atomic output writer, so the provenance pointer resolves
+  after every run (#6610). The pointer previously named a file no stdout run
+  wrote. When the workspace cannot take the write, the projection is emitted
+  with `source_report: null` and resolves to the RIPR-SPEC-0066 `unknown`
+  state instead of claiming an unwritten report.
+
 ### Added
 
 - Bounded repair states its inline-test boundary as permanent scope:
@@ -70,6 +119,35 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Windows: `ripr agent card --json` now reports `selected_target.file`
+  with portable `/` separators for both existing and proposed targets,
+  instead of leaking native backslashes. `allowed_files` and
+  `forbidden_files` already used the shared normalized renderer and are
+  unchanged (#5440).
+- Discarded Rust `matches!` computations no longer count as assertion oracles
+  in parser, lexical or registered-harness facts. Actual asserting wrappers
+  retain pattern credit, including the weak whole-wildcard boundary from
+  #5410. Consumed multiline lexical and inline Trial Err guards retain their
+  assertion twins, with condition ownership and sibling coordinates preserved.
+  Balanced groups retain quoted/struct/block operands and a body opener on a
+  later row; quoted return text and recovered Err expressions cannot
+  manufacture a guard's assertion twin.
+  Wrapped discarded matcher statements cannot borrow a sibling assertion;
+  actual observers inside pure block scrutinees keep their own coordinates.
+  Negated block conditions retain consumed Err-guard twins and weak wildcard
+  grip. Terminal panic/bail names grant no divergence authority; unresolved or
+  shadowed macros remain outside this bounded Err-return grammar.
+  File-fact generation 1.26 and classified generations 1.37/0.43 invalidate
+  favorable or guard-blind predecessor facts
+  (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
+  existing honesty corpus, preserving absent, weak and strong observer
+  boundaries. Shared-validator negative controls reject strong and weak
+  false credit, missed strong credit, empty findings and removed consumers;
+  the current CLI compares raw JSON and human projections with those reports.
+
+- Agent receipt recovery commands preserve native Unix roots and relative or
+  absolute workflow verify output paths when pasted from another directory.
+  Custom missing verify inputs still emit no unrelated producer hint (#6684).
 - `ripr swarm ingest` no longer fails the packet's forbidden-edit guard open
   on path spellings. `SRC/PRICING.py`, absolute or verbatim `\\?\` paths
   under the root, symlinked-root spellings, drive-relative forms, and

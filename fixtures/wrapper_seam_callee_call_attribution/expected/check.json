@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:463e8297",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/wrapper_seam_callee_call_attribution/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "try_parse_summary(raw).map_err(|error| error.to_string().into())"
        },
@@ -132,7 +132,7 @@
         "id": "probe:src_lib.rs:return_value:7ef92e0f",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/wrapper_seam_callee_call_attribution/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "try_parse_summary(raw).map_err(|error| error.to_string().into())"
        },

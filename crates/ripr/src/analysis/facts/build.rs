@@ -5,12 +5,11 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use crate::analysis::cancellation;
+use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
-    CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
+    CacheLoad, FileFactCacheStats, KnownFilePaths, RepoFileFactCache, RepoFileFactCacheKey,
 };
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Files parsed per parallel batch. Each worker installs the owning request's
@@ -71,7 +70,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
         &cache,
         || match attribution {
             MissAttribution::Named => cache.known_file_paths(),
-            MissAttribution::Skipped => HashSet::new(),
+            MissAttribution::Skipped => KnownFilePaths::default(),
         },
     )
 }
@@ -82,7 +81,7 @@ fn build_index_with_file_fact_cache(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
+    mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
@@ -112,7 +111,7 @@ fn build_index_with_file_fact_cache(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
@@ -149,7 +148,7 @@ fn insert_cached_file_batches(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
+    load_known_file_paths: &mut impl FnMut() -> KnownFilePaths,
     accounting: &mut CacheAccounting,
 ) -> Result<RustIndex, String> {
     let CacheAccounting {
@@ -164,7 +163,7 @@ fn insert_cached_file_batches(
     // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
     // and decode the entire cache directory just to discard the inventory.
     // Initialized once, at the first miss.
-    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
+    let mut known_cached_file_paths: Option<KnownFilePaths> = None;
     let mut index = RustIndex::default();
     let token = cancellation::current_token();
     for batch in files.chunks(PARSE_BATCH_FILES) {
@@ -227,27 +226,33 @@ fn insert_cached_file_batches(
         parsed.resize_with(batch.len(), || None);
         if !parse_positions.is_empty() {
             cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+            let results: Vec<(usize, Result<super::FileFacts, WorkerError>)> = parse_positions
                 .par_iter()
                 .map(|&position| {
                     let result = cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
+                        cancellation::checkpoint_typed()?;
                         let (file, bytes) = &batch[position];
-                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                        cancellation::checkpoint()?;
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)
+                            .map_err(WorkerError::Failed)?;
+                        cancellation::checkpoint_typed()?;
                         Ok(facts)
                     });
                     (position, result)
                 })
                 .collect();
             // Do not replace an observed failure with a deadline noticed
-            // only after joining.
-            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-                return Err(error.clone());
+            // only after joining, nor with a sibling's abort (#6721).
+            if let Some(error) = cancellation::select_batch_error(
+                token.as_ref(),
+                results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err()),
+            ) {
+                return Err(error);
             }
             cancellation::checkpoint()?;
             for (position, result) in results {
-                parsed[position] = Some(result?);
+                parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
         }
         #[cfg(test)]
@@ -348,23 +353,30 @@ fn build_index_with_adapters(
         // Read + parse run on rayon workers; every file is independent.
         // `collect` on an indexed parallel iterator preserves input order,
         // so `results[i]` corresponds to `batch[i]`.
-        let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
+        let results: Vec<Result<(PathBuf, super::FileFacts, bool), WorkerError>> = batch
             .par_iter()
             .map(|file| {
                 cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
+                    cancellation::checkpoint_typed()?;
                     let full = root.join(file);
-                    let bytes = std::fs::read(&full)
-                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                    cancellation::checkpoint()?;
-                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
+                    let bytes = std::fs::read(&full).map_err(|err| {
+                        WorkerError::Failed(format!("failed to read {}: {err}", full.display()))
+                    })?;
+                    cancellation::checkpoint_typed()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)
+                        .map_err(WorkerError::Failed)?;
+                    cancellation::checkpoint_typed()?;
                     Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
                 })
             })
             .collect();
-        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
-            return Err(error.clone());
+        // The first ordinary failure in input order wins over a sibling's
+        // abort (#6721); with none, the first abort in input order.
+        if let Some(error) = cancellation::select_batch_error(
+            token.as_ref(),
+            results.iter().filter_map(|result| result.as_ref().err()),
+        ) {
+            return Err(error);
         }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
@@ -373,7 +385,7 @@ fn build_index_with_adapters(
         // in input order wins and the per-iteration checkpoint ordering
         // (error first, then checkpoint) is unchanged.
         for result in results {
-            let (file, summary, not_utf8) = result?;
+            let (file, summary, not_utf8) = result.map_err(WorkerError::into_message)?;
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
@@ -390,7 +402,7 @@ fn build_index_with_adapters(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
@@ -719,7 +731,12 @@ fn some_fn() -> i32 {
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
         let file_facts = index.files().get(&PathBuf::from("src/lib.rs"));
         assert!(file_facts.is_some());
-        assert!(file_facts.is_some_and(|facts| !facts.calls.is_empty()));
+        assert!(file_facts.is_some_and(|facts| {
+            facts
+                .functions
+                .iter()
+                .any(|function| !function.calls.is_empty())
+        }));
         assert!(
             index
                 .files()
@@ -799,7 +816,7 @@ pub fn check(x: i32) -> bool {
         ) -> Result<super::super::FileFacts, String> {
             Ok(super::super::FileFacts {
                 path: path.to_path_buf(),
-                source: text.to_string(),
+                source: text.into(),
                 ..super::super::FileFacts::default()
             })
         }
@@ -829,7 +846,7 @@ pub fn check(x: i32) -> bool {
             index
                 .files()
                 .get(&PathBuf::from("src/lib.rs"))
-                .map_or("", |facts| facts.data().source.as_str()),
+                .map_or("", |facts| facts.data().source.as_ref()),
             "pub fn fallback() {}\n"
         );
         assert!(
@@ -1594,7 +1611,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1627,7 +1644,7 @@ pub fn check(x: i32) -> bool {
                     &adapter,
                     &StubSyntaxAdapter,
                     &fixture.cache,
-                    HashSet::new,
+                    KnownFilePaths::default,
                 )
             })
         });
@@ -1766,7 +1783,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1821,7 +1838,7 @@ pub fn check(x: i32) -> bool {
                         &adapter,
                         &adapter,
                         &fixture.cache,
-                        HashSet::new,
+                        KnownFilePaths::default,
                     )
                     .err()
                 } else {

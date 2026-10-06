@@ -91,11 +91,12 @@ pub(crate) struct SeamCardBinding {
 }
 
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
-/// URI. The grammar matches the gap template exactly: one non-empty path
-/// segment with no further separators.
+/// URI. The canonical id embeds a workspace-relative path (Python, and
+/// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
+/// prefix alone routes the URI, and only an empty suffix fails.
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .filter(|id| !id.is_empty())
 }
 
 /// Bind the repair-card producers into one committing snapshot. This runs
@@ -109,6 +110,7 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
 /// snapshot identity.
 pub(crate) fn bind_snapshot_card_producers(
     root: &Path,
+    config: &RiprConfig,
     snapshot: &mut Snapshot,
 ) -> Result<(), AttemptFailure> {
     let repository_head = git_output(root, &["rev-parse", "HEAD"])
@@ -123,7 +125,10 @@ pub(crate) fn bind_snapshot_card_producers(
         .to_string();
     let mut bindings = Vec::new();
     if !snapshot.items.is_empty() {
-        let config = RiprConfig::default();
+        // The card producers run under the same resolved workspace
+        // configuration as the snapshot's findings (#6825 review): a
+        // configured oracle strength or harness registration must not
+        // classify the card's seams differently from the committed items.
         let changed_files = snapshot
             .items
             .iter()
@@ -136,7 +141,7 @@ pub(crate) fn bind_snapshot_card_producers(
             .collect::<Vec<_>>();
         let inventory = inventory_diff_scoped_classified_seams_at_with_config(
             root,
-            &config,
+            config,
             &changed_files,
             &changed_owner_names,
         )
@@ -392,7 +397,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the seam inventory and the evidence facts both ran with built-in defaults; project-local configuration stays detected-not-loaded",
+                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings (#6825 review); compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -502,6 +507,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
         })
@@ -573,10 +579,17 @@ mod tests {
             repair_card_resource_id("ripr://repair-card/gap:test:1"),
             Some("gap:test:1")
         );
+        // #5268 review: a producer canonical id embeds a workspace-relative
+        // path, so the suffix is read whole and a nested id must resolve.
+        assert_eq!(
+            repair_card_resource_id(
+                "ripr://repair-card/gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee"
+            ),
+            Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
+        );
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",
-            "ripr://repair-card/a/b",
             "ripr://gap/gap:test:1",
             "https://example.com/repair-card/x",
         ] {

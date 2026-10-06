@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:c2e7eb02",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==lit62657461",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==lit62657461",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit62657461"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:c2e7eb02",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/recursive_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "if final_label == \"beta\" {"
        },
