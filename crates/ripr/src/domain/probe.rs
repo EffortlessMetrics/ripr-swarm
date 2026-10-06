@@ -76,6 +76,11 @@ pub enum StopReason {
     /// owner. ripr does not expand the macro; classification stays
     /// `no_static_path`. See RIPR-SPEC-0117.
     MacroReachUnresolved,
+    /// ripr could not establish the evidence a gap claim needs (today, that
+    /// the refused related assertions do not run), so the finding is an
+    /// unknown rather than a gap. A `static_limit_kind` names the missing
+    /// link. See RIPR-SPEC-0240.
+    GapEvidenceUnresolved,
 }
 
 impl StopReason {
@@ -94,6 +99,7 @@ impl StopReason {
             StopReason::StaticProbeUnknown => "static_probe_unknown",
             StopReason::TransitiveReachUnresolved => "transitive_reach_unresolved",
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
+            StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
         }
     }
 
@@ -147,6 +153,10 @@ impl StopReason {
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
+            }
+            StopReason::GapEvidenceUnresolved => {
+                "ripr could not establish the evidence a gap needs for this change, so it does \
+                 not claim one"
             }
         }
     }
@@ -655,6 +665,7 @@ mod tests {
             StopReason::StaticProbeUnknown,
             StopReason::TransitiveReachUnresolved,
             StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

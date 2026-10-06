@@ -2293,9 +2293,9 @@ fn checks_helper() {
     #[test]
     fn probe_shape_fact_retains_no_per_shape_kind_allocation() {
         // #5415 step 1 pin: kind is one discriminant byte, not a String
-        // plus heap. The struct must be strictly smaller than the old
-        // String-kind layout (56 vs 72 bytes on 64-bit). Text stays owned;
-        // that is step 2.
+        // plus heap. The struct must stay strictly smaller than the old
+        // String-kind layout (72 bytes on 64-bit), even with the #5336
+        // `end_byte` word added after that pin was written.
         assert_eq!(size_of::<ProbeShapeKind>(), 1);
         assert!(size_of::<ProbeShapeFact>() < size_of::<usize>() * 3 + size_of::<String>() * 2);
     }
