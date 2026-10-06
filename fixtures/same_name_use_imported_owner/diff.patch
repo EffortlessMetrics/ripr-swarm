@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub mod celsius {
+     pub fn snap(v: u32) -> u32 {
+-        (v + 5) / 10 * 10
++        (5 + v) / 10 * 10
+     }
+ }
+ 

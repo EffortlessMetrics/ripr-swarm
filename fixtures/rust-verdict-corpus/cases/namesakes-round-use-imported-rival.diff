@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,7 @@
+ 
+ pub mod metric {
+     pub fn round(v: u32) -> u32 {
+-        (v + 50) / 100 * 100
++        (50 + v) / 100 * 100
+     }
+ }
+ 

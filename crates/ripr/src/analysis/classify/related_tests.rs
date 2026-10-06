@@ -649,6 +649,25 @@ fn find_related_tests_with_candidates<'a>(
         }
     };
 
+    // #6292/#6537: a module-level owner with same-named module-level rivals
+    // in its package is told apart by the call's spelled path. A test whose
+    // every call of the name settles on a rival relates through no signal.
+    let call_identity = owner_fn
+        .filter(|_| indexed_same_name_count > 1)
+        .and_then(|owner| match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => super::OwnerCallIdentity::new(
+                owner,
+                candidate_index
+                    .function_indices(owner_name)
+                    .iter()
+                    .map(|&function_index| index.functions().at(function_index)),
+            ),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => {
+                super::OwnerCallIdentity::new(owner, index.functions().iter())
+            }
+        });
+
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
     // still filtered out.
@@ -825,6 +844,15 @@ fn find_related_tests_with_candidates<'a>(
                 })
             })
         });
+
+        if calls_owner
+            && !calls_helper_entry
+            && call_identity.as_ref().is_some_and(|identity| {
+                identity.resolve_test(test, index) == super::CallTarget::Other
+            })
+        {
+            continue;
+        }
 
         // Token text discarded by a property macro cannot re-enter through
         // raw-body, test-name or file-name affinity. An independent ordinary
@@ -1687,7 +1715,7 @@ fn cross_host_stem(path: &Path) -> Option<String> {
     Some(stem.to_string())
 }
 
-fn normalize_path(path: &Path) -> String {
+pub(super) fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
@@ -6091,6 +6119,52 @@ quickcheck! {
             names.is_empty(),
             "opaque macros must not mint tests: {names:?}"
         );
+        Ok(())
+    }
+
+    /// #6537: two files each define `delay` and test it from their own
+    /// `mod tests { use super::*; .. }`. The coolers test's bare `delay(..)`
+    /// binds `coolers::delay`, so it neither relates to nor reaches the
+    /// changed `heaters::delay`; the heaters test still relates directly.
+    #[test]
+    fn a_sibling_files_same_named_function_test_does_not_relate() -> Result<(), String> {
+        let heaters = "pub fn delay(warm: bool) -> u32 {\n    if warm { 5 } else { 50 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn cold_delay() {\n        assert_eq!(delay(false), 50);\n    }\n}\n";
+        let coolers = heaters.replace("cold_delay", "warm_delay");
+        let mut functions = Vec::new();
+        let mut tests = Vec::new();
+        let mut files = std::collections::BTreeMap::new();
+        for (path, source) in [
+            ("src/heaters.rs", heaters),
+            ("src/coolers.rs", coolers.as_str()),
+        ] {
+            let facts =
+                crate::analysis::syntax::ra::summarize_file_with_parser(Path::new(path), source)
+                    .map_err(|error| error.to_string())?;
+            functions.extend(facts.functions.iter().cloned());
+            tests.extend(facts.tests.iter().cloned());
+            files.insert(PathBuf::from(path), facts);
+        }
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0 == "src/heaters.rs::delay")
+            .cloned()
+            .ok_or("heaters::delay owner")?;
+        let mut changed = probe("src/heaters.rs", "if warm { 5 } else { 50 }");
+        changed.owner = Some(owner.id.clone());
+
+        let related = find_related_tests(&changed, Some(&owner), &index, true, None, None);
+        let names = related
+            .iter()
+            .map(|(test, reason)| (test.name.as_str(), *reason))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![("cold_delay", RelationReason::DirectOwnerCall)]);
         Ok(())
     }
 }

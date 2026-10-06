@@ -189,6 +189,17 @@ rule only for an assertion whose context was admitted.
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
 
+### Same-named module-level functions (#6544)
+
+A bare call used to refuse the pin whenever any other module-level `fn` of
+the owner's name existed. A same-package rival no longer refuses the pin at
+`establish`. Each test must instead settle its bare call on the owner through
+the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
+`use super::celsius::snap;` pins `celsius::snap`, while a test that imports
+`fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
+neither. A rival in another package, or one whose container is unknown,
+still refuses the pin outright.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare

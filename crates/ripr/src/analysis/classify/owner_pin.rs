@@ -36,6 +36,7 @@
 //! names the method is not detected.
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+use super::call_identity::{CallTarget, OwnerCallIdentity};
 use super::reveal::{
     assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
     file_imports_own_item,
@@ -66,6 +67,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
+    /// Same-named module-level rivals in the owner's package, settled per
+    /// test by the call's spelled path (#6544). `None` when there are none.
+    identity: Option<OwnerCallIdentity>,
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
@@ -369,7 +373,15 @@ impl OwnerReturnPin {
             _ => return None,
         };
         let method = matches!(call, PinCall::Method { .. });
-        if other_definition_competes(owner, index, method) {
+        // #6544: a bare call's same-package module-level rivals are settled
+        // per test by the import or path that spells the call; every other
+        // competing definition still refuses the pin here.
+        let identity = if method {
+            None
+        } else {
+            OwnerCallIdentity::new(owner, index.functions().iter())
+        };
+        if other_definition_competes(owner, index, method, identity.as_ref()) {
             return None;
         }
         Some(Self {
@@ -378,6 +390,7 @@ impl OwnerReturnPin {
             path,
             returns_bool,
             trait_scope_by_file: RefCell::default(),
+            identity,
         })
     }
 
@@ -456,7 +469,10 @@ impl OwnerReturnPin {
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
-                !test_body_shadows_owner(test, &self.name)
+                self.identity
+                    .as_ref()
+                    .is_none_or(|identity| identity.resolve_test(test, index) == CallTarget::Owner)
+                    && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
                     && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
@@ -913,7 +929,12 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
 /// dispatches to the same method on the pointee. A definition whose item
 /// container is unknown (lexical fallback) always competes, and so does a
 /// `fn name` the parser never indexed (inside a `macro_rules!` body).
-fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method: bool) -> bool {
+fn other_definition_competes(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    method: bool,
+    settled_per_test: Option<&OwnerCallIdentity>,
+) -> bool {
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
     let indexed_competes = index.functions().iter().any(|function| {
@@ -923,7 +944,9 @@ fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method:
         match function.item.container {
             FunctionContainer::Unknown => true,
             FunctionContainer::Local => false,
-            FunctionContainer::Free => !method,
+            FunctionContainer::Free => {
+                !method && !settled_per_test.is_some_and(|identity| identity.settles(function))
+            }
             _ => {
                 method
                     && function.item.has_self_param
@@ -1110,7 +1133,15 @@ pub(in crate::analysis) fn pin_scope_needs(
         }
         _ => return needs,
     };
-    needs.competing_definitions = !other_definition_competes(owner, index, method);
+    // Same rivals `establish` settles per test (#6544): once indexed they no
+    // longer refuse, but files that define more of them still widen scope.
+    let identity = if method {
+        None
+    } else {
+        OwnerCallIdentity::new(owner, index.functions().iter())
+    };
+    needs.competing_definitions =
+        !other_definition_competes(owner, index, method, identity.as_ref());
     needs
 }
 

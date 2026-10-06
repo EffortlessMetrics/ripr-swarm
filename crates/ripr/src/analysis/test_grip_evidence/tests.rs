@@ -17191,3 +17191,36 @@ mod tests {
     }
     Ok(())
 }
+
+/// #6292: repo mode shares the diff-mode call-identity rule. The only test
+/// calls `b::render`, so it neither relates to nor grips the never-called
+/// `a::render`, while `b::render` keeps it as a direct owner call.
+#[test]
+fn a_qualified_call_to_another_modules_function_does_not_grip_the_owner() -> Result<(), String> {
+    let source = "pub mod a {\n    pub fn render(x: i32) -> i32 {\n        x + 1\n    }\n}\n\npub mod b {\n    pub fn render(x: i32) -> i32 {\n        x * 2\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn doubles_two() {\n        assert_eq!(b::render(2), 4);\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), source)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let related_for = |owner_suffix: &str| -> Result<Vec<(String, RelationReason)>, String> {
+        let seam = seams
+            .iter()
+            .find(|seam| seam.owner().ends_with(owner_suffix))
+            .ok_or_else(|| format!("seam for {owner_suffix} must be inventoried"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .into_iter()
+            .map(|related| (related.test_name, related.relation_reason))
+            .collect())
+    };
+    let changed = related_for("::a::render")?;
+    if changed.iter().any(|(name, _)| name == "doubles_two") {
+        return Err(format!(
+            "a test of b::render must not relate to a::render: {changed:?}"
+        ));
+    }
+    let rival = related_for("::b::render")?;
+    if rival != vec![("doubles_two".to_string(), RelationReason::DirectOwnerCall)] {
+        return Err(format!("b::render must keep its direct test: {rival:?}"));
+    }
+    Ok(())
+}

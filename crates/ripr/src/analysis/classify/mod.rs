@@ -1,5 +1,6 @@
 mod activation;
 mod boundary_pairing;
+mod call_identity;
 mod context;
 mod decision;
 mod flow;
@@ -24,6 +25,7 @@ pub(in crate::analysis) use activation::{
 pub(in crate::analysis) use boundary_pairing::{
     has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
+pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,

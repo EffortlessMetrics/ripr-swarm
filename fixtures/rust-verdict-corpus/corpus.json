@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.8",
+  "corpus_version": "2026-10-05.1",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -1579,6 +1579,31 @@
         {
           "path": "src/lib.rs",
           "sha256": "4bf58840e12a3b961725f3e1b899bb4ada19e5fc5da625feb9b5c42a86e30825"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-namesakes",
+      "origin": "authored",
+      "version_label": "authored 2026-10-05 for same-named module-level functions (#6292, #6537, #6544)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "851f62a59ac8d3d10d5e3c3984b242f74ae4e6a3deff4b64c02edcd1cb325714"
+        },
+        {
+          "path": "src/coolers.rs",
+          "sha256": "78c9d6fa5d46eb3c562ecf4cc15065dced6744c265ac33ee873411a8518c0eaa"
+        },
+        {
+          "path": "src/heaters.rs",
+          "sha256": "40328d49adfa818588e313184a0c8acc96e88ee2d6a69697aaea3f77ae6e9b2a"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "0b471d6ea99f53cd32eda587a9829e275282fc3e1ae7d1db7605578ea3c777dc"
         }
       ]
     }
@@ -12096,6 +12121,227 @@
       "reasoning": "Grid cell: closure in an iterator adaptor (pattern destructured; mutants change the closure's operator) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0231.",
       "labeling_observation": {
         "ripr_commit": "1273096",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "namesakes-render-qualified-other-module",
+      "subject_id": "authored-namesakes",
+      "diff": "cases/namesakes-render-qualified-other-module.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 6
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "qualified_call_to_same_named_function_in_other_module",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x - 1",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: a::render(2) becomes 1 instead of 3"
+          },
+          {
+            "replacement": "0",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: a::render returns 0"
+          },
+          {
+            "replacement": "x",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: a::render(2) becomes 2 instead of 3"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "a::render is never called; the only render test calls b::render(2) by its qualified path, so no mutant of a::render fails. Issue #6292.",
+      "labeling_observation": {
+        "ripr_commit": "8cdde3b",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "namesakes-delay-sibling-file-test",
+      "subject_id": "authored-namesakes",
+      "diff": "cases/namesakes-delay-sibling-file-test.diff",
+      "anchor": {
+        "file": "src/heaters.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "match_arm",
+      "test_shape": "same_named_function_tested_in_sibling_file",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Mode::Warm => 6,",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 6"
+          },
+          {
+            "replacement": "Mode::Warm => 0,",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 0"
+          },
+          {
+            "replacement": "Mode::Warm => 1,",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "heaters.rs tests only Mode::Cold; the Warm assertion lives in coolers.rs and its bare delay(..) binds coolers::delay through use super::*. Issue #6537.",
+      "labeling_observation": {
+        "ripr_commit": "8cdde3b",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "namesakes-snap-use-imported-owner",
+      "subject_id": "authored-namesakes",
+      "diff": "cases/namesakes-snap-use-imported-owner.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "use_import_selects_one_of_same_named_functions",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(v + 2) / 10 * 10",
+            "outcome": "tests_failed",
+            "failing_test": "snap_tests::snap_seventeen_to_twenty",
+            "equivalence_review": "not equivalent: snap(17) becomes 10"
+          },
+          {
+            "replacement": "(v - 5) / 10 * 10",
+            "outcome": "tests_failed",
+            "failing_test": "snap_tests::snap_seventeen_to_twenty",
+            "equivalence_review": "not equivalent: snap(17) becomes 10"
+          },
+          {
+            "replacement": "(v + 5) * 10 * 10",
+            "outcome": "tests_failed",
+            "failing_test": "snap_tests::snap_seventeen_to_twenty",
+            "equivalence_review": "not equivalent: snap(17) becomes 2200"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "use super::celsius::snap makes the bare snap(17) call name celsius::snap, and assert_eq! pins its whole return value, so every mutant fails. Issue #6544.",
+      "labeling_observation": {
+        "ripr_commit": "8cdde3b",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "namesakes-round-use-imported-rival",
+      "subject_id": "authored-namesakes",
+      "diff": "cases/namesakes-round-use-imported-rival.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 30
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "use_import_selects_the_other_same_named_function",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "(v + 49) / 100 * 100",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: metric::round(50) becomes 0 instead of 100"
+          },
+          {
+            "replacement": "(v - 50) / 100 * 100",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: metric::round(150) becomes 100 instead of 200"
+          },
+          {
+            "replacement": "0",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: metric::round returns 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The trap pair of #6544: the round test imports imperial::round, so metric::round is never called and no mutant fails.",
+      "labeling_observation": {
+        "ripr_commit": "8cdde3b",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
