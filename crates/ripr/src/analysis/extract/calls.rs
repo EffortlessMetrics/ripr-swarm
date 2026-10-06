@@ -8,6 +8,11 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
     // stays exact; the fact text keeps the original source line.
     let masked = mask_comments_and_strings(body);
     let property_macros = super::property_macros::opaque_property_macros(&masked);
+    // `#[derive(Error)]`, `#[cfg(test)]` and `#[should_panic(..)]` are
+    // attributes, not calls: a parenthesis inside one names no function, so
+    // it must not lend reach to a same-named function (#6924).
+    let attributes = attribute_ranges(&masked);
+    let mut attribute_index = 0;
     let mut line_offset = 0;
     let mut property_index = 0;
     let mut line_property_start = 0;
@@ -42,7 +47,16 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
             {
                 property_index += 1;
             }
+            while attributes
+                .get(attribute_index)
+                .is_some_and(|range| range.end <= line_offset + i)
+            {
+                attribute_index += 1;
+            }
             if bytes[i] == b'('
+                && !attributes
+                    .get(attribute_index)
+                    .is_some_and(|range| range.contains(&(line_offset + i)))
                 && !property_macros
                     .get(property_index)
                     .is_some_and(|item| item.range.contains(&(line_offset + i)))
@@ -64,6 +78,58 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     calls
+}
+
+/// Byte ranges of every outer or inner attribute (`#[..]`, `#![..]`) in
+/// `masked`, which has comments and string contents erased, so a `#` or
+/// bracket inside either cannot open or close one. Sorted by start; nested
+/// attributes fall inside their parent's range.
+pub(crate) fn attribute_ranges(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'#' {
+            i += 1;
+            continue;
+        }
+        let mut open = i + 1;
+        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+            open += 1;
+        }
+        if bytes.get(open) == Some(&b'!') {
+            open += 1;
+            while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+                open += 1;
+            }
+        }
+        if bytes.get(open) != Some(&b'[') {
+            i += 1;
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, byte) in bytes[open..].iter().enumerate() {
+            match byte {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // An unclosed attribute is malformed source; claim nothing for it.
+        let Some(end) = end else {
+            break;
+        };
+        ranges.push(i..end);
+        i = end;
+    }
+    ranges
 }
 
 /// CallFact already owns a source line. Exclude opaque arguments from that
@@ -226,6 +292,31 @@ real_call(1);
         assert_eq!(calls[0].line, 22);
         assert_eq!(calls[0].name, "real_call");
         assert_eq!(calls[0].text, "real_call(1);");
+    }
+
+    #[test]
+    fn attribute_arguments_are_not_calls_but_code_after_them_is() {
+        let calls = extract_call_facts(
+            r#"#[derive(Error, Debug)]
+#[error("braced {msg}")]
+struct E { msg: String }
+#![cfg_attr(test, allow(dead_code))]
+# [ should_panic(expected = "x") ]
+let v = vec![derive_me(1)];
+real_call(E { msg: build(2) });
+"#,
+            40,
+        );
+
+        assert_eq!(call_names(&calls), vec!["derive_me", "build", "real_call"]);
+        assert_eq!(calls[0].line, 45);
+    }
+
+    #[test]
+    fn an_unclosed_attribute_keeps_the_plain_call_reading() {
+        let calls = extract_call_facts("before(1);\n#[derive(Error\n", 1);
+
+        assert_eq!(call_names(&calls), vec!["before", "derive"]);
     }
 
     #[test]
