@@ -825,6 +825,10 @@ fn missing_boundary_discriminator(
     let parameters = function_parameters(owner);
     let (left, right) =
         oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
+    if let Some(reason) = unreadable_spelled_line_reason(related_tests) {
+        *unresolved = Some(reason);
+        return None;
+    }
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
@@ -2447,15 +2451,77 @@ fn split_top_level_args(text: &str) -> Vec<String> {
 /// 2) or when it is an array repeat (`[b'f'; 16]`'s 16 is a length);
 /// otherwise its own scalar is read and its groups (`Some(5)`, `(',',
 /// true)`, `Case { n: 1 }`) are read as argument lists in turn.
+/// A line nested deeper than [`MAX_SPELLED_DEPTH`] yields no values; see
+/// [`spelled_line_is_unreadable`].
 fn spelled_scalar_values(line: &str) -> Vec<String> {
+    if spelled_line_is_unreadable(line) {
+        return Vec::new();
+    }
     let mut values = Vec::new();
-    collect_spelled_values(line, &mut values);
+    collect_spelled_values(line, &mut values, 0);
     values.sort();
     values.dedup();
     values
 }
 
-fn collect_spelled_values(text: &str, values: &mut Vec<String>) {
+/// The deepest `()`/`[]`/`{}` nesting a table-row or builder line may
+/// have and still be read. Real rows nest a few levels; the bound keeps a
+/// hostile line (`(1, ` repeated thousands of times) from overflowing the
+/// stack or re-masking each level.
+const MAX_SPELLED_DEPTH: usize = 32;
+
+/// Whether a table-row or builder line nests deeper than
+/// [`MAX_SPELLED_DEPTH`]. Its values cannot be read, so a related test
+/// holding one leaves the changed boundary unresolved rather than missing
+/// an input it may well pass.
+fn spelled_line_is_unreadable(line: &str) -> bool {
+    // Too few openers to nest that deep: skip the masking scan.
+    if line
+        .bytes()
+        .filter(|byte| matches!(byte, b'(' | b'[' | b'{'))
+        .count()
+        <= MAX_SPELLED_DEPTH
+    {
+        return false;
+    }
+    let mut depth = 0usize;
+    for byte in structural_bytes(line) {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_SPELLED_DEPTH {
+                    return true;
+                }
+            }
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The reason a changed boundary is unresolved when a related test holds a
+/// table-row or builder line too deeply nested to read.
+fn unreadable_spelled_line_reason(related_tests: &[&TestSummary]) -> Option<String> {
+    related_tests
+        .iter()
+        .flat_map(|test| test.body.lines())
+        .map(str::trim)
+        .any(|line| {
+            (looks_like_table_row(line) || looks_like_builder_method(line))
+                && spelled_line_is_unreadable(line)
+        })
+        .then(|| {
+            format!(
+                "a related test's table row or builder line nests deeper than {MAX_SPELLED_DEPTH} levels, so ripr cannot read the inputs it passes"
+            )
+        })
+}
+
+fn collect_spelled_values(text: &str, values: &mut Vec<String>, depth: usize) {
+    if depth > MAX_SPELLED_DEPTH {
+        return;
+    }
     let structure = structural_bytes(text);
     for (start, end) in top_level_comma_ranges(&structure) {
         let (Some(argument), Some(argument_structure)) =
@@ -2472,7 +2538,7 @@ fn collect_spelled_values(text: &str, values: &mut Vec<String>) {
         }
         values.extend(scalar_values(&shape.outside));
         for group in shape.groups {
-            collect_spelled_values(group, values);
+            collect_spelled_values(group, values, depth + 1);
         }
     }
 }
@@ -4623,6 +4689,40 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(
             spelled_scalar_values("[(1, true), (2, false)],"),
             strings(&["1", "2", "false", "true"])
+        );
+    }
+
+    #[test]
+    fn deeply_nested_table_line_is_unreadable_not_a_crash() {
+        // Exact-head review on #6796: the recursive split once had no depth
+        // bound, so one hostile line overflowed the stack.
+        let line = format!("{}{}", "(1, ".repeat(5000), ")".repeat(5000));
+        assert!(spelled_line_is_unreadable(&line));
+        assert!(spelled_scalar_values(&line).is_empty());
+        let shallow = format!(
+            "{}{}",
+            "(1, ".repeat(MAX_SPELLED_DEPTH),
+            ")".repeat(MAX_SPELLED_DEPTH)
+        );
+        assert!(!spelled_line_is_unreadable(&shallow));
+        assert_eq!(spelled_scalar_values(&shallow), vec!["1".to_string()]);
+
+        let owner = function("pub fn score(amount: u32) -> bool {\n    amount > 10\n}");
+        let body = format!("let rows = [\n{line},\n];\nassert!(score(20));");
+        let test = test_with_body_calls(&body, &[(13, "assert!(score(20));")]);
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "amount > 10"),
+            &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(
+            gathered
+                .unresolved_boundary
+                .as_deref()
+                .is_some_and(|reason| reason.contains("nests deeper than")),
+            "{:?}",
+            gathered.unresolved_boundary
         );
     }
 
