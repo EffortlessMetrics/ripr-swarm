@@ -133,10 +133,20 @@ impl ClassifiedProbeEvidence {
         // result to its caller's return, the owner's
         // change is not shown to reach that result: propagation is unknown
         // (an abstention), never credit or an actionable gap.
+        // #6780 Devin review: only a family whose observation follows the
+        // owner's returned value depends on the hop forwarding it. A side
+        // effect or deleted call acts on state the test can observe without
+        // any returned value (`record(out)` pushing into a `&mut Vec`), so
+        // those keep their owner-local effect-sink propagation.
+        let observes_owner_return = !matches!(
+            context.probe.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        );
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
-                if matches!(propagate.state, StageState::Yes | StageState::Weak)
+                if observes_owner_return
+                    && matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
                     && !chain_forwards_to_observed_hops(
                         &owner.name,

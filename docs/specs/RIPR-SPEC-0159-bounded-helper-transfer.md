@@ -37,7 +37,16 @@ can only hint that a caller "may lead here" without changing anything.
   caller relates as `HelperOwnerCall`, not `same_test_file`,
   `owner_named_test` or `weak_token_substring`. A test that calls no hop
   caller keeps its proximity reason.
-- Hop propagation (#6780): when the related tests reach the owner only
+- A hop-caller call that a test-local binding shadows (a nested
+  `fn <name>` anywhere in the test body, or a `let` binding naming it at
+  or before the call, such as `let order_discount = |_: u32| 5;`) is not a
+  call of the hop caller: it earns no `HelperOwnerCall` and binds no row
+  down the chain. The shadow authority is the seam-call one: parser body
+  facts on parser-backed files, the masked-body lexical scanners
+  otherwise.
+- Hop propagation (#6780): for probe families observed through the
+  owner's returned value (every family except `side_effect` and
+  `call_deletion`), when the related tests reach the owner only
   through the chain (some `HelperOwnerCall`, no `DirectOwnerCall`), the
   owner's result must be forwarded unchanged through every hop up to the
   highest hop whose caller a `HelperOwnerCall` test calls directly (the
@@ -50,7 +59,11 @@ can only hint that a caller "may lead here" without changing anything.
   `L2` of distinct value. Otherwise the propagation stage is `unknown`
   (`helper_result_not_forwarded`), so the finding abstains instead of
   crediting the entry's oracle or reporting a gap. Arithmetic or
-  let-bound use of the result is not followed in V1.
+  let-bound use of the result is not followed in V1. A `side_effect` or
+  `call_deletion` probe acts on state a test can observe without any
+  returned value (a helper pushing into a caller's `&mut Vec`), so it keeps
+  its owner-local effect-sink propagation and is not judged by result
+  forwarding.
 - Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
   recomputed from the asserting test, and requires the assertion's
   subject to hold exactly one entry call whose arguments are each a whole

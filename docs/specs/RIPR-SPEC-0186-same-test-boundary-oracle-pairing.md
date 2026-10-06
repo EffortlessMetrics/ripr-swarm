@@ -108,7 +108,8 @@ test: activation is recomputed from that test alone, because a row carries
 no source test and another test in another file can share the line. That
 line holds one entry call and no direct owner call. A computed hop argument
 already stops the row transfer (RIPR-SPEC-0159), so no `==` row exists to
-pair. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
+pair, and so does an entry call shadowed by a test-local closure or nested
+fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
 never admits a wrapper assertion here.
 
 Proximity-only oracle credit and bare-name method relation are out of

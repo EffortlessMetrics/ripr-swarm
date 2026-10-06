@@ -822,6 +822,15 @@ fn find_related_tests_with_candidates<'a>(
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
                         && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                        // #6780 Devin review: a test-local closure or nested
+                        // fn named like the hop caller shadows it, so the
+                        // call never reaches the helper.
+                        && !super::helper_transfer::test_call_is_shadowed(
+                            index,
+                            test,
+                            &hop.caller.name,
+                            call.line,
+                        )
                 })
             })
         });
@@ -2708,6 +2717,46 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    // #6780 Devin review: parser-backed facts from a real test file. A
+    // closure or nested fn named like the wrapper shadows it, so the call
+    // earns no `HelperOwnerCall`; an unshadowed call still does.
+    #[test]
+    fn shadowed_wrapper_call_earns_no_helper_owner_call() -> Result<(), String> {
+        let source = "#[test]\nfn closure_shadow() {\n    let order_discount = |_: u32| 5;\n    assert_eq!(order_discount(10), 5);\n}\n\n#[test]\nfn nested_fn_shadow() {\n    fn order_discount(_: u32) -> u32 { 5 }\n    assert_eq!(order_discount(10), 5);\n}\n\n#[test]\nfn call_before_shadow() {\n    assert_eq!(order_discount(10), 5);\n    let order_discount = |_: u32| 5;\n    assert_eq!(order_discount(9), 5);\n}\n\n#[test]\nfn unshadowed() {\n    assert_eq!(order_discount(10), 5);\n}\n";
+        let file_facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("tests/discount.rs"),
+            source,
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(!file_facts.used_lexical_fallback);
+        let owner = function("src/lib.rs", "is_bulk");
+        let wrapper = function("src/lib.rs", "order_discount");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), wrapper.clone()],
+            tests: file_facts.tests.clone(),
+            files: std::iter::once((PathBuf::from("tests/discount.rs"), file_facts)).collect(),
+            ..Default::default()
+        });
+        assert_eq!(index.tests().len(), 4, "the parser summarized every test");
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: wrapper,
+                call_text: "if is_bulk(qty) {".to_string(),
+                arguments: vec!["qty".to_string()],
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "10 <= qty");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, Some(&chain), None);
+        let helper: Vec<&str> = related
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+            .map(|(test, _)| test.name.as_str())
+            .collect();
+        assert_eq!(helper, ["call_before_shadow", "unshadowed"], "{related:?}");
+        Ok(())
     }
 
     #[test]

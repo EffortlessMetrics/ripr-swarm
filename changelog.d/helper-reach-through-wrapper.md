@@ -26,3 +26,11 @@
   no longer stopped by an outer wrapper above it that drops the result; the
   forwarding check runs only up to the highest caller a related test calls
   directly.
+- A test-local closure or nested fn named like a helper's wrapper
+  (`let order_discount = |_: u32| 5;`) shadows it: calling it no longer
+  relates the test to the helper as `helper_owner_call` or pairs the
+  helper's boundary.
+- A helper's side effect (`side_effect`, `call_deletion`) behind a wrapper
+  that discards the helper's unit result keeps its propagation; only
+  families observed through the helper's returned value abstain with
+  `helper_result_not_forwarded`.

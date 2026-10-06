@@ -516,6 +516,37 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Whether a test's call of `callee` on absolute line `call_line` is
+/// shadowed by a test-local `fn callee` (hoisted, defeats every line) or a
+/// `let` binding naming it at or before the call (#6780 Devin review: a
+/// `let order_discount = |_| 5;` closure never reaches the helper). The
+/// authority follows the test file's producer, as for seam calls: parser
+/// body facts on parser-backed files, the masked-body lexical scanners on
+/// fallback files or files absent from the index.
+pub(crate) fn test_call_is_shadowed(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    callee: &str,
+    call_line: usize,
+) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let parser_backed = index
+        .files()
+        .get(&test.file)
+        .is_some_and(|facts| !facts.used_lexical_fallback);
+    let body_line = call_line.saturating_sub(test.start_line);
+    if parser_backed {
+        ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &test.nested_fn_names,
+            let_bindings: &test.let_bindings,
+        }
+        .body_shadows_callee_at_line("", callee, body_line)
+    } else {
+        let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+        ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, callee, body_line)
+    }
+}
+
 /// Stop token named when the owner is reached only through a chain whose
 /// hops do not hand the owner's result to the entry's return (#6780).
 pub(crate) const HELPER_RESULT_NOT_FORWARDED: &str = "helper_result_not_forwarded";

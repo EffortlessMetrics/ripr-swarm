@@ -450,3 +450,108 @@ fn mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper() -> Re
     assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     Ok(())
 }
+
+// #6780 Devin review: a test-local binding that shadows the wrapper name
+// never reaches the helper, so its call must not relate through the chain
+// or pair the wrapper's boundary.
+#[test]
+fn shadowed_wrapper_call_does_not_relate_or_pair() -> Result<(), String> {
+    for shadow in [
+        "        let order_discount = |_: u32| 5;",
+        "        fn order_discount(_: u32) -> u32 { 5 }",
+    ] {
+        let tests = format!("{shadow}\n        assert_eq!(order_discount(10), 5);");
+        let finding = predicate_finding(&bulk_source(FORWARDING, &tests), BULK_DIFF)?;
+        assert_ne!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{shadow}: {finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{shadow}: {finding}");
+        assert!(
+            !has_boundary_row(&finding, "qty == 10"),
+            "{shadow}: {finding}"
+        );
+    }
+    // Control: a shadow binding after the call, or under another name,
+    // leaves the wrapper call relating and pairing.
+    for unshadowed in [
+        "        assert_eq!(order_discount(10), 5);
+        let order_discount = |_: u32| 5;
+        assert_eq!(order_discount(9), 5);",
+        "        let discount = |_: u32| 5;
+        assert_eq!(order_discount(10), 5);
+        assert_eq!(discount(9), 5);",
+    ] {
+        let finding = predicate_finding(&bulk_source(FORWARDING, unshadowed), BULK_DIFF)?;
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{unshadowed}: {finding}"
+        );
+        assert!(
+            has_boundary_row(&finding, "qty == 10"),
+            "{unshadowed}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+const RECORD_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn record(out: &mut Vec<u32>) {\n-    out.push(9);\n+    out.push(10);\n }\n";
+
+// #6780 Devin review: a helper's side effect on caller-owned state is
+// observable without forwarding the helper's (unit) result, so a wrapper
+// that discards it must not make the effect's propagation unknown.
+#[test]
+fn helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation() -> Result<(), String> {
+    let source = "fn record(out: &mut Vec<u32>) {\n    out.push(10);\n}\n\npub fn wrapper(out: &mut Vec<u32>) {\n    record(out);\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn wrapper_records_ten() {\n        let mut out = Vec::new();\n        wrapper(&mut out);\n        assert_eq!(out, vec![10]);\n    }\n}\n";
+    let report = all_findings(source, RECORD_DIFF)?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    let mut families = Vec::new();
+    for finding in findings {
+        assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+        assert_eq!(
+            relation_of(finding, "wrapper_records_ten"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert!(
+            !finding["ripr"]["propagate"]["summary"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("helper_result_not_forwarded"),
+            "{finding}"
+        );
+        assert_ne!(
+            finding["classification"], "propagation_unknown",
+            "{finding}"
+        );
+        families.push(
+            finding["probe"]["family"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        );
+    }
+    families.sort();
+    assert_eq!(families, ["call_deletion", "side_effect"], "{report}");
+    Ok(())
+}
+
+fn all_findings(source: &str, diff: &str) -> Result<Value, String> {
+    let scratch = Scratch::create()?;
+    std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    let diff_file = scratch.0.join("change.diff");
+    std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())
+}

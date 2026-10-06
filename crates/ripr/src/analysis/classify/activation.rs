@@ -264,7 +264,7 @@ fn observed_discriminator_values(
     else {
         return Vec::new();
     };
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
@@ -775,7 +775,7 @@ fn missing_boundary_discriminator(
     let parameters = function_parameters(owner);
     let (left, right) =
         oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     if call_values.is_empty() {
         return None;
     }
@@ -1320,13 +1320,23 @@ fn owner_call_parameter_values(
     owner_name: &str,
     parameters: &[String],
 ) -> Vec<Vec<ParameterValue>> {
+    owner_call_parameter_values_where(related_tests, owner_name, parameters, |_, _| true)
+}
+
+/// `owner_call_parameter_values` over only the calls `keep` admits.
+fn owner_call_parameter_values_where(
+    related_tests: &[&TestSummary],
+    owner_name: &str,
+    parameters: &[String],
+    keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
+) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
         return rows;
     }
     for test in related_tests {
         for call in test.body_calls() {
-            if call.name != owner_name {
+            if call.name != owner_name || !keep(test, call) {
                 continue;
             }
             let Some(arguments) = call_arguments(&call.text, &call.name) else {
@@ -1365,6 +1375,7 @@ fn call_values_for_owner(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let parameters = if parameters.is_empty() {
         function_parameters(owner)
@@ -1378,7 +1389,7 @@ fn call_values_for_owner(
     let Some(chain) = helper_chain else {
         return direct;
     };
-    helper_transferred_rows(&parameters, chain, related_tests)
+    helper_transferred_rows(&parameters, chain, related_tests, index)
 }
 
 /// Bind the entry function's direct test rows down the resolved chain
@@ -1389,13 +1400,28 @@ fn helper_transferred_rows(
     owner_parameters: &[String],
     chain: &super::helper_transfer::HelperChain,
     related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
     let entry_parameters = function_parameters(&entry.caller);
-    let mut rows =
-        owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    let mut rows = owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            )
+        },
+    );
     if rows.is_empty() {
         return Vec::new();
     }
