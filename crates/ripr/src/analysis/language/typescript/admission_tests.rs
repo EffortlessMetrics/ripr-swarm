@@ -150,7 +150,49 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "test.concurrent('x', async () => { await checkout(1); });",
             none,
         ),
+        // -- activation modifiers do not change admission (control 8); the
+        // extractor drops skip/fails/todo forms before admission runs --
+        (
+            "only test without an assertion",
+            "it.only('x', () => { checkout(1); });",
+            none,
+        ),
+        (
+            "var in a for loop is function-scoped",
+            "test('x', () => { for (var i = 0; i < 2; i++) { checkout(i); } checkout(i); });",
+            none,
+        ),
+        (
+            "commonjs require of a runner",
+            "const { test } = require('vitest');\ntest('x', () => { checkout(1); });",
+            none,
+        ),
         // -- assertion-like but unresolved (control 3, 6) --
+        (
+            "commonjs require of an assertion package",
+            "const tap = require('tap');\ntest('x', () => { tap.same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "commonjs require of a test-support helper",
+            "const h = require('./helpers');\ntest('x', () => { h.same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "node:assert required inside a describe callback",
+            "describe('d', () => {\n  const assert = require('node:assert');\n  it('x', () => { assert.strictEqual(checkout(1), 2); });\n});",
+            unresolved,
+        ),
+        (
+            "chai assert destructured from a require inside describe",
+            "describe('d', () => {\n  const { assert } = require('chai');\n  it('x', () => { assert.equal(checkout(1), 2); });\n});",
+            unresolved,
+        ),
+        (
+            "require of a package inside the test",
+            "test('x', () => { const { same } = require('tap'); same(checkout(1), 2); });",
+            unresolved,
+        ),
         (
             "custom matcher",
             "test('x', () => { expect(checkout(1)).toBeEven(); });",
@@ -402,4 +444,24 @@ fn parse_error_files_yield_no_admission_row() {
         "import { checkout } from '../src/cart';\ntest('x', () => { checkout(1 });\n",
     );
     assert!(tests.is_empty(), "got {tests:?}");
+}
+
+/// Control 8 holds because inactive registrations never reach admission:
+/// the extractor drops them, so no admission row can depend on activation.
+#[test]
+fn inactive_registrations_are_not_extracted() -> Result<(), String> {
+    for source in [
+        "test.skip('x', () => { checkout(1); });",
+        "test.fails('x', () => { checkout(1); });",
+        "test.todo('x');",
+        "import { it } from 'node:test';\nit('x', { expectFailure: true }, () => { checkout(1); });",
+    ] {
+        let full = format!("{OWNER_IMPORT}{source}");
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &full);
+        if tests.iter().any(|test| test.local_name == "x") {
+            return Err(format!("expected `{source}` to be dropped by extraction"));
+        }
+    }
+    // The active form of the same registration is extracted.
+    admission_of("test('x', () => { checkout(1); });").map(|_| ())
 }

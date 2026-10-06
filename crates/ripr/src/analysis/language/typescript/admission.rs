@@ -910,7 +910,16 @@ impl<'c> Scan<'c> {
                 continue;
             }
             if let Some(source) = require_source(init) {
-                if classify_source(source, &self.context.test_dir) == ImportClass::TestSupport {
+                // A required package or test-support module binds a receiver
+                // whose members can assert under any name, so it is flagged as
+                // its `import` uses would be. Production and Node built-in
+                // modules are inert receivers; a required runner binds the
+                // test registrar, whose assertion-like members are still
+                // flagged by name inside each test.
+                if matches!(
+                    classify_source(source, &self.context.test_dir),
+                    ImportClass::TestSupport | ImportClass::Package
+                ) {
                     self.flag();
                 }
                 continue;
@@ -1127,8 +1136,11 @@ impl<'c> Scan<'c> {
             }
             Statement::ForStatement(statement) => {
                 let mut names = Vec::new();
+                // `var` is function-scoped and already bound by the enclosing
+                // function scope; only `let`/`const` belong to the loop scope.
                 if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
                     &statement.init
+                    && declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var
                 {
                     declaration_names(declaration, &mut names);
                 }
@@ -1218,7 +1230,9 @@ impl<'c> Scan<'c> {
     ) {
         self.expr(right);
         let mut names = Vec::new();
-        if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left {
+        if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left
+            && declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var
+        {
             declaration_names(declaration, &mut names);
         }
         self.scopes
@@ -2279,7 +2293,10 @@ fn lexical_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
             other => other.as_declaration(),
         };
         match declaration {
-            Some(Declaration::VariableDeclaration(declaration)) => {
+            // `var` is hoisted to the function scope by `var_names`.
+            Some(Declaration::VariableDeclaration(declaration))
+                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var =>
+            {
                 declaration_names(declaration, out);
             }
             Some(Declaration::FunctionDeclaration(function)) => {
