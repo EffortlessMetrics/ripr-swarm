@@ -19,3 +19,7 @@
   pairs with an unrelated wrapper assertion; a match guard that only reads
   the forwarded parameter (`n if n > qty =>`) no longer counts as rebinding
   it.
+- A test that calls a forwarding intermediate caller of a changed helper is
+  no longer stopped by an outer wrapper above it that drops the result; the
+  forwarding check runs only up to the highest caller a related test calls
+  directly.
