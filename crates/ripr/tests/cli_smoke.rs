@@ -23720,3 +23720,111 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
+
+/// #5252 item 4: two unresolvable refs must warn once per ref (naming the
+/// ref), and the renderer-owned preflight spellings must use one separator
+/// style per document like the `next_command` lines already do.
+#[test]
+fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("first-pr-bad-refs");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // Canonicalize so Windows passes the verbatim (`\\?\`) spelling: the
+    // prefix assertions below then pin the strip for real instead of
+    // vacuously. (UNC roots keep their prefix by `human_path_text` design
+    // (#4378) and have no portable fixture, so they stay uncovered.)
+    let root_arg = root
+        .canonicalize()
+        .map_err(|err| format!("canonicalize fixture root: {err}"))?
+        .display()
+        .to_string();
+    let output = run_ripr(&[
+        "first-pr",
+        "--root",
+        &root_arg,
+        "--base",
+        "nope-missing-base",
+        "--head",
+        "also-missing-head",
+    ]);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert!(
+        packet.is_file(),
+        "first-pr must still compose the blocked packet: {output:?}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet)?)?;
+    let warnings = report
+        .pointer("/warnings")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("start-here.json must carry a warnings array")?;
+    let texts: Vec<&str> = warnings
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        texts.len(),
+        warnings.len(),
+        "warnings must all render as text: {warnings:?}"
+    );
+    let mut sorted = texts.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        texts.len(),
+        "each distinct warning must appear once: {texts:?}"
+    );
+    for (role, rev) in [
+        ("--base", "nope-missing-base"),
+        ("--head", "also-missing-head"),
+    ] {
+        assert!(
+            texts
+                .iter()
+                .any(|warning| warning.contains(role) && warning.contains(rev)),
+            "a warning must pair `{role}` with unresolvable ref `{rev}`: {texts:?}"
+        );
+    }
+    // Renderer-owned spellings stay comparable: the root-check path must
+    // still resolve after normalization, and on Windows it must use the
+    // slash spelling the sibling `next_command` lines use (a backslash is
+    // an ordinary filename character on Unix, so that half is Windows-only).
+    let resolved_root = json_pointer_str(&report, "/preflight/resolved_root")?;
+    assert!(
+        std::path::Path::new(resolved_root).is_dir(),
+        "resolved_root must keep naming the workspace: {resolved_root}"
+    );
+    let checks = report
+        .pointer("/preflight/checks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("preflight must carry checks")?;
+    for check in checks {
+        let Some(path) = check.pointer("/path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        assert!(
+            !path.contains(r"\\?\"),
+            "preflight path must not leak the verbatim prefix: {path}"
+        );
+        if cfg!(windows) {
+            assert!(
+                !path.contains('\\'),
+                "preflight path must use the slash spelling: {path}"
+            );
+        }
+    }
+    if cfg!(windows) {
+        assert!(
+            !resolved_root.contains('\\') && !resolved_root.contains(r"\\?\"),
+            "resolved_root must use the slash spelling: {resolved_root}"
+        );
+    }
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}

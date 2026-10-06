@@ -4557,6 +4557,7 @@ tests = [
   "crates/ripr/src/cli/mod.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings",
   "crates/ripr/src/output/first_pr.rs::tests::write_first_pr_records_producing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_missing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_other_ripr_version",
