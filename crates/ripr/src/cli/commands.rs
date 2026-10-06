@@ -7182,6 +7182,44 @@ language = "rust"
             );
         }
 
+        // The prose claims bind to their owned sources too (#6876 review), so
+        // a template or packet change cannot leave the section green while it
+        // drifts: the gate authority to the template's own job-level line,
+        // the failure-surviving uploads and summary to the template's
+        // `always()` steps, and the failure roles to the packet's own
+        // messages and command-metadata stop states.
+        let job_continue = workflow
+            .lines()
+            .find(|line| line.contains("vars.RIPR_GATE_MODE == ''"))
+            .map(str::trim)
+            .ok_or("generated workflow has no job-level RIPR_GATE_MODE continue-on-error")?;
+        assert!(
+            section.contains(job_continue),
+            "docs/EXIT_CODES.md CI integration does not quote the generated \
+             job-level continue-on-error expression:\n{job_continue}\n\nsection:\n{section}"
+        );
+        for step in ["Add RIPR advisory summary", "Upload RIPR report artifacts"] {
+            assert!(
+                workflow.contains(&format!("- name: {step}\n        if: always()")),
+                "the generated workflow no longer runs `{step}` under \
+                 `if: always()`, but the section still claims the steps after \
+                 a failure upload artifacts and the step summary"
+            );
+        }
+        assert!(
+            section.contains("always()"),
+            "the section no longer names the always() steps the binding above checks"
+        );
+        assert!(
+            section.contains("nonzero")
+                && include_str!("command_metadata.rs")
+                    .contains("exits nonzero after the packet is written")
+                && include_str!("commands/ci_packet.rs")
+                    .contains("failed and is advisory; continuing"),
+            "the section's failure-role prose no longer matches the ci-packet \
+             stop states or advisory-continuation message; revisit the section"
+        );
+
         Ok(())
     }
 
