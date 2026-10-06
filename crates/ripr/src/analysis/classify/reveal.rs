@@ -403,12 +403,7 @@ fn analyze_related_assertions(
     // nothing the changed `try_parse` does (#4486). Same-file and same-module
     // tests keep crediting: they commonly exercise a private helper through
     // the module's own entry point, which the relation cannot see.
-    let name_only = |reason: RelationReason| {
-        matches!(
-            reason,
-            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
-        )
-    };
+    let name_only = is_name_only_relation;
     let credits = oracle_crediting_relations(related_tests);
     // A seam callee call runs the seam's callee, not the owner (`reach.rs`
     // keeps it out of owner reach), so it cannot be the reaching test that
@@ -2235,16 +2230,19 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
 pub(in crate::analysis) fn oracle_crediting_relations(
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> impl Fn(RelationReason) -> bool + use<> {
-    let name_only = |reason: RelationReason| {
-        matches!(
-            reason,
-            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
-        )
-    };
     let reach_bearing_related = related_tests
         .iter()
-        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
-    move |reason| !(reach_bearing_related && name_only(reason))
+        .any(|(_, reason)| !is_name_only_relation(*reason) && !is_proximity_only(*reason));
+    move |reason| !(reach_bearing_related && is_name_only_relation(reason))
+}
+
+/// A relation made only by the test's name or path (a changed token, the
+/// owner's name), with no captured call, helper chain or assertion affinity.
+fn is_name_only_relation(reason: RelationReason) -> bool {
+    matches!(
+        reason,
+        RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+    )
 }
 
 pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =

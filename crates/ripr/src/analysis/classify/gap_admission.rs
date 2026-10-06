@@ -137,7 +137,7 @@ fn next_step(judged: &[String]) -> String {
         judged.join(", ")
     };
     format!(
-        "ripr could not read whether the assertions in {tests} run as the standard `assert_eq!` (the \"not credited\" note says why), so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+        "ripr could not read whether the assertions in {tests} run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
     )
 }
 
@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "ripr could not read whether the assertions in `test_format_u8` (src/lib.rs:40) run as the standard `assert_eq!` (the \"not credited\" note says why), so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+                "ripr could not read whether the assertions in `test_format_u8` (src/lib.rs:40) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
             )
         );
     }

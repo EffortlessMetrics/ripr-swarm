@@ -86,8 +86,8 @@
       "stop_reasons": ["gap_evidence_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5) run as the standard `assert_eq!` (the \"not credited\" note says why), so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
-      "suggested_next_action": "ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5) run as the standard `assert_eq!` (the \"not credited\" note says why), so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
+      "recommended_next_step": "ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
+      "suggested_next_action": "ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does.",
       "language": "rust",
       "static_limit_kind": "rust_assertion_context_unresolved",
       "static_limitation": {

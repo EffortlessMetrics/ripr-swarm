@@ -1481,7 +1481,6 @@ fn a_bare_assert_keeps_the_owner_binding_defeats() {
     );
 }
 
-
 fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
     AssertionRefusal::MacroBinding {
         name: "assert_eq".to_string(),

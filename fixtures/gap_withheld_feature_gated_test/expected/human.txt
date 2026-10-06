@@ -18,8 +18,8 @@ Start here:
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
   Related test: tests/weight_tests.rs:5 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)
   Next step: ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5)
-    run as the standard `assert_eq!` (the "not credited" note says why), so it does not report a
-    gap. Check that one of them compares the changed value; add a test only if none does.
+    run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares
+    the changed value; add a test only if none does.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
@@ -28,8 +28,6 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
-Write a test for it:
-  ripr agent stub --root fixtures/gap_withheld_feature_gated_test/input --at src/lib.rs:2
 
 More:
   Full evidence: rerun with --format human-full

@@ -138,7 +138,8 @@ named only when no resolved call selects it under either the original or
 the changed pattern: an input that moved between arms is a discriminator.
 
 When any related call is unresolved, or a guard blocks the decision, no
-missing discriminator is named. Rule 3 then applies unchanged.
+missing discriminator is named, and the finding keeps the class it would
+have without one.
 
 ### Crediting the selected arm
 
