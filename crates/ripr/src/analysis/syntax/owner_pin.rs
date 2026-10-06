@@ -70,6 +70,20 @@ pub(crate) enum AssertionContextRefusal {
     StaleSource,
 }
 
+/// An attribute that decides the test's outcome whatever its assertions do:
+/// `#[ignore]` or a `cfg`/`cfg_attr` disabled in every test build keeps it
+/// from running by default, and `#[should_panic]` absorbs a failing
+/// assertion. Either is evidence of a gap, not an analyzer limit
+/// (RIPR-SPEC-0240).
+pub(crate) fn attribute_settles_test_outcome(attr_text: &str) -> bool {
+    let compact: String = attr_text.chars().filter(|c| !c.is_whitespace()).collect();
+    compact == "#[ignore]"
+        || compact.starts_with("#[ignore=")
+        || compact == "#[should_panic]"
+        || compact.starts_with("#[should_panic(")
+        || attribute_test_build_availability(attr_text) == Some(false)
+}
+
 impl OwnerPinAssertions {
     pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
         self.module_declarations
@@ -806,7 +820,16 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             name.text().to_string(),
         );
         *identities.entry(key.clone()).or_default() += 1;
-        let refusal = if function.async_token().is_some() {
+        // An outcome-settling attribute is named first wherever it sits: it
+        // is evidence of a gap, which RIPR-SPEC-0240 must not withhold.
+        let refusal = if let Some(attr) = function
+            .attrs()
+            .find(|attr| attribute_settles_test_outcome(&attr.syntax().text().to_string()))
+        {
+            Some(AssertionContextRefusal::TestAttribute(
+                attr.syntax().text().to_string(),
+            ))
+        } else if function.async_token().is_some() {
             Some(AssertionContextRefusal::AsyncTest)
         } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros) {
             Some(refusal)

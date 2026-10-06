@@ -49,8 +49,8 @@ use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
-    empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, trusted_macro_binding_sites,
+    attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -193,8 +193,16 @@ impl OwnerPinSyntax {
                             .or_else(|| self.withheld.sites.get(&name).cloned())
                     })
                     .clone();
-                let site =
-                    workspace.or_else(|| test_macro_binding_site(&name, test, index, &resolved));
+                // A definition or `use` covering the test is a real
+                // rebinding; it outranks a workspace site that only may
+                // rebind the name, or the refusal would read as an analyzer
+                // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+                let local = test_macro_binding_site(&name, test, index, &resolved);
+                let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
+                    local
+                } else {
+                    workspace.or(local)
+                };
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -379,6 +387,43 @@ pub(in crate::analysis) enum AssertionRefusal {
 }
 
 impl AssertionRefusal {
+    /// Whether the refusal rests on a limit of ripr's own reading (the file,
+    /// module, test identity, or a binding that only *may* rebind), rather
+    /// than on a shape that can keep the assertion from running or rebind it
+    /// for real. Runtime controls pin the second kind as real gaps
+    /// (`tests/owner_pin_execution.rs`), so only the first kind lets
+    /// RIPR-SPEC-0240 withhold a gap.
+    pub(in crate::analysis) fn is_analyzer_limit(&self) -> bool {
+        match self {
+            Self::LexicalFallback | Self::UnresolvedModule(_) | Self::IncludedFile { .. } => true,
+            // A gated `mod` declaration may be `cfg(any())`, which never runs.
+            Self::ModuleDeclaration { .. } => false,
+            Self::Syntax(refusal) => match refusal {
+                AssertionContextRefusal::UnparsedFile
+                | AssertionContextRefusal::UnidentifiedTest
+                | AssertionContextRefusal::AsyncTest
+                | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::StaleSource => true,
+                AssertionContextRefusal::TestAttribute(attribute) => {
+                    !attribute_settles_test_outcome(attribute)
+                }
+                AssertionContextRefusal::NestedItem
+                | AssertionContextRefusal::GatedItem(_)
+                | AssertionContextRefusal::OpaqueMacro(_)
+                | AssertionContextRefusal::MacroOperandExit(_)
+                | AssertionContextRefusal::ClosureExit
+                | AssertionContextRefusal::ConditionalPath(_)
+                | AssertionContextRefusal::MacroBinding(_) => false,
+            },
+            // A definition or `use` of the name in reach is a real rebinding;
+            // a foreign glob, unresolved `#[macro_use]`, macro argument, or an
+            // unparsed file only may rebind it.
+            Self::MacroBinding { site, .. } => {
+                !site.as_ref().is_some_and(|(_, site)| rebinds(site))
+            }
+        }
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         let at = |path: &Path, line: usize| {
@@ -490,8 +535,11 @@ impl AssertionRefusal {
     }
 }
 
-/// The first workspace file, in path order, whose scan makes `name`
-/// ambiguous everywhere. Disclosure only: the admission decision uses the set.
+/// A workspace site, in path order, whose scan makes `name` ambiguous
+/// everywhere. The admission decision uses the set; the site decides only
+/// whether the refusal is an analyzer limit (RIPR-SPEC-0240). A definition or
+/// `use` of the name is a real rebinding, so it outranks a site that only may
+/// rebind the name, wherever each sits.
 fn workspace_macro_binding_site(
     name: &str,
     index: &RustIndex,
@@ -500,12 +548,28 @@ fn workspace_macro_binding_site(
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
-    index.files().iter().find_map(|(path, facts)| {
-        macro_binding_sites(name, path, &facts.source, index, module_resolved)
-            .into_iter()
-            .find(|(_, site)| site.scope.is_none())
-            .map(|(_, site)| (path.clone(), site))
-    })
+    let mut first = None;
+    for (path, facts) in index.files().iter() {
+        for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved) {
+            if site.scope.is_some() {
+                continue;
+            }
+            if rebinds(&site) {
+                return Some((path.clone(), site));
+            }
+            first.get_or_insert_with(|| (path.clone(), site));
+        }
+    }
+    first
+}
+
+/// A definition or `use` of the name: a real rebinding, not one that only
+/// may rebind it.
+fn rebinds(site: &MacroBindingSite) -> bool {
+    matches!(
+        site.kind,
+        MacroBindingKind::Definition | MacroBindingKind::Import
+    )
 }
 
 /// The scoped site in the test's own file that covers the test.

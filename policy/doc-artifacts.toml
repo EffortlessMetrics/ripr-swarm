@@ -1323,3 +1323,11 @@ path = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records how ripr decides which match arm a test input selects, names the unselected changed arm as a missing discriminator (#5432), and credits a selecting call paired with an exact oracle."
+
+[[artifact]]
+id = "RIPR-SPEC-0240"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the gap-admission rule: a Rust reachable_unrevealed finding whose every refused related assert_eq! was refused for a limit of ripr's own reading becomes static_unknown with rust_assertion_context_unresolved, while refusals for shapes that runtime controls prove can keep an assertion from running stay gaps. Measured on the verdict corpus: false actionable on upstream cases 7/20 to 6/20 with no false silent or false exposed movement. Renumbered from RIPR-SPEC-0221 after #5425 landed that id, and from 0232 after the issue-lifecycle pilot landed it."

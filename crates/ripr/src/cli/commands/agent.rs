@@ -404,11 +404,16 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &before_identity.currentness,
         &after_identity.currentness,
     );
-    let report = output::outcome::targeted_test_outcome_report_from_json(
+    // Both snapshots validated above, so the report reuses the validated
+    // heads instead of re-parsing each document a fourth time (#5301
+    // item 7).
+    let report = output::outcome::targeted_test_outcome_report_from_json_with_heads(
         &before_json,
         &after_json,
         agent_identity_path(&options.before),
         agent_identity_path(&options.after),
+        Some(before_identity.repository_head),
+        Some(after_identity.repository_head),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
