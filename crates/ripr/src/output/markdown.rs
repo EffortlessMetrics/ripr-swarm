@@ -1189,6 +1189,27 @@ mod tests {
     }
 
     #[test]
+    fn powershell_command_rebuilds_several_and_awkward_control_arguments() {
+        // Two control arguments, a non-BMP character, a typographic quote, and
+        // literal `$`/backtick text all survive as separate exact expressions.
+        assert_eq!(
+            powershell_command(
+                "ripr x \"$(printf '\\033')\"'a' \"$(printf '\\360\\237\\230\\200')\"'it\u{2019}s $(calc) `x'"
+            )
+            .as_deref(),
+            Some(
+                "ripr x ('' + [char]0x1b + 'a') ('' + [char]::ConvertFromUtf32(0x1f600) + 'it\u{2019}\u{2019}s $(calc) `x')"
+            )
+        );
+        // User text equal to the lifting placeholder withholds rather than
+        // being substituted.
+        assert_eq!(
+            powershell_command("ripr x RIPRCONTROLARG0X \"$(printf '\\033')\"'a'"),
+            None
+        );
+    }
+
+    #[test]
     fn powershell_command_withholds_control_arguments_it_cannot_rebuild_exactly() {
         for command in [
             // program position
