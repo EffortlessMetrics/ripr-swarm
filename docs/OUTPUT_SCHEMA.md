@@ -13837,7 +13837,8 @@ Field contract:
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
-  `vsix-packaging-path`, or `known-limits-docs`.
+  `vsix-packaging-path`, `extension-version-match`, `init-pin-version`, or
+  `known-limits-docs`.
 - `checks[].status` - `pass`, `warn`, `fail`, or `not_run`.
 - `checks[].required` - `true` for checks that must pass in the normal local
   readiness run. Release-only package and publish dry-run checks can be
@@ -17826,7 +17827,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.30",
+    "schema_version": "1.31",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -17837,7 +17838,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.40",
+      "schema_version": "1.41",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

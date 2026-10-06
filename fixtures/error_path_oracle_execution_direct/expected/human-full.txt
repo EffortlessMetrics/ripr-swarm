@@ -33,8 +33,8 @@ Evidence
   - related test src/lib.rs:21 reports_read_failure uses strong exact value oracle: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
   - source enum variant value io::ErrorKind::Other at line 23
 Drill in:
-  ripr explain --root fixtures/error_path_oracle_execution_direct/input --diff fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root fixtures/error_path_oracle_execution_direct/input --diff fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
 NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
@@ -73,5 +73,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root fixtures/error_path_oracle_execution_direct/input --diff fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
-  ripr context --root fixtures/error_path_oracle_execution_direct/input --diff fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

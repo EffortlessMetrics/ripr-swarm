@@ -21,8 +21,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/weak_error_oracle_assert_matches/input --diff fixtures/weak_error_oracle_assert_matches/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
-  ripr context --root fixtures/weak_error_oracle_assert_matches/input --diff fixtures/weak_error_oracle_assert_matches/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  ripr explain --root <cwd>/fixtures/weak_error_oracle_assert_matches/input --diff <cwd>/fixtures/weak_error_oracle_assert_matches/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
+  ripr context --root <cwd>/fixtures/weak_error_oracle_assert_matches/input --diff <cwd>/fixtures/weak_error_oracle_assert_matches/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

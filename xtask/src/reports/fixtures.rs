@@ -1010,11 +1010,58 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = value.replace('\\', "/");
+    let normalized = project_renderer_cwd(&value.replace('\\', "/"));
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
+}
+
+/// The `check` drill-in commands bind `--root` to the resolved repository
+/// (#3948), so a rendered fixture carries the renderer's working directory.
+/// Checked-in goldens hold the machine-independent `<cwd>/` placeholder
+/// instead, the same projection the library tests use.
+fn project_renderer_cwd(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        // An unreadable working directory leaves the text unprojected, so a
+        // comparison fails loudly instead of passing on machine paths.
+        return text.to_string();
+    };
+    project_cwd_prefix(text, &format!("{}/", normalize_path(&cwd)))
+}
+
+/// Replace `prefix` with `<cwd>/`. A checkout path that needs shell quoting
+/// (a space, `'`, ...) renders the whole token quoted, `'<prefix>tail'`; the
+/// goldens hold the form a quote-free checkout renders, so the quotes are
+/// dropped whenever the tail alone would not need them.
+fn project_cwd_prefix(text: &str, prefix: &str) -> String {
+    let quoted_open = format!("'{}", prefix.replace('\'', r"'\''"));
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(quoted_open.as_str()) {
+        let after = &rest[at + quoted_open.len()..];
+        let Some(end) = after.find('\'') else {
+            break;
+        };
+        let tail = &after[..end];
+        out.push_str(&rest[..at]);
+        if !tail.is_empty() && tail.chars().all(is_bare_shell_char) {
+            out.push_str("<cwd>/");
+            out.push_str(tail);
+        } else {
+            out.push_str("'<cwd>/");
+            out.push_str(tail);
+            out.push('\'');
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out.replace(prefix, "<cwd>/")
+}
+
+/// Mirror of `shell_arg`'s bare-token rule.
+fn is_bare_shell_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':')
 }
 
 fn fixture_name(path: &Path) -> Result<String, String> {
@@ -1943,6 +1990,29 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cwd_projection_unquotes_a_spaced_checkout_and_keeps_needed_quotes() {
+        let prefix = "/tmp/my checkout/";
+        // A bare tail renders quoted only because of the prefix: golden form.
+        assert_eq!(
+            project_cwd_prefix(
+                "ripr explain --root '/tmp/my checkout/fixtures/x/input' --diff d",
+                prefix
+            ),
+            "ripr explain --root <cwd>/fixtures/x/input --diff d"
+        );
+        // A tail that itself needs quoting keeps the quotes.
+        assert_eq!(
+            project_cwd_prefix("--root '/tmp/my checkout/repo root'", prefix),
+            "--root '<cwd>/repo root'"
+        );
+        // A quote-free checkout projects the bare prefix.
+        assert_eq!(
+            project_cwd_prefix("--root /w/fixtures/x/input", "/w/"),
+            "--root <cwd>/fixtures/x/input"
+        );
+    }
+
     /// Unique per process and per call. Fixed names under the shared temp
     /// directory collide when two `cargo test` processes run at once — two
     /// worktrees on one machine is the ordinary case here — and one process

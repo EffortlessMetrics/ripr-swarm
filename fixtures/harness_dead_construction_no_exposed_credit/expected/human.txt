@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
-  ripr context --root fixtures/harness_dead_construction_no_exposed_credit/input --diff fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
+  ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
+  ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
