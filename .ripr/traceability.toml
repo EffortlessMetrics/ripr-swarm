@@ -298,6 +298,7 @@ name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
   "crates/ripr/tests/agent_command_journey.rs::standalone_packet_next_commands_stay_in_selected_root_from_foreign_cwd",
+  "crates/ripr/src/output/evidence_record.rs::tests::bound_verify_keeps_its_typed_spec_for_punctuated_roots",
   "crates/ripr/tests/agent_command_journey.rs::prepared_packet_next_commands_stay_in_selected_root_from_foreign_cwd",
   "crates/ripr/tests/agent_command_journey.rs::prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::prepared_packet_continuation_preserves_required_python_authorization",
@@ -5860,6 +5861,7 @@ tests = [
     "crates/ripr/src/lsp/uri.rs::file_uri_is_within_root_rejects_non_file_and_foreign_uris",
     "editors/vscode/test/suite/extension.test.ts::typed analysis status surfaces server-owned ambiguous root state",
     "crates/ripr/src/lsp/tests.rs::discriminator_witness_stays_aligned_across_lsp_surfaces",
+    "crates/ripr/src/lsp/tests.rs::diagnostic_witness_command_binds_the_workspace_root",
     "crates/ripr/src/domain/diagnostic_witness.rs::tests::witness_preserves_exact_facts_and_named_missing_assertion_limitations",
     "crates/ripr/src/domain/diagnostic_witness.rs::tests::exposed_finding_without_missing_fact_does_not_become_a_gap_witness",
 ]

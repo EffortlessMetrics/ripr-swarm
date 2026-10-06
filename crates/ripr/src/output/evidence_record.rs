@@ -717,6 +717,7 @@ fn canonical_item_for(
             // yields the portable argv.
             .and_then(|display| {
                 crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
+                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
             }),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
@@ -728,6 +729,26 @@ fn canonical_item_for(
         }),
         confidence: alignment_confidence_for(gap_state, static_limitations),
     }
+}
+
+/// Typed spec for the producer's own bound snapshot verify display (#3948).
+/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
+/// pastes correctly, but display recovery refuses those characters in any
+/// word. The producer knows its inputs, so it rebuilds the display from them
+/// and grants the trusted spec only on a byte-for-byte match; any other or
+/// substituted display still recovers nothing.
+fn bound_snapshot_verify_spec(
+    display: &str,
+    verify_root: &std::path::Path,
+) -> Option<crate::domain::CommandSpec> {
+    let root = crate::agent::loop_commands::bound_root(&verify_root.to_string_lossy());
+    let spec = crate::agent::command_specs::agent_verify_command_spec(
+        &root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
+    );
+    (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
 fn alignment_related_test_for_recommended_target(
@@ -2940,6 +2961,50 @@ mod tests {
             return Err(format!(
                 "workflow family must not name pilot paths: {args:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #3948: a standalone root with shell punctuation renders a quoted,
+    /// pasteable verify display that display recovery refuses; the producer's
+    /// own display still carries its typed spec with the portable argv, and a
+    /// display naming another root does not.
+    #[test]
+    fn bound_verify_keeps_its_typed_spec_for_punctuated_roots() -> Result<(), String> {
+        let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        for root in ["/tmp/design & tests", "/tmp/cost$center/repo"] {
+            let display = workflow_snapshot_verify_command_for(root);
+            let json = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new(root),
+            ));
+            let spec = &json["canonical_item"]["command_specs"]["verify"];
+            if spec["human_display"] != display.as_str() {
+                return Err(format!("{root}: verify spec lost its display: {spec}"));
+            }
+            let args: Vec<&str> = spec["args"]
+                .as_array()
+                .ok_or_else(|| format!("{root}: verify spec has no args: {spec}"))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            if !args.windows(2).any(|pair| pair == ["--root", "."]) {
+                return Err(format!("{root}: concrete root entered argv: {args:?}"));
+            }
+
+            let elsewhere = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new("/tmp/other checkout"),
+            ));
+            if elsewhere["canonical_item"]["command_specs"]["verify"] != Value::Null {
+                return Err(format!(
+                    "{root}: a display bound to another root gained a typed spec"
+                ));
+            }
         }
         Ok(())
     }
