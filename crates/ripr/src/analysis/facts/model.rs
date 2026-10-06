@@ -1380,6 +1380,7 @@ pub(crate) struct ProbeShapeFactWire {
     pub start_line: usize,
     pub end_line: usize,
     pub start_byte: usize,
+    pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: WireText,
 }
@@ -1496,6 +1497,7 @@ impl ProbeShapeFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
             kind: fact.kind,
             text: WireText::attached(&fact.text, parent),
         }
@@ -1508,6 +1510,7 @@ impl ProbeShapeFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
             kind: fact.kind,
             text: WireText::Inline {
                 text: fact.text.as_str().to_string(),
@@ -1592,6 +1595,7 @@ impl ProbeShapeFactWire {
             start_line: self.start_line,
             end_line: self.end_line,
             start_byte: self.start_byte,
+            end_byte: self.end_byte,
             kind: self.kind,
             text: link_wire_text(self.text, source, "probe shape text")?,
         })
@@ -1931,6 +1935,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 start_byte: 27,
+                end_byte: 40,
                 kind: ProbeShapeKind::Predicate,
                 text: SourceText::shared_or_owned(&source, 27, "assert!(true)"),
             }],
@@ -1954,6 +1959,7 @@ mod tests {
         let decoded: FileFacts = serde_json::from_value(wire)?;
         assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
         assert_eq!(decoded.probe_shapes[0].text.as_str(), "assert!(true)");
+        assert_eq!(decoded.probe_shapes[0].end_byte, 40);
         for child in [
             decoded.functions[0].body.shared_source(),
             decoded.probe_shapes[0].text.shared_source(),
