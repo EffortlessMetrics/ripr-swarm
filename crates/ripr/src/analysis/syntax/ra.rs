@@ -1232,7 +1232,10 @@ fn extract_parser_probe_shapes(
             range.end(),
         );
         let return_text = slice_text(text, range.start(), range.end());
-        if has_error_path_text(&return_text) {
+        // `return Err(X)`: the call loop already gives the `Err(X)`
+        // constructor its error_path shape, so a second one spanning the
+        // `return` would be a twin seam for the same behavior (#6914).
+        if has_error_path_text(&return_text) && !returns_error_path_call(&return_expr, text) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -1299,7 +1302,9 @@ fn extract_parser_probe_shapes(
                 range.end(),
             );
         }
-        if has_error_path_text(&call_text) {
+        // `Err(Error::X(off))`: the inner variant call is the payload of the
+        // enclosing error constructor, which already carries the shape.
+        if has_error_path_text(&call_text) && !is_error_path_call_argument(&call_expr, text) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -1569,6 +1574,36 @@ fn has_return_value_text(text: &str) -> bool {
         || trimmed.contains(" Ok(")
         || trimmed.contains(" Some(")
         || trimmed.contains("None")
+}
+
+/// True when the returned value is itself a call the call loop marks as an
+/// error path, looking through parentheses.
+fn returns_error_path_call(return_expr: &ast::ReturnExpr, text: &str) -> bool {
+    let mut value = return_expr.expr();
+    while let Some(ast::Expr::ParenExpr(paren)) = value {
+        value = paren.expr();
+    }
+    let Some(ast::Expr::CallExpr(call)) = value else {
+        return false;
+    };
+    let range = call.syntax().text_range();
+    has_error_path_text(&slice_text(text, range.start(), range.end()))
+}
+
+/// True when `call` is a direct argument of an enclosing call that is itself
+/// marked as an error path, so one error behavior keeps one shape (#6914).
+fn is_error_path_call_argument(call: &ast::CallExpr, text: &str) -> bool {
+    let Some(outer) = call
+        .syntax()
+        .parent()
+        .and_then(ast::ArgList::cast)
+        .and_then(|args| args.syntax().parent())
+        .and_then(ast::CallExpr::cast)
+    else {
+        return false;
+    };
+    let range = outer.syntax().text_range();
+    has_error_path_text(&slice_text(text, range.start(), range.end()))
 }
 
 fn call_is_argument(call: &ast::CallExpr) -> bool {
@@ -2207,6 +2242,60 @@ pub fn validate(value: i32) -> Result<i32, String> {
                 .iter()
                 .any(|p| p.kind == ProbeShapeKind::ErrorPath),
             "Should extract error_path probe shapes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn return_err_constructor_gets_one_error_path_shape() -> Result<(), Box<dyn Error>> {
+        // #6914: `return Err(X)` used to emit one error_path on the whole
+        // `return` and a twin on the `Err(X)` call, and `Err(Error::X(..))`
+        // a third on the inner variant call.
+        let source = concat!(
+            "pub fn parse(s: &str) -> Result<u8, Error> {\n",
+            "    if s.is_empty() { return Err(Error::Empty); }\n",
+            "    if s.len() > 3 { return (Err(Error::Long)); }\n",
+            "    if s == \"x\" { return s.parse::<u8>().map_err(Error::from); }\n",
+            "    if s == \"y\" { return Err(Error::Bad(s.len())); }\n",
+            "    Ok(1)\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let on_line = |line: usize, kind: ProbeShapeKind| -> Vec<String> {
+            facts
+                .probe_shapes
+                .iter()
+                .filter(|shape| shape.start_line == line && shape.kind == kind)
+                .map(|shape| shape.text.as_str().to_string())
+                .collect()
+        };
+
+        // The constructor keeps the error_path; the `return` keeps only
+        // its return_value shape.
+        assert_eq!(
+            on_line(2, ProbeShapeKind::ErrorPath),
+            vec!["Err(Error::Empty)"]
+        );
+        assert_eq!(
+            on_line(2, ProbeShapeKind::ReturnValue),
+            vec!["return Err(Error::Empty)"]
+        );
+        // Parentheses around the constructor do not bring the twin back.
+        assert_eq!(
+            on_line(3, ProbeShapeKind::ErrorPath),
+            vec!["Err(Error::Long)"]
+        );
+        // The variant call inside `Err(..)` is its payload, not a second
+        // error behavior.
+        assert_eq!(
+            on_line(5, ProbeShapeKind::ErrorPath),
+            vec!["Err(Error::Bad(s.len()))"]
+        );
+        // A returned `map_err` chain is not a call the call loop marks, so
+        // the `return` stays the line's only error_path.
+        assert_eq!(
+            on_line(4, ProbeShapeKind::ErrorPath),
+            vec!["return s.parse::<u8>().map_err(Error::from)"]
         );
         Ok(())
     }

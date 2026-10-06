@@ -10,7 +10,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:error_path:5c979117",
+      "id": "probe:src_lib.rs:error_path:3139cb41",
       "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
       "canonical_gap_group_size": 2,
       "canonical_gap": {
@@ -27,12 +27,12 @@
       "severity": "info",
       "confidence": 1.00,
       "probe": {
-        "id": "probe:src_lib.rs:error_path:5c979117",
+        "id": "probe:src_lib.rs:error_path:3139cb41",
         "family": "error_path",
         "delta": "value",
         "file": "./src/lib.rs",
         "line": 45,
-        "expression": "return Err(ParseSummaryError::MalformedSource)"
+        "expression": "Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},
@@ -196,7 +196,7 @@
       "source_currentness": "candidate_current"
     },
     {
-      "id": "probe:src_lib.rs:error_path:5c979117.2",
+      "id": "probe:src_lib.rs:error_path:3139cb41.2",
       "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
       "canonical_gap_group_size": 2,
       "canonical_gap": {
@@ -213,12 +213,12 @@
       "severity": "info",
       "confidence": 1.00,
       "probe": {
-        "id": "probe:src_lib.rs:error_path:5c979117.2",
+        "id": "probe:src_lib.rs:error_path:3139cb41.2",
         "family": "error_path",
         "delta": "value",
         "file": "./src/lib.rs",
         "line": 48,
-        "expression": "return Err(ParseSummaryError::MalformedSource)"
+        "expression": "Err(ParseSummaryError::MalformedSource)"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source"},

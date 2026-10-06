@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Not credited: `assert_eq!` in pins_the_sibling_variant_of_the_changed_owner at tests/protocol.rs:6: the assertion is inside a `match` arm
   Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
-  Changed behavior: return Err(ParseError::InvalidData)
+  Changed behavior: Err(ParseError::InvalidData)
   Missing discriminator (1 of 2): ParseError::InvalidData
   Related test: tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner (no assertion pins `ParseError::InvalidData`)
   Next step: Assert the exact error variant or payload instead of only is_err().
@@ -25,8 +25,8 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
-  ripr context --root fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
+  ripr explain --root fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast probe:src_lib.rs:error_path:bcd75653
+  ripr context --root fixtures/guarded_result_match_sibling_variant/input --diff fixtures/guarded_result_match_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:error_path:bcd75653
 Write a test for it:
   ripr agent stub --root fixtures/guarded_result_match_sibling_variant/input --at src/lib.rs:9
 

@@ -8,11 +8,11 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 16 changed line(s), 8 candidate line(s), 16 probe(s), 16 finding(s).
 
 INFO ./src/lib.rs:45
-  id: probe:src_lib.rs:error_path:5c979117
+  id: probe:src_lib.rs:error_path:3139cb41
 
 Changed
   before: return Err(ParseSummaryError::ParserInit);
-  after:  return Err(ParseSummaryError::MalformedSource)
+  after:  Err(ParseSummaryError::MalformedSource)
 
 Probe
   family: error_path
@@ -36,8 +36,8 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - source function argument value raw = "@bad;" at line 10
   - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
-  ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117
-  ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117
+  ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:3139cb41
+  ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:3139cb41
 
 INFO ./src/lib.rs:45
   id: probe:src_lib.rs:return_value:f573bd5d
@@ -72,11 +72,11 @@ Drill in:
   ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:return_value:f573bd5d
 
 INFO ./src/lib.rs:48
-  id: probe:src_lib.rs:error_path:5c979117.2
+  id: probe:src_lib.rs:error_path:3139cb41.2
 
 Changed
   before: return Err(ParseSummaryError::ParserInit);
-  after:  return Err(ParseSummaryError::MalformedSource)
+  after:  Err(ParseSummaryError::MalformedSource)
 
 Probe
   family: error_path
@@ -100,8 +100,8 @@ return Err("malformed source should produce ParseSummaryError::MalformedSource".
   - source function argument value raw = "@bad;" at line 10
   - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
-  ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117.2
-  ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117.2
+  ripr explain --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:3139cb41.2
+  ripr context --root fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:3139cb41.2
 
 INFO ./src/lib.rs:48
   id: probe:src_lib.rs:return_value:f573bd5d.2
