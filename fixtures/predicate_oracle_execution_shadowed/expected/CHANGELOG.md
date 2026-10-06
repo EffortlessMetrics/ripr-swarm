@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (10)
+
+Reason:
+RIPR-SPEC-0197: re-apply #5359 refusal disclosure (Why unrevealed / Not credited / owner-calling next step) on top of main's workspace-relative locations and canonical gap lines after merging main
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -20,7 +20,7 @@ Start here:
   Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
     - reach yes: Related tests appear to reach via_map_or_else: map_or_else_boundary_stays_unresolved
-    - infection unknown: Related tests use opaque fixtures; activation/infection is unknown
+    - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [1] (inputs are strings, computed values or fixtures); activation/infection is unknown
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

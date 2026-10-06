@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **23.5%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 32.0%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **20.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 31.5%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -80,7 +80,7 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 8 of 20 whose tests caught every listed mutant (40.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 51 of 86 (59.3%).
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 7 of 20 whose tests caught every listed mutant (35.0%): `serde-format-u8-hundreds`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 51 of 86 (59.3%).
 - **Mostly unsure.** On real-repository changes it abstained on 19 of 34 cases (55.9%); on the authored cases, 39 of 169 (23.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
@@ -146,11 +146,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 65/203 (32.0%) | 8/34 (23.5%) | 57/169 (33.7%) |
-| False actionable (of discriminated) | 59/106 (55.7%) | 8/20 (40.0%) | 51/86 (59.3%) |
+| False verdicts (all cases) | 64/203 (31.5%) | 7/34 (20.6%) | 57/169 (33.7%) |
+| False actionable (of discriminated) | 58/106 (54.7%) | 7/20 (35.0%) | 51/86 (59.3%) |
 | False exposed (of not fully discriminated) | 6/97 (6.2%) | 0/14 (0.0%) | 6/83 (7.2%) |
 | False silent (of not fully discriminated) | 0/97 (0.0%) | 0/14 (0.0%) | 0/83 (0.0%) |
-| Ideal verdict | 80/203 (39.4%) | 7/34 (20.6%) | 73/169 (43.2%) |
+| Ideal verdict | 81/203 (39.9%) | 8/34 (23.5%) | 73/169 (43.2%) |
 | Abstained (limited or silent where acceptable) | 58/203 (28.6%) | 19/34 (55.9%) | 39/169 (23.1%) |
 | Findings with a contradiction | 2/278 (0.7%) | not split by origin | not split by origin |
 
@@ -165,10 +165,10 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `semver-digit-upper` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
 | `semver-caret-zero-minor` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `hex-from-hex-odd-variant` | upstream | discriminated | credited | gap | reachable_unrevealed, weakly_exposed | false_actionable | none |
-| `hex-decode-slice-odd` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
-| `hex-decode-slice-length` | upstream | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `hex-encode-slice-length` | upstream | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
+| `hex-from-hex-odd-variant` | upstream | discriminated | credited | credited | exposed | ideal | none |
+| `hex-decode-slice-odd` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `hex-decode-slice-length` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `hex-encode-slice-length` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `regex-syntax-word-byte` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `regex-syntax-max-scalar-two-byte` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
