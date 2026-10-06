@@ -12529,6 +12529,80 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// #5497: pilot ranks gap classes only. A private helper reached only
+/// through an integration test reads `opaque` (unresolved reach); pilot
+/// withholds it and says so, while the genuinely uncalled `shipping_fee`
+/// (`ungripped`) still ranks. The withheld seam stays in repo exposure.
+#[test]
+fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-withholds-limitations");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+    )?;
+    std::fs::write(
+        root.join("tests/checkout.rs"),
+        "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+    )?;
+
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let class_of = |owner: &str| {
+        exposure["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|seam| seam["owner"] == format!("src/lib.rs::{owner}"))
+            .map(|seam| seam["grip_class"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Preconditions: the fixture really holds one limitation and one gap.
+    assert_eq!(class_of("tier"), ["opaque"], "{exposure}");
+    assert_eq!(class_of("shipping_fee"), ["ungripped"], "{exposure}");
+
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["withheld_static_limitations_total"], 1, "{summary}");
+    let ranked = summary["top_actionable_seams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|seam| seam["owner"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(ranked.contains(&"src/lib.rs::shipping_fee"), "{summary}");
+    assert!(!ranked.contains(&"src/lib.rs::tier"), "{summary}");
+    assert_eq!(
+        summary["actionable_seams_total"].as_u64(),
+        Some(ranked.len() as u64),
+        "{summary}"
+    );
+
+    let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        "{md}"
+    );
+    let stdout = String::from_utf8_lossy(&pilot.stdout);
+    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// When the pilot seam budget truncates the inventory, pilot's snapshot holds
 /// fewer seams than the after snapshot `ripr check` takes. It must not carry
 /// the comparable identity, or verify would compare two populations.
@@ -12888,7 +12962,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""schema_version": "0.2""#));
+    assert!(summary_json.contains(r#""schema_version": "0.3""#));
     assert!(summary_json.contains(r#""scope": "repo""#));
     assert!(summary_json.contains(r#""status": "complete""#));
     assert!(summary_json.contains(r#""timeout_ms": 30000"#));
@@ -14738,8 +14812,15 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
         "pilot wrote under the working directory {}",
         elsewhere.display()
     );
+    // Pilot renders human paths with forward separators on every platform,
+    // so the needle normalizes the same way (#6856).
     assert!(
-        stdout.contains(&packet.join("pilot-summary.md").display().to_string()),
+        stdout.contains(
+            &packet
+                .join("pilot-summary.md")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
         "{stdout}"
     );
     // The packet's loop commands must write into the analyzed repository,
@@ -14751,12 +14832,16 @@ fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Resu
     let before = packets["next"]["before_snapshot_command"]
         .as_str()
         .ok_or_else(|| format!("the fixture must yield a repair loop: {packets}"))?;
-    let elsewhere_text = elsewhere.display().to_string();
+    // Commands render with forward separators on every platform, so both
+    // needles normalize the same way (#6856). Without this the launch-dir
+    // needle passes vacuously on Windows and the root needle always fails.
+    let elsewhere_text = elsewhere.to_string_lossy().replace('\\', "/");
+    let root_text = root.to_string_lossy().replace('\\', "/");
     assert!(
         !before.contains(&elsewhere_text),
         "the snapshot redirect names the launch directory: {before}"
     );
-    assert!(before.contains(&root_arg), "{before}");
+    assert!(before.contains(&root_text), "{before}");
     Ok(())
 }
 
@@ -23672,6 +23757,114 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
         stderr.contains("git fetch") && !stderr.contains("git fetch origin"),
         "the repair must not assume an `origin` remote: {stderr}"
     );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 4: two unresolvable refs must warn once per ref (naming the
+/// ref), and the renderer-owned preflight spellings must use one separator
+/// style per document like the `next_command` lines already do.
+#[test]
+fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("first-pr-bad-refs");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // Canonicalize so Windows passes the verbatim (`\\?\`) spelling: the
+    // prefix assertions below then pin the strip for real instead of
+    // vacuously. (UNC roots keep their prefix by `human_path_text` design
+    // (#4378) and have no portable fixture, so they stay uncovered.)
+    let root_arg = root
+        .canonicalize()
+        .map_err(|err| format!("canonicalize fixture root: {err}"))?
+        .display()
+        .to_string();
+    let output = run_ripr(&[
+        "first-pr",
+        "--root",
+        &root_arg,
+        "--base",
+        "nope-missing-base",
+        "--head",
+        "also-missing-head",
+    ]);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert!(
+        packet.is_file(),
+        "first-pr must still compose the blocked packet: {output:?}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet)?)?;
+    let warnings = report
+        .pointer("/warnings")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("start-here.json must carry a warnings array")?;
+    let texts: Vec<&str> = warnings
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        texts.len(),
+        warnings.len(),
+        "warnings must all render as text: {warnings:?}"
+    );
+    let mut sorted = texts.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        texts.len(),
+        "each distinct warning must appear once: {texts:?}"
+    );
+    for (role, rev) in [
+        ("--base", "nope-missing-base"),
+        ("--head", "also-missing-head"),
+    ] {
+        assert!(
+            texts
+                .iter()
+                .any(|warning| warning.contains(role) && warning.contains(rev)),
+            "a warning must pair `{role}` with unresolvable ref `{rev}`: {texts:?}"
+        );
+    }
+    // Renderer-owned spellings stay comparable: the root-check path must
+    // still resolve after normalization, and on Windows it must use the
+    // slash spelling the sibling `next_command` lines use (a backslash is
+    // an ordinary filename character on Unix, so that half is Windows-only).
+    let resolved_root = json_pointer_str(&report, "/preflight/resolved_root")?;
+    assert!(
+        std::path::Path::new(resolved_root).is_dir(),
+        "resolved_root must keep naming the workspace: {resolved_root}"
+    );
+    let checks = report
+        .pointer("/preflight/checks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("preflight must carry checks")?;
+    for check in checks {
+        let Some(path) = check.pointer("/path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        assert!(
+            !path.contains(r"\\?\"),
+            "preflight path must not leak the verbatim prefix: {path}"
+        );
+        if cfg!(windows) {
+            assert!(
+                !path.contains('\\'),
+                "preflight path must use the slash spelling: {path}"
+            );
+        }
+    }
+    if cfg!(windows) {
+        assert!(
+            !resolved_root.contains('\\') && !resolved_root.contains(r"\\?\"),
+            "resolved_root must use the slash spelling: {resolved_root}"
+        );
+    }
     std::fs::remove_dir_all(&root)?;
     Ok(())
 }
