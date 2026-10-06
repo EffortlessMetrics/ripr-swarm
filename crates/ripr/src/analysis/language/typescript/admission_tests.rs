@@ -168,6 +168,16 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             none,
         ),
         (
+            "inert class expression in setup",
+            "const Box = class { static size = 2; get(n) { return checkout(n); } };\ntest('x', () => { checkout(1); });",
+            none,
+        ),
+        (
+            "setup forEach with an inert default",
+            "const cases = [1];\ncases.forEach((value = 2) => { test('x', () => { checkout(value); }); });",
+            none,
+        ),
+        (
             "commonjs require of a runner",
             "const { test } = require('vitest');\ntest('x', () => { checkout(1); });",
             none,
@@ -241,6 +251,26 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
         (
             "var redeclares a production require as a runner",
             "var { vi } = require('../src/cart');\nvar { vi } = require('vitest');\nit('x', async () => { await vi.waitUntil(() => checkout(1)); });",
+            unresolved,
+        ),
+        (
+            "class expression static block asserts at load",
+            "const Guard = class { static { expect(checkout(0)).toBe(0); } };\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "class expression static field asserts at load",
+            "const Guard = class { static ok = assert(checkout(0)); };\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "class expression extends a call",
+            "const Guard = class extends makeBase() {};\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "setup forEach parameter default asserts",
+            "const cases = [undefined];\ncases.forEach((value = fail('setup')) => { test('x', () => { checkout(value); }); });",
             unresolved,
         ),
         (

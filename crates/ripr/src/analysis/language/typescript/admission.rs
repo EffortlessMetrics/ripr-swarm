@@ -932,6 +932,13 @@ impl<'c> Scan<'c> {
             let Some(init) = &declarator.init else {
                 continue;
             };
+            // A function body runs only when called, but a class
+            // expression's heritage, decorators, computed keys, static
+            // blocks and static fields run when the binding is created.
+            if let Expression::ClassExpression(class) = init.get_inner_expression() {
+                self.setup_class(class);
+                continue;
+            }
             if is_function_like(init) {
                 continue;
             }
@@ -1025,8 +1032,10 @@ impl<'c> Scan<'c> {
             None => {
                 // `cases.forEach((c) => { it(c.name, ...) })` registers tests
                 // from a callback; its body is setup too.
-                if let Some(body) = for_each_callback_body(call) {
+                if let Some((params, body)) = for_each_callback(call) {
                     self.expr(&call.callee);
+                    // Parameter defaults run before the body on each call.
+                    self.parameter_defaults(params);
                     self.setup_statements(body);
                 } else {
                     self.call(call);
@@ -2105,10 +2114,10 @@ fn require_source<'a>(expression: &'a Expression<'_>) -> Option<&'a str> {
     }
 }
 
-/// The body of a setup-level `<receiver>.forEach(callback)` call.
-fn for_each_callback_body<'b, 'a>(
+/// The parameters and body of a setup-level `<receiver>.forEach(callback)` call.
+fn for_each_callback<'b, 'a>(
     call: &'b oxc_ast::ast::CallExpression<'a>,
-) -> Option<&'b [Statement<'a>]> {
+) -> Option<(&'b FormalParameters<'a>, &'b [Statement<'a>])> {
     let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
         return None;
     };
@@ -2116,11 +2125,13 @@ fn for_each_callback_body<'b, 'a>(
         return None;
     }
     match call.arguments.first() {
-        Some(Argument::ArrowFunctionExpression(arrow)) => Some(&arrow.body.statements),
+        Some(Argument::ArrowFunctionExpression(arrow)) => {
+            Some((&arrow.params, &arrow.body.statements))
+        }
         Some(Argument::FunctionExpression(function)) => function
             .body
             .as_ref()
-            .map(|body| body.statements.as_slice()),
+            .map(|body| (&*function.params, body.statements.as_slice())),
         _ => None,
     }
 }
@@ -2182,7 +2193,7 @@ fn collect_setup_statement_names(
                 })
                 || matches!(call.callee.get_inner_expression(), Expression::Identifier(identifier)
                     if DESCRIBE_ROOTS.contains(&identifier.name.as_str()))
-                || for_each_callback_body(call).is_some();
+                || for_each_callback(call).is_some();
             if !describe_like {
                 return;
             }
