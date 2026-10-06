@@ -1362,6 +1362,40 @@ mod tests {
     }
 
     #[test]
+    fn a_shard_that_lands_exactly_on_the_ceiling_keeps_its_last_seam() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(30, 10, 6);
+        for k in [2, 5, 11] {
+            let prefix = seams
+                .get(..k)
+                .ok_or("the corpus is shorter than the prefix")?;
+            let exact = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 30, prefix))?;
+            for (ceiling, first_end) in [(exact, k), (exact.saturating_sub(1), k - 1)] {
+                PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+                let ShardPlan::Ranges(ranges) = plan_shard_ranges(&key, &seams, 30, ceiling)?
+                else {
+                    return Err(format!("ceiling {ceiling} should shard"));
+                };
+                assert_eq!(
+                    ranges.first(),
+                    Some(&(0..first_end)),
+                    "prefix {k}, ceiling {ceiling}"
+                );
+                assert_eq!(
+                    Some(ranges),
+                    probed_shard_ranges(&key, &seams, 30, ceiling)?
+                );
+                assert_eq!(
+                    PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+                    0,
+                    "prefix {k}, ceiling {ceiling}: the size model disagreed with a real encode"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_wrong_size_model_falls_back_to_the_probing_search() -> Result<(), String> {
         let key = empty_key();
         let seams = mixed_seams(60, 20, 5);
