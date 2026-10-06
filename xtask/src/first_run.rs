@@ -99,14 +99,16 @@ const CASES: [Case; 3] = [
 ];
 
 /// What a verdict means given whether the crate's tests notice the edit.
-/// A gap class on a caught edit is a false gap; an unknown is unresolved,
-/// not wrong.
+/// A missing-path class on a caught edit is a false gap; `weakly_exposed`
+/// there names a discriminator but calls it too weak, so it understates the
+/// tests. An unknown is unresolved, not wrong.
 fn verdict_reading(verdict: Option<&str>, caught: bool) -> &'static str {
     match (verdict, caught) {
         (None, _) => "no verdict",
         (Some("exposed"), true) => "agrees with the tests",
         (Some("exposed"), false) => "false credit",
-        (Some("weakly_exposed" | "reachable_unrevealed" | "no_static_path"), true) => "false gap",
+        (Some("weakly_exposed"), true) => "understates the tests",
+        (Some("reachable_unrevealed" | "no_static_path"), true) => "false gap",
         (Some("weakly_exposed" | "reachable_unrevealed" | "no_static_path"), false) => {
             "agrees with the tests"
         }
@@ -1100,28 +1102,52 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_on_an_edit_the_tests_catch_reads_as_a_false_gap_and_an_unknown_as_unresolved() {
+    fn every_verdict_class_has_a_reading_for_a_caught_and_an_uncaught_edit() {
+        let expected = [
+            ("exposed", "agrees with the tests", "false credit"),
+            (
+                "weakly_exposed",
+                "understates the tests",
+                "agrees with the tests",
+            ),
+            ("reachable_unrevealed", "false gap", "agrees with the tests"),
+            ("no_static_path", "false gap", "agrees with the tests"),
+            ("infection_unknown", "unresolved", "unresolved"),
+            ("propagation_unknown", "unresolved", "unresolved"),
+            ("static_unknown", "unresolved", "unresolved"),
+        ];
         assert_eq!(
-            verdict_reading(Some("reachable_unrevealed"), true),
-            "false gap"
+            expected.map(|(class, _, _)| class),
+            VERDICT_CLASSES,
+            "every verdict class needs an expected reading"
         );
-        assert_eq!(verdict_reading(Some("weakly_exposed"), true), "false gap");
-        assert_eq!(verdict_reading(Some("no_static_path"), true), "false gap");
-        assert_eq!(
-            verdict_reading(Some("infection_unknown"), true),
-            "unresolved"
-        );
-        assert_eq!(verdict_reading(Some("static_unknown"), false), "unresolved");
-        assert_eq!(
-            verdict_reading(Some("exposed"), true),
-            "agrees with the tests"
-        );
-        assert_eq!(verdict_reading(Some("exposed"), false), "false credit");
-        assert_eq!(
-            verdict_reading(Some("reachable_unrevealed"), false),
-            "agrees with the tests"
-        );
+        for (class, caught, uncaught) in expected {
+            assert_eq!(verdict_reading(Some(class), true), caught, "{class} caught");
+            assert_eq!(
+                verdict_reading(Some(class), false),
+                uncaught,
+                "{class} uncaught"
+            );
+        }
         assert_eq!(verdict_reading(None, true), "no verdict");
+        assert_eq!(verdict_reading(None, false), "no verdict");
+    }
+
+    #[test]
+    fn the_markdown_verdict_line_names_the_reading_and_the_catching_tests() {
+        let case = CaseResult {
+            name: "demo-1.0.0".to_string(),
+            steps: vec![(step("check", 0, "", "", 0.1), vec![])],
+            verdict: Some("reachable_unrevealed"),
+            caught_by: &["tests::boundary", "tests::equal"],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        let text = render_markdown("ripr 0.0.0", &[], &[case]);
+        assert!(
+            text.contains("verdict: `reachable_unrevealed` (false gap; tests that notice the edit: tests::boundary, tests::equal)"),
+            "{text}"
+        );
     }
 
     #[test]

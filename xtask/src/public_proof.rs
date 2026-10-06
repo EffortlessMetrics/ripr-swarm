@@ -1785,7 +1785,7 @@ fn first_run_section(
     page.line("## First run");
     page.blank();
     page.line(
-        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured."
+        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction, and reads each verdict against the tests that catch the edit in that crate; it does not judge verdict accuracy in general. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured."
     );
     page.blank();
     let mut verdict_rows = Vec::new();

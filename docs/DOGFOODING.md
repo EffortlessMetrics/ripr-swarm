@@ -58,8 +58,9 @@ compiles ripr from source on every run. It records the static verdict class each
 release produces for each edit, so a verdict change between releases is visible.
 Each case also records the crate tests that fail with its edit applied (checked
 by running `cargo test` on the feature branch), and the report reads the verdict
-against them: a gap class on an edit the tests catch is a `false gap`, an
-unknown class is `unresolved`. All three pinned edits are caught, so an unknown
+against them. On an edit the tests catch, `reachable_unrevealed` or
+`no_static_path` is a `false gap`, `weakly_exposed` `understates the tests`,
+and an unknown class is `unresolved`. All three pinned edits are caught, so an unknown
 replacing a gap there is a correction, not lost resolution. Verdict accuracy in
 general is still a question for the hand-labeled corpus, not this walk.
 
