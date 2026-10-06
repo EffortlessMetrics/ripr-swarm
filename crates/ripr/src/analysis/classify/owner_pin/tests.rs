@@ -1049,6 +1049,7 @@ fn a_bare_call_no_import_settles_pins_neither_rival() {
         .map(|pin| admitted_texts(&index, &pin))
         .unwrap_or_else(|| vec!["no pin".to_string()]);
     assert!(admitted.is_empty(), "{admitted:?}");
+}
 
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";
 
