@@ -3,7 +3,9 @@ mod classify;
 mod patterns;
 mod scan;
 
-pub(crate) use arguments::{assertion_oracle_text, equality_assertion_arguments};
+pub(crate) use arguments::{
+    assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
+};
 pub(crate) use classify::classify_assertion;
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
@@ -13,7 +15,7 @@ pub(crate) use patterns::{
 pub(crate) use scan::unwrap_err_bound_variables;
 pub(crate) use scan::{
     err_return_guard_oracles, extract_assertions, extract_line_scanned_oracles,
-    guarded_result_match_scan_with_shadow_authority,
+    guarded_result_match_scan_with_shadow_authority, terminal_err_return_guard_oracle,
 };
 
 #[cfg(test)]
@@ -285,3 +287,6 @@ mod relational_tests;
 
 #[cfg(test)]
 mod wildcard_tests;
+
+#[cfg(test)]
+mod discarded_matches_tests;

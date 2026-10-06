@@ -486,6 +486,54 @@ fn parse_budget_limitation(
     ))
 }
 
+/// One typed `producer_failure` per changed Python file the facts producer
+/// could not parse (#6824). The repo-mode evidence producer already types
+/// this failure (`source_facts_parse_error`, #3554 PR B), but the PR-local
+/// diff/worktree pass used to drop it, so a syntax error in the edited file
+/// collapsed the run into a complete, limitations-empty
+/// `no_behavioral_candidates` zero. The shape mirrors the Rust lexical
+/// fallback parity limitation (`producer_failure` / `language_adapter` /
+/// `inspect_failure`, `crates/ripr/src/analysis/language/rust/mod.rs`).
+fn source_fact_parse_error_limitation(
+    relative: &Path,
+    facts: &source_facts::PythonSourceFacts,
+) -> Result<Option<AnalysisLimitation>, String> {
+    let Some(parse_error) = source_facts::source_facts_syntax_parse_error(facts) else {
+        return Ok(None);
+    };
+    let portable = normalized_path(relative);
+    let reason = parse_error
+        .evidence
+        .strip_prefix("source_fact_parse_error: ")
+        .unwrap_or(parse_error.evidence.as_str());
+    let detail = format!(
+        "{portable}: the Python parser reported a syntax error ({reason}), so no source facts \
+         were extracted; this file's changed lines seed no probe shapes and can lose its \
+         related tests, so its findings are incomplete."
+    )
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
+    let limitation = AnalysisLimitation::new(
+        AnalysisLimitationKind::ProducerFailure,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Fix the file so it parses as Python, then re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(1)?
+    .with_detail(detail)?;
+    // A path the portable-path rules reject (a legal Unix filename spelled
+    // like a Windows drive path, for example) still gets the limitation;
+    // the detail already names it (mirrors the Rust parity limitation).
+    let limitation = match limitation.clone().with_path(&portable) {
+        Ok(with_path) => with_path,
+        Err(_) => limitation,
+    };
+    Ok(Some(limitation))
+}
+
 impl LanguageAdapter for PythonAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::Python))
@@ -549,6 +597,13 @@ impl PythonAdapter {
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut limitations = Vec::new();
+        // The diff-scoped limitation set describes the changed scope (the
+        // read-failure disclosure model below); parse-failure promotions
+        // bind to the same admitted changed paths.
+        let changed_paths: Vec<String> = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect();
         for relative in &workspace_files {
             let Some(source) = workspace_read.sources.get(relative) else {
                 continue;
@@ -556,6 +611,18 @@ impl PythonAdapter {
             let facts = extract_source_facts(relative, source);
             debug_assert!(source_fact_snapshot_observation(&facts) > 0);
             if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
+                limitations.push(limitation);
+            }
+            // #6824: a syntax error in a changed file must surface as a
+            // named producer failure, never as a silent complete zero. An
+            // unchanged file's parse failure stays out of the diff-scoped
+            // limitation set (its context loss matches the Rust twin's
+            // unchanged-file behavior).
+            if changed_paths
+                .iter()
+                .any(|changed| changed == &normalized_path(relative))
+                && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
+            {
                 limitations.push(limitation);
             }
             docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
@@ -622,10 +689,6 @@ impl PythonAdapter {
         // and the concrete read failure. Unreadable unchanged files are
         // counted in `skipped_files` below but stay out of the diff-scoped
         // limitation set.
-        let changed_paths: Vec<String> = changed_files
-            .iter()
-            .map(|changed| normalized_path(&changed.path))
-            .collect();
         for (file, error) in &workspace_read.io_failures {
             if !changed_paths
                 .iter()
