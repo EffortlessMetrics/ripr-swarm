@@ -3,6 +3,20 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
+
+Serializing the same document twice into one tool response — pretty
+`content[0].text` plus `structuredContent` — made the wire response ~2.4x
+the compact document, so a listing the document guard approved at 65 KB
+died `result_too_large` at the 128 KiB bound after every budget layer had
+passed. Zero-finding fixtures cannot witness this; it needs hundreds of
+items. The envelope is now the calibration owner: compact text always,
+`structuredContent` only while the complete envelope measures under the
+bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
+`MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
+escaping doubles the text copy). When changing a wire shape, measure the
+final envelope, not the document.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length

@@ -54,6 +54,55 @@ pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
 
 const MAX_FAILURE_DETAIL_CHARS: usize = 512;
 
+/// The caller-narrowed window over a gap list's selected items (#6021):
+/// `offset` indexes the selected items in snapshot order, `limit` caps the
+/// returned page. The default window byte-fills one wire-fitting page.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct GapListWindow {
+    pub(crate) offset: usize,
+    pub(crate) limit: Option<usize>,
+}
+
+/// The disclosed page window inside a gap-list document: what the caller
+/// asked for (`offset`, `limit` when set), what shipped, and how to
+/// continue. A page never lies about the selection: `selected` stays the
+/// full stored-selection count while `page.returned` counts this page.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct GapPage {
+    offset: usize,
+    limit: Option<usize>,
+    returned: usize,
+    has_more: bool,
+    next_offset: Option<usize>,
+}
+
+/// Compact serialized length of a document, measured without retaining the
+/// encoded bytes.
+fn document_bytes(value: &Value) -> Result<usize, AttemptFailure> {
+    struct LengthWriter(usize);
+
+    impl std::io::Write for LengthWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LengthWriter(0);
+    serde_json::to_writer(&mut writer, value).map_err(|error| {
+        AttemptFailure::new(
+            CODE_ANALYSIS_FAILED,
+            format!("serialize gap list: {error}"),
+            "retry with ripr_refresh",
+        )
+    })?;
+    Ok(writer.0)
+}
+
 /// One typed failure. `detail` is producer wording bounded to
 /// [`MAX_FAILURE_DETAIL_CHARS`]; `recovery` names the action that can change
 /// the state; `data` carries small structured context (for example the
@@ -404,20 +453,97 @@ impl WorkspaceSession {
 
     /// Bounded working set for the current (or named) snapshot. Selection is
     /// the snapshot's stored shared-budget result; this function never
-    /// re-runs ranking.
-    pub(crate) fn list_gaps(&self, requested: Option<&str>) -> Result<Value, AttemptFailure> {
+    /// re-runs ranking. `window` pages over the selected items in snapshot
+    /// order (#6021); an unset limit byte-fills the page to
+    /// [`super::MAX_TOOL_DOCUMENT_BYTES`] so a listing that outgrows one
+    /// wire response degrades to disclosed pages instead of failing after
+    /// budget approval.
+    pub(crate) fn list_gaps(
+        &self,
+        requested: Option<&str>,
+        window: GapListWindow,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let selection = &snapshot.selection;
         let selected_ids = selection
             .selected_ids()
             .collect::<std::collections::BTreeSet<&str>>();
-        let items = snapshot
+        let selected_items = snapshot
             .items
             .iter()
             .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
-            .map(|item| item.list_summary.clone())
             .collect::<Vec<_>>();
-        let document = json!({
+
+        // The document shell carries every disclosure except the page of
+        // item summaries; its measured size sets the page budget. The
+        // reserve absorbs the small byte difference between this shell's
+        // zeroed page fields and the filled ones the caller receives.
+        let shell_bytes = {
+            let shell = self.gap_list_document(
+                snapshot,
+                selection,
+                requested,
+                Vec::new(),
+                &GapPage::default(),
+            )?;
+            document_bytes(&shell)?
+        };
+        // Reserve covers the array syntax around the summaries and the
+        // byte-accounting margin; per-item commas are charged below.
+        let reserve = 256usize;
+        let page_budget =
+            super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
+
+        let start = window.offset.min(selected_items.len());
+        let mut page = GapPage {
+            offset: start,
+            limit: window.limit,
+            ..GapPage::default()
+        };
+        let mut items = Vec::new();
+        let mut used = 0usize;
+        for item in &selected_items[start..] {
+            if items.len() >= window.limit.unwrap_or(usize::MAX) {
+                break;
+            }
+            // One byte per joining comma keeps the accounting exact.
+            let cost = item.list_summary_bytes().saturating_add(1);
+            // The first summary always ships: a page must make progress
+            // even when a single item outgrows the byte budget.
+            if !items.is_empty() && used + cost > page_budget {
+                break;
+            }
+            used += cost;
+            items.push(item.list_summary.clone());
+        }
+        page.returned = items.len();
+        page.has_more = start + items.len() < selected_items.len();
+        page.next_offset = page.has_more.then_some(start + items.len());
+
+        let document = self.gap_list_document(snapshot, selection, requested, items, &page)?;
+        bounded_document(document)
+    }
+
+    /// Assemble the gap-list document around a page of item summaries.
+    fn gap_list_document(
+        &self,
+        snapshot: &Snapshot,
+        selection: &DiagnosticBudgetResult,
+        requested: Option<&str>,
+        items: Vec<Value>,
+        page: &GapPage,
+    ) -> Result<Value, AttemptFailure> {
+        let mut continuation = json!({
+            "tool": "ripr_get_gap",
+            "resource_template": "ripr://gap/{canonical_id}",
+        });
+        if let Some(next_offset) = page.next_offset {
+            continuation["next_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": { "offset": next_offset },
+            });
+        }
+        Ok(json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": requested,
@@ -442,6 +568,13 @@ impl WorkspaceSession {
                 .map(|reason| overflow_reason_as_str(*reason))
                 .collect::<Vec<_>>(),
             "items": items,
+            "page": {
+                "offset": page.offset,
+                "limit": page.limit,
+                "returned": page.returned,
+                "has_more": page.has_more,
+                "next_offset": page.next_offset,
+            },
             "omitted_items": selection
                 .omitted
                 .iter()
@@ -450,17 +583,13 @@ impl WorkspaceSession {
                     "reason": omitted_reason_as_str(item.reason),
                 }))
                 .collect::<Vec<_>>(),
-            "continuation": {
-                "tool": "ripr_get_gap",
-                "resource_template": "ripr://gap/{canonical_id}",
-            },
+            "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred.",
             "limitations": [
                 "summaries do not contain evidence detail; read one item with ripr_get_gap or ripr://gap/{canonical_id}",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
-        });
-        bounded_document(document)
+        }))
     }
 
     /// One canonical item's complete bounded evidence.
@@ -1067,9 +1196,11 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
         };
-        let _ = complete.list_gaps(None).map_err(|failure| failure.detail)?;
+        let _ = complete
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete
-            .list_gaps(None)
+            .list_gaps(None, GapListWindow::default())
             .map_err(|failure| failure.detail)?;
         let complete_snapshot = complete
             .last_good
@@ -1118,7 +1249,10 @@ mod tests {
     #[test]
     fn list_get_snapshot_before_any_refresh_fail_closed() -> Result<(), String> {
         let session = WorkspaceSession::default();
-        expect_code(session.list_gaps(None), CODE_NO_SNAPSHOT)?;
+        expect_code(
+            session.list_gaps(None, GapListWindow::default()),
+            CODE_NO_SNAPSHOT,
+        )?;
         expect_code(session.get_gap("gap:any", None), CODE_NO_SNAPSHOT)?;
         expect_code(
             session.snapshot_document("snapshot:sha256:none"),
@@ -1137,7 +1271,10 @@ mod tests {
             in_flight: true,
             ..Default::default()
         };
-        expect_code(session.list_gaps(None), CODE_ANALYSIS_IN_FLIGHT)?;
+        expect_code(
+            session.list_gaps(None, GapListWindow::default()),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
         expect_code(session.get_gap("gap:any", None), CODE_ANALYSIS_IN_FLIGHT)?;
         expect_code(
             session.snapshot_document("snapshot:sha256:any"),
@@ -1159,7 +1296,7 @@ mod tests {
             .ok_or_else(|| "missing snapshot".to_string())?
             .snapshot_id
             .clone();
-        match session.list_gaps(Some("snapshot:sha256:old")) {
+        match session.list_gaps(Some("snapshot:sha256:old"), GapListWindow::default()) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
                 Err(format!("unexpected failure code: {}", failure.code))
@@ -1179,6 +1316,263 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    /// A snapshot carrying `count` distinct canonical items, built from the
+    /// shared gaps test finding with per-index identities. No analysis runs:
+    /// the session contract is exercised against typed producer output.
+    fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        let findings = (0..count)
+            .map(|index| {
+                let mut finding = gaps::test_finding()?;
+                finding.id = format!("finding:test:{index}");
+                if let Some(gap) = finding.canonical_gap.as_mut() {
+                    gap.id = format!("gap:test:{index}");
+                }
+                finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
+                // Distinct files: the shared budget caps items per document,
+                // and this fixture needs a workspace-scale selection.
+                finding.probe.location =
+                    crate::domain::SourceLocation::new(format!("src/module{index}.rs"), 12, 5);
+                Ok(finding)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let output = crate::app::CheckOutput {
+            schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            harness_projections: Vec::new(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Draft,
+            root: PathBuf::from("."),
+            base: None,
+            analysis_outcome: Some(outcome(
+                AnalysisOutcomeKind::CompleteWithFindings,
+                count as u64,
+                Vec::new(),
+            )?),
+            summary: crate::domain::Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            partial_scope: None,
+        };
+        let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        Ok(WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        })
+    }
+
+    /// #6021: an aggregate listing too large for one wire response degrades
+    /// to disclosed pages. The old behavior returned the whole budget-
+    /// approved document and let the tool envelope fail `result_too_large`
+    /// after approval — the approved-then-dead sequence. Now the default
+    /// call byte-fills one wire-fitting page, discloses the window, and
+    /// walking `page.next_offset` covers the selection exactly once.
+    #[test]
+    fn oversized_aggregate_listing_pages_instead_of_dying_after_budget_approval()
+    -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let document = session
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
+
+        // The page itself must fit the wire envelope end to end.
+        let envelope = crate::mcp::protocol::tool_result(document.clone())
+            .map_err(|error| format!("paged listing must ship: {error}"))?;
+        let envelope_bytes = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
+        if envelope_bytes.len() > crate::mcp::MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "the paged envelope must fit the wire bound, got {} bytes",
+                envelope_bytes.len()
+            ));
+        }
+        // A byte-filled page must actually sit at the tool document ceiling.
+        let document_bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
+        if document_bytes.len() > crate::mcp::MAX_TOOL_DOCUMENT_BYTES {
+            return Err(format!(
+                "the default page must respect the tool document ceiling, got {} bytes",
+                document_bytes.len()
+            ));
+        }
+
+        let selected = document
+            .pointer("/selected")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "list lost its selected count".to_string())?;
+        let returned = document
+            .pointer("/page/returned")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "list lost its page window".to_string())?;
+        if returned == 0 || returned >= selected {
+            return Err(format!(
+                "a byte-filled page must be partial: returned {returned} of {selected}"
+            ));
+        }
+        if document.pointer("/page/has_more").and_then(Value::as_bool) != Some(true) {
+            return Err("a partial page must disclose has_more".to_string());
+        }
+        if document
+            .pointer("/page/next_offset")
+            .and_then(Value::as_u64)
+            != Some(returned)
+        {
+            return Err("next_offset must resume after the returned page".to_string());
+        }
+        if document
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .map(|items| items.len())
+            != Some(returned as usize)
+        {
+            return Err("items must carry exactly the returned page".to_string());
+        }
+        if document
+            .pointer("/continuation/next_page/tool")
+            .and_then(Value::as_str)
+            != Some("ripr_list_gaps")
+        {
+            return Err("a partial page must name the next-page route".to_string());
+        }
+
+        // Walking next_offset covers the selection exactly once, in order,
+        // ending in a disclosed final page.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pages = 0usize;
+        let mut offset = 0usize;
+        loop {
+            let document = session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        offset,
+                        limit: None,
+                    },
+                )
+                .map_err(|failure| failure.detail)?;
+            let ids = document
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "page lost its items".to_string())?;
+            if ids.is_empty() {
+                return Err(format!("page at offset {offset} returned no items"));
+            }
+            for id in ids {
+                let id = id
+                    .pointer("/canonical_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "item summary lost its identity".to_string())?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("identity {id} appeared on two pages"));
+                }
+            }
+            pages += 1;
+            match document.pointer("/page/has_more").and_then(Value::as_bool) {
+                Some(true) => {
+                    offset = document
+                        .pointer("/page/next_offset")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| "has_more without next_offset".to_string())?
+                        as usize;
+                }
+                Some(false) => break,
+                other => return Err(format!("page lost has_more: {other:?}")),
+            }
+            if pages > selected as usize {
+                return Err("paging must terminate".to_string());
+            }
+        }
+        if seen.len() != selected as usize {
+            return Err(format!(
+                "walked {} identities but the selection holds {selected}",
+                seen.len()
+            ));
+        }
+
+        // An explicit limit caps the page and is disclosed.
+        let limited = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 0,
+                    limit: Some(1),
+                },
+            )
+            .map_err(|failure| failure.detail)?;
+        if limited.pointer("/page/limit").and_then(Value::as_u64) != Some(1)
+            || limited.pointer("/page/returned").and_then(Value::as_u64) != Some(1)
+            || limited.pointer("/page/has_more").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(format!(
+                "an explicit limit must cap and disclose: {limited}"
+            ));
+        }
+        // An offset past the selection is an empty disclosed page, not an error.
+        let beyond = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: selected as usize + 5,
+                    limit: None,
+                },
+            )
+            .map_err(|failure| failure.detail)?;
+        if beyond
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            != Some(false)
+            || beyond.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+            || beyond.pointer("/page/next_offset") != Some(&Value::Null)
+        {
+            return Err(format!(
+                "an offset past the selection must be an empty final page: {beyond}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #6021: below the wire ceiling the default listing still ships the
+    /// whole selection in one page — the small-workspace contract is
+    /// unchanged apart from the added page disclosure.
+    #[test]
+    fn fitting_listing_ships_whole_with_a_closed_page_window() -> Result<(), String> {
+        let session = session_with_findings(3)?;
+        let document = session
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
+        if document.pointer("/selected").and_then(Value::as_u64) != Some(3)
+            || document
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                != Some(3)
+        {
+            return Err(format!("small selection must ship whole: {document}"));
+        }
+        if document.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+            || document.pointer("/page/next_offset") != Some(&Value::Null)
+            || document.pointer("/page/returned").and_then(Value::as_u64) != Some(3)
+        {
+            return Err(format!(
+                "a complete listing must close its window: {document}"
+            ));
+        }
+        let envelope = crate::mcp::protocol::tool_result(document)
+            .map_err(|error| format!("small listing must ship: {error}"))?;
+        if envelope.get("structuredContent").is_none() {
+            return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
     }
 
     #[test]

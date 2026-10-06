@@ -136,6 +136,19 @@ with reasons and the continuation route (`ripr_get_gap`). Pass `snapshot_id`
 to bind the read to a specific snapshot: a mismatched identity fails closed
 with `stale_snapshot` and the current identity.
 
+Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
+selected items in snapshot order, disclosed through the `page` window
+(`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
+When the whole selection cannot fit one wire response, the default call
+returns the first wire-fitting page and `continuation.next_page` names the
+`ripr_list_gaps` call that resumes the walk; walking `next_offset` covers
+the selection exactly once. Only a listing that cannot fit even one page
+fails closed with `result_too_large`. Tool responses carry the document once
+at full fidelity: `content[0].text` is the compact JSON serialization, and
+`structuredContent` repeats it only while the complete envelope stays under
+the 128-KiB response bound — a large page ships as compact text instead of
+failing after budget approval.
+
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
 identity: identity and location, the changed behavior (expression,
