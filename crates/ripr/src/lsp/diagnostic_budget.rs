@@ -617,7 +617,10 @@ pub(crate) fn diagnostic_canonical_id(
         // gap) is not a collectContext namespace and stays a legacy fallback
         // only. Gap-ledger diagnostics keep their ledger-canonical identity
         // via `diagnostic_id`; the ledger route matches both gap and
-        // canonical gap ids.
+        // canonical gap ids. Producer-less disclosures (the diff-scope
+        // guard) carry no producer identity and keep the deterministic
+        // `location:` fallback; their content has no collectContext
+        // continuation (the workspace-status limitation surface names it).
         for key in [
             "finding_id",
             "seam_id",

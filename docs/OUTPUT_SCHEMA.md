@@ -7904,6 +7904,11 @@ Success payload (200-level result object, no `protocol_version`,
   NOT the immutable snapshot-handle contract reserved for #1602; the
   `riprAgent` capability advertises `snapshot_handles: false` until that
   contract lands. `null` when the snapshot carries no generation identity.
+- `seam_evidence_identity` — the current snapshot's seam evidence identity
+  (`{"snapshot_id": ...}`). Pass it as `evidence_identity` when continuing a
+  listed seam `canonical_id` through `ripr.collectContext` or
+  `ripr.collectEvidenceContext`; the seam routes reject a seam id cited
+  without it on a current snapshot (#6848).
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
 - `selected` — `[{canonical_id, document}]` for every delivered diagnostic
@@ -7911,9 +7916,15 @@ Success payload (200-level result object, no `protocol_version`,
   producer identity the continuation route resolves: the finding's probe id
   (`data.finding_id`) for finding diagnostics, the seam id for seam
   diagnostics, and the ledger-canonical gap id for gap-ledger diagnostics.
-  Every listed canonical id is accepted by `ripr.collectContext` (#6848);
-  legacy payloads without producer ids fall back to the projection-local
-  `diagnostic_id`.
+  Every listed finding, seam, or gap canonical id is accepted by
+  `ripr.collectContext` (#6848): finding ids directly, seam ids together
+  with this envelope's `seam_evidence_identity` as `evidence_identity`,
+  gap-ledger ids through the ledger route. Producer-less disclosures (the
+  diff-scope guard) fall back to a deterministic `location:` id with no
+  `ripr.collectContext` continuation; their content is the workspace-status
+  limitation surface. The finding id follows the canonical group's current
+  primary, so a gap's listed id can change when a new primary probe rotates
+  in; the id listed by a given snapshot always resolves for that snapshot.
 - `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
   200 entries. `reason` is `profile_filtered`, `document_item_limit`,
   `workspace_item_limit`, or `serialized_byte_limit`.
