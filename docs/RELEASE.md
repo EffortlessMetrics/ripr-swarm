@@ -375,9 +375,12 @@ version to the next development version while the constant stays. Between
 the release commit and verified publication, a dev-built generator self-pins
 a version whose archive is not up yet — publish promptly, and refresh CI
 with the previous release until publication verifies. `cargo xtask release-readiness
---version <version>` checks the constant as `init-pin-version`: a stable
-release fails until the constant equals the version, and a release candidate
-fails if the constant names it.
+--version <version>` checks the constant as `init-pin-version`. Once CHANGELOG.md has
+the `## <version>` heading the cut's fold writes, a stable release fails until
+the constant equals the version; before the fold, the lag is the normal
+development state and the check warns, so main's push CI stays green. A
+release candidate fails if the constant names the candidate or its stable
+target.
 
 ```bash
 cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force

@@ -1,5 +1,5 @@
 <!-- section: Changed -->
-- Performance: `ripr pilot`: the evidence context builds its import and owner-name
+- Performance (`ripr pilot`): the evidence context builds its import and owner-name
   tables once and derives its three target-affinity helper tables from one
   pass, instead of rescanning every source's `use` statements up to four
   times. Over two cold runs each, pilot wall time fell from 31.7s to 26.9s
