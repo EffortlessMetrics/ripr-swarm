@@ -10,5 +10,5 @@
   (`assert_eq!(Stack::new(1).depth(), 1)`) is typed like a `let` binding, and
   a changed early `return None;` / `return Err(..);` is pinned when it is the
   only source of that value and every other exit builds `Some(..)` / `Ok(..)`.
-  bytesize's `as_kib` and `as_mb` return-value probes now read `exposed`
-  (#5352).
+  The verdict corpus cases `bytesize-as-kib-div` and `bytesize-as-mb-div`
+  now read `exposed` (#5352).
