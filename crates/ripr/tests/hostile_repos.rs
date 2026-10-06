@@ -900,6 +900,17 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
             repair.stderr
         ));
     }
+    // The refusal's drill-in command carries the hostile root as portable
+    // printf segments, never raw bytes.
+    if !repair.stderr.contains("Run `ripr pilot --root '")
+        || !repair.stderr.contains("\"$(printf '\\033')\"")
+        || !repair.stderr.contains("\"$(printf '\\342\\200\\256')\"")
+    {
+        return Err(format!(
+            "expected the refusal's drill-in command to quote the hostile root\n{}",
+            repair.stderr
+        ));
+    }
 
     // A bad ref echoed back by the failure path.
     let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
