@@ -94,6 +94,7 @@ use crate::agent::loop_commands::{
 use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 pub fn run(args: Vec<String>) -> Result<(), CommandError> {
     let outcome = run_command(args);
@@ -211,6 +212,7 @@ fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
+    let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
         .seam_id
@@ -375,6 +377,7 @@ fn persist_before_repair_attempt(
             println!("(PowerShell) {form}");
         }
     }
+    crate::edit_cage::trace_persist_latency("persist_before_attempt", persist_started.elapsed());
     Ok(())
 }
 
