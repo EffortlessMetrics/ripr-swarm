@@ -398,7 +398,9 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         return None;
     }
     let reason = git_reason_line(&output.stderr)?;
-    if reason.contains("not a git repository") {
+    // These two mean "no repository here", not "a damaged one": the work-tree
+    // message already tells the user to run from, or point `--root` at, one.
+    if reason.contains("not a git repository") || reason.contains("invalid gitfile") {
         return None;
     }
     Some(format!(
