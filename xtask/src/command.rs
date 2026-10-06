@@ -1191,7 +1191,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/mutation-spot-check.{json,md}",
             false,
             false,
-            "Scores static grip verdicts against real cargo-mutants outcomes on supplied checkouts through the ripr calibrate join; agreement counts only seam-precise operator mutants.",
+            "Scores static grip verdicts against real cargo-mutants outcomes on supplied checkouts through the ripr calibrate join; agreement counts only operator mutants joined by seam_id or span containment to predicate or return seams.",
         ),
         command_entry(
             "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
