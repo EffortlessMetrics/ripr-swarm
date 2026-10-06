@@ -207,7 +207,7 @@ pub(crate) fn judge_recommendations(
                 .copied()
                 .filter(|o| {
                     columns.is_some_and(|(start, end)| (start..end).contains(&o.column))
-                        && super::pairing_for(o.genre, o.name, kind, expression) == "seam_precise"
+                        && super::operator_mutant_of_expression(o.genre, o.name, kind, expression)
                 })
                 .collect::<Vec<_>>();
             let (tier, joined) = if !precise.is_empty() {

@@ -604,8 +604,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.18`: parser raw oracle scans exclude opaque property bodies (#5131).
 /// Published `1.17` favorable discarded-oracle facts cannot replay.
 /// `1.20`: unguarded wildcard pattern assertions are weak, not exact strong
-/// oracles (#5397). Predecessor strong wildcard facts must not replay. The
-/// concurrent assertion-admission candidate #5359 uses generation `1.19`.
+/// oracles (#5397). Predecessor strong wildcard facts must not replay.
 /// `1.21`: bodies and shape text are spans into the entry's `source`, not
 /// allocated strings (#5415 step 2). Predecessor payloads carry bare-string
 /// bodies that the span wire rejects, so they must cold-recompute.
@@ -626,9 +625,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// derived file-call storage. Retained per-function calls are authoritative;
 /// either predecessor family must rebuild this combined file-fact shape.
 /// `1.29`: probe shapes gain the parser-owned end byte (#5336).
-/// `1.30`: the guarded-match scan emits the #6673 asserted-Err form
-/// (diverging Ok arm, exact assertion Err arm); `1.29` facts lack it.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.30";
+/// `1.30`: files that only parse as Rust 2021 (`gen` identifiers) are
+/// parser-backed, and literal facts include char and byte literals (#5359).
+/// Earlier lexical-fallback and literal facts must miss.
+/// `1.31`: the guarded-match scan emits the #6673 asserted-Err form
+/// (diverging Ok arm, exact assertion Err arm); `1.30` facts lack it.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3905,8 +3907,10 @@ mod tests {
         // (#5415 step 3); legacy payloads carry a dead copy.
         // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
         // 1.28 -> 1.29: probe shapes gain the parser-owned end byte (#5336).
-        // 1.30: the #6673 asserted-Err guarded-match form.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.30");
+        // 1.29 -> 1.30: Rust 2021 parse fallback and char/byte literal
+        // facts (#5359).
+        // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.31");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

@@ -114,14 +114,37 @@ These native receipts are also accepted as-is:
   reject the file instead of counting as zero.
   `verdict` rows feed the `*_unknown` count, which is `review_on_change`: a
   changed verdict list is printed under "For review" and never fails the gate.
-- `ripr-mutation-spot-check-v1` from the mutation spot-check: the agreement
-  rate of the `claims_discriminator` and `claims_no_discriminator` families,
-  join coverage as `seam_precise` pairings over all mutants, and the
-  precision of `ripr pilot`'s top ten recommendations per repository (a
-  recommendation is confirmed when a mutant on its line, or else in its
-  function's body, was missed). These compare
-  static claims with real mutation outcomes on a sample; they are evidence
-  about ripr's calibration, not a mutation result for the corpus.
+- `ripr-mutation-spot-check-v2` from the mutation spot-check: the agreement
+  rate of the `claims_discriminator` and `claims_no_discriminator` families
+  over `canonical_precise` records (operator mutants joined by `seam_id` or
+  span containment to a predicate or return seam), and join coverage as
+  `canonical_precise` over every runtime record. These compare static claims
+  with real mutation outcomes on a sample; they are evidence about ripr's
+  calibration, not a mutation result for the corpus. A
+  `ripr-mutation-spot-check-v1` receipt is refused: its `seam_precise`
+  operator-text pairings are a different population. For the same reason a
+  baseline row whose samples were not ingested from a v2 receipt is reported
+  as not comparable instead of gating a v2 value against it. The committed
+  baseline has no measured value for these rows yet.
+  These rates pool every repository in the receipt, so each row's evidence
+  ends with its population as one JSON array: every repository's name,
+  checkout revision, cargo-mutants version, `mutant_set_sha256` (a digest of
+  the sorted mutant names, so selection arguments count even when unrecorded),
+  `cargo_mutants_args` and `mutant_timeout_secs` (both `null` for a supplied
+  `mutants.out`, whose run settings the harness cannot see; a shorter timeout
+  turns slow caught mutants into unscoreable timeouts). The gate compares a row only against a
+  baseline over the same population; a swapped repository, a moved revision,
+  a different mutant set, timeout or cargo-mutants run reports "not
+  comparable" with both populations, because the pooled rate can move with
+  no verdict changing. Repository order does not matter. A population with an
+  unrecorded (`null`) cargo-mutants version is never comparable, even to
+  another unrecorded one, because it could hide an instrument change. A
+  receipt repository without a name, revision or mutant-set digest, or with
+  non-string arguments, an empty or non-string version, or a timeout that is
+  not a positive integer, is refused.
+  The receipt also carries the precision of `ripr pilot`'s top ten
+  recommendations per repository (a recommendation is confirmed when a mutant
+  on its line, or else in its function's body, was missed).
 - `ripr-rust-corpus-smoke-v1` from `cargo xtask rust-corpus smoke`: per
   repository, `corpus.not_analyzed` (0 when the run reached `analyzed`, 1 when
   it failed closed, timed out or broke) and `corpus.check_ms` (the time of an

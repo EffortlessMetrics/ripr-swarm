@@ -43,6 +43,9 @@ pub(crate) use oxc_span::{GetSpan, SourceType};
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+mod admission;
+#[cfg(test)]
+mod admission_tests;
 mod annotation_only;
 #[cfg(test)]
 mod annotation_only_tests;
@@ -84,6 +87,7 @@ mod workspace_packages;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
+pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;

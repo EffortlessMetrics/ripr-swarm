@@ -300,3 +300,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_oracle_helper_gated (13)
+
+Reason:
+RIPR-SPEC-0224: record test_assertion_admission evidence for TypeScript related tests without a recognized assertion (#5524)
+
+Command:
+`cargo xtask goldens bless typescript_oracle_helper_gated --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

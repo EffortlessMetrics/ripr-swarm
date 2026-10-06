@@ -592,6 +592,7 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    let drop_ins = crate::analysis::facts::drop_in::DropInManifests::new(root);
     // A package nested under a changed one relates like the owner's own, so
     // it is read first: its local empty macros join the query.
     let mut query = query.clone();
@@ -670,8 +671,12 @@ pub(super) fn admit_dependents(
                     tokens.insert_scanned(id, file_tokens);
                     withheld.push((*file).clone());
                     if !bindings_saturated {
-                        bindings_saturated = withheld_macro_bindings
-                            .absorb(&String::from_utf8_lossy(bytes), &query.package_names);
+                        bindings_saturated = withheld_macro_bindings.absorb(
+                            file,
+                            &String::from_utf8_lossy(bytes),
+                            &query.package_names,
+                            &drop_ins,
+                        );
                     }
                 }
             }
@@ -1343,10 +1348,21 @@ mod tests {
     fn withheld_macro_bindings_saturate_on_a_foreign_glob() {
         let packages = BTreeSet::from(["core".to_string()]);
         let mut bindings = classify::WithheldMacroBindings::default();
-        assert!(!bindings.absorb("fn plain() {}", &packages));
-        assert!(!bindings.absorb("use core::prelude::*;", &packages));
-        assert!(bindings.absorb("use proptest::prelude::*;", &packages));
-        assert!(bindings.absorb("fn plain() {}", &packages));
+        let path = Path::new("e/src/lib.rs");
+        assert!(!bindings.absorb(path, "fn plain() {}", &packages, &Default::default()));
+        assert!(!bindings.absorb(
+            path,
+            "use core::prelude::*;",
+            &packages,
+            &Default::default()
+        ));
+        assert!(bindings.absorb(
+            path,
+            "use proptest::prelude::*;",
+            &packages,
+            &Default::default()
+        ));
+        assert!(bindings.absorb(path, "fn plain() {}", &packages, &Default::default()));
     }
 
     #[test]
