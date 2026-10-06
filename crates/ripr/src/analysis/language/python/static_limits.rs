@@ -1,5 +1,4 @@
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
-use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
@@ -15,17 +14,32 @@ pub(super) struct PythonStaticLimit {
     pub(super) missing: String,
 }
 
+/// The static limit for a changed line without its old text. Callers that
+/// have the finding's assertion focus use [`static_limit_for_focused_change`]
+/// so a changed dict key is localized the same way the rows are.
+#[cfg(test)]
 pub(super) fn static_limit_for_change(
     line_text: &str,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
-    // The family filter the finding's rows are selected with (#5572): a
-    // strong assertion of another behavior family is not a known oracle for
-    // this change, so it never suppresses a test-side limit. No old line is
-    // needed — the family filter reads only the changed line.
-    let focus =
-        PythonAssertionFocus::for_change(classify_probe_shape(line_text).0, line_text, None);
+    let focus = PythonAssertionFocus::for_change(
+        super::probe_shape::classify_probe_shape(line_text).0,
+        line_text,
+        None,
+    );
+    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+}
+
+/// `focus` is the one the finding's rows are selected with (#5572): only the
+/// assertion a row selects can suppress a test-side limit, so a strong
+/// sibling-field or other-family assertion never hides one.
+pub(super) fn static_limit_for_focused_change(
+    line_text: &str,
+    focus: &PythonAssertionFocus,
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonStaticLimit> {
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
         return Some(PythonStaticLimit {
@@ -112,7 +126,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
         });
     }
-    if related_candidates_have_property_based_test_limit(related_candidates, &focus) {
+    if related_candidates_have_property_based_test_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::PropertyBasedTest,
             evidence: "static_limit property_based_test: related test uses generated inputs"
@@ -129,7 +143,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, &focus) {
+    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"

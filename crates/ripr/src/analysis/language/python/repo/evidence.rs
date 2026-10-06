@@ -16,7 +16,7 @@
 //! - `related_test_candidates` / `find_related_tests`: the shared matcher
 //!   (exact/import/call/helper evidence, uncertain name-similarity links);
 //! - `classify_sink_alignment_with_old`: the sink-alignment read-out;
-//! - `static_limit_for_change`: typed dynamic-resolution and
+//! - `static_limit_for_focused_change`: typed dynamic-resolution and
 //!   unsupported-syntax limits.
 //!
 //! Boundaries held by this producer:
@@ -63,7 +63,9 @@ use super::super::source_facts::{
     source_fact_snapshot_observation, source_facts_parse_error,
 };
 use super::super::source_utils::normalized_path;
-use super::super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_change};
+use super::super::static_limits::{
+    implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+};
 use super::super::workspace::owner_for_changed_line;
 use super::super::{PythonOwner, PythonTest};
 use super::roles::PythonFileRole;
@@ -702,7 +704,7 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_change(text, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, &focus, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit

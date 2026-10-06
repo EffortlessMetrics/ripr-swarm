@@ -783,3 +783,35 @@ fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
         None
     );
 }
+
+/// A changed dict key is localized from the old and new lines, so the
+/// static-limit check must use the classifier's focus: without the old line a
+/// strong sibling-key assertion would be selected and hide the limit (#5572).
+#[test]
+fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
+    let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
+    let old = "    return {\"host\": \"a\", \"port\": 80}";
+    let new = "    return {\"host\": \"a\", \"port\": 9090}";
+    let source = "import pytest\nfrom hypothesis import given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\ndef test_f(value):\n    config = f(value)\n    assert config[\"host\"] == \"a\"\n    assert config[\"port\"] > 0\n";
+    let tests = extract_tests(Path::new("tests/test_calc.py"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(shapes(&tests[0]), vec![(FIELD, STRONG), (FIELD, WEAK)]);
+    let candidates = super::related_tests::related_test_candidates(&owners[0], &tests);
+    assert_eq!(candidates.len(), 1);
+    let focus = PythonAssertionFocus::for_change(ProbeFamily::FieldConstruction, new, Some(old));
+    assert_eq!(
+        selected(&tests[0], &focus),
+        Some("assert config[\"port\"] > 0")
+    );
+    assert_eq!(
+        super::static_limits::static_limit_for_focused_change(new, &focus, &owners[0], &candidates)
+            .map(|limit| limit.kind),
+        Some(StaticLimitKind::PropertyBasedTest)
+    );
+    // Without the old line the sibling key is not ruled out, which is why the
+    // classifier passes its own focus.
+    assert_eq!(
+        static_limit_for_change(new, &owners[0], &candidates).map(|limit| limit.kind),
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+}

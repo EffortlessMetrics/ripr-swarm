@@ -12477,6 +12477,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::identical_assertions_tie_break_on_the_later_source_line",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::wrong_family_strong_assertion_does_not_suppress_test_side_limits",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::passed_over_sibling_field_assertion_does_not_suppress_test_side_limits",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_dict_key_limit_suppression_uses_the_classifier_focus",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_except_clause_keeps_the_handler_value_assertion",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_raise_class_is_independent_of_assertion_order",
   "crates/ripr/src/app/tests/python_family_selection_packets.rs::no_family_relevant_row_for_same_method_on_other_class_stays_advisory",
