@@ -37,6 +37,8 @@ pub(crate) use adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult
 pub(crate) use id::LanguageId;
 #[cfg(feature = "lang-perl")]
 pub(crate) use perl::PerlAdapter;
+#[cfg(all(test, feature = "lang-perl"))]
+pub(crate) use perl::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
 #[cfg(test)]

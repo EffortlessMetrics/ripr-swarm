@@ -3,6 +3,8 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod discarded_matcher_honesty;
+
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
 fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {

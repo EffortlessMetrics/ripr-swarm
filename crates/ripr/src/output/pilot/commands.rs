@@ -50,11 +50,11 @@ pub(super) struct PilotCommands {
 
 impl PilotCommands {
     pub(super) fn new(context: PilotSummaryContext<'_>) -> Self {
-        // `ripr pilot` writes its artifacts relative to the working directory
-        // it ran in, not `--root`, so every pilot path a follow-up command
-        // names is bound against that directory once, as is the root (#4000):
-        // pasted from any directory, the commands read and write the files
-        // this run produced.
+        // `--out` resolves against the working directory pilot ran in (its
+        // default sits under `--root`, #5324), so every pilot path a
+        // follow-up command names is bound against that directory once, as
+        // is the root (#4000): pasted from any directory, the commands read
+        // and write the files this run produced.
         let out_dir = loop_commands::bound_root_path(
             context
                 .artifacts

@@ -36,6 +36,7 @@ fn failure_vocabulary() -> Vec<&'static str> {
         "workspace_unavailable",
         "analysis_failed",
         "unsupported_profile",
+        super::workspace::CODE_CONFIG_INVALID,
         CODE_NO_SNAPSHOT,
         "analysis_in_flight",
         "stale_snapshot",
@@ -61,9 +62,9 @@ fn failure_vocabulary() -> Vec<&'static str> {
 /// nothing and executes nothing (ADR 0022).
 pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session. Call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to run one bounded static analysis and commit a completed snapshot; call `ripr_list_gaps` for the deterministically bounded working set of canonical items; then call `ripr_get_gap` (or read `ripr://gap/{canonical_id}`) for one item's complete bounded evidence. When one item's producer repair-readiness facts are established, call `ripr_prepare_repair` to create (or replay) one bounded in-memory repair transaction bound to that snapshot and item, then read it back with `ripr_get_repair_attempt` or `ripr://repair-attempt/{attempt_id}` and inspect its receipt state with `ripr_get_receipt_status` or `ripr://receipt/{receipt_id}`; durable CLI attempts of this workspace are readable through the same routes. For one canonical item's bounded repair card — the same repair_card.v1 document `ripr agent card` and the standard language server project — call `ripr_get_repair_card` or read `ripr://repair-card/{canonical_id}`; the card binds the analyzed repository head and currentness of its committed snapshot and names the same typed next action the CLI would. The server never edits source, runs tests or mutation, executes verification commands, launches processes, or loads project-local provider configuration, and no evidence document is ever a repair authorization: the external client's approval and sandbox policy remains authoritative for every command a returned route names. To analyze outside this session, run the ripr CLI in the repository: `ripr check --format json` names each changed-behavior gap and its missing test input.";
 
-const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state. The document contains repository-root discovery state (validated or unavailable, with repository markers and any root error code), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: current desired input (workspace diff against the default branch, draft mode), current attempt state (no_snapshot, in_flight, completed, or failed), the last completed snapshot identity, last-known-good state, freshness as of the last refresh, the typed AnalysisOutcome of the committed snapshot, and the built-in profile and support facts. `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
+const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state. The document contains repository-root discovery state (validated or unavailable, with repository markers and any root error code), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: current desired input (workspace diff against the default branch, draft mode), current attempt state (no_snapshot, in_flight, completed, or failed), the last completed snapshot identity, last-known-good state, freshness as of the last refresh, the typed AnalysisOutcome of the committed snapshot, and the analysis profile and support facts: the workspace's own ripr.toml is honored when it loads (project_config: loaded, with its config_identity and enabled languages), built-in defaults apply when none resolves, and a config that cannot be read or parsed is detected_not_loaded. `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the workspace diff through RIPR's shared check authority (the same analysis `ripr check` and the language server run) and commit the completed snapshot into this server's session. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (a concurrent attempt is running; poll ripr_workspace_status), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: project-local configuration is not loaded (built-in defaults, draft mode). This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), plus reserved codes (config_invalid, workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the workspace diff through RIPR's shared check authority (the same analysis `ripr check` and the language server run) and commit the completed snapshot into this server's session. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (a concurrent attempt is running; poll ripr_workspace_status), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: the workspace's own ripr.toml is honored through the same resolution the CLI uses (a loaded config, built-in defaults with marker-based language auto-enable when none resolves, draft mode); a configuration that cannot be read or resolved fails the attempt closed with config_invalid. This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), config_invalid (resolve the workspace configuration error the failure names), plus reserved codes (workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; and one small summary per selected item (canonical_id, exposure class, language, file, line). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities, and the continuation route is ripr_get_gap. Before the first successful ripr_refresh this tool fails closed with no_snapshot; while an attempt runs it reports analysis_in_flight; a document that cannot fit the response bound fails with result_too_large. Summaries carry no evidence detail; read one item with ripr_get_gap.";
 
@@ -674,8 +675,12 @@ fn status_success_schema() -> Value {
                                 "enum": [
                                     "built_in_defaults_only",
                                     "detected_not_loaded",
+                                    "loaded",
                                     "unavailable"
                                 ]
+                            },
+                            "project_config_identity": {
+                                "type": "string"
                             }
                         },
                         "required": ["project_config_state"],
@@ -798,11 +803,18 @@ fn status_success_schema() -> Value {
                             },
                             "project_config": {
                                 "type": "string",
-                                "const": "detected_not_loaded"
+                                "enum": [
+                                    "built_in_defaults",
+                                    "detected_not_loaded",
+                                    "loaded"
+                                ]
+                            },
+                            "config_identity": {
+                                "type": "string"
                             },
                             "support": {
                                 "type": "string",
-                                "const": "built_in_defaults"
+                                "enum": ["built_in_defaults", "project_config"]
                             }
                         },
                         "required": ["mode", "languages", "project_config", "support"],
