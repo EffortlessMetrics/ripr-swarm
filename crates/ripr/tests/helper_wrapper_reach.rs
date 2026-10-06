@@ -357,7 +357,10 @@ fn generic_helper_behind_a_constant_argument_wrapper_pairs() -> Result<(), Strin
 // #6780 review: a test that calls the forwarding intermediate hop
 // (`middle(10)`) observes that hop's result, so an outer wrapper that drops
 // `middle`'s result does not make propagation unknown; a test that calls
-// only the dropping outer wrapper still abstains.
+// only the dropping outer wrapper still abstains. End to end, a test
+// calling `middle` also makes `middle` multi-caller, so the chain stops
+// there; the hop-bound check itself is discriminated by the
+// `chain_forwards_owner_result_checks_every_hop` unit test.
 fn layered_source(tests: &str) -> String {
     format!(
         "fn is_bulk(qty: u32) -> bool {{\n    10 <= qty\n}}\n\npub fn middle(qty: u32) -> bool {{\n    is_bulk(qty)\n}}\n\npub fn entry(qty: u32) -> u32 {{\n    let _ = middle(qty);\n    5\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn bulk_threshold() {{\n{tests}\n    }}\n}}\n"
