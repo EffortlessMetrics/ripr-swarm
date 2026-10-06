@@ -23734,18 +23734,37 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
 fn init_warns_when_the_root_is_not_a_git_work_tree() -> Result<(), String> {
     // `.cargo/config.toml` redirects TMPDIR into `target/`, which is inside
     // the checkout's work tree, so the plain temp helper cannot host the
-    // non-repo half. The sibling-of-workspace helper escapes it; the git
-    // precondition below pins that on every machine.
+    // non-repo half. The sibling-of-workspace helper escapes the checkout,
+    // but the checkout itself may be nested in another repository, so both
+    // git probes below run under a ceiling at the fixture's parent: the
+    // fixture dir itself is examined (it holds no `.git`, a genuine
+    // outside), while discovery can never reach an enclosing work tree.
+    // The ceiling must be the parent, not the fixture: git still examines
+    // the starting directory when it equals a ceiling.
     let bare = unique_external_workspace("init-nonrepo-warning")?;
     std::fs::create_dir_all(&bare).map_err(|e| format!("create bare root: {e}"))?;
-    let outside = run_command("git", Some(&bare), &["rev-parse", "--is-inside-work-tree"])
-        .map_err(|e| e.to_string())?;
+    let ceiling = bare
+        .parent()
+        .ok_or_else(|| "fixture root has no parent".to_string())?
+        .display()
+        .to_string();
+    let ceiling_env = [("GIT_CEILING_DIRECTORIES", ceiling.as_str())];
+    let outside = run_command_with_env(
+        "git",
+        &bare,
+        &["rev-parse", "--is-inside-work-tree"],
+        &ceiling_env,
+    )
+    .map_err(|e| e.to_string())?;
     assert!(
         !outside.status.success(),
         "fixture must sit outside any work tree: {outside:?}"
     );
     let bare_arg = bare.display().to_string();
-    let output = run_ripr(&["init", "--ci", "github", "--root", &bare_arg]);
+    let output = run_ripr_with_env(
+        &["init", "--ci", "github", "--root", &bare_arg],
+        &ceiling_env,
+    );
     assert_success(&output);
     assert!(
         bare.join("ripr.toml").is_file(),
