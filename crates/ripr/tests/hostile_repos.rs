@@ -856,6 +856,41 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
         return Err(format!("seam id did not round-trip\n{envelope}"));
     }
 
+    // The repair before-phase announces the root on stderr before it
+    // validates the seam, and the unknown-seam refusal repeats it in a
+    // drill-in command; neither may carry raw control or bidi bytes.
+    let root_abs = root
+        .to_str()
+        .ok_or_else(|| "scratch root is not UTF-8".to_string())?;
+    let repair = ripr(
+        &scratch.path,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_abs,
+            "--seam-id",
+            "67fc764ba37d77bd",
+            "--phase",
+            "before",
+        ],
+        &[],
+    )?;
+    if repair.stderr.contains("panicked") || leaks(&repair.stdout) || leaks(&repair.stderr) {
+        return Err(format!("repair before leaked\n{:?}", repair.stderr));
+    }
+    if !repair
+        .stderr
+        .contains("ripr: agent repair --phase before for seam `67fc764ba37d77bd` at ")
+        || !repair.stderr.contains("\\u{1b}]0;PWN")
+    {
+        return Err(format!(
+            "expected the escaped root in the before-phase announcement\n{}",
+            repair.stderr
+        ));
+    }
+
     // A bad ref echoed back by the failure path.
     let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
     assert_sane(&bad_ref, "check with hostile ref")?;
