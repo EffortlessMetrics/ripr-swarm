@@ -494,6 +494,7 @@ Updated:
 ## Pending — python_method_owner (10)
 
 Reason:
+RIPR-SPEC-0224: assertion-free Python rows name their assertion-admission state and parameterization is no longer projected as an oracle (#5571)
 RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
 
 Command:
