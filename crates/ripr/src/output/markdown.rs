@@ -485,6 +485,7 @@ fn lift_control_arguments(command: &str) -> Option<(String, Vec<String>)> {
     let mut out = String::new();
     let mut lifted = Vec::new();
     let mut index = 0;
+    let mut seen_token = false;
     while index < chars.len() {
         // A token runs to the next whitespace outside quotes.
         let start = index;
@@ -509,8 +510,11 @@ fn lift_control_arguments(command: &str) -> Option<(String, Vec<String>)> {
             index += 1;
         }
         let token: String = chars[start..index].iter().collect();
+        let is_first = !seen_token;
+        seen_token |= !token.is_empty();
         if token.contains(MARKER) {
-            if start == 0 {
+            // The program is the first token, however much whitespace precedes it.
+            if is_first {
                 return None;
             }
             let expression = control_argument_expression(&token)?;
@@ -1212,8 +1216,9 @@ mod tests {
     #[test]
     fn powershell_command_withholds_control_arguments_it_cannot_rebuild_exactly() {
         for command in [
-            // program position
+            // program position, with or without leading whitespace
             "\"$(printf '\\033')\"ripr x",
+            "  'ab'\"$(printf '\\033')\"'cd.exe' --help",
             // not an octal escape
             "ripr x 'a'\"$(printf '%s' x)\"'b'",
             // invalid UTF-8
