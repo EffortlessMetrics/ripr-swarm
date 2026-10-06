@@ -1755,9 +1755,10 @@ fn inventory_scope_key(path: &Path) -> Vec<u8> {
                 }
             })
             .collect();
-        let stripped = units
-            .strip_prefix(&[u16::from(b'.'), u16::from(b'/')])
-            .unwrap_or(&units);
+        let mut stripped = &units[..];
+        while let Some(rest) = stripped.strip_prefix(&[u16::from(b'.'), u16::from(b'/')]) {
+            stripped = rest;
+        }
         stripped
             .iter()
             .flat_map(|unit| unit.to_le_bytes())
@@ -1771,8 +1772,13 @@ fn normalize_scope_key_bytes(bytes: &[u8]) -> Vec<u8> {
         .iter()
         .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
         .collect();
-    if key.starts_with(b"./") {
-        key.drain(..2);
+    // Repeatedly, like `trim_start_matches`: `././x` keys as `x`.
+    let mut start = 0;
+    while key.get(start..).is_some_and(|rest| rest.starts_with(b"./")) {
+        start += 2;
+    }
+    if start > 0 {
+        key.drain(..start);
     }
     key
 }
@@ -5085,6 +5091,33 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    #[test]
+    fn scoped_sets_strip_repeated_dot_slash_prefixes() -> Result<(), String> {
+        // Parity with `trim_start_matches`: a `././`-prefixed change scopes
+        // exactly like its bare counterpart (#6887 review). Portable: the
+        // rule holds on every host.
+        let root = make_tempdir("repeated-prefix-scope")?;
+        no_impact_layout(&root)?;
+        write_file(&root.join("src/first.rs"), "pub fn a() -> i32 { 1 }\n")?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("././src/first.rs")],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        let names: Vec<_> = inventory
+            .changed_production_files
+            .iter()
+            .filter_map(|path| path.file_name().map(|name| name.to_string_lossy()))
+            .collect();
+        if names != ["first.rs"] {
+            return Err(format!("repeated prefix must scope the file: {names:?}"));
+        }
+        Ok(())
+    }
+
     /// Two files differing only in invalid UTF-8 bytes must not merge in
     /// scope: scoping one leaves its sibling out (#6884). Unix-only:
     /// only Unix admits invalid-byte file names.
@@ -5134,6 +5167,11 @@ marker = "libtest_mimic::Trial"
         );
         assert_eq!(
             inventory_scope_key(Path::new("./src/lib.rs")),
+            inventory_scope_key(Path::new("src/lib.rs"))
+        );
+        // Repeated prefixes strip entirely, like `trim_start_matches`.
+        assert_eq!(
+            inventory_scope_key(Path::new("././src/lib.rs")),
             inventory_scope_key(Path::new("src/lib.rs"))
         );
         assert_ne!(
