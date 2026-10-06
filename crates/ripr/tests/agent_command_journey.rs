@@ -1815,3 +1815,101 @@ fn before_phase_builds_one_shared_inventory(base: &Path, bash: &Path) -> Result<
     }
     Ok(())
 }
+
+/// #6897/#6917: the opt-in persist-latency trace prints one line per
+/// persist span on the before phase, stays silent without the switch, and
+/// never disturbs `--json` stdout.
+#[test]
+fn repair_before_phase_emits_persist_trace_when_enabled() -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("before-persist-trace");
+    let result = before_phase_emits_persist_trace_when_enabled(&base, &bash);
+    cleanup(&base);
+    result
+}
+
+fn before_phase_emits_persist_trace_when_enabled(base: &Path, bash: &Path) -> Result<(), String> {
+    let root = base.join("selected root");
+    let (journey, _) = start_journey_at_root(&root, bash)?;
+    // The repair before phase refuses a checkout whose build directory is
+    // not Git-ignored, as on the relative-root journey.
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("write .gitignore: {error}"))?;
+    fixture_git_ok(&root, &["add", ".gitignore"])
+        .map_err(|error| format!("fixture git add: {error}"))?;
+    commit_fixture(&root, "ignore the build directory")?;
+    let traced = run_ripr_with_env(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+        "RIPR_PERSIST_LATENCY_TRACE",
+        "1",
+    )?;
+    assert_success(&traced, "ripr agent repair --phase before")?;
+    let stderr = String::from_utf8_lossy(&traced.stderr);
+    for span in [
+        "phase=baseline_git_inventory ",
+        "phase=baseline_worktree_identity ",
+        "phase=baseline_index_records ",
+        "phase=baseline_stability_recheck ",
+        "phase=baseline_capture ",
+        "phase=baseline_serialize ",
+        "phase=baseline_write ",
+        "phase=attempt_stage_source_read:before_snapshot ",
+        "phase=attempt_stage_source_write:before_snapshot ",
+        "phase=attempt_stage_source_digest:before_snapshot ",
+        "phase=attempt_stage_artifacts ",
+        "phase=persist_before_attempt ",
+    ] {
+        if stderr.matches(span).count() != 1 {
+            return Err(format!(
+                "traced before phase must print {span}exactly once:\n{stderr}"
+            ));
+        }
+    }
+    // Without the switch the same phase stays silent and `--json` stdout
+    // keeps its repair_attempt document.
+    let untraced = run_ripr(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_success(&untraced, "ripr agent repair --phase before --json")?;
+    let untraced_stderr = String::from_utf8_lossy(&untraced.stderr);
+    if untraced_stderr.contains("ripr_persist_latency") {
+        return Err(format!(
+            "untraced before phase must print no persist lines:\n{untraced_stderr}"
+        ));
+    }
+    let document: Value = serde_json::from_slice(&untraced.stdout)
+        .map_err(|error| format!("before-phase --json stdout is not JSON: {error}"))?;
+    if document
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "before-phase --json stdout is missing repair_attempt.attempt_id:\n{document}"
+        ));
+    }
+    Ok(())
+}

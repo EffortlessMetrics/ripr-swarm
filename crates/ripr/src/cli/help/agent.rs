@@ -377,8 +377,9 @@ authority. The before phase refuses such seams before creating anything.
 
 Environment variables:
   RIPR_PERSIST_LATENCY_TRACE  When present, emits diagnostic persist-phase
-                                    trace lines for baseline capture and
-                                    attempt publication. Presence enables
-                                    tracing even if the value is empty or 0;
-                                    it does not change any verdict.
+                                    trace lines for baseline capture, attempt
+                                    publication, and after-phase state
+                                    recapture. Presence enables tracing even
+                                    if the value is empty or 0; it does not
+                                    change any verdict.
 "#;
