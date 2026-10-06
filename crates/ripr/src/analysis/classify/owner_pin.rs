@@ -403,19 +403,22 @@ type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, 
 /// A file another crate can also compile is never charged to one root:
 /// an `include!` fragment (its text lands in every includer, with or
 /// without a recorded edge), a shared integration-test helper whose
-/// provenance keeps only the first of several `tests/*.rs` owners, and,
-/// while any `include!` is unresolved in the workspace, an edge-less file
-/// that the unresolved include may be pulling in.
+/// provenance keeps only the first of several `tests/*.rs` owners, and
+/// every file while any `include!` is unresolved in the workspace: an
+/// ambiguous, cfg-conflicting, capped or unindexed include leaves its
+/// fragment, and the fragment's module children, looking like a root.
 fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
+    if !index.include_limitations.is_empty() {
+        return None;
+    }
     let facts = index.files().get(file)?;
     let provenance = &facts.role_provenance;
     if provenance.earliest_unresolved_reason.is_some()
         || index.include_targets.contains(file)
-        || provenance
-            .edges
-            .iter()
-            .any(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Include)
-        || (provenance.edges.is_empty() && !index.include_limitations.is_empty())
+        || provenance.edges.iter().any(|edge| {
+            edge.kind == SourceRoleProvenanceEdgeKind::Include
+                || index.include_targets.contains(&edge.parent)
+        })
     {
         return None;
     }

@@ -1068,17 +1068,27 @@ fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
     // `include!` pastes the fragment into every includer, edge or not.
     assert!(refused("tests/common.rs", Vec::new(), true, false));
     assert!(refused(
-        "tests/common.rs",
+        "src/bin/frag.rs",
         vec![edge(
-            "tests/a.rs",
-            "tests/common.rs",
+            "src/bin/a.rs",
+            "src/bin/frag.rs",
             SourceRoleProvenanceEdgeKind::Include
         )],
         false,
         false
     ));
-    // An unresolved `include!` anywhere may be pulling in an edge-less file.
+    // An unresolved `include!` anywhere may be pulling in any file.
     assert!(refused("tests/common.rs", Vec::new(), false, true));
+    assert!(refused(
+        "src/util.rs",
+        vec![edge(
+            LIB,
+            "src/util.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        true
+    ));
     // A shared `tests/common/mod.rs` keeps only its first owner's edge, but
     // every `tests/*.rs` that declares it compiles its own copy.
     assert!(refused(
@@ -1091,6 +1101,73 @@ fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
         false,
         false
     ));
+}
+
+#[test]
+fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Result<(), String> {
+    // Real composition: `src/lib.rs` is included by two binaries, so the
+    // include resolver leaves it without a parent and its `asserts` child
+    // composes under it as if it were a crate root of its own.
+    let root = std::env::temp_dir().join(format!(
+        "ripr-owner-pin-include-fragment-{}",
+        std::process::id()
+    ));
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        (
+            "src/lib.rs",
+            "#[macro_use]\nmod asserts;\npub fn f() -> u32 {\n    1\n}\n",
+        ),
+        (
+            "src/asserts.rs",
+            "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }\n",
+        ),
+        (
+            "src/main.rs",
+            "include!(\"lib.rs\");\nfn main() {}\n#[cfg(test)]\nmod tests;\n",
+        ),
+        (
+            "src/bin/tool.rs",
+            "include!(\"../lib.rs\");\nfn main() {}\n",
+        ),
+        (
+            "src/tests.rs",
+            "#[test]\nfn t() {\n    assert_eq!(super::f(), 1);\n}\n",
+        ),
+    ];
+    let mut paths = Vec::new();
+    for (path, text) in files {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&full, text).map_err(|error| error.to_string())?;
+        if path.ends_with(".rs") {
+            paths.push(PathBuf::from(path));
+        }
+    }
+    let index = crate::analysis::facts::build_index(&root, &paths);
+    let _ = std::fs::remove_dir_all(&root);
+    let index = index?;
+    assert!(
+        !index.include_limitations.is_empty(),
+        "the two includers must leave `src/lib.rs` unresolved"
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new("src/tests.rs"));
+    assert!(test.is_some(), "the fixture test must be indexed");
+    let Some(test) = test else { return Ok(()) };
+    assert!(
+        OwnerPinSyntax::default()
+            .refusal(test, &test.assertions[0], &index)
+            .is_some()
+    );
+    Ok(())
 }
 
 #[test]

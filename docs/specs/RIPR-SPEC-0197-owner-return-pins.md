@@ -335,10 +335,13 @@ string literal is not a call or a reference. These rules hold for
   `tests/*.rs` assertions. Exported definitions, `pub` imports, sites in
   another macro's arguments, unparsed files, and any file or test whose
   root is not recognized stay workspace-wide. So does any file another
-  crate can also compile: an `include!` fragment (a recorded include target
-  or include edge), a non-root file under a `tests/*.rs` root (a shared
+  crate can also compile: an `include!` fragment or a module below one (a
+  recorded include target, include edge, or include target as a module
+  parent), a non-root file under a `tests/*.rs` root (a shared
   `tests/common/mod.rs` composes under its first owner only), and, while any
-  `include!` in the workspace is unresolved, every file with no module edge. A withheld file in the
+  `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
+  capped, dynamic or unindexed), every file: an unresolved fragment and its
+  module children otherwise look like a crate root of their own. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
   `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
   closure; every other withheld site stays workspace-wide. Limits: a
@@ -595,6 +598,7 @@ assertions. This repair shares the existing callback without that larger migrati
   bindings in another target
   (`a_crate_local_binding_in_another_target_does_not_reach_the_test`,
   `a_crate_local_site_another_crate_can_compile_stays_workspace_wide`,
+  `a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide`,
   `a_withheld_crate_roots_private_glob_is_routed_by_root`); plain `assert_eq!` against an owner-free value, `#[should_panic]`
   and assertions outside the test body; by-value prelude method names;
   constructor signatures; macro-bound, aliased and parameter receivers;
