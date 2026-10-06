@@ -905,6 +905,9 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     if !repair.stderr.contains("Run `ripr pilot --root '")
         || !repair.stderr.contains("\"$(printf '\\033')\"")
         || !repair.stderr.contains("\"$(printf '\\342\\200\\256')\"")
+        || !repair.stderr.contains("']0;PWN'")
+        || !repair.stderr.contains("\"$(printf '\\007')\"")
+        || !repair.stderr.contains("'x'")
     {
         return Err(format!(
             "expected the refusal's drill-in command to quote the hostile root\n{}",
