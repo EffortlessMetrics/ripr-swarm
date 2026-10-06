@@ -38,7 +38,7 @@ use crate::app::repair_card_handoff::{
 use crate::config::RiprConfig;
 use crate::domain::{AgentCardRefusalKind, RepairCardSnapshotCurrentness};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const REPAIR_CARD_SCHEMA_VERSION: &str = "ripr-mcp-repair-card-v1";
 
@@ -99,6 +99,28 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
+/// Changed-file scope for the card inventory, in the inventory's own
+/// spelling. The discovery corpus is bare workspace-relative (`discover`
+/// strips the root before pushing), while item files render through the
+/// shared finding-location owner with its `./` prefix (#5996), so the
+/// prefix is normalized away and the changed-file intersection matches.
+/// Joining the root would absolutize them and lose every changed seam;
+/// an out-of-root item keeps its absolute fallback spelling and simply
+/// matches nothing.
+fn inventory_changed_files(items: &[GapItem]) -> Vec<PathBuf> {
+    items
+        .iter()
+        .map(|item| {
+            PathBuf::from(
+                item.file
+                    .as_str()
+                    .strip_prefix("./")
+                    .unwrap_or(item.file.as_str()),
+            )
+        })
+        .collect()
+}
+
 /// Bind the repair-card producers into one committing snapshot. This runs
 /// inside the refresh attempt (the adapter's single allowed analysis), after
 /// the shared check authority completed: the diff-scoped seam inventory over
@@ -129,11 +151,14 @@ pub(crate) fn bind_snapshot_card_producers(
         // configuration as the snapshot's findings (#6825 review): a
         // configured oracle strength or harness registration must not
         // classify the card's seams differently from the committed items.
-        let changed_files = snapshot
-            .items
-            .iter()
-            .map(|item| std::path::PathBuf::from(item.file.as_str()))
-            .collect::<Vec<_>>();
+        // Item files are root-relative on the wire (#5254 item 6) with the
+        // shared owner's `./` prefix (#5996); the inventory corpus is bare
+        // (`discover` strips the root), so the prefix is normalized away
+        // and the changed-file scope matches. Joining the root here would
+        // make them absolute and lose every changed seam. An out-of-root
+        // item keeps its absolute fallback spelling and simply matches
+        // nothing.
+        let changed_files = inventory_changed_files(&snapshot.items);
         let changed_owner_names = snapshot
             .findings
             .iter()
@@ -571,6 +596,31 @@ mod tests {
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
         Ok(std::env::temp_dir().join(format!("ripr-mcp-repair-card-{nanos}")))
+    }
+
+    #[test]
+    fn inventory_changed_files_keep_the_relative_wire_spelling() -> Result<(), String> {
+        // The inventory corpus is bare workspace-relative, so changed scope
+        // must be too: joining the root would absolutize the scope and lose
+        // every changed seam. An in-root item normalizes the `./` wire
+        // prefix away; an out-of-root item keeps its absolute fallback
+        // spelling.
+        let root = temp_root()?;
+        let mut inside = super::super::gaps::test_finding()?;
+        inside.probe.location.file = root.join("src/lib.rs");
+        let inside_item = GapItem::from_finding(&inside, &root)?;
+        let mut outside = super::super::gaps::test_finding()?;
+        outside.probe.location.file = std::env::temp_dir().join("ripr-card-scope-elsewhere/lib.rs");
+        let outside_item = GapItem::from_finding(&outside, &root)?;
+
+        let changed = inventory_changed_files(&[inside_item, outside_item]);
+        if changed.first().map(PathBuf::as_path) != Some(Path::new("src/lib.rs")) {
+            return Err(format!("in-root scope must stay relative: {changed:?}"));
+        }
+        if changed.get(1).is_none_or(|path| !path.is_absolute()) {
+            return Err(format!("out-of-root scope must stay absolute: {changed:?}"));
+        }
+        Ok(())
     }
 
     #[test]

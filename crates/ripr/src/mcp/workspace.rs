@@ -1626,6 +1626,40 @@ mod tests {
     }
 
     #[test]
+    fn portable_snapshot_identity_survives_distinct_absolute_checkouts() -> Result<(), String> {
+        // #5254 item 6: the same finding content committed from two checkouts
+        // at different absolute roots must share one snapshot identity, since
+        // every served file renders root-relative. Absolute host paths in
+        // evidence would fork the identity per checkout. Host-native roots
+        // (no filesystem touch) so the pin holds on every host.
+        let one_root = std::env::temp_dir().join("ripr-portable-one");
+        let two_root = std::env::temp_dir().join("ripr-portable-two");
+        let mut first = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        first.root = one_root.clone();
+        let mut first_finding = gaps::test_finding()?;
+        first_finding.probe.location.file = one_root.join("src/lib.rs");
+        first_finding.related_tests[0].file = one_root.join("tests/checkout.rs");
+        first.findings.push(first_finding);
+
+        let mut second = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        second.root = two_root.clone();
+        let mut second_finding = gaps::test_finding()?;
+        second_finding.probe.location.file = two_root.join("src/lib.rs");
+        second_finding.related_tests[0].file = two_root.join("tests/checkout.rs");
+        second.findings.push(second_finding);
+
+        let one = Snapshot::from_output(&first, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let two = Snapshot::from_output(&second, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        if one.snapshot_id != two.snapshot_id {
+            return Err(format!(
+                "distinct checkouts must share one portable snapshot identity: {} vs {}",
+                one.snapshot_id, two.snapshot_id
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn snapshot_identity_binds_same_length_evidence_with_the_original_digest() -> Result<(), String>
     {
         let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
@@ -1654,6 +1688,8 @@ mod tests {
             let mut original_items = snapshot
                 .findings
                 .iter()
+                // Same root the `output()` shell commits with, so the
+                // re-projection reproduces the committed bytes exactly.
                 .map(|finding| GapItem::from_finding(finding, Path::new(".")))
                 .collect::<Result<Vec<_>, _>>()?;
             for item in &mut original_items {
