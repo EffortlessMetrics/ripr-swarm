@@ -893,7 +893,7 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     if !repair
         .stderr
         .contains("ripr: agent repair --phase before for seam `67fc764ba37d77bd` at ")
-        || !repair.stderr.contains("\\u{1b}]0;PWN")
+        || !repair.stderr.contains("\\u{1b}]0;PWN\\u{07}\\u{202e}x")
     {
         return Err(format!(
             "expected the escaped root in the before-phase announcement\n{}",
