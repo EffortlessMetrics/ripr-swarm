@@ -378,8 +378,10 @@ with the previous release until publication verifies. `cargo xtask release-readi
 --version <version>` checks the constant as `init-pin-version`. Once CHANGELOG.md has
 the `## <version>` heading the cut's fold writes, a stable release fails until
 the constant equals the version; before the fold, the lag is the normal
-development state and the check warns, so main's push CI stays green. A
-release candidate fails if the constant names the candidate or its stable
+development state and the check warns, so main's push CI stays green, but a
+constant already at or past the version fails because development generators
+would pin an unpublished release. An unreadable CHANGELOG.md fails. A release
+candidate fails unless the constant names a release older than its stable
 target.
 
 ```bash
