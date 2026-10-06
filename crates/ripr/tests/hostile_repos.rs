@@ -643,14 +643,14 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
 #[test]
 fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     type Damage = fn(&Path) -> Result<(), String>;
-    let cases: [(&str, Damage, &[&str]); 3] = [
+    let cases: [(&str, Damage, &[&str]); 4] = [
         (
             "bad config",
             |root| {
                 fs::write(root.join(".git/config"), b"[core\n")
                     .map_err(|e| format!("write failed: {e}"))
             },
-            &["bad config line 1", "git fsck"],
+            &["bad config line 1", "correct or restore it"],
         ),
         (
             "corrupt packed-refs",
@@ -658,7 +658,7 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                 fs::write(root.join(".git/packed-refs"), b"garbage\n")
                     .map_err(|e| format!("write failed: {e}"))
             },
-            &["packed-refs", "git fsck"],
+            &["packed-refs", "correct or restore it"],
         ),
         (
             "unborn HEAD",
@@ -666,7 +666,27 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                 fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
                     .map_err(|e| format!("write failed: {e}"))
             },
-            &["git rev-parse HEAD", "re-run"],
+            &["git rev-parse HEAD", "Check"],
+        ),
+        (
+            "corrupt object",
+            |root| {
+                let head = Command::new("git")
+                    .current_dir(root)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .map_err(|e| format!("git rev-parse failed: {e}"))?;
+                let sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+                let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
+                let mut permissions = fs::metadata(&object)
+                    .map_err(|e| format!("object missing: {e}"))?
+                    .permissions();
+                permissions.set_readonly(false);
+                fs::set_permissions(&object, permissions)
+                    .map_err(|e| format!("chmod failed: {e}"))?;
+                fs::write(&object, b"junk").map_err(|e| format!("write failed: {e}"))
+            },
+            &["git fsck"],
         ),
     ];
     let scratch = Scratch::new("damaged-git")?;

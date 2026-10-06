@@ -376,6 +376,24 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
     }
 }
 
+/// Whether a `fatal:`/`error:` line of Git's stderr reports a damaged object
+/// store. Anchored to those lines so a path or branch that merely contains
+/// "corrupt" does not read as damage.
+fn git_stderr_names_object_damage(stderr: &str) -> bool {
+    const MARKERS: [&str; 5] = [
+        "unable to unpack",
+        "inflate:",
+        "bad object",
+        "loose object",
+        "object file",
+    ];
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .any(|line| MARKERS.into_iter().any(|marker| line.contains(marker)))
+}
+
 /// Git's first `fatal:`/`error:` line, made terminal-safe and bounded: the
 /// text can quote repository content (a `packed-refs` line, a config key).
 fn git_reason_line(stderr: &[u8]) -> Option<String> {
@@ -384,9 +402,18 @@ fn git_reason_line(stderr: &[u8]) -> Option<String> {
         .lines()
         .map(str::trim)
         .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))?;
-    let line: String = line.chars().take(300).collect();
-    Some(crate::terminal_text::terminal_safe(line))
+    // Escape first, then bound, so the displayed reason is what is limited.
+    let escaped = crate::terminal_text::terminal_safe(line.to_string());
+    if escaped.chars().count() <= GIT_REASON_MAX_CHARS {
+        return Some(escaped);
+    }
+    let mut bounded: String = escaped.chars().take(GIT_REASON_MAX_CHARS).collect();
+    bounded.push('…');
+    Some(bounded)
 }
+
+/// Displayed length limit for Git's reason line, after escaping.
+const GIT_REASON_MAX_CHARS: usize = 300;
 
 /// The repair message when Git itself failed (exit 128) for a reason that is
 /// not an absent ref: a damaged repository answers a ref probe with `fatal:`,
@@ -400,13 +427,23 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
     let reason = git_reason_line(&output.stderr)?;
     // These two mean "no repository here", not "a damaged one": the work-tree
     // message already tells the user to run from, or point `--root` at, one.
-    if reason.contains("not a git repository") || reason.contains("invalid gitfile") {
+    // Matched as the diagnostic's own prefix: a bad-config line can name a
+    // file whose path happens to contain those words.
+    if reason.starts_with("fatal: not a git repository")
+        || reason.starts_with("fatal: invalid gitfile")
+    {
         return None;
     }
+    let repair = if git_stderr_names_object_damage(&reason) {
+        "Repair the object store: run `git fsck`, restore the missing objects (for example \
+         `git fetch`), then re-run."
+    } else {
+        "If Git names a config or ref file, correct or restore it (`.git/config`, \
+         `.git/packed-refs`); `git fsck` checks the object store only. Then re-run."
+    };
     Some(format!(
         "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
-         Repair the repository (inspect `.git/config` and `.git/packed-refs`, or run \
-         `git fsck`), then re-run.",
+         {repair}",
         crate::terminal_text::terminal_safe(root.display().to_string())
     ))
 }
@@ -1221,16 +1258,7 @@ fn run_git_diff_bytes(
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
-        } else if [
-            "unable to unpack",
-            "inflate:",
-            "bad object",
-            "corrupt",
-            "loose object",
-        ]
-        .iter()
-        .any(|marker| stderr.contains(marker))
-        {
+        } else if git_stderr_names_object_damage(stderr) {
             " Git reports a damaged object store; run `git fsck`, restore the missing objects \
              (for example `git fetch`), then re-run."
                 .to_string()
@@ -2550,6 +2578,39 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn git_reason_line_is_terminal_safe_bounded_and_anchored() {
+        let hostile = format!(
+            "warning: x\nfatal: bad line \u{1b}[2J\u{202e}{}\n",
+            "z".repeat(900)
+        );
+        let line = git_reason_line(hostile.as_bytes()).unwrap_or_default();
+        assert!(line.starts_with("fatal: bad line "), "{line}");
+        assert!(
+            !line.contains('\u{1b}') && !line.contains('\u{202e}'),
+            "{line}"
+        );
+        assert!(line.contains("\\u{1b}"), "{line}");
+        assert!(line.chars().count() <= GIT_REASON_MAX_CHARS + 1, "{line}");
+        assert!(line.ends_with('…'), "{line}");
+        assert_eq!(git_reason_line(b"hint: nothing fatal here\n"), None);
+    }
+
+    #[test]
+    fn object_damage_hint_is_anchored_to_git_error_lines() {
+        assert!(git_stderr_names_object_damage(
+            "error: inflate: data stream error (incorrect header check)\n"
+        ));
+        assert!(git_stderr_names_object_damage("fatal: bad object HEAD\n"));
+        // A path or branch that contains the word is not damage.
+        assert!(!git_stderr_names_object_damage(
+            "fatal: ambiguous argument 'corrupt_input.rs': unknown revision\n"
+        ));
+        assert!(!git_stderr_names_object_damage(
+            "warning: bad-object-fix is not a branch\n"
+        ));
     }
 
     #[test]
