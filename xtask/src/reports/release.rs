@@ -2455,13 +2455,21 @@ fn github_workflow_check(binary: &Path) -> ReleaseReadinessCheck {
                 // installed binary's empty-state output carries the text.
                 "ripr reports ci-summary",
                 "$GITHUB_STEP_SUMMARY",
-                "target/ripr/pilot",
-                "target/ripr/workflow",
                 "target/ripr/reports",
                 "RIPR_UPLOAD_SARIF",
                 "actions/upload-artifact",
             ];
             let mut missing = missing_required_needles(&result.stdout, &required);
+            // #6555: the artifact upload names the whole `target/ripr`
+            // directory instead of listing `target/ripr/pilot` and
+            // `target/ripr/workflow`; that path still uploads both.
+            if !result
+                .stdout
+                .lines()
+                .any(|line| line.trim() == "target/ripr")
+            {
+                missing.push("target/ripr (artifact upload path)".to_string());
+            }
             missing.extend(ci_summary_first_run_missing(binary));
             missing.extend(ci_packet_steps_missing(binary));
             if missing.is_empty() {

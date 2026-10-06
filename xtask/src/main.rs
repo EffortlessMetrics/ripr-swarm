@@ -36,12 +36,14 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod identity_registry;
 mod issue_lifecycle_attempt;
+mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod no_panic;
 mod orchestration_attempt;
@@ -59,6 +61,7 @@ mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;
+mod work_portfolio;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;
@@ -6025,6 +6028,28 @@ fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
         violations.push(
             ".github/workflows/routed-rust.yml must keep `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` so a second Ready transition replaces the prior admission attempt without cancelling push or manual runs (#4986)".to_string(),
         );
+    }
+    for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
+        let mut in_job_condition = false;
+        if routed_rust_job_block_any(workflow, job, |line| {
+            // Only the job's own `if:` (and its folded continuation lines)
+            // decides cancellation; step-level `if: always()` cleanup is fine.
+            if line.starts_with("    ") && !line.starts_with("     ") {
+                in_job_condition = line.trim_start().starts_with("if:");
+            } else if !line.starts_with("      ") && !line.trim().is_empty() {
+                in_job_condition = false;
+            }
+            let normalized: String = line
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            in_job_condition && normalized.contains("always()")
+        }) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so a second Ready transition queues behind the obsolete head's full gate. Use `!cancelled()` (#6729)"
+            ));
+        }
     }
     if workflow.contains(ROUTED_RUST_DRAFT_GUARD_SNIPPET) {
         violations.push(

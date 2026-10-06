@@ -1,5 +1,6 @@
 use crate::agent::loop_commands::shell_arg;
 use crate::config::{CONFIG_FILE_NAME, detect_python_project};
+use crate::output::path::human_path;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -165,7 +166,11 @@ impl PreflightCheck {
 
 pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight {
     let mut checks = Vec::new();
-    let resolved_root = root.display().to_string();
+    // #5252 item 4: every renderer-owned preflight spelling renders through
+    // the shared human-path rule (#4378) so one document never mixes the
+    // verbatim `display` form with the slash-spelled `next_command` lines.
+    // `options.root` echoes still carry the caller's own spelling.
+    let resolved_root = human_path(root);
     checks.push(preflight_root_check(root, options));
     let git_available = matches!(checks.last().map(|check| check.status), Some("ok"))
         && preflight_git_repo_check(root, &mut checks);
@@ -280,7 +285,7 @@ fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck
             "Workspace root",
             format!("Workspace root `{}` exists.", options.root),
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else {
         PreflightCheck::needs_attention(
             "root",
@@ -291,7 +296,7 @@ fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck
             ),
             Some("Run from a repository root or pass --root <path>.".to_string()),
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     }
 }
 
@@ -361,14 +366,27 @@ fn preflight_git_ref_check(
             true
         }
         Ok(output) => {
+            // #5252 item 4: `rev-parse --verify --quiet` emits no detail, so
+            // both refs used to fall back to one shared string and warn
+            // twice, byte-identical, naming neither ref. The fallback keeps
+            // the summary so each warning names its role and rev; the role
+            // parallels the check id at the two call sites.
+            let role = match id {
+                "git_base" => "--base",
+                "git_head" => "--head",
+                unknown => unknown,
+            };
+            let summary = format!("Could not resolve {role} `{rev}` to a commit.");
             checks.push(
                 PreflightCheck::needs_attention(
                     id,
                     label,
                     command_problem(
-                        &format!("Could not resolve `{rev}` to a commit."),
+                        &summary,
                         &output,
-                        "Fetch the missing ref or pass a resolvable --base/--head.",
+                        &format!(
+                            "{summary} Fetch the missing ref or pass a resolvable --base/--head."
+                        ),
                     ),
                     next_command,
                 )
@@ -468,21 +486,21 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
             "Cargo workspace",
             "Cargo.toml was found at the workspace root.",
         )
-        .with_path(manifest.display().to_string())
+        .with_path(human_path(&manifest))
     } else if detect_python_project(root) {
         PreflightCheck::ok(
             "python_project",
             "Python project",
             "Python project markers were found; first-pr can consume Python preview gap-ledger records.",
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else if detect_typescript_project(root) {
         PreflightCheck::ok(
             "typescript_project",
             "TypeScript project",
             "TypeScript project markers were found; first-pr can consume TypeScript preview gap-ledger records.",
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else {
         PreflightCheck::needs_attention(
             "cargo_workspace",
@@ -493,7 +511,7 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
                     .to_string(),
             ),
         )
-        .with_path(manifest.display().to_string())
+        .with_path(human_path(&manifest))
     }
 }
 
@@ -505,14 +523,14 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
             "RIPR config",
             format!("{CONFIG_FILE_NAME} was found."),
         )
-        .with_path(config.display().to_string())
+        .with_path(human_path(&config))
     } else {
         PreflightCheck::defaulted(
             "ripr_config",
             "RIPR config",
             format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
         )
-        .with_path(config.display().to_string())
+        .with_path(human_path(&config))
     }
 }
 
@@ -528,7 +546,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             ),
             Some("Choose a directory for --out-dir, then rerun first-pr.".to_string()),
         )
-        .with_path(out_dir.display().to_string());
+        .with_path(human_path(&out_dir));
     }
     if out_dir.is_dir() {
         PreflightCheck::ok(
@@ -536,7 +554,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             "Output directory",
             format!("Output directory `{}` exists.", options.out_dir),
         )
-        .with_path(out_dir.display().to_string())
+        .with_path(human_path(&out_dir))
     } else {
         PreflightCheck {
             id: "output_dir",
@@ -546,7 +564,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
                 "Output directory `{}` will be created if needed.",
                 options.out_dir
             ),
-            path: Some(out_dir.display().to_string()),
+            path: Some(human_path(&out_dir)),
             next_command: None,
             recovery_commands: Vec::new(),
             recovery_guidance: None,

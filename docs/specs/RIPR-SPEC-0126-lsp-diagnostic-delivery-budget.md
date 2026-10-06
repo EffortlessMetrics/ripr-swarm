@@ -15,9 +15,12 @@ canonical evidence. It does not change gate authority.
 The diagnostic producer must make profile admission explicit. An ordinary
 finding emitted after `finding_is_visible_in_profile` passes carries
 `data.delivery_eligible: true`. The delivery bridge reads that signal only
-after the existing gap-ledger, classified-seam, and preview-family authorities;
-those more specific producer decisions retain precedence. Missing or false
-signals remain fail-closed.
+after the existing gap-ledger and classified-seam authorities; those more
+specific producer decisions retain precedence. The preview packet verdict
+(`preview_actionability.repair_packet_ready`) gates the repair-packet surface
+(code actions), not diagnostic delivery (#6847): a profile-admitted preview
+finding delivers through its producer stamp like every other ordinary
+finding, at advisory severity. Missing or false signals remain fail-closed.
 
 The limited-run scope-guard disclosure (#4325) carries the same producer-owned
 signal: the `ripr-scope-diff-oversized` workspace warning is delivered because
@@ -121,8 +124,9 @@ them.
 - The scope-guard disclosure warning (RIPR-SPEC-0141) is eligible only through
   the same explicit producer-owned `delivery_eligible` signal; its catalog code
   alone admits nothing.
-- Existing gap-ledger, classified-seam, and preview eligibility signals take
-  precedence over the ordinary-finding signal.
+- Existing gap-ledger and classified-seam eligibility signals take precedence
+  over the ordinary-finding signal; the preview packet verdict gates the
+  repair-packet surface, not diagnostic delivery (#6847).
 - Overflow is machine-readable and cannot be presented as a complete inventory.
 - Complete evidence identity is independent of the passive budget.
 - Transport, pull/push, status, client, and gate policy are out of scope for PR A.
@@ -166,6 +170,13 @@ ordering, document/workspace/byte limits, oversized detail, profile filtering,
 the scope-guard producer-signal boundary, and invalid budgets. The delivered
 push and pull surfaces for the scope-guard warning are covered by
 `crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes`.
+The preview packet-verdict/delivery-stamp boundary is covered by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::producer_stamp_delivers_packet_not_ready_preview_finding`
+(#6847, #6848); both-profile publication of a packet-not-ready preview finding
+and cross-surface listed-id resolution are covered by
+`crates/ripr/src/lsp/tests.rs::typescript_preview_finding_publishes_in_both_profiles_despite_incomplete_packet`
+and
+`crates/ripr/src/lsp/tests.rs::list_actionable_item_ids_resolve_through_collect_context_for_all_language_classes`.
 
 ## Implementation Mapping
 
