@@ -745,7 +745,9 @@ impl SessionProfile {
     /// zero finding count is never mistaken for a language gate (#6825).
     fn session_limitation(&self) -> Option<&'static str> {
         match self.posture {
-            SessionConfigPosture::Loaded { .. } => None,
+            SessionConfigPosture::Loaded { .. } => Some(
+                "this profile resolved ripr.toml at server startup; each ripr_refresh re-resolves it and binds the config identity it used in the snapshot outcome, so a post-startup ripr.toml edit is visible to the next refresh before it is visible here",
+            ),
             SessionConfigPosture::DetectedNotLoaded => Some(
                 "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
             ),
@@ -791,7 +793,10 @@ pub(crate) fn run_check(
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    super::repair_card::bind_snapshot_card_producers(root, &mut snapshot)?;
+    // The card producers consume the same resolved workspace configuration
+    // as the findings (#6825 review), so one committed snapshot cannot
+    // disagree with itself across the two producers.
+    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
     Ok(snapshot)
 }
 
@@ -1226,8 +1231,10 @@ mod tests {
                 .and_then(Value::as_array)
                 .ok_or_else(|| "session lost its limitations".to_string())?;
             let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
-            if text.contains("ripr.toml") {
-                return Err(format!("a loaded config is not a limitation: {text}"));
+            if text.contains("could not be loaded") || !text.contains("re-resolves") {
+                return Err(format!(
+                    "a loaded profile must carry only the startup-freshness disclosure: {text}"
+                ));
             }
         }
 

@@ -107,30 +107,56 @@ fn changed_file_syntax_error_is_a_named_partial_run_not_a_complete_zero() -> Res
         ));
     }
     // The old collapse: a complete-looking zero with no parse disclosure.
-    // The fixed run must instead name the producer failure and go partial.
+    // The fixed run must instead name the producer failure and go partial,
+    // asserted structurally against the typed outcome.
     if stdout.contains("no_behavioral_candidates") {
         return Err(format!(
             "an unparseable changed file must not end as no_behavioral_candidates\nstdout: {stdout}"
         ));
     }
-    if !stdout.contains("\"partial_with_limitations\"") {
+    let document: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|error| format!("check output is not JSON: {error}\nstdout: {stdout}"))?;
+    if document
+        .pointer("/analysis_outcome/outcome/kind")
+        .and_then(|kind| kind.as_str())
+        != Some("partial_with_limitations")
+    {
         return Err(format!(
-            "expected the partial outcome kind in JSON\nstatus: {:?}\nstderr: {stderr}\nstdout: {stdout}",
-            output.status.code()
+            "expected the partial outcome kind in the typed outcome\nstdout: {stdout}"
         ));
     }
-    for expected in [
-        "\"producer_failure\"",
-        "\"language_adapter\"",
-        "\"inspect_failure\"",
-        "src/pricing.py",
-        "Fix the file so it parses as Python",
+    let limitations = document
+        .pointer("/analysis_outcome/outcome/limitations")
+        .and_then(|limitations| limitations.as_array())
+        .ok_or_else(|| format!("the outcome lost its limitations\nstdout: {stdout}"))?;
+    let [limitation] = limitations.as_slice() else {
+        return Err(format!(
+            "exactly one typed limitation expected, got {limitations:?}"
+        ));
+    };
+    for (field, expected) in [
+        ("kind", "producer_failure"),
+        ("producer_stage", "language_adapter"),
+        ("path", "src/pricing.py"),
     ] {
-        if !stdout.contains(expected) {
+        if limitation.get(field).and_then(|value| value.as_str()) != Some(expected) {
             return Err(format!(
-                "expected {expected} in the limitation JSON\nstdout: {stdout}"
+                "limitation {field} must be {expected:?}: {limitation}"
             ));
         }
+    }
+    if limitation
+        .pointer("/recovery/kind")
+        .and_then(|value| value.as_str())
+        != Some("inspect_failure")
+        || !limitation
+            .pointer("/recovery/detail")
+            .and_then(|value| value.as_str())
+            .is_some_and(|detail| detail.contains("Fix the file so it parses as Python"))
+    {
+        return Err(format!(
+            "the limitation must carry the typed fix-then-rerun recovery: {limitation}"
+        ));
     }
     Ok(())
 }

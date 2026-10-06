@@ -238,10 +238,11 @@ fn refresh_attempt_failure_code(reply: &Value, context: &str) -> Result<String, 
         .ok_or_else(|| format!("{context} lost its attempt failure code: {result}"))
 }
 
-/// The issue's exact scenario: a Python workspace (`pyproject.toml` plus a
-/// `ripr.toml` enabling python) whose candidate commit applies the
+/// The issue's exact scenario fixture: a Python workspace (`pyproject.toml`
+/// plus a `ripr.toml` enabling python) whose candidate commit applies the
 /// `>` → `>=` predicate mutation. The CLI scores one finding for this
 /// crate; the MCP loop must see the same canonical item.
+#[cfg(feature = "lang-python")]
 fn write_python_workspace() -> Result<PathBuf, String> {
     let root = workspace_name("python");
     let _ = std::fs::remove_dir_all(&root);
@@ -318,6 +319,11 @@ fn initialize_session(session: &mut Session) -> Result<(), String> {
     Ok(())
 }
 
+/// Python-only (#4252): a build without `lang-python` refuses the enabled
+/// language before any parse runs, so the loaded posture and the python
+/// canonical gap are not observable there; the rust-only controls below
+/// still run in that configuration.
+#[cfg(feature = "lang-python")]
 #[test]
 fn python_workspace_analyzes_over_mcp_and_projects_the_loaded_config() -> Result<(), String> {
     let root = write_python_workspace()?;

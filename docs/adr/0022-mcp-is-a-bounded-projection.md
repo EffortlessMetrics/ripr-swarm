@@ -280,4 +280,6 @@ built-in defaults including the zero-config marker-based language
 auto-enable, and a present-but-unreadable or unparseable `ripr.toml` fails
 the refresh attempt closed with the promoted `config_invalid` code instead of
 silently analyzing a different language profile than the CLI. The repair-card
-producers keep their own built-in-defaults slice and disclose it on the card.
+producers consume the same resolved configuration as the snapshot's findings
+(#6825 review), so one committed snapshot cannot disagree with itself across
+the two producers, and the card discloses the config identity posture.

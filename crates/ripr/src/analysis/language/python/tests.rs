@@ -4625,6 +4625,10 @@ fn changed_file_syntax_error_is_a_named_producer_failure_not_a_zero() -> Result<
         "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n\ndef broken(:\n",
     )?;
     write_repo_file(&root.join("helper.py"), "def helper():\n    return 1\n")?;
+    // An unchanged sibling with a syntax error stays out of the diff-scoped
+    // limitation set (the read-failure disclosure model): its context loss
+    // matches the Rust twin's unchanged-file behavior.
+    write_repo_file(&root.join("unchanged_broken.py"), "def broken(:\n")?;
     let changed_files = vec![ChangedFile {
         path: PathBuf::from("pricing.py"),
         added_lines: vec![ChangedLine {
