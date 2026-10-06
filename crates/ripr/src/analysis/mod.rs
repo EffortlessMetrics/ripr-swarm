@@ -453,7 +453,7 @@ use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
@@ -510,9 +510,11 @@ fn push_stable_path_text(output: &mut String, text: &str) {
 /// (#5996): workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
-/// against a workspace. A relative location passes through with stable
-/// separators, so a producer that already names the workspace (the CLI's
-/// `./src/main.rs`) keeps its exact rendering on every surface.
+/// against a workspace. A remainder containing `..` resolves outside the
+/// root, so it keeps the plain spelling too. A relative location passes
+/// through with stable separators, so a producer that already names the
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
+/// surface.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
@@ -530,7 +532,15 @@ pub(crate) fn finding_location_text_with_platform(
     let relative = file
         .strip_prefix(&root)
         .ok()
-        .filter(|relative| !relative.as_os_str().is_empty());
+        .filter(|relative| !relative.as_os_str().is_empty())
+        // `strip_prefix` is lexical: `/repo/../outside.rs` strips to
+        // `../outside.rs`, which resolves outside the root. Any parent
+        // component escapes, so only a clean remainder strips (#6877).
+        .filter(|relative| {
+            !relative
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        });
     match relative {
         Some(relative) => format!("./{}", stable_path_text(relative)),
         None => stable_path_text(&file),
@@ -1071,6 +1081,29 @@ mod tests {
                 false
             ),
             r"//?/F:/repo/src/main.rs"
+        );
+    }
+
+    /// A `strip_prefix` remainder containing `..` resolves outside the root,
+    /// so it keeps the plain full spelling instead of serving a
+    /// workspace-joined `./..` escape on the wire (#6877).
+    #[test]
+    fn finding_location_text_rejects_a_parent_escape() {
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/../outside.rs"),
+                false
+            ),
+            "/repo/../outside.rs"
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/sub/../../outside.rs"),
+                false
+            ),
+            "/repo/sub/../../outside.rs"
         );
     }
 
