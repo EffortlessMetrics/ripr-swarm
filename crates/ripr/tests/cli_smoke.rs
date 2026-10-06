@@ -34,6 +34,8 @@ mod python_source_admission;
 mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[path = "cli_smoke/shell_words.rs"]
+mod shell_words;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -2229,8 +2231,12 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find(|line| line.starts_with("  ripr context "))
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
-    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
+    // #6762: split as the shell would, so a checkout path that needs
+    // quoting (a space, an apostrophe) replays as one argument.
+    let explain_words = shell_words::posix_words(explain_line)?;
+    let context_words = shell_words::posix_words(context_line)?;
+    let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
+    let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
         return Err(format!(
             "unexpected navigation commands:\n{explain_line}\n{context_line}"
@@ -3511,20 +3517,15 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
 }
 
 /// The write command a `first-pr --check` missing-packet recovery suggests,
-/// as arguments after `ripr` (each shell word decoded; the fixture paths have
-/// no spaces).
+/// as arguments after `ripr`, split the way the shell would so a quoted
+/// checkout path with spaces stays one argument (#6762).
 fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
     let line = stderr
         .split("Create and validate it with:\n")
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = line
-        .split_whitespace()
-        .map(|arg| {
-            decode_shell_token(arg).ok_or_else(|| format!("malformed shell word `{arg}`: {line}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut args = shell_words::posix_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -5753,11 +5754,12 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let mut next_args: Vec<&str> = next_command
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?
-        .split_whitespace()
-        .collect();
+    let next_words = shell_words::posix_words(
+        next_command
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
+    )?;
+    let mut next_args: Vec<&str> = next_words.iter().map(String::as_str).collect();
     next_args.push("--json");
     let after = run_ripr(&next_args);
     assert_success(&after);
@@ -12492,14 +12494,19 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     let (check_part, redirect) = after_command
         .split_once(" > ")
         .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_args: Vec<&str> = check_part
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
-        .split_whitespace()
-        .collect();
+    let check_words = shell_words::posix_words(
+        check_part
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?,
+    )?;
+    let check_args: Vec<&str> = check_words.iter().map(String::as_str).collect();
     // Pilot anchors the redirect at the resolved root (#3938), so the printed
     // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
+    let redirect_words = shell_words::posix_words(redirect)?;
+    let [redirect_word] = redirect_words.as_slice() else {
+        return Err(format!("after command redirect is not one word: {after_command}").into());
+    };
+    let redirect_path = std::path::Path::new(redirect_word);
     let after = if redirect_path.is_absolute() {
         redirect_path.to_path_buf()
     } else {
@@ -13036,13 +13043,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let repair_words = shell_words::posix_words(repair_line)?;
+    let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
             .iter()
             .position(|token| *token == flag)
             .and_then(|at| tokens.get(at + 1))
-            .map(|value| value.trim_matches('\''))
+            .copied()
     };
     assert_eq!(
         tokens.first().copied(),

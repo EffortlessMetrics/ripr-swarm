@@ -1040,23 +1040,40 @@ fn project_cwd_prefix(text: &str, prefix: &str) -> String {
     let mut rest = text;
     while let Some(at) = rest.find(quoted_open.as_str()) {
         let after = &rest[at + quoted_open.len()..];
-        let Some(end) = after.find('\'') else {
+        let Some((tail, consumed)) = quoted_tail(after) else {
             break;
         };
-        let tail = &after[..end];
         out.push_str(&rest[..at]);
         if !tail.is_empty() && tail.chars().all(is_bare_shell_char) {
             out.push_str("<cwd>/");
-            out.push_str(tail);
+            out.push_str(&tail);
         } else {
             out.push_str("'<cwd>/");
-            out.push_str(tail);
+            out.push_str(&tail.replace('\'', r"'\''"));
             out.push('\'');
         }
-        rest = &after[end + 1..];
+        rest = &after[consumed..];
     }
     out.push_str(rest);
     out.replace(prefix, "<cwd>/")
+}
+
+/// Read the rest of a `shell_arg`-quoted token after its opening quote:
+/// the unescaped tail and the bytes consumed through the closing quote. An
+/// embedded quote renders as `'\''` and stays part of the token (#6762).
+fn quoted_tail(after: &str) -> Option<(String, usize)> {
+    let mut tail = String::new();
+    let mut at = 0;
+    loop {
+        let end = at + after[at..].find('\'')?;
+        tail.push_str(&after[at..end]);
+        if after[end..].starts_with(r"'\''") {
+            tail.push('\'');
+            at = end + 4;
+        } else {
+            return Some((tail, end + 1));
+        }
+    }
 }
 
 /// Mirror of `shell_arg`'s bare-token rule.
@@ -2010,6 +2027,19 @@ mod tests {
         assert_eq!(
             project_cwd_prefix("--root /w/fixtures/x/input", "/w/"),
             "--root <cwd>/fixtures/x/input"
+        );
+        // #6762: a tail carrying an escaped quote is one token, not two.
+        assert_eq!(
+            project_cwd_prefix(r"--root '/tmp/my checkout/it'\''s/input' --diff d", prefix),
+            r"--root '<cwd>/it'\''s/input' --diff d"
+        );
+        // So is a checkout whose own path carries the quote.
+        assert_eq!(
+            project_cwd_prefix(
+                r"--root '/tmp/dev'\''s repo/fixtures/x/input' --diff d",
+                "/tmp/dev's repo/"
+            ),
+            "--root <cwd>/fixtures/x/input --diff d"
         );
     }
 
