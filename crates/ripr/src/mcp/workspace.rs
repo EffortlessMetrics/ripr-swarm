@@ -694,10 +694,16 @@ impl SessionProfile {
                     posture,
                 }
             }
-            Err(_) => Self {
+            // A load failure with no config entry anywhere (for example the
+            // marker-based language auto-enable refusing an unavailable
+            // language on a feature-restricted build) is a defaults
+            // posture; only a present-but-unloadable entry is
+            // detected-not-loaded (#6825).
+            Err(_) if crate::config::config_discovered_for_root(root) => Self {
                 posture: SessionConfigPosture::DetectedNotLoaded,
                 ..Self::built_in()
             },
+            Err(_) => Self::built_in(),
         }
     }
 
@@ -765,8 +771,8 @@ pub(crate) fn run_check(
     let config = crate::config::load_for_root(root).map_err(|error| {
         AttemptFailure::new(
             CODE_CONFIG_INVALID,
-            format!("the workspace ripr.toml could not be loaded: {error}"),
-            "fix or remove the workspace ripr.toml, then retry with ripr_refresh",
+            format!("the workspace configuration could not be loaded: {error}"),
+            "address the configuration error above (the detail names the cause), then retry with ripr_refresh",
         )
     })?;
     let input = crate::app::CheckInput {
@@ -1188,35 +1194,41 @@ mod tests {
         }
 
         // A python-enabled workspace: loaded posture with the config
-        // identity and the enabled language.
-        std::fs::write(
-            root.join("ripr.toml"),
-            "[languages]\nenabled = [\"python\"]\n",
-        )
-        .map_err(|error| error.to_string())?;
-        let loaded = SessionProfile::resolve(Some(&root));
-        match &loaded.posture {
-            SessionConfigPosture::Loaded { identity }
-                if identity.starts_with("fnv1a64:") && loaded.languages == vec!["python"] => {}
-            other => {
+        // identity and the enabled language. Python-only (#4252): a build
+        // without `lang-python` refuses the enabled language at load, so
+        // the loaded posture is not observable there.
+        #[cfg(feature = "lang-python")]
+        {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[languages]\nenabled = [\"python\"]\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let loaded = SessionProfile::resolve(Some(&root));
+            match &loaded.posture {
+                SessionConfigPosture::Loaded { identity }
+                    if identity.starts_with("fnv1a64:") && loaded.languages == vec!["python"] => {}
+                other => {
+                    return Err(format!(
+                        "a python-enabled workspace must project loaded with its language: {other:?}"
+                    ));
+                }
+            }
+            let document =
+                crate::mcp::workspace::WorkspaceSession::default().session_document(&loaded);
+            if document.pointer("/profile/config_identity").is_none() {
                 return Err(format!(
-                    "a python-enabled workspace must project loaded with its language: {other:?}"
+                    "a loaded profile must publish its config identity: {document}"
                 ));
             }
-        }
-        let document = crate::mcp::workspace::WorkspaceSession::default().session_document(&loaded);
-        if document.pointer("/profile/config_identity").is_none() {
-            return Err(format!(
-                "a loaded profile must publish its config identity: {document}"
-            ));
-        }
-        let limitations = document
-            .pointer("/limitations")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "session lost its limitations".to_string())?;
-        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
-        if text.contains("ripr.toml") {
-            return Err(format!("a loaded config is not a limitation: {text}"));
+            let limitations = document
+                .pointer("/limitations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "session lost its limitations".to_string())?;
+            let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+            if text.contains("ripr.toml") {
+                return Err(format!("a loaded config is not a limitation: {text}"));
+            }
         }
 
         // A present but unparseable config: detected-not-loaded, refresh

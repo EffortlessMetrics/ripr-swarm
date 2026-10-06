@@ -298,15 +298,20 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
     // status projects the honest posture (#6825): `loaded` with the text
     // fingerprint when a config resolves, `detected_not_loaded` when a
     // config entry is present but cannot be read or parsed (the refresh
-    // attempt fails closed with `config_invalid`), and built-in defaults
-    // when no config resolves.
+    // attempt fails closed), and built-in defaults when no config entry
+    // exists at all — including feature-gated language auto-enable
+    // refusals, which stay file-state facts here and disclose themselves
+    // at analysis time.
     let (project_config_state, project_config_identity) =
         match crate::config::load_for_root(&canonical) {
             Ok(config) => match crate::config::loaded_config_identity(&config) {
                 Some(identity) => (ProjectConfigState::Loaded, Some(identity)),
                 None => (ProjectConfigState::BuiltInDefaultsOnly, None),
             },
-            Err(_) => (ProjectConfigState::DetectedNotLoaded, None),
+            Err(_) if crate::config::config_discovered_for_root(&canonical) => {
+                (ProjectConfigState::DetectedNotLoaded, None)
+            }
+            Err(_) => (ProjectConfigState::BuiltInDefaultsOnly, None),
         };
     ResolvedRoot {
         root: RootStatus {
