@@ -191,3 +191,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (17)
+
+Reason:
+RIPR-SPEC-0224: related-test row now shows the family-relevant assertion (#5525); class, stages and actionability unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

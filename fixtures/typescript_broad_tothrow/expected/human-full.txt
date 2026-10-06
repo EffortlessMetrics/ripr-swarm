@@ -45,7 +45,7 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation.
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
-  - related test tests/parser.test.ts:3 empty user throws uses weak broad error oracle: expect(...).toThrow()
+  - related test tests/parser.test.ts:3 empty user throws uses unknown unknown oracle
 
 Weakness
   - Related test reaches `parseUser` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).
@@ -57,8 +57,8 @@ TypeScript preview card (advisory)
   owner kind: function
   changed behavior: predicate changed at src/parser.ts:2: `if (input.trim() === "") {`
   related test: tests/parser.test.ts:3 empty user throws
-  oracle: broad_error (weak)
-  suggested assertion shape: Use literal toThrow/rejects.toThrow or rejects.toMatchObject payload evidence; broad error checks stay weak.
+  oracle: unknown (unknown)
+  suggested assertion shape: Add an exact boundary assertion for the changed predicate.
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
