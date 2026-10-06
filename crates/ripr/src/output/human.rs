@@ -3043,6 +3043,16 @@ mod tests {
 
     /// The drill-in commands for a `--worktree` check, built by the same
     /// owner `ripr check` uses, so the renderer tests see the real argv.
+    /// The drill-in binds `--root` to the resolved repository (#3948), so the
+    /// rendered text carries the renderer directory. These tests pin the scope
+    /// flags, not the machine path: project the bound root back to `repo`.
+    fn unbound_repo_root(rendered: String) -> String {
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root("repo"),
+        );
+        rendered.replace(&bound, "repo")
+    }
+
     fn worktree_drill_in() -> crate::app::FindingDrillIn {
         let input = crate::app::CheckInput {
             root: PathBuf::from("repo"),
@@ -3086,11 +3096,11 @@ mod tests {
             partial_scope: None,
         };
 
-        let rendered = super::render_bounded_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+        ));
 
         assert!(
             rendered.contains(&format!(
@@ -3139,11 +3149,11 @@ mod tests {
             partial_scope: None,
         };
 
-        let rendered = super::render_full_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+        ));
 
         for id in ["first", "second"] {
             assert!(
@@ -3210,11 +3220,11 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
         };
-        super::render_full_with_config_and_navigation(
+        unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(drill_in),
-        )
+        ))
     }
 
     /// #4924 review: when policy suppresses every finding, no block prints,

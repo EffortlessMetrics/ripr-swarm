@@ -40,5 +40,5 @@ Evidence
   - source assertion argument value "fortnight" at line 51
   - source enum variant value Unit::Fortnight at line 51
 Drill in:
-  ripr explain --root fixtures/match_arm_proximity_wrapper_confirms/input --diff fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
-  ripr context --root fixtures/match_arm_proximity_wrapper_confirms/input --diff fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f
+  ripr explain --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
+  ripr context --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f

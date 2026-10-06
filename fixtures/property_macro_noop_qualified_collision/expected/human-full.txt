@@ -51,8 +51,8 @@ Limitation detail
 Next step
   Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.
 Drill in:
-  ripr explain --root fixtures/property_macro_noop_qualified_collision/input --diff fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/property_macro_noop_qualified_collision/input --diff fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/property_macro_noop_qualified_collision/input --diff <cwd>/fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/property_macro_noop_qualified_collision/input --diff <cwd>/fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope

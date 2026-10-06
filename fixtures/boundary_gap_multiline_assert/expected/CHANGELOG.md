@@ -392,3 +392,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_multiline_assert (14)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless boundary_gap_multiline_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
