@@ -10,7 +10,9 @@
 //!
 //! The walk observes; it does not gate. A static verdict is recorded per case
 //! but never asserted here. Verdict accuracy belongs to a labeled corpus, and
-//! this report only names which verdict each release produced.
+//! this report only names which verdict each release produced, read against
+//! whether the crate's own tests notice the edit. Without that reading an
+//! unknown replacing a false gap looks like lost resolution.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +51,9 @@ struct Case {
     line: usize,
     from: &'static str,
     to: &'static str,
+    /// Tests that fail with the edit applied (`cargo test` on the feature
+    /// branch). Empty means the crate's tests do not notice the edit.
+    caught_by: &'static [&'static str],
 }
 
 const CASES: [Case; 3] = [
@@ -59,6 +64,17 @@ const CASES: [Case; 3] = [
         line: 166,
         from: "digit > b'9'",
         to: "digit >= b'9'",
+        // Recorded 2026-10-06: requirements such as `=0.9.0` stop parsing.
+        caught_by: &[
+            "test_basic",
+            "test_caret",
+            "test_exact",
+            "test_less_than",
+            "test_multiple",
+            "test_tilde",
+            "test_whitespace_delimited_comparator_sets",
+            "test_wildcard",
+        ],
     },
     Case {
         krate: "fastrand",
@@ -67,6 +83,8 @@ const CASES: [Case; 3] = [
         line: 684,
         from: "val >= surrogate_start",
         to: "val > surrogate_start",
+        // Recorded 2026-10-06: `char::try_from` panics on a surrogate.
+        caught_by: &["test_char"],
     },
     Case {
         krate: "bytesize",
@@ -75,8 +93,26 @@ const CASES: [Case; 3] = [
         line: 192,
         from: "bytes < unit",
         to: "bytes <= unit",
+        // Recorded 2026-10-06: `ByteSize::kib(1)` renders as "1024 B".
+        caught_by: &["tests::test_display", "tests::test_to_string_as"],
     },
 ];
+
+/// What a verdict means given whether the crate's tests notice the edit.
+/// A gap class on a caught edit is a false gap; an unknown is unresolved,
+/// not wrong.
+fn verdict_reading(verdict: Option<&str>, caught: bool) -> &'static str {
+    match (verdict, caught) {
+        (None, _) => "no verdict",
+        (Some("exposed"), true) => "agrees with the tests",
+        (Some("exposed"), false) => "false credit",
+        (Some("weakly_exposed" | "reachable_unrevealed" | "no_static_path"), true) => "false gap",
+        (Some("weakly_exposed" | "reachable_unrevealed" | "no_static_path"), false) => {
+            "agrees with the tests"
+        }
+        (Some(_), _) => "unresolved",
+    }
+}
 
 /// Wall-clock budget per step. A blown budget is friction, not a failure.
 fn budget_secs(step: &str) -> f64 {
@@ -472,6 +508,7 @@ struct CaseResult {
     name: String,
     steps: Vec<(StepResult, Vec<String>)>,
     verdict: Option<&'static str>,
+    caught_by: &'static [&'static str],
     workflow_lines: Option<usize>,
     workflow_installs_with_cargo: Option<bool>,
 }
@@ -531,6 +568,7 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
         name,
         steps: annotated,
         verdict,
+        caught_by: case.caught_by,
         workflow_lines,
         workflow_installs_with_cargo,
     })
@@ -647,6 +685,8 @@ fn finish(
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
+            "caught_by": case.caught_by,
+            "verdict_reading": verdict_reading(case.verdict, !case.caught_by.is_empty()),
             "workflow_lines": case.workflow_lines,
             "workflow_installs_with_cargo": case.workflow_installs_with_cargo,
             "steps": case.steps.iter().map(|(s, f)| step_json(s, f)).collect::<Vec<Value>>(),
@@ -808,9 +848,15 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
     }
     for case in cases {
         text.push_str(&format!(
-            "\n## {}\n\nverdict: `{}`; generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
+            "\n## {}\n\nverdict: `{}` ({}; tests that notice the edit: {}); generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
             case.name,
             case.verdict.unwrap_or("none printed"),
+            verdict_reading(case.verdict, !case.caught_by.is_empty()),
+            if case.caught_by.is_empty() {
+                "none".to_string()
+            } else {
+                case.caught_by.join(", ")
+            },
             case.workflow_lines
                 .map_or_else(|| "none".to_string(), |lines| lines.to_string()),
             case.workflow_installs_with_cargo
@@ -879,6 +925,7 @@ mod tests {
                 (step("init_ci", 0, "", "", 0.1), vec!["x".to_string()]),
             ],
             verdict: Some("weakly_exposed"),
+            caught_by: &[],
             workflow_lines: Some(321),
             workflow_installs_with_cargo: Some(false),
         };
@@ -1041,6 +1088,7 @@ mod tests {
             line: 2,
             from: "a > b",
             to: "a >= b",
+            caught_by: &[],
         };
         assert_eq!(
             apply_edit("x\nif a > b {\ny\n", &case).as_deref(),
@@ -1049,6 +1097,42 @@ mod tests {
         assert_eq!(apply_edit("x\nif a > b && a > b {\n", &case), None);
         assert_eq!(apply_edit("x\nif a > c {\n", &case), None);
         assert_eq!(apply_edit("if a > b {\nx\n", &case), None, "wrong line");
+    }
+
+    #[test]
+    fn a_gap_on_an_edit_the_tests_catch_reads_as_a_false_gap_and_an_unknown_as_unresolved() {
+        assert_eq!(
+            verdict_reading(Some("reachable_unrevealed"), true),
+            "false gap"
+        );
+        assert_eq!(verdict_reading(Some("weakly_exposed"), true), "false gap");
+        assert_eq!(verdict_reading(Some("no_static_path"), true), "false gap");
+        assert_eq!(
+            verdict_reading(Some("infection_unknown"), true),
+            "unresolved"
+        );
+        assert_eq!(verdict_reading(Some("static_unknown"), false), "unresolved");
+        assert_eq!(
+            verdict_reading(Some("exposed"), true),
+            "agrees with the tests"
+        );
+        assert_eq!(verdict_reading(Some("exposed"), false), "false credit");
+        assert_eq!(
+            verdict_reading(Some("reachable_unrevealed"), false),
+            "agrees with the tests"
+        );
+        assert_eq!(verdict_reading(None, true), "no verdict");
+    }
+
+    #[test]
+    fn every_pinned_case_records_the_tests_that_catch_its_edit() {
+        for case in &CASES {
+            assert!(
+                !case.caught_by.is_empty(),
+                "{} has no recorded outcome",
+                case.krate
+            );
+        }
     }
 
     #[test]

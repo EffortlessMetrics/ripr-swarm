@@ -56,8 +56,12 @@ beyond progress lines, output over a read budget, no next step after `check`, a
 step over its time budget, and a generated workflow that is over 1,500 lines or
 compiles ripr from source on every run. It records the static verdict class each
 release produces for each edit, so a verdict change between releases is visible.
-Whether a verdict is correct is a separate question for a hand-labeled corpus,
-not this walk.
+Each case also records the crate tests that fail with its edit applied (checked
+by running `cargo test` on the feature branch), and the report reads the verdict
+against them: a gap class on an edit the tests catch is a `false gap`, an
+unknown class is `unresolved`. All three pinned edits are caught, so an unknown
+replacing a gap there is a correction, not lost resolution. Verdict accuracy in
+general is still a question for the hand-labeled corpus, not this walk.
 
 Run it against the published release and the release candidate, and compare the
 two JSON files. It needs registry access and Git.
