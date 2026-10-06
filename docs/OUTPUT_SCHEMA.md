@@ -1103,6 +1103,15 @@ The evidence-first fields are additive in schema `0.2`:
   - `unknown` — no strong oracle observed the changed sink (or a `<module>`
     owner with no usable token).
 
+  On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
+  family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
+  gap ledger never delegates their repair card to an agent packet:
+  `no_family_relevant_assertion` (a related test's assertions all observe
+  another behavior family, so its row shows no oracle) and
+  `other_behavior_assertion_passed_over` (a row now shows a different
+  assertion than its strongest one). `oracle_alignment` keeps what the
+  selected assertions show.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 

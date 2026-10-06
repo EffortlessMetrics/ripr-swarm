@@ -13,3 +13,15 @@
   assertion. Equal candidates are chosen by family, whole-value
   over `len(...)` observation and shape before source position, so
   reordering assertions does not change the result (#5572).
+- When the selected assertion changes a finding, its class or stage may move
+  only where the old strength-only choice was another family's assertion or
+  depended on assertion order; a changed raise with a matching
+  `pytest.raises(..., match=...)` is now `exposed` whichever assertion comes
+  last. Test-side static limits (opaque assertion helpers, property-based
+  inputs) are no longer suppressed by a strong assertion of another family.
+  The missing entry and observe summary name the kind of assertion the test
+  does have instead of reporting the oracle as `unknown`. Repair cards whose
+  rows have no family-relevant assertion (`alignment_reason:
+  no_family_relevant_assertion`) or now show a different assertion than the
+  strongest one (`other_behavior_assertion_passed_over`) are never delegated
+  to an agent packet (#5572).

@@ -47,10 +47,22 @@ struct Case {
     name: &'static str,
     focus: PythonAssertionFocus,
     body: &'static str,
+    /// The parsed (shape, strength) inventory the case depends on.
+    inventory: Vec<(PythonOracleShape, OracleStrength)>,
     expected: Option<&'static str>,
     /// Whether the strength-only collapse picked something else.
     old_differs: bool,
 }
+
+const EXACT: PythonOracleShape = PythonOracleShape::ExactAssertion;
+const BOUND: PythonOracleShape = PythonOracleShape::BoundaryAssertion;
+const EXC: PythonOracleShape = PythonOracleShape::ExceptionAssertion;
+const FIELD: PythonOracleShape = PythonOracleShape::FieldAssertion;
+const STATUS: PythonOracleShape = PythonOracleShape::StatusCodeAssertion;
+const MOCK: PythonOracleShape = PythonOracleShape::MockExpectation;
+const STRONG: OracleStrength = OracleStrength::Strong;
+const MEDIUM: OracleStrength = OracleStrength::Medium;
+const WEAK: OracleStrength = OracleStrength::Weak;
 
 fn family(family: ProbeFamily) -> PythonAssertionFocus {
     PythonAssertionFocus::for_family(family)
@@ -62,6 +74,7 @@ fn cases() -> Vec<Case> {
             name: "return value: strong exception + weaker value observer -> value",
             focus: family(ProbeFamily::ReturnValue),
             body: "    with pytest.raises(ValueError, match=\"neg\"):\n        f(-1)\n    assert f(2) > 0\n",
+            inventory: vec![(EXC, STRONG), (BOUND, WEAK)],
             expected: Some("assert f(2) > 0"),
             old_differs: true,
         },
@@ -69,6 +82,7 @@ fn cases() -> Vec<Case> {
             name: "error path: strong value + exception observer -> exception",
             focus: family(ProbeFamily::ErrorPath),
             body: "    assert f(2) == 4\n    with pytest.raises(ValueError):\n        f(-1)\n",
+            inventory: vec![(EXACT, STRONG), (EXC, WEAK)],
             expected: Some("pytest.raises(ValueError)"),
             old_differs: true,
         },
@@ -80,6 +94,7 @@ fn cases() -> Vec<Case> {
                 None,
             ),
             body: "    order = f(5)\n    assert order.count == 1\n    assert order.total > 0\n",
+            inventory: vec![(FIELD, STRONG), (FIELD, WEAK)],
             expected: Some("assert order.total > 0"),
             old_differs: true,
         },
@@ -91,6 +106,7 @@ fn cases() -> Vec<Case> {
                 Some("    return {\"host\": \"a\", \"port\": 80}"),
             ),
             body: "    assert f(1)[\"host\"] == \"a\"\n    assert f(1)[\"port\"] > 0\n",
+            inventory: vec![(FIELD, STRONG), (FIELD, WEAK)],
             expected: Some("assert f(1)[\"port\"] > 0"),
             old_differs: true,
         },
@@ -102,6 +118,7 @@ fn cases() -> Vec<Case> {
                 Some("    return {\"host\": \"a\", \"port\": 80}"),
             ),
             body: "    assert f(1)[\"host\"] == \"a\"\n",
+            inventory: vec![(FIELD, STRONG)],
             expected: Some("assert f(1)[\"host\"] == \"a\""),
             old_differs: false,
         },
@@ -109,6 +126,7 @@ fn cases() -> Vec<Case> {
             name: "predicate: a stronger mock expectation stays applicable (a predicate may gate a call)",
             focus: family(ProbeFamily::Predicate),
             body: "    f(3)\n    notifier.assert_called_once_with(3)\n    assert f(3) >= 0\n",
+            inventory: vec![(MOCK, MEDIUM), (BOUND, WEAK)],
             expected: Some("notifier.assert_called_once_with(3)"),
             old_differs: false,
         },
@@ -116,6 +134,7 @@ fn cases() -> Vec<Case> {
             name: "predicate: equal strength prefers the boundary observer",
             focus: family(ProbeFamily::Predicate),
             body: "    assert f(3) >= 0\n    self.assertIn(f(3), (0, 1))\n",
+            inventory: vec![(BOUND, WEAK), (FIELD, WEAK)],
             expected: Some("assert f(3) >= 0"),
             old_differs: true,
         },
@@ -123,6 +142,7 @@ fn cases() -> Vec<Case> {
             name: "error path: a stronger mock expectation is not an exception observer",
             focus: family(ProbeFamily::ErrorPath),
             body: "    notifier.assert_called_once_with(3)\n    with pytest.raises(ValueError):\n        f(-1)\n",
+            inventory: vec![(MOCK, MEDIUM), (EXC, WEAK)],
             expected: Some("pytest.raises(ValueError)"),
             old_differs: true,
         },
@@ -130,6 +150,7 @@ fn cases() -> Vec<Case> {
             name: "predicate: an exception observer stays applicable (a predicate may guard a raise)",
             focus: family(ProbeFamily::Predicate),
             body: "    with pytest.raises(ValueError, match=\"neg\"):\n        f(-1)\n",
+            inventory: vec![(EXC, STRONG)],
             expected: Some("pytest.raises(ValueError, match=\"neg\")"),
             old_differs: false,
         },
@@ -137,6 +158,7 @@ fn cases() -> Vec<Case> {
             name: "equal strength: whole value over a trailing len aggregate",
             focus: family(ProbeFamily::ReturnValue),
             body: "    assert f(1) == 2\n    assert len(f(1)) == 1\n",
+            inventory: vec![(EXACT, STRONG), (EXACT, STRONG)],
             expected: Some("assert f(1) == 2"),
             old_differs: true,
         },
@@ -144,6 +166,7 @@ fn cases() -> Vec<Case> {
             name: "equal strength: whole value over a leading len aggregate",
             focus: family(ProbeFamily::ReturnValue),
             body: "    assert len(f(1)) == 1\n    assert f(1) == 2\n",
+            inventory: vec![(EXACT, STRONG), (EXACT, STRONG)],
             expected: Some("assert f(1) == 2"),
             old_differs: false,
         },
@@ -151,6 +174,7 @@ fn cases() -> Vec<Case> {
             name: "return value: no applicable assertion -> none, not the exception",
             focus: family(ProbeFamily::ReturnValue),
             body: "    with pytest.raises(ValueError, match=\"neg\"):\n        f(-1)\n",
+            inventory: vec![(EXC, STRONG)],
             expected: None,
             old_differs: true,
         },
@@ -158,6 +182,7 @@ fn cases() -> Vec<Case> {
             name: "error path: no applicable assertion -> none, not the exact value",
             focus: family(ProbeFamily::ErrorPath),
             body: "    assert f(2) == 4\n",
+            inventory: vec![(EXACT, STRONG)],
             expected: None,
             old_differs: true,
         },
@@ -165,7 +190,48 @@ fn cases() -> Vec<Case> {
             name: "error path: a status code observes the error's visible effect",
             focus: family(ProbeFamily::ErrorPath),
             body: "    response = f(-1)\n    assert response.status_code == 400\n    assert response.count == 0\n",
+            inventory: vec![(STATUS, STRONG), (FIELD, STRONG)],
             expected: Some("assert response.status_code == 400"),
+            old_differs: true,
+        },
+        Case {
+            name: "except line: a normal-value observer of the handler result applies",
+            focus: PythonAssertionFocus::for_change(
+                ProbeFamily::ErrorPath,
+                "    except (ValueError, TypeError):",
+                Some("    except ValueError:"),
+            ),
+            body: "    assert f(None) == 0\n",
+            inventory: vec![(EXACT, STRONG)],
+            expected: Some("assert f(None) == 0"),
+            old_differs: false,
+        },
+        Case {
+            name: "try line: a mock expectation applies",
+            focus: PythonAssertionFocus::for_change(ProbeFamily::ErrorPath, "    try:", None),
+            body: "    f(1)\n    notifier.assert_called_once_with(3)\n",
+            inventory: vec![(MOCK, MEDIUM)],
+            expected: Some("notifier.assert_called_once_with(3)"),
+            old_differs: false,
+        },
+        Case {
+            name: "finally line: the stronger value observer is kept over a weak exception observer",
+            focus: PythonAssertionFocus::for_change(ProbeFamily::ErrorPath, "    finally:", None),
+            body: "    with pytest.raises(ValueError):\n        f(-1)\n    assert f(2) == 4\n",
+            inventory: vec![(EXC, WEAK), (EXACT, STRONG)],
+            expected: Some("assert f(2) == 4"),
+            old_differs: false,
+        },
+        Case {
+            name: "raise line: the same normal-value observer does not apply",
+            focus: PythonAssertionFocus::for_change(
+                ProbeFamily::ErrorPath,
+                "        raise TypeError(\"bad\")",
+                None,
+            ),
+            body: "    assert f(None) == 0\n",
+            inventory: vec![(EXACT, STRONG)],
+            expected: None,
             old_differs: true,
         },
     ]
@@ -180,6 +246,15 @@ fn family_relevant_assertion_selection_controls() {
         let test = parse_test(case.body);
         if test.assertions.is_empty() {
             failures.push(format!("{}: fixture extracted no assertions", case.name));
+            continue;
+        }
+        if shapes(&test) != case.inventory {
+            failures.push(format!(
+                "{}: parsed inventory {:?}, expected {:?}",
+                case.name,
+                shapes(&test),
+                case.inventory
+            ));
             continue;
         }
         let actual = selected(&test, &case.focus);
@@ -498,6 +573,130 @@ fn a_test_with_only_wrong_family_assertions_reports_none_in_evidence() -> Result
             .any(|line| line.starts_with("test_oracle: ")),
         "{:?}",
         finding.evidence
+    );
+    Ok(())
+}
+
+/// When only the source line differs, the later source line wins.
+#[test]
+fn identical_assertions_tie_break_on_the_later_source_line() {
+    let test = parse_test("    assert f(1) == 2\n    assert f(1) == 2\n");
+    assert_eq!(shapes(&test), vec![(EXACT, STRONG), (EXACT, STRONG)]);
+    let lines: Vec<usize> = test
+        .assertions
+        .iter()
+        .map(|assertion| assertion.line)
+        .collect();
+    assert!(lines[0] < lines[1], "{lines:?}");
+    for probe_family in [ProbeFamily::ReturnValue, ProbeFamily::Predicate] {
+        let line = select_relevant_assertion(&test.assertions, Some(&family(probe_family)))
+            .assertion()
+            .map(|assertion| assertion.line);
+        assert_eq!(line, Some(lines[1]));
+    }
+}
+
+/// A strong assertion of another behavior family never suppresses a
+/// test-side static limit (#5572): the limit reads the same family filter
+/// as the rows.
+#[test]
+fn wrong_family_strong_assertion_does_not_suppress_test_side_limits() {
+    let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
+    let tests = vec![parse_test(
+        "    with pytest.raises(ValueError, match=\"neg\"):\n        f(-1)\n    assert_valid(f(2))\n",
+    )];
+    assert_eq!(
+        shapes(&tests[0]),
+        vec![
+            (EXC, STRONG),
+            (
+                PythonOracleShape::UnknownCustomHelper,
+                OracleStrength::Unknown
+            )
+        ]
+    );
+    let candidates = super::related_tests::related_test_candidates(&owners[0], &tests);
+    assert_eq!(candidates.len(), 1);
+    // Changed return: the exception assertion is not a known oracle, so the
+    // opaque helper limits the finding.
+    assert_eq!(
+        static_limit_for_change("    return x * 2", &owners[0], &candidates)
+            .map(|limit| limit.kind),
+        Some(StaticLimitKind::OpaqueCustomAssertionHelper)
+    );
+    // Changed raise: the matching exception assertion is a known oracle.
+    assert_eq!(
+        static_limit_for_change("        raise ValueError(\"neg\")", &owners[0], &candidates)
+            .map(|limit| limit.kind),
+        None
+    );
+}
+
+/// A changed `except` clause is observed by the handler's result.
+#[test]
+fn changed_except_clause_keeps_the_handler_value_assertion() -> Result<(), String> {
+    let source = "def to_int(text):\n    try:\n        return int(text)\n    except (ValueError, TypeError):\n        return 0\n";
+    let owners = extract_owners(Path::new("src/conv.py"), source);
+    let mut tests = extract_tests(
+        Path::new("tests/test_conv.py"),
+        "from src.conv import to_int\n\ndef test_to_int_none():\n    assert to_int(None) == 0\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let tests = vec![tests.remove(0)];
+    let finding = classify_change_with_old(
+        Path::new("src/conv.py"),
+        4,
+        "    except (ValueError, TypeError):",
+        Some("    except ValueError:"),
+        &owners,
+        &tests,
+    )
+    .ok_or("a changed except clause must classify")?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath);
+    assert_eq!(
+        finding.related_tests[0].oracle.as_deref(),
+        Some("assert to_int(None) == 0")
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "test_oracle: exact_value strong (test_to_int_none)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// The class of a changed raise does not depend on assertion source order.
+#[test]
+fn changed_raise_class_is_independent_of_assertion_order() -> Result<(), String> {
+    let source = "def parse(text):\n    if not text:\n        raise KeyError(\"empty\")\n    return int(text)\n";
+    let owners = extract_owners(Path::new("src/app.py"), source);
+    let raises = "    with pytest.raises(KeyError, match=\"empty\"):\n        parse(\"\")\n";
+    let value = "    assert parse(\"42\") == 42\n";
+    let mut classes = Vec::new();
+    for body in [format!("{raises}{value}"), format!("{value}{raises}")] {
+        let mut tests = extract_tests(
+            Path::new("tests/test_app.py"),
+            &format!("import pytest\nfrom src.app import parse\n\ndef test_parse():\n{body}"),
+        );
+        assert_eq!(tests.len(), 1);
+        let tests = vec![tests.remove(0)];
+        let finding = classify_change_with_old(
+            Path::new("src/app.py"),
+            3,
+            "        raise KeyError(\"empty\")",
+            Some("        raise ValueError(\"empty\")"),
+            &owners,
+            &tests,
+        )
+        .ok_or("a changed raise must classify")?;
+        classes.push(finding.class);
+    }
+    assert_eq!(
+        classes,
+        vec![ExposureClass::Exposed, ExposureClass::Exposed]
     );
     Ok(())
 }

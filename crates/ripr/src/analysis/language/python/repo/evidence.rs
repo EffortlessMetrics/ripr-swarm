@@ -586,6 +586,10 @@ fn build_production_file_evidence(
                 // The owner inventory has no changed line, so its rows keep
                 // the strongest assertion overall; each behavior item below
                 // re-projects the rows for its own line's family (#5572).
+                // An owner's `related_tests` can therefore name a different
+                // assertion than one of its behavior items: the inventory is
+                // one row per test for every line of the owner, and no single
+                // family describes them all.
                 find_related_tests(owner, all_tests, None),
             )
         })

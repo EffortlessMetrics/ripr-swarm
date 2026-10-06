@@ -366,7 +366,32 @@ fn python_weak_missing_summary(
     probe_family: &ProbeFamily,
     strongest_kind: &OracleKind,
 ) -> String {
-    let shape = match probe_family {
+    format!(
+        "Related Python test reaches `{}` but the strongest extracted oracle is `{}`; add or strengthen a focused assertion for {}.",
+        owner.name,
+        strongest_kind.as_str(),
+        python_family_assertion_target(probe_family)
+    )
+}
+
+/// The missing summary when related tests assert, but every assertion
+/// observes another behavior family than the change (#5572).
+fn python_no_family_relevant_missing_summary(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+    other_kind: &OracleKind,
+) -> String {
+    format!(
+        "Related Python test reaches `{}`, but its assertions observe a different behavior (strongest: `{}`) and none observes the changed {}; add or strengthen a focused assertion for {}.",
+        owner.name,
+        other_kind.as_str(),
+        probe_family.as_str().replace('_', " "),
+        python_family_assertion_target(probe_family)
+    )
+}
+
+fn python_family_assertion_target(probe_family: &ProbeFamily) -> &'static str {
+    match probe_family {
         ProbeFamily::Predicate => "the changed boundary",
         ProbeFamily::ReturnValue => "the returned value",
         ProbeFamily::ErrorPath => "the exact exception type/message",
@@ -374,12 +399,7 @@ fn python_weak_missing_summary(
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => "the changed output/log/call effect",
         ProbeFamily::MatchArm => "the changed match arm",
         ProbeFamily::StaticUnknown => "the changed behavior",
-    };
-    format!(
-        "Related Python test reaches `{}` but the strongest extracted oracle is `{}`; add or strengthen a focused assertion for {shape}.",
-        owner.name,
-        strongest_kind.as_str()
-    )
+    }
 }
 
 fn python_recommended_next_step(

@@ -1431,6 +1431,13 @@ fn python_agent_packet_eligibility(
         );
     }
     match (oracle_alignment, alignment_reason) {
+        // A related row with no family-relevant assertion, or one that now
+        // shows a different assertion than the strength-only pick
+        // (RIPR-SPEC-0224, #5572), is not an established bounded repair route: the
+        // suggested test may exercise another behavior or owner.
+        (_, Some("no_family_relevant_assertion" | "other_behavior_assertion_passed_over")) => {
+            (false, "python_family_selection_not_delegatable")
+        }
         (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
             (true, "python_direct_owner_oracle")
         }
@@ -4607,6 +4614,7 @@ mod tests {
         let mut direct = 0usize;
         let mut no_strong = 0usize;
         let mut orthogonal = 0usize;
+        let mut family_selection = 0usize;
         for entry in fs::read_dir(&fixture_root).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -4673,6 +4681,12 @@ mod tests {
                             return Err(format!("no-strong fixture denied: {name}"));
                         }
                     }
+                    (_, Some("no_family_relevant_assertion")) => {
+                        family_selection += 1;
+                        if eligible {
+                            return Err(format!("no-family-relevant fixture eligible: {name}"));
+                        }
+                    }
                     (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
                         orthogonal += 1;
                         if eligible {
@@ -4703,11 +4717,11 @@ mod tests {
         // and does not carry a card. #5572: the error-path card of
         // `python_adversarial_error_path_untaken_branch` no longer surfaces the
         // alignment of its normal-value assertion, which is not relevant to the
-        // changed raise, so it moves from `direct` to `no_strong_oracle`; it
-        // stays agent-packet eligible either way.
-        if (direct, no_strong, orthogonal) != (5, 30, 11) {
+        // changed raise, so it moves from eligible `direct` to the
+        // never-delegated `no_family_relevant_assertion` (RIPR-SPEC-0224).
+        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 11, 1) {
             return Err(format!(
-                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
+                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
         }
         Ok(())

@@ -1,3 +1,5 @@
+use super::assertion_selection::PythonAssertionFocus;
+use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
@@ -18,6 +20,12 @@ pub(super) fn static_limit_for_change(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
+    // The family filter the finding's rows are selected with (#5572): a
+    // strong assertion of another behavior family is not a known oracle for
+    // this change, so it never suppresses a test-side limit. No old line is
+    // needed — the family filter reads only the changed line.
+    let focus =
+        PythonAssertionFocus::for_change(classify_probe_shape(line_text).0, line_text, None);
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
         return Some(PythonStaticLimit {
@@ -104,7 +112,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
         });
     }
-    if related_candidates_have_property_based_test_limit(related_candidates) {
+    if related_candidates_have_property_based_test_limit(related_candidates, &focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::PropertyBasedTest,
             evidence: "static_limit property_based_test: related test uses generated inputs"
@@ -121,7 +129,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates) {
+    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, &focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -471,6 +479,7 @@ fn body_calls_at_name_boundary(body: &str, call: &str) -> bool {
 
 fn related_candidates_have_property_based_test_limit(
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> bool {
     related_candidates
         .iter()
@@ -478,7 +487,8 @@ fn related_candidates_have_property_based_test_limit(
         .any(|candidate| {
             test_uses_property_based_inputs(candidate.test)
                 && !candidate.test.assertions.iter().any(|assertion| {
-                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    focus.admits(assertion)
+                        && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                 })
         })
 }
@@ -576,6 +586,7 @@ pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -
 
 fn related_candidates_have_opaque_custom_assertion_limit(
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> bool {
     let mut has_opaque_helper = false;
     let mut has_known_strong_oracle = false;
@@ -587,7 +598,9 @@ fn related_candidates_have_opaque_custom_assertion_limit(
         for assertion in &candidate.test.assertions {
             if assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper {
                 has_opaque_helper = true;
-            } else if assertion.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+            } else if focus.admits(assertion)
+                && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+            {
                 has_known_strong_oracle = true;
             }
         }

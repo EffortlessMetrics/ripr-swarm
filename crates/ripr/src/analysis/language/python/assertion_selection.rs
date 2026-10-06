@@ -63,6 +63,10 @@ use std::cmp::Ordering;
 pub(super) struct PythonAssertionFocus {
     family: ProbeFamily,
     changed_field: Option<PythonChangedField>,
+    /// The changed line opens a `try:` / `except` / `finally:` block. An
+    /// `ErrorPath` change there alters what the handler does — often the value
+    /// it returns — so normal-value, mock and output observers apply too.
+    error_handler_line: bool,
 }
 
 /// The field a `FieldConstruction` change writes, when the changed line names
@@ -91,9 +95,12 @@ impl PythonAssertionFocus {
         let changed_field = matches!(family, ProbeFamily::FieldConstruction)
             .then(|| changed_field(line_text, old_line_text))
             .flatten();
+        let error_handler_line =
+            matches!(family, ProbeFamily::ErrorPath) && is_error_handler_line(line_text);
         Self {
             family,
             changed_field,
+            error_handler_line,
         }
     }
 
@@ -102,6 +109,7 @@ impl PythonAssertionFocus {
         Self {
             family,
             changed_field: None,
+            error_handler_line: false,
         }
     }
 
@@ -109,8 +117,11 @@ impl PythonAssertionFocus {
         &self.family
     }
 
-    fn admits(&self, assertion: &PythonAssertion) -> bool {
-        shape_matches_family(assertion.oracle_shape, &self.family)
+    /// Whether `assertion` can observe this change at all (the family
+    /// filter). Static-limit suppression reads the same filter, so a
+    /// wrong-family strong assertion never hides a limit.
+    pub(super) fn admits(&self, assertion: &PythonAssertion) -> bool {
+        self.error_handler_line || shape_matches_family(assertion.oracle_shape, &self.family)
     }
 
     /// Sink relevance: 0 for a sibling-field observer, 1 otherwise.
@@ -152,6 +163,17 @@ impl PythonAssertionFocus {
     }
 }
 
+/// The `try:` / `except` / `except*` / `finally:` lines `classify_probe_shape`
+/// files under `ErrorPath`. A `raise` or `with ... raises(` line is not one.
+fn is_error_handler_line(line_text: &str) -> bool {
+    let trimmed = line_text.trim_start();
+    trimmed.starts_with("try:")
+        || trimmed.starts_with("except ")
+        || trimmed.starts_with("except:")
+        || trimmed.starts_with("except* ")
+        || trimmed.starts_with("finally:")
+}
+
 fn changed_field(line_text: &str, old_line_text: Option<&str>) -> Option<PythonChangedField> {
     if let Some((_, attr, _)) = parse_attribute_assignment(line_text) {
         return Some(PythonChangedField::Attribute(attr.to_string()));
@@ -166,7 +188,13 @@ fn shape_matches_family(shape: PythonOracleShape, family: &ProbeFamily) -> bool 
     match family {
         // An error path is observed by the raised exception or its visible
         // effect (status code, captured output); a normal-value observer
-        // never triggers the changed raise.
+        // never triggers the changed raise. (Handler lines are admitted
+        // wholesale in `admits`.) A field assertion on a captured exception
+        // (`with pytest.raises(E) as excinfo:` then `assert
+        // excinfo.value.code == 3`) is not recognized here: telling it from a
+        // normal-value field assertion needs the `as` binding, which the
+        // assertion inventory does not carry, so it stays a value observer
+        // and fails closed for a changed raise.
         ProbeFamily::ErrorPath => matches!(
             shape,
             Shape::ExceptionAssertion
@@ -213,6 +241,17 @@ impl<'a> PythonAssertionSelection<'a> {
             Self::NoFamilyRelevant | Self::NoAssertion => None,
         }
     }
+}
+
+/// The pre-#5572 strength-only projection: the strongest assertion, the last
+/// one in extractor order on ties. It is not a selector; the classifier
+/// compares it with the family selection only to keep repair delegation
+/// fail-closed (a row whose projection moved never becomes newly
+/// delegatable, RIPR-SPEC-0224).
+pub(super) fn strength_only_assertion(assertions: &[PythonAssertion]) -> Option<&PythonAssertion> {
+    assertions
+        .iter()
+        .max_by_key(|assertion| assertion.oracle_strength.rank())
 }
 
 /// Select the assertion of one test relevant to `focus`.

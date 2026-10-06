@@ -40,6 +40,17 @@ impl SinkAlignment {
         ) || self.alignment_reason == "module_owner_no_sink_token"
     }
 
+    /// The same read-out with a non-delegatable reason: a related row has
+    /// no family-relevant assertion (`no_family_relevant_assertion`) or now
+    /// shows a different assertion than the strength-only pick
+    /// (`other_behavior_assertion_passed_over`), #5572. Only the surfaced
+    /// finding fields use it; the classifier decided from `observes()` first,
+    /// and the gap ledger never delegates either reason.
+    pub(super) fn with_reason(mut self, reason: &str) -> Self {
+        self.alignment_reason = reason.to_string();
+        self
+    }
+
     /// The alignment surfaced when the classifier did not reach a strong-oracle
     /// branch (no-static-path, static-limit, heuristic-only, or weak-oracle
     /// findings never compute owner alignment). `changed_sink` is retained
