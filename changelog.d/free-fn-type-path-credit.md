@@ -1,3 +1,4 @@
+<!-- section: Fixed -->
 - A module-level `fn` is no longer credited by tests that call a same-named
   associated function or method. In bytesize, `ByteSize::kb(1000)` made the
   free `kb` beside it read `direct_owner_call`, took its argument as the free
