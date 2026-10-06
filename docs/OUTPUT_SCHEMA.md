@@ -1109,8 +1109,8 @@ The evidence-first fields are additive in schema `0.2`:
   `no_family_relevant_assertion` (a related test's assertions all observe
   another behavior family, so its row shows no oracle) and
   `other_behavior_assertion_passed_over` (a row now shows a different
-  assertion than its strongest one). `oracle_alignment` keeps what the
-  selected assertions show.
+  assertion than the strength-only pick, which can be equally strong).
+  `oracle_alignment` keeps what the selected assertions show.
 
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
