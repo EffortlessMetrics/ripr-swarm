@@ -30,8 +30,15 @@ pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
 /// variant-gated on one path and opaque on the other. Whether the `?`
 /// returns from the owner (rather than a closure) is a body-level question
 /// this line-level reader does not answer; flow owns it.
+///
+/// When both readers find a variant and they differ (a nested
+/// `x.map(|_| Err(E::V)).ok_or(E::W)?`), the line names two errors and the
+/// identity is opaque: `None` (fail-closed, PR #6786 review).
 pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
-    exact_error_variant(text).or_else(|| question_mark_error_variant(text))
+    match (exact_error_variant(text), question_mark_error_variant(text)) {
+        (Some(constructed), Some(returned)) => (constructed == returned).then_some(constructed),
+        (constructed, returned) => constructed.or(returned),
+    }
 }
 
 /// Byte offset of the `(` that opens the argument of the first
@@ -139,6 +146,26 @@ fn depth_zero_without_pipe(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_error_variant_is_opaque_when_the_two_readers_disagree() {
+        assert_eq!(
+            changed_error_variant("let v = x.map(|_| Err(E::V)).ok_or(E::W)?;"),
+            None
+        );
+        assert_eq!(
+            changed_error_variant("let v = x.map(|_| Err(E::V)).ok_or(E::V)?;").as_deref(),
+            Some("E::V")
+        );
+        assert_eq!(
+            changed_error_variant("return Err(E::V);").as_deref(),
+            Some("E::V")
+        );
+        assert_eq!(
+            changed_error_variant("let v = x.ok_or(E::W)?;").as_deref(),
+            Some("E::W")
+        );
+    }
 
     #[test]
     fn question_mark_error_variant_reads_ok_or_and_ok_or_else() {

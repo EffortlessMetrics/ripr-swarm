@@ -3208,21 +3208,23 @@ pub fn parse(value: &str) -> Result<i32, String> {
     {
         // #6695: production builds ErrorPath seams from `return` and tail
         // expressions (syntax/ra.rs); an `ok_or(Type::Variant)?` in either
-        // position stores that variant through the shared identity owner,
-        // so a sibling pin cannot match it in repo mode.
+        // position is recognised there and stores that variant through the
+        // shared identity owner, so a sibling pin cannot match it in repo
+        // mode. The short `E::Bad` has no `Error::` text to trip the older
+        // shape triggers.
         let path = PathBuf::from("src/code.rs");
         let source = r#"
-pub enum CodeError {
-    NotDigit,
-    TooLong,
+pub enum E {
+    Bad,
+    Other,
 }
 
-pub fn first_code(slot: Option<Result<u32, CodeError>>) -> Result<u32, CodeError> {
-    return slot.ok_or(CodeError::NotDigit)?;
+pub fn first_code(slot: Option<Result<u32, E>>) -> Result<u32, E> {
+    return slot.ok_or(E::Bad)?;
 }
 
-pub fn last_code(slot: Option<Result<u32, CodeError>>) -> Result<u32, CodeError> {
-    slot.ok_or_else(|| CodeError::NotDigit)?
+pub fn last_code(slot: Option<Result<u32, E>>) -> Result<u32, E> {
+    slot.ok_or_else(|| E::Bad)?
 }
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
@@ -3246,7 +3248,7 @@ pub fn last_code(slot: Option<Result<u32, CodeError>>) -> Result<u32, CodeError>
             assert_eq!(
                 seam.required_discriminator(),
                 &RequiredDiscriminator::ErrorVariant {
-                    variant: "CodeError::NotDigit".to_string(),
+                    variant: "E::Bad".to_string(),
                 },
                 "{}",
                 seam.expression()

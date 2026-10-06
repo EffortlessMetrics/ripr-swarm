@@ -1804,7 +1804,7 @@ fn constructor_returns_self(
 }
 
 /// The return type a `fn` definition declares, whitespace-collapsed.
-fn declared_return_type(definition: &str) -> Option<String> {
+pub(super) fn declared_return_type(definition: &str) -> Option<String> {
     let masked = mask_comments_and_strings(definition);
     let params = masked.find('(')?;
     let params_close = matching_close(&masked, params, b'(', b')')?;

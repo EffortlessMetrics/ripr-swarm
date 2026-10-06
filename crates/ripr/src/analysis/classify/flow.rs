@@ -800,10 +800,64 @@ fn error_path_sink_text(probe: &Probe, owner_fn: Option<&FunctionSummary>) -> St
     if exact_error_variant(&probe.expression).is_none()
         && let Some(variant) = question_mark_error_variant(&probe.expression)
         && question_mark_returns_from_owner(probe, owner_fn)
+        && owner_error_type_names_variant_enum(owner_fn, &variant)
     {
         return format!("Result::Err({variant})");
     }
     result_error_text(&probe.expression)
+}
+
+/// Whether the owner's declared return type is `Result<_, E>` with `E` the
+/// enum the `ok_or` variant belongs to (PR #6786 review, Devin). `?`
+/// converts the error through `From` when the owner returns another error
+/// type (`Inner::Bad` becomes `Outer::Wrapped`), so the variant is the
+/// owner's returned error only when the types agree. Compared by the final
+/// path segment; a type alias (`Result<T>`, `io::Result<T>`, `Result<T,
+/// Error>` naming an alias), `Self`, a generic or an unparsed signature
+/// answers `false` (fail-closed).
+fn owner_error_type_names_variant_enum(owner_fn: Option<&FunctionSummary>, variant: &str) -> bool {
+    let Some(function) = owner_fn else {
+        return false;
+    };
+    let Some(enum_name) = variant.rsplit("::").nth(1) else {
+        return false;
+    };
+    let Some(returned) = super::owner_pin::declared_return_type(&function.body) else {
+        return false;
+    };
+    let returned = returned.trim();
+    let Some(arguments) = ["Result<", "std::result::Result<", "core::result::Result<"]
+        .iter()
+        .find_map(|prefix| returned.strip_prefix(prefix))
+        .and_then(|rest| rest.strip_suffix('>'))
+    else {
+        return false;
+    };
+    // Split the generic arguments at depth-zero commas.
+    let mut depth = 0i32;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for (offset, character) in arguments.char_indices() {
+        match character {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&arguments[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&arguments[start..]);
+    let [_, error_type] = parts.as_slice() else {
+        return false;
+    };
+    let error_type = error_type.trim();
+    !error_type.is_empty()
+        && error_type.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == ':'
+        })
+        && error_type.rsplit("::").next() == Some(enum_name)
 }
 
 /// Whether a `?` on the probe's line returns from the owner function: the
@@ -1682,6 +1736,49 @@ mod tests {
         assert_eq!(sinks.len(), 1, "{sinks:?}");
         assert_eq!(sinks[0].text, "Result::Err(CodeError::NotDigit)");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn question_mark_ok_or_sink_requires_the_owner_error_type_to_be_the_variant_enum() {
+        // Same type: the `?` returns the variant unchanged.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<u8, Inner> {\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(v)\n}",
+        );
+        let probe = probe(ProbeFamily::ErrorPath, "let v = x.ok_or(Inner::Bad)?;", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.text == "Result::Err(Inner::Bad)"),
+            "{sinks:?}"
+        );
+        // Converting type: `?` turns `Inner::Bad` into whatever `From<Inner>
+        // for Outer` builds, so no exact owner-level variant is claimed.
+        for signature in [
+            "pub fn parse(x: Option<u8>) -> Result<u8, Outer> {",
+            "pub fn parse(x: Option<u8>) -> Result<u8> {",
+            "pub fn parse(x: Option<u8>) -> io::Result<u8> {",
+            "pub fn parse(x: Option<u8>) -> Result<u8, Box<dyn Error>> {",
+        ] {
+            let owner = ok_or_owner(&format!(
+                "{signature}\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(v)\n}}"
+            ));
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.text != "Result::Err(Inner::Bad)"),
+                "{signature}: {sinks:?}"
+            );
+        }
+        // Nested generics in the success type still split at the right comma.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<Vec<(u8, u8)>, crate::Inner> {\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(vec![(v, v)])\n}",
+        );
+        assert!(owner_error_type_names_variant_enum(
+            Some(&owner),
+            "Inner::Bad"
+        ));
     }
 
     #[test]

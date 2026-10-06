@@ -601,11 +601,18 @@ fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
             .any(|token| source_tokens.iter().any(|source| source == token))
 }
 
-/// `Err::<T, E>(payload)` spelled as `Err(payload)`: the turbofish names
-/// types, not a different constructor, so error identities compare equal.
-/// Any other text is returned unchanged.
+/// `Err::<T, E>(payload)` and `Result::Err::<T, E>(payload)` spelled as
+/// `Err(payload)`: the turbofish names types, not a different constructor,
+/// so error identities compare equal with the flow sink, which
+/// `exact_error_variant` already reduces to `Result::Err(payload)` (PR #6786
+/// review, Devin). Nested generics are balanced. Any other text is returned
+/// unchanged.
 fn without_err_turbofish(text: &str) -> String {
-    let Some(generics) = text.strip_prefix("Err::<") else {
+    let Some(generics) = text
+        .strip_prefix("Result::")
+        .unwrap_or(text)
+        .strip_prefix("Err::<")
+    else {
         return text.to_string();
     };
     let mut depth = 1i32;
@@ -891,6 +898,41 @@ mod tests {
         ] {
             assert!(opaque_path_text(text), "{text}");
         }
+    }
+
+    /// `return Result::Err::<T, E>(E::Bad)` and `return Err::<T, E>(..)`
+    /// reach the same canonical sink as `return Err(E::Bad)` through the
+    /// production flow facts, nested generics included.
+    #[test]
+    fn qualified_and_unqualified_err_turbofish_complete_the_error_witness() -> Result<(), String> {
+        for expression in [
+            "return Result::Err::<u8, E>(E::Bad);",
+            "return Err::<u8, E>(E::Bad);",
+            "return Result::Err::<Vec<Option<u8>>, E>(E::Bad);",
+            "return Err(E::Bad);",
+        ] {
+            let witness = production_witness(&probe(ProbeFamily::ErrorPath, expression), None)
+                .ok_or_else(|| format!("no witness for {expression}"))?;
+            assert_eq!(
+                witness.edges[0].status,
+                EdgeStatus::Established,
+                "{expression}"
+            );
+            assert_eq!(
+                witness.completeness,
+                PathCompleteness::Complete,
+                "{expression}"
+            );
+        }
+        assert_eq!(
+            without_err_turbofish("Result::Err::<Vec<Option<u8>>, E>(E::Bad)"),
+            "Err(E::Bad)"
+        );
+        assert_eq!(
+            without_err_turbofish("Result::Err(E::Bad)"),
+            "Result::Err(E::Bad)"
+        );
+        Ok(())
     }
 
     /// The owner-checked `ok_or?` bypass keys on the probe line having no
