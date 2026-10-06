@@ -396,6 +396,21 @@ fn git_stderr_names_object_damage(stderr: &str) -> bool {
         .any(|line| MARKERS.into_iter().any(|marker| line.contains(marker)))
 }
 
+/// Whether Git rejected `GIT_CONFIG_*` configuration from the environment.
+/// Matched as the diagnostics' own line prefixes: a bad-config line can name a
+/// file whose path merely contains `GIT_CONFIG`.
+fn git_stderr_rejects_environment_config(stderr: &str) -> bool {
+    const PREFIXES: [&str; 3] = [
+        "error: bogus count in GIT_CONFIG",
+        "error: missing config key GIT_CONFIG",
+        "fatal: unable to parse command-line config",
+    ];
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .any(|line| PREFIXES.into_iter().any(|prefix| line.starts_with(prefix)))
+}
+
 /// Git's first `fatal:`/`error:` line, made terminal-safe and bounded: the
 /// text can quote repository content (a `packed-refs` line, a config key).
 fn git_reason_line(stderr: &[u8]) -> Option<String> {
@@ -439,7 +454,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
     // The whole stderr, not the displayed line: an `error:` line about a ref
     // can precede the `fatal:` line that names the object damage.
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let repair = if stderr.contains("GIT_CONFIG") {
+    let repair = if git_stderr_rejects_environment_config(&stderr) {
         // Git rejected configuration inherited from the environment, before
         // reading any repository file.
         "Git rejected configuration from the environment (`GIT_CONFIG_*`); correct or unset \
@@ -2606,6 +2621,19 @@ mod tests {
         assert!(line.chars().count() <= GIT_REASON_MAX_CHARS + 1, "{line}");
         assert!(line.ends_with('…'), "{line}");
         assert_eq!(git_reason_line(b"hint: nothing fatal here\n"), None);
+    }
+
+    #[test]
+    fn environment_config_rejection_is_anchored_to_git_diagnostics() {
+        assert!(git_stderr_rejects_environment_config(
+            "error: bogus count in GIT_CONFIG_COUNT\nfatal: unable to parse command-line config\n"
+        ));
+        assert!(git_stderr_rejects_environment_config(
+            "error: missing config key GIT_CONFIG_KEY_0\n"
+        ));
+        assert!(!git_stderr_rejects_environment_config(
+            "fatal: bad config line 1 in file /tmp/GIT_CONFIG_dir/.git/config\n"
+        ));
     }
 
     #[test]
