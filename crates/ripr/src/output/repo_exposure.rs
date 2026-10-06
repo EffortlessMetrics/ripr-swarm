@@ -265,10 +265,13 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         python_guidance,
         generated_skip,
     };
-    // The hash pass renders the full document into memory: no destination
-    // I/O happens here. The write pass below renders it again into `out`,
-    // so `serialize_write_pass` minus `serialize_hash_pass` is the I/O
-    // cost (#6898).
+    // The hash pass streams the document through `Sha256Writer`, which
+    // hashes each chunk without buffering it, so no destination I/O
+    // happens here. The write pass below renders the document a second
+    // time into `out`, so `serialize_write_pass` minus
+    // `serialize_hash_pass` mixes destination I/O with the hash cost and
+    // second-render cache effects: it bounds I/O, it does not isolate it
+    // (#6898).
     let hash_started = Instant::now();
     write_repo_exposure_json_document(
         limit_info,
