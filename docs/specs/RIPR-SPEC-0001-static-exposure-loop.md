@@ -381,6 +381,7 @@ Fixture coverage:
 - `deeply_nested_table_line_is_unreadable_not_a_crash`
 - `computed_only_call_with_local_counter_boundary_is_unknown_not_weak`
 - `method_call_builder_argument_is_not_credited_end_to_end`
+- `all_dropped_boundary_literals_read_the_no_literal_boundary_reason`
 - `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`

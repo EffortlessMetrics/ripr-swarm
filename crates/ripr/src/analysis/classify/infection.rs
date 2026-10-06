@@ -687,6 +687,35 @@ mod tests {
     }
 
     #[test]
+    fn all_dropped_boundary_literals_read_the_no_literal_boundary_reason() {
+        // ub-review on #6796: when every boundary literal is dropped (all
+        // sit inside computed operands) and the literal-kind filter then
+        // keeps no test literal, the summary is the no-literal-boundary
+        // reason, never a no-static-path claim.
+        let computed = probe(ProbeFamily::Predicate, "total < base * 3 || n == m + 1");
+        let mixed_kinds = test_with_literals(&["3", "'x'", "1"]);
+        let evidence =
+            infection_evidence(&computed, &[&mixed_kinds], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert_eq!(
+            evidence.summary,
+            "Predicate changed, but no literal boundary was visible in the changed expression"
+        );
+        assert!(!evidence.summary.contains("static path"));
+
+        // A computed operand over a named constant (`LIMIT * 3`) is not the
+        // constant itself, so it reads the same no-literal reason.
+        let constant = probe(ProbeFamily::Predicate, "total < LIMIT * 3");
+        let evidence =
+            infection_evidence(&constant, &[&mixed_kinds], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert_eq!(
+            evidence.summary,
+            "Predicate changed, but no literal boundary was visible in the changed expression"
+        );
+    }
+
+    #[test]
     fn computed_comparison_operand_is_not_its_contained_literal() {
         // #6671: `CURRENT - 2 > version` never compares against `2`.
         assert!(boundary_literals("CURRENT - 2 > manifest.version").is_empty());
