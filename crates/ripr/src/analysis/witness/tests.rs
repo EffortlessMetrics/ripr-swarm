@@ -1194,6 +1194,30 @@ fn absent_finding_canonical_gap_does_not_join_seam_gap_identity() {
     );
 }
 
+// #5268: with the Rust producer populating canonical gaps, a finding's
+// required discriminator now names the gap's normalized discriminator
+// (source `canonical_gap`) instead of falling back to the missing fact —
+// the same source precedence the Python/Perl producers already project.
+#[test]
+fn populated_canonical_gap_is_the_required_discriminator_source() {
+    let finding = FindingSpec::default().build();
+    let witness = from_finding(&finding);
+    assert_eq!(witness.portable_item_id, "gap:pricing:boundary");
+    assert_eq!(witness.required_discriminator.source, "canonical_gap");
+
+    let absent = FindingSpec {
+        canonical_id: None,
+        ..FindingSpec::default()
+    }
+    .build();
+    let witness = from_finding(&absent);
+    assert_eq!(witness.portable_item_id, "finding:pricing");
+    assert_eq!(
+        witness.required_discriminator.source,
+        "missing_discriminator_fact"
+    );
+}
+
 #[test]
 fn relation_identity_is_reason_and_oracle_not_test_name() {
     let first = FindingSpec::default()

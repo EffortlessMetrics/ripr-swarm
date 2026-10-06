@@ -1,6 +1,7 @@
 use super::super::rust_index::{TestSummary, extract_literals};
 use super::activation::{
-    boundary_constant_operand_name, has_observed_boundary_equality, owner_input_values,
+    ARM_UNSELECTED_REASON_PREFIX, boundary_constant_operand_name, has_observed_boundary_equality,
+    owner_input_values,
 };
 use crate::domain::*;
 
@@ -114,6 +115,18 @@ pub(in crate::analysis) fn infection_evidence(
                     StageState::Unknown,
                     Confidence::Low,
                     "No reachable tests were found, so infection cannot be established",
+                )
+            } else if let Some(unselected) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            {
+                // RIPR-SPEC-0229: every related test's owner input selects a
+                // different arm, so none activates this one.
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    unselected.reason.clone(),
                 )
             } else if is_wildcard_discard(&probe.expression) {
                 StageEvidence::new(
@@ -397,7 +410,7 @@ mod tests {
             file: PathBuf::from("tests/value.rs"),
             start_line: 1,
             end_line: 3,
-            body: "assert_eq!(score(10), 11);".to_string(),
+            body: "assert_eq!(score(10), 11);".into(),
             calls: Vec::new(),
             assertions: Vec::new(),
             literals: values

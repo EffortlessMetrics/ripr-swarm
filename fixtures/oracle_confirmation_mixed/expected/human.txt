@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/oracle_confirmation_mixed/input/src/lib.rs:2
+  File: ./src/lib.rs:2
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:analyze_diff:call_deletion:call_deletion:record_effect_rows
   Changed behavior: record_effect(rows)
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 3): src/lib.rs:12 calls_owner_without_observing_effect (has no assertion)

@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/guarded_result_match_swallowed/input/src/lib.rs:9
+  File: ./src/lib.rs:9
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
   Missing discriminator (1 of 5): ParseError::InvalidData
   Related test (1 of 2): tests/messages.rs:4 logs_failures_without_discriminating (assertion not credited: ripr could not establish that it runs as the standard macro)

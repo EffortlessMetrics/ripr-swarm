@@ -1465,7 +1465,7 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: "pub fn score(amount: i32) -> Response {\n    if amount > 10 {\n        status: amount,\n    }\n}"
-                .to_string(),
+                .into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -1501,7 +1501,7 @@ mod tests {
             start_line: 1,
             end_line: 6,
             body: "pub fn quote(amount: i32, threshold: i32) -> Quote {\n    let eligible = amount >= threshold;\n    Quote {\n        code: 200,\n        eligible,\n    }\n}"
-                .to_string(),
+                .into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -1532,7 +1532,7 @@ mod tests {
             start_line: 1,
             end_line: 6,
             body: "pub fn quote(amount: i32, threshold: i32) -> Quote {\n    let eligible = amount >= threshold;\n    Quote {\n        code: 200,\n        remaining: threshold,\n    }\n}"
-                .to_string(),
+                .into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -1560,7 +1560,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: body.lines().count(),
-            body: body.to_string(),
+            body: body.into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 3,
@@ -1827,7 +1827,7 @@ mod tests {
             end_line: 5,
             body:
                 "pub fn collect(x: i32) {\n    let mut items = Vec::new();\n    items.push(x);\n}"
-                    .to_string(),
+                    .into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),

@@ -51,7 +51,7 @@ action.
 | `dynamic_dispatch` | The call target or behavior may be selected dynamically, such as computed member calls (`obj[name]` followed by invocation) or `getattr(obj, name)(...)`. | Treat the finding as advisory. Prefer a focused test that observes the concrete runtime target or result. |
 | `metaprogramming` | The code shape may change behavior through a metaprogramming mechanism, such as proxies, metaclasses, generated attributes, or similar indirection. | Keep the limit visible. Do not assume the static owner or call path is the full runtime boundary. |
 | `missing_import_graph` | The preview adapter did not resolve a full project import graph. | Check whether the related test and owner are the intended files before copying a packet or opening a test. |
-| `decorator_indirection` | A Python decorator may change the callable boundary before the body runs. Simple route decorators such as `@api.post(...)` can still be route metadata when the changed body has a supported repair shape. | Treat owner/test evidence as syntax-first. Add a test around the decorated public behavior, not only the undecorated body. |
+| `decorator_indirection` | A Python decorator may change the callable boundary before the body runs. Simple route decorators such as `@api.post(...)` can still be route metadata when the changed body has a supported repair shape. `functools.lru_cache`, `functools.cache`, and `functools.cached_property` are not this limit when they bind from `functools`. | Treat owner/test evidence as syntax-first. Add a test around the decorated public behavior, not only the undecorated body. |
 | `mocked_module` | A test replaces or mocks a module or symbol involved in the finding, such as `unittest.mock.patch(...)` or pytest `monkeypatch.setattr(...)`. | Read the mock as interaction evidence, not proof of the real dependency behavior. Keep repair routing blocked unless a separate non-mocked concrete oracle path exists. |
 | `opaque_custom_assertion_helper` | A related Python test observes behavior through a custom assertion helper whose body is not inspected. | Keep the finding out of repair queues until a human or analyzer can confirm whether the helper already observes the changed discriminator. |
 | `property_based_test` | A related Python test uses generated inputs, such as Hypothesis `@given(...)`, and syntax alone cannot prove which concrete examples run. | Do not assume the generated cases include the missing discriminator. Keep repair routing blocked unless that same related test also contains concrete strong oracle evidence. |
@@ -67,6 +67,33 @@ action.
 | `rust_subprocess_binary_reach_unresolved` | An integration test invokes a Cargo-built binary, but ripr does not yet map that executable back to the changed owner. | Treat this as a named `no_static_path` limitation. Inspect the subprocess test and binary target manually; do not infer reach, receipt validity, coverage, or repair readiness. |
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. |
+
+## Seam Readings: `opaque` and `activation_unknown`
+
+Repo-wide output (`ripr pilot`, `ripr check --format repo-exposure-json`, and
+the editor's seam diagnostics) grades every seam with a grip class. Two of the
+classes mean ripr stopped short of a verdict about the tests. Human output
+prints both with the plain word `unknown`, for example `unknown, opaque`.
+
+| Reading | What ripr found | What it could not establish | What to do |
+| --- | --- | --- | --- |
+| `opaque` | A candidate path to the seam that ripr does not trace: a test calling a public function that calls a private helper, a macro, or a trait impl that a test or test-reachable function mentions by type and may run through a call such as `to_string()`. The seam's `opaque_static_evidence` limitation names the test or production function and the path. No related test is established. | Whether any test runs the seam, and if one does, whether it notices a wrong value there. | Do not write a test from this reading alone. If the limitation names a test, open it and check that it exercises the seam and has an assertion that would notice a wrong value there. If it names a production function instead, as trait-dispatch evidence can, find the tests that call that function and check the same. If such a test exists and asserts the exact value, leave the seam. If the assertion is broad (`> 0`, `is_ok`), or the test runs the seam but asserts nothing about the value or asserts on something else, strengthen that test with an exact assertion rather than adding a second one. Only if no test runs the seam, add a test of the owner through its intended public path. |
+| `activation_unknown` | Activation is not established: ripr has no input value that reaches the changed behavior. A related test is listed, but it may be linked only by name or file, so ripr has not shown that it calls the seam's owner. A boundary-value hint may still be listed under the seam's missing discriminators; read it as guidance on where to look, not as a confirmed gap. | Whether the listed test calls the owner (limitations `activation_owner_call_absent` and `activation_owner_call_unresolved`), and which input it passes. A value that comes through a helper, fixture, environment variable or computed local records a value limitation: `activation_boundary_input_unresolved` when a local, iterator, closure or computed operand feeds the boundary, `activation_value_unresolved` when no literal value was observed. | Read the seam's limitation category and repair route in the evidence record. Every activation limitation routes to analyzer work (an `analysis/...` route), so the reading by itself is not test debt: ripr could not follow the owner call or the input, and the intended public path may already reach the owner. Check by hand whether the listed test reaches the owner through its public path and whether its assertion would notice a wrong value there; for a predicate boundary, also check that it passes a value on the changed boundary (a return-value or call-presence seam has no boundary value to pass); once activation is established, a weak assertion shows as `weakly_gripped`. If the check finds a real gap, add the call, the input or a stronger assertion through the public path. If the test already does everything that applies to the seam, leave it alone and file an analyzer follow-up naming the route; do not add a direct call or restate the input only to satisfy ripr. |
+
+How the two count:
+
+- `opaque` is not headline-eligible, so it stays out of the headline gap count,
+  and `ripr pilot` lists it after every other class. In the editor its
+  diagnostic severity is `[severity.seams] opaque`, default `info`.
+- `activation_unknown` is headline-eligible. In the editor its severity is
+  `[severity.seams] activation_unknown`, default `info`.
+- `ungripped` (`no path` in human output) means ripr found no related test and
+  no unresolved candidate path. A seam with an unresolved path reads `opaque`, not `ungripped`.
+
+`opaque` errs toward unknown. Matching is by name, so a trait impl of a type
+that your tests use reads `opaque` even when no test runs that impl (`Debug`,
+`Hash` and `Drop` impls are typical). `opaque` is a prompt to look, not
+evidence that a test exists. RIPR-SPEC-0230 lists the limits.
 
 ## External-Language Related-Test Inventory
 
