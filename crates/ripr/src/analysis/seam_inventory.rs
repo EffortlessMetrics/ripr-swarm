@@ -3374,6 +3374,23 @@ pub fn loop_value(x: u32) -> u32 {
     }
     found + tagged
 }
+
+pub fn positions(x: u32, v: &[u32]) -> u32 {
+    let a = pair(x).0;
+    let b = v[slot(x)];
+    let c = [elem(x), 1];
+    let t = (tup(x), 2);
+    let p = Point { y: field_init(x) };
+    let r = 0..bound(x);
+    let n = !flag(x);
+    let w = &borrowed(x);
+    let k = (wrapped(x)) as u64;
+    let m = if let Some(z) = maybe(x) { z } else { 0 };
+    match x {
+        _ if guard(x) => 1,
+        _ => 0,
+    }
+}
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
@@ -3432,6 +3449,17 @@ pub fn loop_value(x: u32) -> u32 {
             "commit(x)",
             "search(x)",
             "probe(step)",
+            "pair(x)",
+            "slot(x)",
+            "elem(x)",
+            "tup(x)",
+            "field_init(x)",
+            "bound(x)",
+            "flag(x)",
+            "borrowed(x)",
+            "wrapped(x)",
+            "maybe(x)",
+            "guard(x)",
         ] {
             assert!(
                 consumed.contains(&call),
