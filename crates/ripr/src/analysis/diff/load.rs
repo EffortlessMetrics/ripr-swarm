@@ -314,6 +314,7 @@ pub fn resolve_effective_base(
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .or_else(|| unreadable_repository_message(root, &output))
             .unwrap_or_else(|| {
                 let fetch = missing_ref_repair(root, explicit, git_timeout);
                 format!(
@@ -338,6 +339,9 @@ enum GitRootProbe {
     /// Git ran and refused the repository because another user owns it; the
     /// message carries the `safe.directory` repair rendered from Git's stderr.
     DubiousOwnership(String),
+    /// Git ran and could not read the repository (a bad `.git/config`, a
+    /// damaged ref store); the message carries Git's own reason and a repair.
+    Unreadable(String),
     Unanswered,
 }
 
@@ -365,9 +369,108 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
             Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string())
         }
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
-        GitRootProbe::DubiousOwnership(message) => Some(message),
+        GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
+            Some(message)
+        }
         GitRootProbe::Unanswered => None,
     }
+}
+
+/// Whether a `fatal:`/`error:` line of Git's stderr reports a damaged object
+/// store. Anchored to those lines so a path or branch that merely contains
+/// "corrupt" does not read as damage.
+fn git_stderr_names_object_damage(stderr: &str) -> bool {
+    const MARKERS: [&str; 7] = [
+        "unable to read",
+        "Could not read",
+        "unable to unpack",
+        "inflate:",
+        "bad object",
+        "loose object",
+        "object file",
+    ];
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .any(|line| MARKERS.into_iter().any(|marker| line.contains(marker)))
+}
+
+/// Whether Git rejected `GIT_CONFIG_*` configuration from the environment.
+/// Matched as the diagnostics' own line prefixes: a bad-config line can name a
+/// file whose path merely contains `GIT_CONFIG`.
+fn git_stderr_rejects_environment_config(stderr: &str) -> bool {
+    const PREFIXES: [&str; 3] = [
+        "error: bogus count in GIT_CONFIG",
+        "error: missing config key GIT_CONFIG",
+        "fatal: unable to parse command-line config",
+    ];
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .any(|line| PREFIXES.into_iter().any(|prefix| line.starts_with(prefix)))
+}
+
+/// Git's first `fatal:`/`error:` line, made terminal-safe and bounded: the
+/// text can quote repository content (a `packed-refs` line, a config key).
+fn git_reason_line(stderr: &[u8]) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))?;
+    // Escape first, then bound, so the displayed reason is what is limited.
+    let escaped = crate::terminal_text::terminal_safe(line.to_string());
+    if escaped.chars().count() <= GIT_REASON_MAX_CHARS {
+        return Some(escaped);
+    }
+    let mut bounded: String = escaped.chars().take(GIT_REASON_MAX_CHARS).collect();
+    bounded.push('…');
+    Some(bounded)
+}
+
+/// Displayed length limit for Git's reason line, after escaping.
+const GIT_REASON_MAX_CHARS: usize = 300;
+
+/// The repair message when Git itself failed (exit 128) for a reason that is
+/// not an absent ref: a damaged repository answers a ref probe with `fatal:`,
+/// where an absent ref answers exit 1 without a message. Without this a
+/// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
+/// "not inside a Git work tree" (#6908).
+fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
+    if output.status.code() != Some(128) {
+        return None;
+    }
+    let reason = git_reason_line(&output.stderr)?;
+    // These two mean "no repository here", not "a damaged one": the work-tree
+    // message already tells the user to run from, or point `--root` at, one.
+    // Matched as the diagnostic's own prefix: a bad-config line can name a
+    // file whose path happens to contain those words.
+    if reason.starts_with("fatal: not a git repository")
+        || reason.starts_with("fatal: invalid gitfile")
+    {
+        return None;
+    }
+    // The whole stderr, not the displayed line: an `error:` line about a ref
+    // can precede the `fatal:` line that names the object damage.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let repair = if git_stderr_rejects_environment_config(&stderr) {
+        // Git rejected configuration inherited from the environment, before
+        // reading any repository file.
+        "Git rejected configuration from the environment (`GIT_CONFIG_*`); correct or unset \
+         it, then re-run."
+    } else if git_stderr_names_object_damage(&stderr) {
+        "Repair the object store: run `git fsck`, restore the missing objects (for example \
+         `git fetch`), then re-run."
+    } else {
+        "If Git names a config or ref file, correct or restore it (`.git/config`, \
+         `.git/packed-refs`); `git fsck` checks the object store only. Then re-run."
+    };
+    Some(format!(
+        "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
+         {repair}",
+        crate::terminal_text::terminal_safe(root.display().to_string())
+    ))
 }
 
 fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
@@ -388,6 +491,9 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
                 )
             {
                 return GitRootProbe::DubiousOwnership(message);
+            }
+            if !inside && let Some(message) = unreadable_repository_message(root, &output) {
+                return GitRootProbe::Unreadable(message);
             }
             classify_git_root_probe(Ok(inside))
         }
@@ -416,7 +522,9 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     match probe_git_root(root, git_timeout) {
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
-        GitRootProbe::DubiousOwnership(message) => Some(message),
+        GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
+            Some(message)
+        }
         GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
     }
 }
@@ -718,6 +826,7 @@ fn verify_head_revision(
     let commit = format!("{head}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .or_else(|| unreadable_repository_message(root, &output))
             .unwrap_or_else(|| {
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
@@ -1167,6 +1276,17 @@ fn run_git_diff_bytes(
         let stderr = stderr.trim();
         let hint = if stderr.contains("no merge base") {
             no_merge_base_hint(root, range, git_timeout)
+        } else if stderr.contains("unknown revision or path not in the working tree") {
+            format!(
+                " The range `{}` names a revision Git cannot resolve: HEAD may be unborn or \
+                 point at a missing branch, or the base is absent. Check `git rev-parse HEAD` \
+                 and the base ref, then re-run.",
+                crate::terminal_text::terminal_safe(range.to_string())
+            )
+        } else if git_stderr_names_object_damage(stderr) {
+            " Git reports a damaged object store; run `git fsck`, restore the missing objects \
+             (for example `git fetch`), then re-run."
+                .to_string()
         } else {
             String::new()
         };
@@ -2483,6 +2603,55 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn git_reason_line_is_terminal_safe_bounded_and_anchored() {
+        let hostile = format!(
+            "warning: x\nfatal: bad line \u{1b}[2J\u{202e}{}\n",
+            "z".repeat(900)
+        );
+        let line = git_reason_line(hostile.as_bytes()).unwrap_or_default();
+        assert!(line.starts_with("fatal: bad line "), "{line}");
+        assert!(
+            !line.contains('\u{1b}') && !line.contains('\u{202e}'),
+            "{line}"
+        );
+        assert!(line.contains("\\u{1b}"), "{line}");
+        assert!(line.chars().count() <= GIT_REASON_MAX_CHARS + 1, "{line}");
+        assert!(line.ends_with('…'), "{line}");
+        assert_eq!(git_reason_line(b"hint: nothing fatal here\n"), None);
+    }
+
+    #[test]
+    fn environment_config_rejection_is_anchored_to_git_diagnostics() {
+        assert!(git_stderr_rejects_environment_config(
+            "error: bogus count in GIT_CONFIG_COUNT\nfatal: unable to parse command-line config\n"
+        ));
+        assert!(git_stderr_rejects_environment_config(
+            "error: missing config key GIT_CONFIG_KEY_0\n"
+        ));
+        assert!(!git_stderr_rejects_environment_config(
+            "fatal: bad config line 1 in file /tmp/GIT_CONFIG_dir/.git/config\n"
+        ));
+    }
+
+    #[test]
+    fn object_damage_hint_is_anchored_to_git_error_lines() {
+        assert!(git_stderr_names_object_damage(
+            "error: inflate: data stream error (incorrect header check)\n"
+        ));
+        assert!(git_stderr_names_object_damage("fatal: bad object HEAD\n"));
+        assert!(git_stderr_names_object_damage(
+            "error: refs/heads/feat does not point to a valid object!\nerror: Could not read 0123abc\nfatal: bad object HEAD\n"
+        ));
+        // A path or branch that contains the word is not damage.
+        assert!(!git_stderr_names_object_damage(
+            "fatal: ambiguous argument 'corrupt_input.rs': unknown revision\n"
+        ));
+        assert!(!git_stderr_names_object_damage(
+            "warning: bad-object-fix is not a branch\n"
+        ));
     }
 
     #[test]

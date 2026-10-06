@@ -944,6 +944,8 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
+    // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
+    classify::withhold_unsupported_gap(finding);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a

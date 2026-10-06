@@ -6318,6 +6318,10 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base",
   "crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent",
   "crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out",
+  "crates/ripr/tests/hostile_repos.rs::damaged_git_state_names_the_cause_and_a_repair",
+  "crates/ripr/tests/hostile_repos.rs::malformed_git_environment_config_is_not_blamed_on_the_repository",
+  "crates/ripr/src/analysis/diff/load.rs::tests::object_damage_hint_is_anchored_to_git_error_lines",
+  "crates/ripr/src/analysis/diff/load.rs::tests::environment_config_rejection_is_anchored_to_git_diagnostics",
   "crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags",
   "crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal",
   "crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source",
@@ -12489,9 +12493,31 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::hover_keeps_oracle_kind_on_a_matched_row_that_still_misses",
   "crates/ripr/src/analysis/language/python/python_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::family_relevant_assertion_selection_controls",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::the_fixtures_parse_to_the_intended_oracle_shapes",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::reordering_assertions_never_changes_the_selection",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::a_stronger_orthogonal_assertion_never_displaces_the_relevant_one",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::single_applicable_assertion_keeps_its_strength_only_projection",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::classified_row_and_evidence_share_the_selected_assertion",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::a_test_with_only_wrong_family_assertions_reports_none_in_evidence",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::identical_assertions_tie_break_on_the_later_source_line",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::wrong_family_strong_assertion_does_not_suppress_test_side_limits",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::passed_over_sibling_field_assertion_does_not_suppress_test_side_limits",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_dict_key_limit_suppression_uses_the_classifier_focus",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_except_clause_keeps_the_handler_value_assertion",
+  "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::changed_raise_class_is_independent_of_assertion_order",
+  "crates/ripr/src/app/tests/python_family_selection_packets.rs::no_family_relevant_row_for_same_method_on_other_class_stays_advisory",
+  "crates/ripr/src/app/tests/python_family_selection_packets.rs::no_family_relevant_row_for_wrapper_value_on_changed_raise_stays_advisory",
+  "crates/ripr/src/app/tests/python_family_selection_packets.rs::no_family_relevant_row_for_exception_on_changed_return_stays_advisory",
+  "crates/ripr/src/app/tests/python_family_selection_packets.rs::passed_over_stronger_assertion_card_is_not_newly_delegated",
+  "crates/ripr/src/app/tests/python_family_selection_packets.rs::error_path_class_is_independent_of_assertion_source_order",
 ]
 code = [
   "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/analysis/language/python/assertion_selection.rs",
+  "crates/ripr/src/analysis/language/python/classify.rs",
+  "crates/ripr/src/analysis/language/python/static_limits.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/perl/mod.rs",
@@ -13048,4 +13074,44 @@ code = [
 outputs = []
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0240"
+name = "Unknown, not a gap"
+spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
+tests = [
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_drops_the_gap_confidence_bonus_and_never_raises_a_score",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::an_unmarked_refusal_keeps_the_gap",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_marker_without_the_refused_observe_keeps_the_gap_and_is_consumed",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::an_existing_named_limit_and_non_gap_classes_are_untouched",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_twice_adds_one_stop_reason",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
+  "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
+]
+fixtures = [
+  "fixtures/gap_withheld_feature_gated_test",
+  "fixtures/gap_kept_ignored_test",
+]
+code = [
+  "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "fixtures/gap_withheld_feature_gated_test/expected/check.json",
+  "fixtures/gap_kept_ignored_test/expected/check.json",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+  "verdict_corpus_false_actionable_rate",
 ]

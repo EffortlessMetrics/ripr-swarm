@@ -2443,3 +2443,195 @@ fn a_bare_assert_keeps_the_owner_binding_defeats() {
         OwnerReturnPin::establish(&predicate_probe(gate, "10 <= value"), gate, &partial).is_none()
     );
 }
+
+fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
+    AssertionRefusal::MacroBinding {
+        name: "assert_eq".to_string(),
+        site: kind.map(|kind| {
+            (
+                PathBuf::from("src/lib.rs"),
+                MacroBindingSite {
+                    line: 3,
+                    kind,
+                    scope: None,
+                },
+            )
+        }),
+    }
+}
+
+#[test]
+fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
+    let syntax = AssertionRefusal::Syntax;
+    for refusal in [
+        AssertionRefusal::LexicalFallback,
+        AssertionRefusal::UnresolvedModule("orphan".to_string()),
+        AssertionRefusal::IncludedFile {
+            parent: PathBuf::from("src/lib.rs"),
+            line: 2,
+        },
+        syntax(AssertionContextRefusal::UnparsedFile),
+        syntax(AssertionContextRefusal::UnidentifiedTest),
+        syntax(AssertionContextRefusal::AsyncTest),
+        syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::StaleSource),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[ignore_slow]".to_string(),
+        )),
+        binding_refusal(None),
+        binding_refusal(Some(MacroBindingKind::ForeignGlob("other::*".to_string()))),
+        binding_refusal(Some(MacroBindingKind::MacroUse("mod helpers;".to_string()))),
+        binding_refusal(Some(MacroBindingKind::MacroArgument("rgtest".to_string()))),
+        binding_refusal(Some(MacroBindingKind::Unparsed)),
+        binding_refusal(Some(MacroBindingKind::NoImplicitPrelude)),
+    ] {
+        assert!(refusal.is_analyzer_limit(), "{}", refusal.describe());
+    }
+}
+
+#[test]
+fn refusals_that_can_keep_an_assertion_from_running_are_not_limits() {
+    let syntax = AssertionRefusal::Syntax;
+    for refusal in [
+        AssertionRefusal::ModuleDeclaration {
+            parent: PathBuf::from("tests/weight_tests.rs"),
+            line: 3,
+            declaration: "mod dormant;".to_string(),
+        },
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[ignore]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[ignore = \"slow\"]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[cfg(any())]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[cfg(all(test, any()))]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[should_panic]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::TestAttribute(
+            "#[should_panic(expected = \"boom\")]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::NestedItem),
+        syntax(AssertionContextRefusal::GatedItem(
+            "#[cfg(any())]".to_string(),
+        )),
+        syntax(AssertionContextRefusal::OpaqueMacro("skip".to_string())),
+        syntax(AssertionContextRefusal::MacroOperandExit(
+            "assert_eq".to_string(),
+        )),
+        syntax(AssertionContextRefusal::ClosureExit),
+        syntax(AssertionContextRefusal::ConditionalPath("if")),
+        syntax(AssertionContextRefusal::MacroBinding(
+            "assert_eq".to_string(),
+        )),
+        binding_refusal(Some(MacroBindingKind::Definition)),
+        binding_refusal(Some(MacroBindingKind::Import)),
+    ] {
+        assert!(!refusal.is_analyzer_limit(), "{}", refusal.describe());
+    }
+}
+
+#[test]
+fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
+    // A feature gate first, or an `async` test, must not hide the `#[ignore]`
+    // or `#[should_panic]` that settles the outcome (RIPR-SPEC-0240).
+    for (tests, expected) in [
+        (
+            "use demo::weight;\n#[test]\n#[cfg(feature = \"std\")]\n#[ignore]\nfn weighs() { assert_eq!(weight(4), 12); }\n",
+            "#[ignore]",
+        ),
+        (
+            "use demo::weight;\n#[ignore]\n#[tokio::test]\nasync fn weighs() { assert_eq!(weight(4), 12); }\n",
+            "#[ignore]",
+        ),
+        (
+            "use demo::weight;\n#[test]\n#[cfg(feature = \"std\")]\n#[should_panic]\nfn weighs() { assert_eq!(weight(4), 12); }\n",
+            "#[should_panic]",
+        ),
+    ] {
+        let refusal = weight_refusal(tests, &[]);
+        assert!(
+            matches!(
+                &refusal,
+                Some(AssertionRefusal::Syntax(AssertionContextRefusal::TestAttribute(attribute)))
+                    if attribute == expected
+            ),
+            "{tests}: {refusal:?}"
+        );
+        assert!(
+            refusal.is_some_and(|refusal| !refusal.is_analyzer_limit()),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
+fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
+    // The test file defines its own `assert_eq!`, a real rebinding that can
+    // keep the assertion from checking anything. An unresolved `#[macro_use]`
+    // elsewhere in the workspace only may rebind the name, so reporting that
+    // site would turn a real rebinding into an analyzer limit (RIPR-SPEC-0240).
+    let tests = "macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\nuse demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let macro_use = "fn a() {}\n#[macro_use]\nextern crate other;\n";
+    let refusal_with = |files: &[(&str, &str)]| {
+        let index = index(files);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .cloned();
+        assert!(test.is_some(), "the fixture test must be indexed");
+        let test = test?;
+        let probe = return_probe(owner(&index, "weight"), "x * 3");
+        OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            &test,
+            &test.assertions[0],
+            &index,
+        )
+    };
+    let site_kind = |refusal: &Option<AssertionRefusal>| match refusal {
+        Some(AssertionRefusal::MacroBinding {
+            site: Some((path, site)),
+            ..
+        }) => Some((path.clone(), site.kind.clone())),
+        _ => None,
+    };
+
+    let both = refusal_with(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        ("src/other.rs", macro_use),
+    ]);
+    assert_eq!(
+        site_kind(&both),
+        Some((PathBuf::from(TESTS), MacroBindingKind::Definition)),
+        "{both:?}"
+    );
+    assert!(both.is_some_and(|refusal| !refusal.is_analyzer_limit()));
+
+    // Control: without the local definition the workspace site is reported,
+    // and it is an analyzer limit.
+    let plain = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let only_macro_use = refusal_with(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/other.rs", macro_use),
+    ]);
+    assert_eq!(
+        site_kind(&only_macro_use),
+        Some((
+            PathBuf::from("src/other.rs"),
+            MacroBindingKind::MacroUse("extern crate other;".to_string())
+        ))
+    );
+    assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
+}

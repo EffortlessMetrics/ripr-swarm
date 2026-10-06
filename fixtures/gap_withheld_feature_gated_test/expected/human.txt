@@ -1,0 +1,34 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/gap_withheld_feature_gated_test/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: limited by static analysis (static_limited)
+  Safe next action: inspect the named static limitation before treating this as repair-ready.
+  File: ./src/lib.rs:2
+  Static exposure: unknown (static_unknown, note, confidence 0.64)
+  Why unknown: the analysis could not determine a static exposure state
+  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:6: the test carries `#[cfg(feature = "std")]`, which may change whether or how it runs
+  Changed behavior: input * 3
+  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Related test: tests/weight_tests.rs:5 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Next step: ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:5)
+    run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares
+    the changed value; add a test only if none does.
+  Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    - reach yes: Related tests appear to reach weight: checks_weight
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
