@@ -215,7 +215,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `ledger-sku-family-end` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
 | `accounts-balance-add` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `accounts-trailer-crc` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `accounts-last-byte-unchecked` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -223,7 +223,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-fee-err-return-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
 | `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
