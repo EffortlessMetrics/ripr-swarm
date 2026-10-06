@@ -14,3 +14,8 @@
   (`helper_result_not_forwarded`) instead of crediting the wrapper's
   assertion or reporting a gap; such a parameter also no longer carries the
   test's input into the helper's activation rows.
+- The wrapper pairing above reads only boundary rows from the asserting
+  test itself, so a same-line boundary input in another test file no longer
+  pairs with an unrelated wrapper assertion; a match guard that only reads
+  the forwarded parameter (`n if n > qty =>`) no longer counts as rebinding
+  it.

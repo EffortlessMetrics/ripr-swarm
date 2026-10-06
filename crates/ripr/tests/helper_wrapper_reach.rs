@@ -253,8 +253,7 @@ fn unit_source(wrapper_body: &str, tests: &str) -> String {
 // #6780 review B2: a return-value change in a helper whose wrapper drops
 // or transforms the helper's result is not credited through the wrapper pin.
 #[test]
-fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> Result<(), String>
-{
+fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> Result<(), String> {
     for (wrapper, tests) in [
         (
             "    let _ = unit_cents(qty);\n    qty",
@@ -281,7 +280,10 @@ fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> R
 #[test]
 fn return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop() -> Result<(), String> {
     let finding = family_finding(
-        &unit_source("    unit_cents(qty)", "        assert_eq!(order_cents(2), 8);"),
+        &unit_source(
+            "    unit_cents(qty)",
+            "        assert_eq!(order_cents(2), 8);",
+        ),
         UNIT_DIFF,
         "return_value",
     )?;

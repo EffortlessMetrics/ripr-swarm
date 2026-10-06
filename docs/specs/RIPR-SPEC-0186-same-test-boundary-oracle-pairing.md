@@ -16,6 +16,7 @@ Linked issues:
 
 - #4828
 - #5027 (shared execution admission before pairing)
+- #6668 (argument must be the boundary literal, not merely contain it)
 
 Linked PRs:
 
@@ -77,6 +78,13 @@ constant or helper hop stays paired. A same-test mix that calls the boundary
 without asserting and asserts a far call (`let _ = gate(10); assert_eq!(gate(100),
 true)`) does not pair.
 
+An owner-call argument is a boundary input only when it is the literal itself
+(including a type suffix such as `10u32`), a named local bound to that literal,
+or a form infection already recorded as `==` the boundary. An expression that
+merely contains the literal does not pair, including `gate(if false { 10 } else
+{ 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
+pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
+
 A private helper reached only through a wrapper (RIPR-SPEC-0159 chain,
 #6694 / #6672) pairs on the wrapper call: an admitted discriminating
 assertion whose subject is one call of the chain's entry, that names no
@@ -88,10 +96,16 @@ parameter it forwards to the hop, and its tail is the hop call itself or
 `if <call> { A } else { B }` (or `if !<call>`) where `A` and `B` are
 distinct literals. A discarded, let-bound, transformed, branch-guarded or
 computed-branch result, or a rebound forwarded parameter, keeps the
-pairing missing (and RIPR-SPEC-0159 makes propagation unknown). The row
-must come from the entry call on the assertion's own line: that line
-holds one entry call and no direct owner call. A computed hop argument already stops the row
-transfer (RIPR-SPEC-0159), so no `==` row exists to pair.
+pairing missing (and RIPR-SPEC-0159 makes propagation unknown). A match
+guard that only reads a forwarded parameter (`n if n > qty =>`) is not a
+rebinding; a pattern that binds it (`Some(qty) =>`) is. The row must come
+from the entry call on the assertion's own line, in the assertion's own
+test: activation is recomputed from that test alone, because a row carries
+no source test and another test in another file can share the line. That
+line holds one entry call and no direct owner call. A computed hop argument
+already stops the row transfer (RIPR-SPEC-0159), so no `==` row exists to
+pair. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
+never admits a wrapper assertion here.
 
 Proximity-only oracle credit and bare-name method relation are out of
 scope.
@@ -103,8 +117,11 @@ scope.
 - A control where one test does both (`assert_eq!(gate(10), true)`, and
   `fixtures/strong_boundary_oracle`) stays `exposed`.
 - Unit tests cover split tests, same-call pairing, same-test split calls,
-  same-line split calls, unused-argument literals, shadowed bindings, and
-  let-bound pairing including short names.
+  same-line split calls, unused-argument literals, shadowed bindings,
+  let-bound pairing including short names, buried-literal if-expression and
+  `std::cmp::max` arguments (including `assert!`), typed literals, locals
+  bound to the boundary, named-constant pairing through infection `==`,
+  and named-constant pairing when an unrelated extra argument is compound.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
@@ -128,6 +145,19 @@ scope.
   fixture remains `exposed`.
 - Given `let _ = gate(10); assert_eq!(gate(100), true)` in one test, when the
   predicate is classified, then it does not pair.
+- Given `assert_eq!(gate(if false { 10 } else { 50 }), true)` or
+  `assert_eq!(gate(std::cmp::max(10, 50)), true)`, when the predicate is
+  classified, then it does not pair: the evaluated argument is 50.
+- Given `let threshold = 10; assert_eq!(gate(threshold), true)`, or
+  `assert_eq!(gate(10u32), true)`, or `assert_eq!(gate(LIMIT), true)` with an
+  infection `==` fact, when the predicate is classified, then it pairs.
+  `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
+  also pairs: the extra compound argument is not the compared parameter.
+  `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
+  also pairs: a path-qualified constant is still the named boundary.
+  Given `let amount = raw; amount >= threshold` and
+  `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
+  not treat the aliased input as a boundary just because `threshold` is 10.
 - Given private `fn is_bulk(qty: u32) -> bool { 10 <= qty }` reached only
   through `pub fn order_discount(qty: u32) -> u32 { if is_bulk(qty) { 5 } else
   { 0 } }` and `assert_eq!(order_discount(10), 5)`, when the predicate is

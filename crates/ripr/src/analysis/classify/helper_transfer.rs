@@ -851,7 +851,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 3,
-            body: format!("pub fn {name}(input: &str) -> bool {{ true }}"),
+            body: format!("pub fn {name}(input: &str) -> bool {{ true }}").into(),
             calls: calls
                 .iter()
                 .map(|(callee, text)| CallFact {
@@ -988,7 +988,7 @@ mod tests {
 
     fn one_hop_chain(caller_body: &str) -> HelperChain {
         let mut caller = function("src/lib.rs", "wrapper", &[]);
-        caller.body = caller_body.to_string();
+        caller.body = caller_body.to_string().into();
         HelperChain {
             hops: vec![HelperHop {
                 caller,
@@ -1124,10 +1124,13 @@ mod tests {
     #[test]
     fn chain_forwards_owner_result_checks_every_hop() {
         let mut lower = function("src/lib.rs", "middle", &[]);
-        lower.body = "fn middle(qty: u32) -> bool {\n    is_bulk(qty)\n}".to_string();
+        lower.body = "fn middle(qty: u32) -> bool {\n    is_bulk(qty)\n}"
+            .to_string()
+            .into();
         let mut upper = function("src/lib.rs", "entry", &[]);
-        upper.body =
-            "pub fn entry(qty: u32) -> u32 {\n    if middle(qty) { 5 } else { 0 }\n}".to_string();
+        upper.body = "pub fn entry(qty: u32) -> u32 {\n    if middle(qty) { 5 } else { 0 }\n}"
+            .to_string()
+            .into();
         let hop = |caller: FunctionSummary| HelperHop {
             caller,
             call_text: String::new(),
@@ -1139,8 +1142,9 @@ mod tests {
         };
         assert!(chain_forwards_owner_result("is_bulk", &chain));
         let mut dropping = function("src/lib.rs", "entry", &[]);
-        dropping.body =
-            "pub fn entry(qty: u32) -> u32 {\n    let _ = middle(qty);\n    5\n}".to_string();
+        dropping.body = "pub fn entry(qty: u32) -> u32 {\n    let _ = middle(qty);\n    5\n}"
+            .to_string()
+            .into();
         let chain = HelperChain {
             hops: vec![hop(lower), hop(dropping)],
             stop_above: None,
@@ -1198,7 +1202,7 @@ mod tests {
     prev
 }
 "
-            .to_string(),
+            .into(),
             start_line: 1,
             ..function("src/lib.rs", "first_char", &[])
         };
@@ -1216,7 +1220,7 @@ mod tests {
     prev
 }
 "
-            .to_string(),
+            .into(),
             start_line: 1,
             ..function("src/lib.rs", "is_word_start", &[])
         };

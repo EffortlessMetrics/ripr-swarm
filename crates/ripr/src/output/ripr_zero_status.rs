@@ -1,5 +1,11 @@
 use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
+use super::gate::{
+    GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings,
+    discloses_blocked_producer_outcome, discloses_incomplete_analysis_outcome,
+    discloses_limited_findings_bound, discloses_limited_partial_scope,
+    incomplete_analysis_outcome_kind,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -147,6 +153,8 @@ struct DeltaParse {
     counts: DebtDeltaSummary,
     items: Vec<DeltaItem>,
     warnings: Vec<String>,
+    partial_denominator: bool,
+    counts_items_mismatch: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -156,6 +164,7 @@ struct GapLedgerParse {
     ripr_zero_targets: usize,
     repair_routes: Vec<RepairRoute>,
     warnings: Vec<String>,
+    partial_denominator: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -222,6 +231,7 @@ struct ReviewMetadata {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct GateParse {
     blocking_candidates: usize,
+    failed: bool,
     warnings: Vec<String>,
 }
 
@@ -272,7 +282,14 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
             .to_string(),
     );
 
-    let status = if delta.status == ParseStatus::Loaded {
+    // A partial or contradictory denominator makes the report incomplete,
+    // even when every input parsed (#5251 Z2/Z3/Z4).
+    let partial_denominator = delta.partial_denominator || gap_ledger.partial_denominator;
+    let status = if delta.status == ParseStatus::Loaded
+        && !partial_denominator
+        && !delta.counts_items_mismatch
+        && !gate.failed
+    {
         "advisory"
     } else {
         "incomplete"
@@ -280,7 +297,14 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     .to_string();
     let delta_visible_unresolved =
         delta.counts.still_present + delta.counts.new_policy_eligible + delta.counts.acknowledged;
-    let target_from_gap_ledger = gap_ledger.supplied && gap_ledger.status == ParseStatus::Loaded;
+    // A partial-denominator ledger (blocked, partial-scope, findings-bounded,
+    // or incomplete-outcome producer run) is disclosed but never selected as
+    // the target denominator: its zero would erase visible delta debt. The
+    // delta keeps the debt signal while the report stays incomplete (#6095
+    // review).
+    let target_from_gap_ledger = gap_ledger.supplied
+        && gap_ledger.status == ParseStatus::Loaded
+        && !gap_ledger.partial_denominator;
     let visible_unresolved = if target_from_gap_ledger {
         gap_ledger.ripr_zero_targets
     } else {
@@ -291,13 +315,21 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     } else {
         "baseline_debt_delta"
     };
-    let state = if delta.status != ParseStatus::Loaded {
-        "unknown"
-    } else if visible_unresolved == 0
+    // Contradictory inputs can never yield a verdict, and a partial
+    // denominator or a failed gate evaluation can never yield bare achieved
+    // — but visible debt keeps its not_yet signal, disclosed by the parse
+    // warnings (#5251 Z2/Z3/Z4/Z5).
+    let all_clear = visible_unresolved == 0
         && delta.counts.stale == 0
         && delta.counts.invalid == 0
-        && delta.counts.missing_input == 0
+        && delta.counts.missing_input == 0;
+    let state = if delta.status != ParseStatus::Loaded
+        || delta.counts_items_mismatch
+        || (all_clear && partial_denominator)
+        || (all_clear && gate.failed)
     {
+        "unknown"
+    } else if all_clear {
         "achieved"
     } else {
         "not_yet"
@@ -524,24 +556,307 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             ..DeltaParse::default()
         };
     }
+    // Fail closed on content-free input (#5251 Z1): a delta document without
+    // a delta section, or with a partial one, is not evidence of zero debt.
+    // Real `ripr baseline diff` output always carries all eight counts.
+    let Some(delta_section) = value.get("delta").and_then(Value::as_object) else {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has no delta section; an empty input is not evidence of zero debt"
+            )],
+            ..DeltaParse::default()
+        };
+    };
+    let mut missing_counts = Vec::new();
+    for key in [
+        "still_present",
+        "resolved",
+        "new_policy_eligible",
+        "acknowledged",
+        "suppressed",
+        "stale_baseline_entry",
+        "invalid_baseline_entry",
+        "missing_current_input",
+    ] {
+        if delta_section.get(key).is_none() {
+            missing_counts.push(key);
+        }
+    }
+    if !missing_counts.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has a partial delta section (missing counts: {}); partial counts are not evidence of zero debt",
+                missing_counts.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
+    // Present-but-malformed counts fail closed too (#6095 review): a null,
+    // string, or negative count must never read as zero debt.
+    let mut malformed_counts = Vec::new();
+    for key in [
+        "still_present",
+        "resolved",
+        "new_policy_eligible",
+        "acknowledged",
+        "suppressed",
+        "stale_baseline_entry",
+        "invalid_baseline_entry",
+        "missing_current_input",
+    ] {
+        if validated_count(delta_section, key).is_none() {
+            malformed_counts.push(key);
+        }
+    }
+    if !malformed_counts.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has malformed counts ({}); counts must be valid nonnegative integers, and malformed counts are not evidence of zero debt",
+                malformed_counts.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
+    // Present-but-malformed run-state disclosures fail closed (#6770
+    // review): a corrupt qualifier must never read as a complete
+    // denominator. Absence (or explicit null) is fine — complete runs
+    // carry no envelope — but a present envelope must hold the shape the
+    // shared predicates read. A future producer adding shapes extends both
+    // the predicates and this gate together.
+    let mut malformed_disclosures = Vec::new();
+    if let Some(outcome) = value.get("analysis_outcome")
+        && !outcome.is_null()
+        && !outcome.is_object()
+    {
+        malformed_disclosures.push("analysis_outcome");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && !scope.is_null()
+        && !scope.is_object()
+    {
+        malformed_disclosures.push("analysis_scope");
+    }
+    if let Some(limitations) = value.get("run_limitations")
+        && !limitations.is_null()
+        && !limitations.is_array()
+    {
+        malformed_disclosures.push("run_limitations");
+    }
+    if let Some(status) = value.get("current_gate_status")
+        && !status.is_null()
+        && status.as_str().is_none_or(|text| {
+            text.trim().is_empty() || !GATE_DECISION_KNOWN_STATUSES.contains(&text)
+        })
+    {
+        malformed_disclosures.push("current_gate_status");
+    }
+    // Predicate-consumed members validate too (#6770 review): a well-typed
+    // envelope with corrupt members ({"analysis_complete": "false"}) would
+    // otherwise dodge the disclosure predicates and read as a complete
+    // denominator. Only members the shared predicates consume are gated;
+    // diagnostic-only positions (the outcome kind) keep their safe defaults.
+    if let Some(outcome) = value.get("analysis_outcome")
+        && let Some(complete) = outcome.get("analysis_complete")
+        && !complete.is_null()
+        && !complete.is_boolean()
+    {
+        malformed_disclosures.push("analysis_outcome.analysis_complete");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && let Some(run_status) = scope.get("run_status")
+        && !run_status.is_null()
+        && run_status
+            .as_str()
+            .is_none_or(|text| text.trim().is_empty())
+    {
+        malformed_disclosures.push("analysis_scope.run_status");
+    }
+    if let Some(limitations) = value.get("run_limitations").and_then(Value::as_array)
+        && limitations.iter().any(|entry| {
+            if entry.is_null() {
+                return false;
+            }
+            let Some(entry) = entry.as_object() else {
+                return true;
+            };
+            // Blank discriminators are corrupt, not undisclosed: the
+            // predicates match exact vocabulary tokens, so a blank member
+            // would dodge disclosure and read as a complete denominator.
+            // Real entries always name non-blank run_status and category
+            // (output/json bounded-run contract), so an entry without a
+            // usable discriminator is likewise malformed.
+            let usable = |member: Option<&Value>| {
+                member
+                    .is_some_and(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
+            };
+            let run_status = entry.get("run_status");
+            let category = entry.get("category");
+            run_status.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || category.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || (!usable(run_status) && !usable(category))
+        })
+    {
+        malformed_disclosures.push("run_limitations[]");
+    }
+    if !malformed_disclosures.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has malformed run-state disclosures ({}); a corrupt disclosure qualifier is not evidence of zero debt",
+                malformed_disclosures.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
+    // Every count above validated as a real usize, so these reads are exact.
+    let still_present = usize_path(&value, &["delta", "still_present"]);
+    let resolved = usize_path(&value, &["delta", "resolved"]);
+    let new_policy_eligible = usize_path(&value, &["delta", "new_policy_eligible"]);
+    let acknowledged = usize_path(&value, &["delta", "acknowledged"]);
+    let suppressed = usize_path(&value, &["delta", "suppressed"]);
+    let stale = usize_path(&value, &["delta", "stale_baseline_entry"]);
+    let invalid = usize_path(&value, &["delta", "invalid_baseline_entry"]);
+    let missing_input = usize_path(&value, &["delta", "missing_current_input"]);
+    // Aggregates must not overflow: a wrapped sum would fabricate zero
+    // visible debt and `achieved` (or panic in checked builds), so
+    // overflowing counts fail closed as Invalid (#6095 review).
+    let new_sum = new_policy_eligible
+        .checked_add(acknowledged)
+        .and_then(|sum| sum.checked_add(suppressed));
+    let visible_sum = still_present
+        .checked_add(new_policy_eligible)
+        .and_then(|sum| sum.checked_add(acknowledged));
+    if new_sum.is_none() || visible_sum.is_none() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has counts whose aggregates overflow; overflowing counts are not evidence of zero debt"
+            )],
+            ..DeltaParse::default()
+        };
+    }
     let counts = DebtDeltaSummary {
-        still_present: usize_path(&value, &["delta", "still_present"]),
-        resolved: usize_path(&value, &["delta", "resolved"]),
-        new: usize_path(&value, &["delta", "new_policy_eligible"])
-            + usize_path(&value, &["delta", "acknowledged"])
-            + usize_path(&value, &["delta", "suppressed"]),
-        new_policy_eligible: usize_path(&value, &["delta", "new_policy_eligible"]),
-        acknowledged: usize_path(&value, &["delta", "acknowledged"]),
-        suppressed: usize_path(&value, &["delta", "suppressed"]),
-        stale: usize_path(&value, &["delta", "stale_baseline_entry"]),
-        invalid: usize_path(&value, &["delta", "invalid_baseline_entry"]),
-        missing_input: usize_path(&value, &["delta", "missing_current_input"]),
+        still_present,
+        resolved,
+        // Validated non-overflowing above; parse_delta is the only
+        // constructor of nonzero counts, so downstream sums are safe.
+        new: new_sum.unwrap_or(0),
+        new_policy_eligible,
+        acknowledged,
+        suppressed,
+        stale,
+        invalid,
+        missing_input,
     };
     let items = value
         .get("items")
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(delta_item_from_value).collect())
+        .map(|entries| {
+            entries
+                .iter()
+                .map(delta_item_from_value)
+                .collect::<Vec<DeltaItem>>()
+        })
         .unwrap_or_default();
+    // A partial-scope, findings-bounded, or otherwise incomplete producer
+    // denominator is disclosed, never silently counted (#5251 Z2). The
+    // predicates are the shared gate fail-closed vocabulary.
+    let mut warnings = warnings_from_value(&value);
+    let mut partial_denominator = false;
+    if discloses_limited_partial_scope(&value) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} discloses a limited_partial_scope producer run; a partial denominator can never yield achieved"
+        ));
+    }
+    if discloses_limited_findings_bound(&value) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} discloses a findings-bounded producer run; a bounded denominator can never yield achieved"
+        ));
+    }
+    if discloses_incomplete_analysis_outcome(&value) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
+            incomplete_analysis_outcome_kind(&value)
+        ));
+    }
+    // A failed current evaluation has no decisions (#6257 review): the delta
+    // propagates the gate status verbatim, and a config_error current is
+    // never a denominator, mirroring the gate-reader Z5 arm. Without this,
+    // a delta-only invocation would read the empty counts as all-clear.
+    if string_field(value.get("current_gate_status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} reports current gate status config_error; a failed evaluation can never yield achieved"
+        ));
+    }
+    // Counts and items must reconcile (#5251 Z3): the check below
+    // requires exact bucket cardinalities, since the producer aggregates
+    // counts from the emitted items.
+    let clear_counts_zero = counts.still_present == 0
+        && counts.new_policy_eligible == 0
+        && counts.acknowledged == 0
+        && counts.stale == 0
+        && counts.invalid == 0
+        && counts.missing_input == 0;
+    // The producer aggregates every bucket count from the emitted items, so
+    // in a faithful document each bucket cardinality equals its count
+    // exactly. Any deviation is a self-contradictory document, which cannot
+    // yield a verdict (#5251 Z3, #6095 review). Buckets outside the
+    // producer's eight carry no count to contradict, so they block
+    // `achieved` only when the counts would otherwise clear it: against
+    // visible debt the document is already `not_yet`. Historical `resolved`
+    // and accepted `suppressed` counts never mask them.
+    let mut bucket_items: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut unknown_bucket_items = 0usize;
+    for item in &items {
+        match item.bucket.as_str() {
+            "still_present"
+            | "resolved"
+            | "new_policy_eligible"
+            | "acknowledged"
+            | "suppressed"
+            | "stale_baseline_entry"
+            | "invalid_baseline_entry"
+            | "missing_current_input" => {
+                *bucket_items.entry(item.bucket.as_str()).or_insert(0) += 1;
+            }
+            _ => {
+                unknown_bucket_items += 1;
+            }
+        }
+    }
+    let bucket_counts = [
+        ("still_present", counts.still_present),
+        ("resolved", counts.resolved),
+        ("new_policy_eligible", counts.new_policy_eligible),
+        ("acknowledged", counts.acknowledged),
+        ("suppressed", counts.suppressed),
+        ("stale_baseline_entry", counts.stale),
+        ("invalid_baseline_entry", counts.invalid),
+        ("missing_current_input", counts.missing_input),
+    ];
+    let mut counts_items_mismatch = false;
+    for (bucket, count) in bucket_counts {
+        let carried = bucket_items.get(bucket).copied().unwrap_or(0);
+        if carried != count {
+            counts_items_mismatch = true;
+            warnings.push(format!(
+                "required baseline debt delta input {path} bucket {bucket} reports count {count} but carries {carried} item(s); contradictory items and counts cannot yield a verdict"
+            ));
+        }
+    }
+    if unknown_bucket_items > 0 && clear_counts_zero {
+        counts_items_mismatch = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} carries {unknown_bucket_items} item(s) outside the producer buckets against zero counts; contradictory items and counts cannot yield a verdict"
+        ));
+    }
     DeltaParse {
         status: ParseStatus::Loaded,
         baseline_path: string_path(&value, &["baseline", "path"])
@@ -549,7 +864,9 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
         baseline_entries: usize_path(&value, &["baseline", "entries"]),
         counts,
         items,
-        warnings: warnings_from_value(&value),
+        warnings,
+        partial_denominator,
+        counts_items_mismatch,
     }
 }
 
@@ -588,12 +905,49 @@ fn parse_gap_ledger(path: Option<&str>, text: Option<Result<String, String>>) ->
         .filter(|record| gap_decision_ledger::projection_eligible(record, "ripr_zero_count"))
         .count();
     let repair_routes = gap_repair_routes(&records);
+    // A partial-scope ledger is disclosed, never silently counted (#5251
+    // Z4): its targets are a partial denominator, like the gate input rule.
+    let mut warnings = Vec::new();
+    let mut partial_denominator = false;
+    if let Ok(ledger_value) = serde_json::from_str::<Value>(&text) {
+        if discloses_limited_partial_scope(&ledger_value) {
+            partial_denominator = true;
+            warnings.push(format!(
+                "optional gap decision ledger input {path} discloses a limited_partial_scope producer run; a partial denominator can never yield achieved"
+            ));
+        }
+        if discloses_limited_findings_bound(&ledger_value) {
+            partial_denominator = true;
+            warnings.push(format!(
+                "optional gap decision ledger input {path} discloses a findings-bounded producer run; a bounded denominator can never yield achieved"
+            ));
+        }
+        if discloses_incomplete_analysis_outcome(&ledger_value) {
+            partial_denominator = true;
+            warnings.push(format!(
+                "optional gap decision ledger input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
+                incomplete_analysis_outcome_kind(&ledger_value)
+            ));
+        }
+        if discloses_blocked_producer_outcome(&ledger_value) {
+            partial_denominator = true;
+            warnings.push(format!(
+                "optional gap decision ledger input {path} discloses a blocked producer run; a blocked denominator can never yield achieved"
+            ));
+            for producer_warning in blocked_producer_warnings(&ledger_value) {
+                warnings.push(format!(
+                    "optional gap decision ledger input {path} producer warning: {producer_warning}"
+                ));
+            }
+        }
+    }
     GapLedgerParse {
         status: ParseStatus::Loaded,
         supplied: true,
         ripr_zero_targets,
         repair_routes,
-        warnings: Vec::new(),
+        warnings,
+        partial_denominator,
     }
 }
 
@@ -629,9 +983,28 @@ fn parse_gate(path: Option<&str>, text: Option<Result<String, String>>) -> GateP
             };
         }
     };
+    // A failed gate evaluation is surfaced, never silently zeroed (#5251
+    // Z5): its blocking count is meaningless because evaluation did not
+    // complete, so it is forced to 0 and the failure feeds the verdict.
+    let mut gate_warnings = warnings_from_value(&value);
+    let failed = string_field(value.get("status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR);
+    if failed {
+        let config_error_count = value
+            .get("config_errors")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        gate_warnings.push(format!(
+            "optional gate decision input {path} reports status config_error ({config_error_count} config errors); evaluation did not complete, so blocking candidates are reported as 0"
+        ));
+    }
     GateParse {
-        blocking_candidates: usize_path(&value, &["summary", "blocking"]),
-        warnings: warnings_from_value(&value),
+        blocking_candidates: if failed {
+            0
+        } else {
+            usize_path(&value, &["summary", "blocking"])
+        },
+        failed,
+        warnings: gate_warnings,
     }
 }
 
@@ -890,10 +1263,10 @@ fn classify_review(review: Option<ReviewMetadata>, generated_at: &str) -> Metada
     if review.owner.is_none() || review.reason.is_none() || review.created_at.is_none() {
         return MetadataState::Missing;
     }
-    if is_stale_review(review_after, generated_at) {
-        MetadataState::Stale
-    } else {
-        MetadataState::Current
+    match deadline_health(review_after, generated_at) {
+        DeadlineHealth::Stale => MetadataState::Stale,
+        DeadlineHealth::Current => MetadataState::Current,
+        DeadlineHealth::Incomparable => MetadataState::Unknown,
     }
 }
 
@@ -927,7 +1300,7 @@ fn warn_for_metadata(metadata: MetadataCounts, warnings: &mut Vec<String>) {
     }
     if metadata.unknown > 0 {
         warnings.push(format!(
-            "{} baseline entries have unparseable review metadata",
+            "{} baseline entries have unparseable or incomparable review metadata",
             metadata.unknown
         ));
     }
@@ -1126,14 +1499,243 @@ fn top_static_class(counts: &BTreeMap<String, usize>) -> Option<String> {
         .map(|(class, _count)| class.clone())
 }
 
-fn is_stale_review(review_after: &str, generated_at: &str) -> bool {
-    match (unix_ms(review_after), unix_ms(generated_at)) {
-        (Some(review_after), Some(generated_at)) => review_after < generated_at,
-        _ => match (iso_day(review_after), iso_day(generated_at)) {
-            (Some(review_after), Some(generated_at)) => review_after < generated_at,
-            _ => false,
-        },
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ReviewInstant {
+    UnixMs(i128),
+    IsoDay(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeadlineHealth {
+    Current,
+    Stale,
+    Incomparable,
+}
+
+fn deadline_health(review_after: &str, generated_at: &str) -> DeadlineHealth {
+    match compare_review_deadline(review_after, generated_at) {
+        Some(true) => DeadlineHealth::Stale,
+        Some(false) => DeadlineHealth::Current,
+        None => DeadlineHealth::Incomparable,
     }
+}
+
+/// `Some(true)` when `review_after` is strictly before `generated_at`.
+/// `None` when the two values cannot be compared.
+fn compare_review_deadline(review_after: &str, generated_at: &str) -> Option<bool> {
+    let deadline = parse_review_instant(review_after)?;
+    let now = parse_review_instant(generated_at)?;
+    match (&deadline, &now) {
+        (ReviewInstant::UnixMs(deadline), ReviewInstant::UnixMs(now)) => Some(deadline < now),
+        _ => Some(iso_day_of(&deadline)? < iso_day_of(&now)?),
+    }
+}
+
+fn iso_day_of(instant: &ReviewInstant) -> Option<String> {
+    match instant {
+        ReviewInstant::IsoDay(day) => Some(day.clone()),
+        ReviewInstant::UnixMs(ms) => unix_ms_to_iso_day(*ms),
+    }
+}
+
+fn unix_ms_to_iso_day(ms: i128) -> Option<String> {
+    const MILLIS_PER_DAY: i128 = 86_400_000;
+    let days = i64::try_from(ms.div_euclid(MILLIS_PER_DAY)).ok()?;
+    format_civil_day(days_to_civil_date(days)?)
+}
+
+/// Converts days since 1970-01-01 UTC to a civil `(year, month, day)` using the
+/// Howard Hinnant algorithm. Returns `None` when the day is outside the
+/// Gregorian years this classifier will format (`1..=9999`).
+fn days_to_civil_date(days_since_epoch: i64) -> Option<(i64, i64, i64)> {
+    if !(MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days_since_epoch) {
+        return None;
+    }
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    Some((y, m, d))
+}
+
+fn civil_date_to_days(year: i64, month: i64, day: i64) -> Option<i64> {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era
+        .checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)?;
+    if (MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days) {
+        Some(days)
+    } else {
+        None
+    }
+}
+
+const MIN_CIVIL_YEAR: i64 = 1;
+const MAX_CIVIL_YEAR: i64 = 9999;
+/// Unix days for `0001-01-01` and `9999-12-31` UTC, the range `days_to_civil_date`
+/// will format without overflowing Hinnant intermediates.
+const MIN_UNIX_DAY: i64 = -719_162;
+const MAX_UNIX_DAY: i64 = 2_932_896;
+
+fn format_civil_day(parts: (i64, i64, i64)) -> Option<String> {
+    let (year, month, day) = parts;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year) {
+        return None;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
+    if let Some(ms) = unix_ms(value) {
+        return Some(ReviewInstant::UnixMs(ms));
+    }
+    parse_utc_calendar_day(value).map(ReviewInstant::IsoDay)
+}
+
+fn parse_utc_calendar_day(value: &str) -> Option<String> {
+    match value.as_bytes().get(10) {
+        None => format_civil_day(parse_gregorian_date(value)?),
+        Some(b'T' | b't') => parse_rfc3339_utc_day(value),
+        _ => None,
+    }
+}
+
+fn parse_gregorian_date(value: &str) -> Option<(i64, i64, i64)> {
+    if value.len() != 10 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
+        return None;
+    }
+    if !bytes.get(..4)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(5..7)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(8..10)?.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let year = value.get(..4)?.parse::<i64>().ok()?;
+    let month = value.get(5..7)?.parse::<i64>().ok()?;
+    let day = value.get(8..10)?.parse::<i64>().ok()?;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year)
+        || !(1..=12).contains(&month)
+        || day < 1
+        || day > i64::from(days_in_month(year, month)?)
+    {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn days_in_month(year: i64, month: i64) -> Option<u8> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_gregorian_leap(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn is_gregorian_leap(year: i64) -> bool {
+    year.rem_euclid(4) == 0 && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0)
+}
+
+fn parse_rfc3339_utc_day(value: &str) -> Option<String> {
+    let date = value.get(..10)?;
+    let (year, month, day) = parse_gregorian_date(date)?;
+    if !matches!(value.as_bytes().get(10).copied(), Some(b'T' | b't')) {
+        return None;
+    }
+    let time = value.get(11..)?;
+    let hour = parse_two_digits(time.get(..2)?)?;
+    if time.as_bytes().get(2).copied() != Some(b':') {
+        return None;
+    }
+    let minute = parse_two_digits(time.get(3..5)?)?;
+    if time.as_bytes().get(5).copied() != Some(b':') {
+        return None;
+    }
+    let second = parse_two_digits(time.get(6..8)?)?;
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let offset_seconds = parse_rfc3339_offset(skip_rfc3339_fraction(time.get(8..)?)?)?;
+    let local_days = civil_date_to_days(year, month, day)?;
+    let local_seconds = local_days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3_600)?
+        .checked_add(i64::from(minute) * 60)?
+        .checked_add(i64::from(second.min(59)))?;
+    let utc_seconds = local_seconds.checked_sub(offset_seconds)?;
+    // RFC 3339 §5.7 leap seconds are 23:59:60 UTC, including offset forms such
+    // as 15:59:60-08:00. Civil-day conversion keeps that instant on the UTC day.
+    if second == 60 {
+        const UTC_LEAP_SECOND_TOD: i64 = 23 * 3_600 + 59 * 60 + 59;
+        if utc_seconds.rem_euclid(86_400) != UTC_LEAP_SECOND_TOD {
+            return None;
+        }
+    }
+    let utc_days = utc_seconds.div_euclid(86_400);
+    format_civil_day(days_to_civil_date(utc_days)?)
+}
+
+fn skip_rfc3339_fraction(value: &str) -> Option<&str> {
+    let Some(rest) = value.strip_prefix('.') else {
+        return Some(value);
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    rest.get(digits..)
+}
+
+fn parse_rfc3339_offset(value: &str) -> Option<i64> {
+    match value.as_bytes().first().copied() {
+        Some(b'Z' | b'z') if value.len() == 1 => Some(0),
+        Some(sign @ (b'+' | b'-')) => {
+            if value.len() != 6 || value.as_bytes().get(3).copied() != Some(b':') {
+                return None;
+            }
+            let hours = i64::from(parse_two_digits(value.get(1..3)?)?);
+            let minutes = i64::from(parse_two_digits(value.get(4..6)?)?);
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let magnitude = hours.checked_mul(3_600)?.checked_add(minutes * 60)?;
+            if sign == b'-' {
+                Some(-magnitude)
+            } else {
+                Some(magnitude)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_two_digits(value: &str) -> Option<u8> {
+    if value.len() != 2 || !value.as_bytes().iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
@@ -1149,18 +1751,6 @@ fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
 
 fn unix_ms(value: &str) -> Option<i128> {
     value.strip_prefix("unix_ms:")?.parse().ok()
-}
-
-fn iso_day(value: &str) -> Option<String> {
-    let day = value.get(0..10)?;
-    if day.len() == 10
-        && day.as_bytes().get(4) == Some(&b'-')
-        && day.as_bytes().get(7) == Some(&b'-')
-    {
-        Some(day.to_string())
-    } else {
-        None
-    }
 }
 
 fn baseline_path_for_summary(input_path: Option<&str>, delta_path: Option<&str>) -> Option<String> {
@@ -1305,6 +1895,16 @@ fn usize_path(value: &Value, path: &[&str]) -> usize {
         .unwrap_or(0)
 }
 
+/// A delta count that must be a valid nonnegative integer: `None` when the
+/// key is missing or present-but-malformed (null, string, float, negative,
+/// or overflowing). Used where a silent zero would fabricate zero debt.
+fn validated_count(delta_section: &serde_json::Map<String, Value>, key: &str) -> Option<usize> {
+    delta_section
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+}
+
 fn string_path(value: &Value, path: &[&str]) -> Option<String> {
     path_value(value, path).and_then(string_value)
 }
@@ -1333,11 +1933,306 @@ pub(crate) use crate::output::path::display_path;
 #[cfg(test)]
 mod tests {
     use super::{
-        RiprZeroStatusInput, build_ripr_zero_status_report, render_ripr_zero_status_json,
-        render_ripr_zero_status_markdown,
+        MetadataState, ReviewMetadata, RiprZeroStatusInput, build_ripr_zero_status_report,
+        classify_review, render_ripr_zero_status_json, render_ripr_zero_status_markdown,
+        unix_ms_to_iso_day,
     };
     use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use serde_json::Value;
+
+    /// 2026-10-05 12:00:00 UTC — noon so same-day ISO deadlines compare on the
+    /// UTC calendar date, not on a midnight edge.
+    const RUN_AT_2026_10_05_NOON: &str = "unix_ms:1791201600000";
+    /// 2026-10-06 12:00:00 UTC — used to pin offset RFC3339 midnight crossings.
+    const RUN_AT_2026_10_06_NOON: &str = "unix_ms:1791288000000";
+    const PAST_UNIX_MS_2026_01_01: &str = "unix_ms:1767225600000";
+    const FUTURE_UNIX_MS_2026_12_31: &str = "unix_ms:1798675200000";
+
+    fn complete_review(review_after: &str) -> ReviewMetadata {
+        ReviewMetadata {
+            invalid: false,
+            owner: Some("team".into()),
+            reason: Some("baseline".into()),
+            created_at: Some("unix_ms:0".into()),
+            review_after: Some(review_after.into()),
+        }
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_iso_calendar_deadline_stale() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "plain YYYY-MM-DD past the run date must be stale, not silently current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 calendar deadlines must compare against the UTC run date"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "2026-10-05T12:00:00Z"),
+            MetadataState::Stale,
+            "ISO review_after vs RFC3339 generated_at must still evaluate"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01t00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase t is a valid date-time separator"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase z is a valid UTC offset"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("1990-12-31T23:59:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC 3339 leap second 23:59:60 stays on that UTC day"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("1990-12-31T15:59:60-08:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC 3339 leap second with offset is the same UTC instant"
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_unix_ms_deadline_stale() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review(PAST_UNIX_MS_2026_01_01)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_incomparable_review_after_unknown_not_current() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("not-a-deadline")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "unparseable review_after must not fail open to current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("unix_ms:not-millis")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-13-40")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "impossible calendar dates are incomparable, not current"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-02-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "February 31 is not a Gregorian date and must not classify stale"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "29 February on a non-leap year is incomparable"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-12-01Tnot-a-time")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "a T suffix that is not RFC3339 must not classify current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T12:00:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "second 60 is only a leap second at 23:59 UTC"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:59:60-02:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "local 23:59:60 is not a leap second unless UTC is 23:59"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "not-a-timestamp"),
+            MetadataState::Unknown,
+            "a valid deadline against an unparseable generated_at is unknown"
+        );
+    }
+
+    #[test]
+    fn classify_review_normalizes_rfc3339_offsets_to_utc_day() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:30:00-02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Current,
+            "written 2026-10-05 with -02:00 is 2026-10-06 UTC, same as the run day"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-06T00:30:00+02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Stale,
+            "written 2026-10-06 with +02:00 is 2026-10-05 UTC, the prior run day"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2024-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "a real leap-day calendar deadline still compares"
+        );
+    }
+
+    #[test]
+    fn classify_review_keeps_current_and_future_deadlines_current() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-10-05")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current,
+            "same-day ISO deadline is not in the past"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:59:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Current,
+            "same-day UTC leap second stays on the UTC run date"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-12-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review(FUTURE_UNIX_MS_2026_12_31)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Current
+        );
+    }
+
+    #[test]
+    fn unix_ms_to_iso_day_uses_utc_civil_date() {
+        assert_eq!(unix_ms_to_iso_day(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(
+            unix_ms_to_iso_day(1_767_225_600_000).as_deref(),
+            Some("2026-01-01")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(1_791_201_600_000).as_deref(),
+            Some("2026-10-05")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(i128::from(i64::MAX).saturating_mul(86_400_000)).as_deref(),
+            None,
+            "day counts near i64 limits must fail closed, not overflow civil-date math"
+        );
+    }
+
+    #[test]
+    fn ripr_zero_status_evaluates_iso_review_after_and_fails_closed_on_incomparable()
+    -> Result<(), String> {
+        let baseline = r#"{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "created_at": "unix_ms:0",
+          "entries": [
+            {"identity": {"seam_id": "iso-stale"}, "path": "src/iso.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-01-01"}},
+            {"identity": {"seam_id": "unix-stale"}, "path": "src/unix.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "unix_ms:1767225600000"}},
+            {"identity": {"seam_id": "iso-current"}, "path": "src/current.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-12-31"}},
+            {"identity": {"seam_id": "incomparable"}, "path": "src/bad.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "not-a-deadline"}}
+          ]
+        }"#;
+        let delta = r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "kind": "baseline_debt_delta",
+          "baseline": {"path": ".ripr/gate-baseline.json", "entries": 4},
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "warnings": []
+        }"#;
+
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: RUN_AT_2026_10_05_NOON.to_string(),
+            baseline_path: Some(".ripr/gate-baseline.json".to_string()),
+            delta_path: "target/ripr/reports/baseline-debt-delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: Some(Ok(baseline.to_string())),
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["baseline"]["metadata"]["stale"], 2, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["current"], 1, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["unknown"], 1, "{rendered}");
+        assert_eq!(
+            value["baseline"]["metadata"]["missing_metadata"], 0,
+            "{rendered}"
+        );
+        let warnings = value["warnings"]
+            .as_array()
+            .ok_or("warnings array missing")?;
+        let warning_text: Vec<&str> = warnings.iter().filter_map(Value::as_str).collect();
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| warning.contains("stale review metadata")),
+            "{warning_text:?}"
+        );
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| { warning.contains("unparseable or incomparable review metadata") }),
+            "{warning_text:?}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn ripr_zero_status_reports_not_yet_with_metadata_and_repair_route() -> Result<(), String> {
@@ -1928,7 +2823,9 @@ mod tests {
             "invalid_baseline_entry": 0,
             "missing_current_input": 0
           },
-          "items": []
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
         }"#;
         let report = build_ripr_zero_status_report(RiprZeroStatusInput {
             root: ".".to_string(),
@@ -1949,6 +2846,863 @@ mod tests {
         let rendered = render_ripr_zero_status_json(&report)?;
         assert!(rendered.contains("\"state\": \"achieved\""));
         assert!(rendered.contains("\"visible_unresolved\": 0"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_content_free_delta() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta"
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("has no delta section"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_partial_delta_section() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {"resolved": 1}
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("partial delta section"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_delta_count() -> Result<(), String> {
+        // Present-but-malformed counts must never read as zero debt (#6095
+        // review): null, string, and negative counts are all Invalid.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": null,
+            "resolved": 0,
+            "new_policy_eligible": "0",
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": -1,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("malformed counts"), "{rendered}");
+        assert!(rendered.contains("still_present"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_run_state_disclosure() -> Result<(), String>
+    {
+        // Present-but-malformed run-state disclosures fail closed (#6770
+        // review): a corrupt qualifier is never a complete denominator, even
+        // when the counts themselves validate. Explicit null stays absent.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": "garbage",
+          "analysis_scope": null,
+          "run_limitations": {},
+          "current_gate_status": 42
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_outcome"), "{rendered}");
+        assert!(rendered.contains("run_limitations"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("analysis_scope"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_disclosure_member() -> Result<(), String> {
+        // Predicate-consumed members validate, not just envelope shapes
+        // (#6770 review): {"analysis_complete": "false"} dodges the
+        // boolean-false predicate, so without member validation a corrupt
+        // qualifier reads as a complete denominator. Null limitation
+        // entries stay lenient, matching top-level null handling.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": {"analysis_complete": "false"},
+          "analysis_scope": {"run_status": 42},
+          "run_limitations": [{"run_status": 42}, "bare-string", null],
+          "current_gate_status": "  "
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("analysis_outcome.analysis_complete"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_blank_disclosure_discriminator() -> Result<(), String>
+    {
+        // Blank discriminators are corrupt, not undisclosed (#6770 review):
+        // the predicates match exact vocabulary tokens, so blank members
+        // dodge disclosure; likewise an entry with no usable discriminator
+        // and an out-of-schema gate status. All fail as Invalid, never as
+        // a complete denominator.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_scope": {"run_status": "  "},
+          "run_limitations": [{"run_status": " "}, {"category": ""}, {}],
+          "current_gate_status": "error"
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_overflowing_delta_counts() -> Result<(), String> {
+        // Aggregates that overflow must fail closed (#6095 review): a wrapped
+        // sum would fabricate zero visible debt and `achieved`. usize::MAX
+        // keeps the overflow exact on any pointer width.
+        let delta = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {{
+            "still_present": {},
+            "resolved": 0,
+            "new_policy_eligible": 1,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          }},
+          "items": []
+        }}"#,
+            usize::MAX
+        );
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("aggregates overflow"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_unclassified_items_under_resolved_counts()
+    -> Result<(), String> {
+        // An unclassifiable item blocks achieved even when historical
+        // resolved counts are positive: resolved is not current-debt
+        // evidence for an item of unknown classification (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [{"bucket": "unrecognized", "path": "src/mystery.rs"}]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("contradictory"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_discloses_a_partial_scope_delta_and_withholds_achieved()
+    -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "run_status": "limited_partial_scope",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("limited_partial_scope"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_keeps_not_yet_for_debt_under_a_partial_scope_delta() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "run_status": "limited_partial_scope",
+          "delta": {
+            "still_present": 2,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"not_yet\""), "{rendered}");
+        assert!(rendered.contains("limited_partial_scope"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_when_items_contradict_zero_counts() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [{"bucket": "still_present", "path": "src/a.rs"}]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("contradict"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_discloses_a_partial_scope_gap_ledger() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
+        }"#;
+        let gap_ledger = r#"{
+          "run_status": "limited_partial_scope",
+          "gap_records": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("gap decision ledger input gap-ledger.json discloses"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_rejects_a_blocked_gap_ledger_with_producer_warnings() -> Result<(), String>
+    {
+        // A `status: "blocked"` ledger with producer warnings is a failed
+        // producer, never a complete zero denominator: an otherwise clean
+        // delta must report unknown and preserve the warnings (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": ["parse ledger-source.json failed: invalid JSON: expected value at line 1 column 1"]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains(
+                "gap decision ledger input gap-ledger.json discloses a blocked producer run"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("producer warning: parse ledger-source.json failed"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_accepts_a_warning_free_blocked_gap_ledger_as_zero() -> Result<(), String> {
+        // The producer also reports `status: "blocked"` for a genuinely
+        // empty zero-gap ledger; with no warnings that stays a complete zero
+        // denominator and a clean delta still reports achieved.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        assert!(
+            rendered.contains("\"target_source\": \"gap_decision_ledger\""),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_keeps_delta_debt_under_a_failed_gap_ledger() -> Result<(), String> {
+        // A failed (blocked) ledger must not erase visible delta debt: the
+        // delta keeps the not_yet signal while the report stays incomplete
+        // and preserves the producer warnings (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 2,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
+        }"#;
+        let gap_ledger = r#"{
+          "status": "blocked",
+          "records": [],
+          "warnings": ["parse ledger-source.json failed: source file not found"]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: Some(Ok(gap_ledger.to_string())),
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"not_yet\""), "{rendered}");
+        assert!(rendered.contains("\"visible_unresolved\": 2"), "{rendered}");
+        assert!(
+            rendered.contains("\"target_source\": \"baseline_debt_delta\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("producer warning: parse ledger-source.json failed"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_surfaces_a_failed_gate_decision() -> Result<(), String> {
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "resolved", "identity": {"seam_id": "r"}, "path": "src/r.rs"}
+          ]
+        }"#;
+        let gate = r#"{
+          "schema_version": "0.1",
+          "kind": "gate_decision",
+          "status": "config_error",
+          "config_errors": ["gate evaluate requires --pr-guidance <path> or --gap-ledger <path>"],
+          "summary": {"blocking": 2}
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: Some("gate.json".to_string()),
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: Some(Ok(gate.to_string())),
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(
+            rendered.contains("reports status config_error (1 config errors)"),
+            "{rendered}"
+        );
+        // A failed gate evaluation is meaningless blocking evidence: the
+        // count is forced to 0 and a zero-count delta reports unknown, never
+        // achieved (#6095 review).
+        assert!(
+            rendered.contains("\"blocking_candidates\": 0"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"status\": \"incomplete\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_when_items_exceed_a_nonzero_count() -> Result<(), String> {
+        // The producer aggregates counts from the emitted items, so a
+        // still_present count of 1 carrying 2 items is a contradictory
+        // document, which cannot yield a verdict (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 1,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "still_present", "identity": {"seam_id": "a"}, "path": "src/a.rs"},
+            {"bucket": "still_present", "identity": {"seam_id": "b"}, "path": "src/b.rs"}
+          ]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("bucket still_present reports count 1 but carries 2 item(s)"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_when_a_nonzero_count_carries_no_items() -> Result<(), String>
+    {
+        // A positive count with no items is the same contradiction from the
+        // other side: the counts cannot be trusted, so no verdict (#6095
+        // review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 1,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("bucket still_present reports count 1 but carries 0 item(s)"),
+            "{rendered}"
+        );
         Ok(())
     }
 

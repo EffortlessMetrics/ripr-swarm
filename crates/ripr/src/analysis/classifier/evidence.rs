@@ -1,6 +1,7 @@
 use crate::analysis::classify::{
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, activation_evidence_with_value_facts,
+    ARM_UNSELECTED_REASON_PREFIX, ArmSelector, HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, activation_evidence_with_value_facts, callee_is_unique,
     chain_forwards_owner_result, classify, confidence_score, contains_as_whole_word,
     current_path_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
     infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
@@ -51,7 +52,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let mut activation = activation_evidence_with_value_facts(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -61,6 +62,47 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
+        // #3731 review (F11, G1): the changed owner's package scope, computed
+        // once — the cross-package same-name defeats compare each related
+        // test's package against it.
+        let owner_package = context
+            .owner_fn
+            .and_then(|owner| package_prefix(&owner.file));
+        // RIPR-SPEC-0229: an unselected-arm discriminator reads each related
+        // test's owner calls as inputs to the changed owner. A test whose
+        // file imports a foreign same-named function, or whose own package
+        // defines one, may be calling that function instead, so the same
+        // identity defeats reveal applies withhold the named arm here.
+        if let Some(owner) = context.owner_fn
+            && activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            && test_summaries.iter().any(|test| {
+                let imports_foreign = context.index.files().get(&test.file).is_some_and(|facts| {
+                    context.test_file_imports_foreign_callee_name(
+                        &test.file,
+                        &facts.source,
+                        &owner.name,
+                    )
+                });
+                let package_defines = package_prefix(&test.file).is_some_and(|test_package| {
+                    owner_package
+                        .as_deref()
+                        .is_some_and(|owner_package| owner_package != test_package)
+                        && context.index.functions().iter().any(|function| {
+                            function.name == owner.name
+                                && package_prefix(&function.file).as_deref()
+                                    == Some(test_package.as_str())
+                        })
+                });
+                imports_foreign || package_defines
+            })
+        {
+            activation
+                .missing_discriminators
+                .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
+        }
         let infect = infection_evidence(context.probe, &test_summaries, &activation);
         let valid_witness = propagation_witness
             .as_ref()
@@ -94,12 +136,6 @@ impl ClassifiedProbeEvidence {
             }
             _ => propagate,
         };
-        // #3731 review (G1): the changed owner's package scope, computed
-        // once — the cross-package same-name defeat below compares each
-        // related test's package against it.
-        let owner_package = context
-            .owner_fn
-            .and_then(|owner| package_prefix(&owner.file));
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
         // high-traffic owner relates to thousands of tests spread over a
@@ -122,74 +158,104 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+        // A same-named function elsewhere (a trait method on another enum
+        // with the same variant names) makes a direct call ambiguous; a
+        // partial index cannot show the name is unique.
+        let arm_selector = context
+            .owner_fn
+            .filter(|owner| {
+                matches!(context.probe.family, ProbeFamily::MatchArm)
+                    && context.workspace_complete
+                    && callee_is_unique(&owner.name, context.index)
+            })
+            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .map(|selector| {
+                selector.in_workspace(
+                    context.index,
+                    context
+                        .related_tests
+                        .iter()
+                        .map(|(test, _)| test.file.as_path()),
+                )
+            });
         let package_defeats_by_file = FileDefeatMemo::default();
+        // Built lazily: only a match arm beside an owner-calling test asks
+        // whether a same-file test may run the owner (#6297).
+        let proximity_reach = TransitiveReachIndex::new(context.index);
+        let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
             .unwrap_or_default();
+        // #3731 review (F11): the related test's file source is reachable
+        // here, so the caller computes the same-name-import defeat per test
+        // instead of restructuring the reveal inputs.
+        let import_defeats = |test: &TestSummary, callee: &str| {
+            context.index.files().get(&test.file).is_some_and(|facts| {
+                context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
+            })
+        };
+        // #3731 review (G1): the test's OWN package defining a same-named
+        // function defeats the bare-scrutinee binding the same way a foreign
+        // import does — the bare call in that test may bind the local
+        // definition while the changed owner lives in another package.
+        // Index-backed, not a new lexical scan: package scopes come from the
+        // shared `package_prefix` authority and the same-named definition
+        // from the workspace's indexed functions. Both package scopes must
+        // resolve; an unscopable side (single-crate relative paths, absolute
+        // paths) keeps today's behavior.
+        let cross_package_defeats = |test: &TestSummary, callee: &str| {
+            memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
+                let Some(test_package) = package_prefix(&test.file) else {
+                    return false;
+                };
+                let Some(owner_package) = owner_package.as_deref() else {
+                    return false;
+                };
+                if test_package == owner_package {
+                    return false;
+                }
+                context.index.functions().iter().any(|function| {
+                    function.name == callee
+                        && package_prefix(&function.file).as_deref() == Some(test_package.as_str())
+                })
+            })
+        };
+        let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
             &context.related_tests,
             &owner_locals,
-            // #3731 review (F11): the related test's file source is
-            // reachable here, so the caller computes the same-name-import
-            // defeat per test instead of restructuring the reveal inputs.
-            &|test, callee| {
-                context.index.files().get(&test.file).is_some_and(|facts| {
-                    context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
-                })
-            },
-            // #3731 review (G1): the test's OWN package defining a
-            // same-named function defeats the bare-scrutinee binding the
-            // same way a foreign import does — the bare call in that test
-            // may bind the local definition while the changed owner lives
-            // in another package. Index-backed, not a new lexical scan:
-            // package scopes come from the shared `package_prefix`
-            // authority and the same-named definition from the workspace's
-            // indexed functions. Both package scopes must resolve; an
-            // unscopable side (single-crate relative paths, absolute
-            // paths) keeps today's behavior.
-            &|test, callee| {
-                memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
-                    let Some(test_package) = package_prefix(&test.file) else {
-                        return false;
-                    };
-                    let Some(owner_package) = owner_package.as_deref() else {
-                        return false;
-                    };
-                    if test_package == owner_package {
-                        return false;
-                    }
-                    context.index.functions().iter().any(|function| {
-                        function.name == callee
-                            && package_prefix(&function.file).as_deref()
-                                == Some(test_package.as_str())
-                    })
-                })
-            },
+            &import_defeats,
+            &cross_package_defeats,
             &ReturnOracleAdmission {
-                owner_return_pin: &|test, assertion| {
-                    owner_return_pin.as_ref().is_some_and(|pin| {
-                        pin.admits(
-                            test,
-                            assertion,
-                            context.index,
-                            &|file, name| {
-                                context.index.files().get(file).is_some_and(|facts| {
-                                    context.test_file_imports_foreign_callee_name(
-                                        file,
-                                        &facts.source,
-                                        name,
-                                    )
-                                })
-                            },
-                            pin_syntax,
-                        )
+                owner_return_pin: &owner_pin_admits,
+                assertion_admitted: &assertion_admitted,
+                proximity_may_reach_owner: &|test| {
+                    context.owner_fn.is_none_or(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_may_reach(test)
                     })
                 },
-                assertion_admitted: &assertion_admitted,
             },
+            arm_selector.as_ref(),
         );
 
         let discriminate =
@@ -211,6 +277,16 @@ impl ClassifiedProbeEvidence {
                 &activation,
                 context.helper_chain.as_ref(),
                 &assertion_admitted,
+                // The same owner-pin decision and binding defeats reveal
+                // applied, so pairing cannot credit a pin reveal refused.
+                &|test, assertion| {
+                    matches!(assertion.kind, OracleKind::RelationalCheck)
+                        && context.owner_fn.is_some_and(|owner| {
+                            !import_defeats(test, &owner.name)
+                                && !cross_package_defeats(test, &owner.name)
+                        })
+                        && owner_pin_admits(test, assertion)
+                },
                 &|test: &TestSummary| {
                     activation_evidence_with_value_facts(
                         context.probe,
@@ -456,7 +532,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 9,
-            body: "match expect_response(&input, \"ready\") { .. }".to_string(),
+            body: "match expect_response(&input, \"ready\") { .. }".into(),
             calls: Vec::new(),
             assertions: vec![guarded_oracle()],
             literals: Vec::new(),
@@ -473,7 +549,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 4,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -513,7 +589,7 @@ mod tests {
             file: PathBuf::from("crates/alpha/src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -665,7 +741,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -712,7 +788,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -763,7 +839,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 6,
-            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".to_string(),
+            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
