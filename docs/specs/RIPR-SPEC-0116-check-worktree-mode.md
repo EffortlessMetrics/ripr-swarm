@@ -74,13 +74,7 @@ When `--worktree` is present:
 - the printed drill-in commands (`ripr explain`, `ripr context`) carry
   `--worktree` after `--base`, so they read the same uncommitted scope as the
   check that printed them; `ripr explain` and `ripr context` accept
-  `--worktree` and reject it combined with `--diff` or `--from`;
-- the printed drill-in commands (`ripr explain`, `ripr context`, `ripr check`
-  listing, `ripr agent stub`) name the repository `check` resolved as an
-  absolute `--root`, and a relative `--diff` or `--from` as an absolute
-  path (the stdin sentinel `-` stays), never the relative spelling repeated
-  as typed, so pasting one from another directory analyzes the same
-  repository (#3948).
+  `--worktree` and reject it combined with `--diff` or `--from`.
 
 When `--worktree` is absent:
 
@@ -88,6 +82,14 @@ When `--worktree` is absent:
   `unanalyzed_working_tree`;
 - `--diff <file>` remains file-based mode;
 - default-base resolution is unchanged.
+
+In every mode, the printed drill-in commands (`ripr explain`, `ripr context`,
+the `ripr check` listing, `ripr agent stub`, and the `ripr context --json`
+`witness.explain_command`) name the repository `check` resolved as an absolute
+`--root`, and a relative `--diff`, `--from` or `--perl-facts` as an absolute
+path (the stdin sentinel `-` stays), never the relative spelling repeated as
+typed, so pasting one from another directory analyzes the same repository
+(#3948).
 
 ### Doctor guidance
 
@@ -198,8 +200,10 @@ that untracked source was analyzed.
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`
-- `crates/ripr/src/app/navigation.rs::tests::finding_navigation_binds_a_relative_root_for_every_drill_in`
   - dirty tracked edit produces findings and no unanalyzed-worktree disclosure.
+- `crates/ripr/src/app/navigation.rs::tests::finding_navigation_binds_a_relative_root_for_every_drill_in`
+- `crates/ripr/src/app/navigation.rs::tests::finding_navigation_binds_relative_input_files_and_keeps_the_stdin_sentinel`
+  - drill-ins name the resolved root and bound input files (#3948).
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure`
   - clean worktree produces no findings and no scope/unanalyzed-worktree
   disclosure.

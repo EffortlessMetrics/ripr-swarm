@@ -93,8 +93,8 @@ pub(crate) fn finding_navigation_with_worktree(
     }
 }
 
-/// A `--diff` or `--from` input resolves against the process working
-/// directory, independently of `--root`, so a drill-in pasted from another
+/// A `--diff`, `--from` or `--perl-facts` input resolves against the process
+/// working directory, independently of `--root`, so a drill-in pasted from another
 /// directory would read a different file (or none). The stdin sentinel `-`
 /// stays as typed.
 fn bound_input_file(path: &Path) -> String {
@@ -146,7 +146,7 @@ fn navigation_args(
     if let Some(perl_facts_path) = input.perl_facts_path.as_deref() {
         args.push(format!(
             "--perl-facts {}",
-            shell_arg(&perl_facts_path.display().to_string())
+            shell_arg(&bound_input_file(perl_facts_path))
         ));
     }
     if let Some(suppression_policy) = input.suppression_policy.as_deref() {
@@ -324,17 +324,24 @@ mod tests {
         }
     }
 
-    /// #3948 (Devin on #6759): `--diff` and `--from` resolve against the
-    /// process directory, not `--root`, so the drill-in names them absolute;
-    /// the stdin sentinel stays `-`.
+    /// #3948 (Devin on #6759): `--diff`, `--from` and `--perl-facts` resolve
+    /// against the process directory, not `--root`, so the drill-in names
+    /// them absolute; the stdin sentinel stays `-`.
     #[test]
     fn finding_navigation_binds_relative_input_files_and_keeps_the_stdin_sentinel() {
         let input = CheckInput {
             root: PathBuf::from("repo"),
             diff_file: Some(PathBuf::from("changes.patch")),
+            perl_facts_path: Some(PathBuf::from("facts.json")),
             ..CheckInput::default()
         };
         let command = finding_navigation(&input, None, false).explain_command("probe:id");
+        let facts = bound_input_file(Path::new("facts.json"));
+        assert!(
+            Path::new(&facts).is_absolute()
+                && command.contains(&format!("--perl-facts {}", shell_arg(&facts))),
+            "relative --perl-facts must be bound: {command}"
+        );
         let diff = bound_input_file(Path::new("changes.patch"));
         assert!(
             Path::new(&diff).is_absolute()

@@ -192,7 +192,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — binding_value_fail_closed (9)
+## Pending — binding_value_fail_closed (13)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder

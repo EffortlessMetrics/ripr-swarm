@@ -419,7 +419,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — opaque_fixture_builder (9)
+## Pending — opaque_fixture_builder (12)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder

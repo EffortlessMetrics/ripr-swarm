@@ -276,7 +276,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — source_role_harness_suppression (14)
+## Pending — source_role_harness_suppression (18)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
