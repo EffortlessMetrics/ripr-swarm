@@ -5231,6 +5231,23 @@ mod diagnostic_policy_tests {
                 "message must attribute the override to the session layer: {message}"
             ));
         }
+
+        // The flag has the same session layering: a session-disabled
+        // seamDiagnostics under the full profile must route to the session
+        // setting, not ripr.toml (#6853 review).
+        let config = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            enable_seam_diagnostics: false,
+            session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
+            ..LspAnalysisConfig::default()
+        };
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let recovery = payload["recovery"].as_str().unwrap_or_default();
+        if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
+            return Err(format!(
+                "session seam override recovery must name the session route: {recovery}"
+            ));
+        }
         Ok(())
     }
 }
