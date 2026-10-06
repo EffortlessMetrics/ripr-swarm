@@ -8250,6 +8250,7 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::unapplied_or_conditional_derive_gives_no_witness",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::derive_whose_function_does_not_reach_the_owner_gives_no_witness",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_call_witness_outranks_a_derive_witness",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_same_named_function_elsewhere_does_not_lend_the_derive_reach",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::proc_macro_derive_entries_pair_each_derive_with_its_function",
   "crates/ripr/src/analysis/extract/calls.rs::tests::attribute_arguments_are_not_calls_but_code_after_them_is",
   "crates/ripr/src/analysis/extract/calls.rs::tests::parameter_attributes_that_run_their_arguments_stay_calls",

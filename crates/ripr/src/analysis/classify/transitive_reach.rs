@@ -155,9 +155,10 @@ struct ReachGraph<'a> {
     /// pass per owner and invoked macro name.
     macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>>,
     /// Derive name to the `#[proc_macro_derive(Name)]` production functions
-    /// that expand it. Empty in a workspace without a proc-macro crate, which
-    /// then never scans a test file for derives.
-    derive_entries: HashMap<String, Vec<&'a str>>,
+    /// that expand it, each the function the attribute annotates in its own
+    /// file. Empty in a workspace without a proc-macro crate, which then never
+    /// scans a test file for derives.
+    derive_entries: HashMap<String, Vec<&'a FunctionSummary>>,
     /// Per test file: the derive names its attributes apply, filled on first
     /// use.
     file_derives: Mutex<HashMap<&'a Path, std::sync::Arc<Vec<String>>>>,
@@ -208,21 +209,25 @@ impl<'a> ReachGraph<'a> {
         }
         let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
         let receiver_checks = all_tests.iter().map(|_| Mutex::default()).collect();
-        let mut derive_entries: HashMap<String, Vec<&'a str>> = HashMap::new();
+        let mut derive_entries: HashMap<String, Vec<&'a FunctionSummary>> = HashMap::new();
         for file in index.files().values() {
             let source = &file.data().source;
             if !source.contains("proc_macro_derive") {
                 continue;
             }
             for (derive, function) in proc_macro_derive_entries(source) {
-                if let Some((&name, _)) = by_name.get_key_value(function.as_str()) {
-                    derive_entries.entry(derive).or_default().push(name);
+                if let Some(annotated) = file
+                    .functions
+                    .iter()
+                    .find(|f| f.name == function && !f.source_role.is_evidence_role())
+                {
+                    derive_entries.entry(derive).or_default().push(annotated);
                 }
             }
         }
-        for names in derive_entries.values_mut() {
-            names.sort_unstable();
-            names.dedup();
+        for functions in derive_entries.values_mut() {
+            functions.sort_unstable_by(|a, b| (&a.name, &a.file).cmp(&(&b.name, &b.file)));
+            functions.dedup_by(|a, b| a.id == b.id);
         }
         Self {
             all_tests,
@@ -260,9 +265,11 @@ impl<'a> ReachGraph<'a> {
     }
 
     /// The first proc-macro derive applied in `file` whose expanding function
-    /// reaches the owner: the function is a reaching name, or calls the owner
-    /// or one directly. The extra hop keeps a derive one call above the walk's
-    /// depth bound in range, since the derive function is a thin entry.
+    /// reaches the owner: that annotated function itself calls the owner or a
+    /// reaching name. Checking its own calls, not its name, keeps a same-named
+    /// function elsewhere from lending it reach; the one hop also keeps a
+    /// derive one call above the walk's depth bound in range, since the derive
+    /// function is a thin entry.
     fn derive_entry(
         &self,
         index: &'a RustIndex,
@@ -277,15 +284,11 @@ impl<'a> ReachGraph<'a> {
         let mut best: Option<(String, &'a str)> = None;
         for derive in derives.iter() {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
-                let reaches = reaching.contains(function)
-                    || self.by_name.get(function).into_iter().flatten().any(|f| {
-                        calls_of(f).iter().any(|call| {
-                            !is_macro_call(&call.name)
-                                && (call.name == owner_name
-                                    || reaching.contains(call.name.as_str()))
-                        })
-                    });
-                let candidate = (derive.clone(), function);
+                let reaches = calls_of(function).iter().any(|call| {
+                    !is_macro_call(&call.name)
+                        && (call.name == owner_name || reaching.contains(call.name.as_str()))
+                });
+                let candidate = (derive.clone(), function.name.as_str());
                 if reaches && best.as_ref().is_none_or(|current| candidate < *current) {
                     best = Some(candidate);
                 }
@@ -2774,10 +2777,14 @@ mod tests {
     /// a test file `tests/it.rs` with `test_source` whose test calls nothing
     /// that reaches the owner.
     fn derive_index(test_source: &str) -> RustIndex {
-        derive_index_with(test_source, Vec::new())
+        derive_index_with(test_source, Vec::new(), Vec::new())
     }
 
-    fn derive_index_with(test_source: &str, extra_tests: Vec<TestFact>) -> RustIndex {
+    fn derive_index_with(
+        test_source: &str,
+        extra_tests: Vec<TestFact>,
+        other_functions: Vec<FunctionSummary>,
+    ) -> RustIndex {
         let proc_macro_source = "#[proc_macro_derive(Error, attributes(error))]\n\
                                  pub fn derive_error(input: TokenStream) -> TokenStream {\n\
                                      expand(input)\n\
@@ -2818,6 +2825,7 @@ mod tests {
                 proc_macro_source,
             ),
             file("tests/it.rs", Vec::new(), test_source.to_string()),
+            file("src/other.rs", other_functions, String::new()),
         ]
         .into_iter()
         .collect();
@@ -2863,6 +2871,7 @@ mod tests {
         let index = derive_index_with(
             "#[derive(Error)]\nstruct E;\n",
             vec![make_test_at("test_expand", "tests/z.rs", 1, vec!["expand"])],
+            Vec::new(),
         );
 
         let witness = find_transitive_witness("fmt_impl", &index);
@@ -2876,6 +2885,17 @@ mod tests {
             )),
             Some(("test_expand".to_string(), "expand".to_string(), None, 1))
         );
+    }
+
+    // Negative: a same-named function in another file that reaches the owner
+    // does not lend reach to the annotated derive function, which does not.
+    #[test]
+    fn a_same_named_function_elsewhere_does_not_lend_the_derive_reach() {
+        let mut other = make_fn("derive_error", vec!["other_owner"]);
+        other.file = PathBuf::from("src/other.rs");
+        let index = derive_index_with("#[derive(Error)]\nstruct E;\n", Vec::new(), vec![other]);
+
+        assert!(find_transitive_witness("other_owner", &index).is_none());
     }
 
     // Path-qualified derives name the last segment, the macro's own name.
