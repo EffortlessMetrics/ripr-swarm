@@ -160,7 +160,6 @@ fn ranked_section(md: &str) -> &str {
     md.find("## Ranked Seams").map_or("", |start| &md[start..])
 }
 
-
 const EXAMPLE_13: [&str; 4] = [
     "W src/a.rs f 1",
     "U src/a.rs f 2",
