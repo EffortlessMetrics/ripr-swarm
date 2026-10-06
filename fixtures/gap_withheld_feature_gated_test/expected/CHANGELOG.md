@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_withheld_feature_gated_test (3)
+
+Reason:
+RIPR-SPEC-0240: rebased onto main, where finding paths render workspace-relative and gaps carry canonical_gap_id
+
+Command:
+`cargo xtask goldens bless gap_withheld_feature_gated_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

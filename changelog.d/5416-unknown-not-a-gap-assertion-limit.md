@@ -8,5 +8,5 @@
   no repair route, and a next step naming the tests to check. Refusals for an
   `if` branch, an uncalled closure, an opaque macro, a gated module or a real
   rebinding stay gaps. On the labeled verdict corpus false gaps on fully
-  caught upstream edits fall from 9/20 to 8/20 with no new false silent or false
-  exposed verdicts.
+  caught upstream edits fall from 7/20 to 6/20 with no new false silent or false
+  exposed verdicts (#5416).

@@ -4,12 +4,12 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 64/203 | 0.3153 |
-| False actionable (of discriminated) | 58/106 | 0.5472 |
+| False verdicts (all cases) | 63/203 | 0.3103 |
+| False actionable (of discriminated) | 57/106 | 0.5377 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
 | Ideal verdict | 81/203 | 0.3990 |
-| Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
+| Abstained (limited or silent where acceptable) | 59/203 | 0.2906 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
@@ -17,11 +17,11 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | authored | 169 | 57/169 | 51/86 | 6/83 | 0/83 | 73/169 | 39/169 |
-| upstream | 34 | 7/34 | 7/20 | 0/14 | 0/14 | 8/34 | 19/34 |
+| upstream | 34 | 6/34 | 6/20 | 0/14 | 0/14 | 8/34 | 20/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `serde-format-u8-hundreds` | upstream | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `serde-format-u8-hundreds` | upstream | discriminated | credited | limited | static_unknown | abstained | yes | none |
 | `serde-format-u8-tens` | upstream | discriminated | credited | limited | propagation_unknown | abstained | no | none |
 | `semver-caret-minor-ge` | upstream | discriminated | credited | limited | no_static_path | abstained | no | none |
 | `semver-tilde-pre-ge` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |

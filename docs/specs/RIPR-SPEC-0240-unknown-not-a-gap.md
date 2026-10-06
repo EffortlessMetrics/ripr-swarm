@@ -153,14 +153,20 @@ read. The rule never upgrades a class.
 
 ## Measured effect
 
-Verdict corpus (34 cases, corpus 2026-10-04.3), measured on top of #5359:
+Verdict corpus (203 cases, corpus 2026-10-04.8), measured against main at
+80975c807 (#5359 merged):
 
 | Rate | Before | After |
 | --- | --- | --- |
-| False actionable (of discriminated) | 9/20 | 8/20 |
-| False exposed (of not fully discriminated) | 0/14 | 0/14 |
-| False silent (of not fully discriminated) | 0/14 | 0/14 |
-| Abstained | 19/34 | 20/34 |
+| False actionable (of discriminated) | 58/106 | 57/106 |
+| False actionable, upstream cases | 7/20 | 6/20 |
+| False exposed (of not fully discriminated) | 6/97 | 6/97 |
+| False silent (of not fully discriminated) | 0/97 | 0/97 |
+| Abstained | 58/203 | 59/203 |
+
+The first measurement, on the 34-case corpus 2026-10-04.3 on top of #5359,
+moved false actionable on upstream cases from 9/20 to 8/20 through the same
+single case.
 
 serde `format_u8` hundreds moves from `reachable_unrevealed` to
 `static_unknown`. No fixture golden moves. The remaining false gaps are
