@@ -1172,9 +1172,42 @@ fn is_identifier_byte(byte: u8) -> bool {
 }
 
 /// `include!` and `#[path]` compose a file out of other files, so the
-/// composing file decides those files' module roles.
+/// composing file decides those files' module roles. A lexical superset:
+/// `include !`, `# [ path ..]` and any `cfg_attr`, which may carry a `path`
+/// with no static target that disables crate-root routing (#6909).
 fn composes_modules(bytes: &[u8]) -> bool {
-    contains(bytes, b"include!") || contains(bytes, b"#[path")
+    let after_space = |at: usize| {
+        bytes.get(at..).map_or(at, |rest| {
+            at + rest
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count()
+        })
+    };
+    let word_at = |at: usize, word: &[u8]| {
+        bytes.get(at..at + word.len()) == Some(word)
+            && bytes
+                .get(at + word.len())
+                .is_none_or(|next| !is_identifier_byte(*next))
+    };
+    (0..bytes.len()).any(|at| {
+        let starts_word = at == 0 || !is_identifier_byte(bytes[at - 1]);
+        if starts_word && word_at(at, b"include") {
+            return bytes.get(after_space(at + b"include".len())) == Some(&b'!');
+        }
+        if bytes[at] != b'#' {
+            return false;
+        }
+        let mut next = after_space(at + 1);
+        if bytes.get(next) == Some(&b'!') {
+            next = after_space(next + 1);
+        }
+        if bytes.get(next) != Some(&b'[') {
+            return false;
+        }
+        let name = after_space(next + 1);
+        word_at(name, b"path") || word_at(name, b"cfg_attr")
+    })
 }
 
 fn identifier_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
@@ -1257,6 +1290,12 @@ mod tests {
         let none = AdmissionQuery::default();
         assert!(none.admits(b"include!(\"x.rs\");"));
         assert!(none.admits(b"#[path = \"a.rs\"] mod a;"));
+        // #6909: these also compose modules; a withheld one would leave
+        // named mode routing crate-local sites the full index refuses.
+        assert!(none.admits(b"#[cfg_attr(unix, path = \"u.rs\")] mod check;"));
+        assert!(none.admits(b"# [ path = \"a.rs\" ] mod a;"));
+        assert!(none.admits(b"include !(\"x.rs\");"));
+        assert!(!none.admits(b"#[derive(Debug)] struct S; fn includes() {}"));
         assert!(!none.admits(b"#![doc = include_str!(\"../README.md\")]"));
         let cargo_bin = b"let tool = env!(\"CARGO_BIN_EXE_tool\");";
         assert!(!none.admits(cargo_bin));

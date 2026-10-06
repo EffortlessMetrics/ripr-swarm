@@ -38,7 +38,7 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item,
+    file_imports_own_item, file_use_statements, use_statement_first_segment,
 };
 use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
@@ -46,6 +46,7 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind};
+use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
@@ -870,6 +871,12 @@ enum ReturnPathGate {
     Head(&'static str),
     /// The pinned value must be exactly this unit variant (`None`).
     Exact(&'static str),
+    /// #6692: a field of a hand-written `Clone::clone`'s returned struct
+    /// literal. The pinned value must be the clone's own receiver
+    /// (`assert_eq!(w.clone(), w)`), compared through a derived
+    /// `PartialEq`, so every field of the clone is compared with the
+    /// original's.
+    CloneReceiver,
 }
 
 impl OwnerReturnPin {
@@ -881,6 +888,9 @@ impl OwnerReturnPin {
         owner: &FunctionSummary,
         index: &RustIndex,
     ) -> Option<Self> {
+        if matches!(probe.family, ProbeFamily::FieldConstruction) {
+            return Self::establish_clone_field(probe, owner, index);
+        }
         if !owner.item.has_body {
             return None;
         }
@@ -943,6 +953,85 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            trait_scope_by_file: RefCell::default(),
+        })
+    }
+
+    /// #6692: the owner-side gates for a `field_construction` probe in a
+    /// hand-written `impl Clone for T`. Established only when the changed
+    /// line is a field of the struct literal that is `clone`'s only exit,
+    /// `T` is declared once in the workspace with `#[derive(PartialEq)]`
+    /// and has no hand-written `PartialEq` impl, no workspace trait is
+    /// named `Clone`, and no other `fn clone` with a receiver competes.
+    /// The test-side gate then requires `assert_eq!(recv.clone(), recv)`.
+    fn establish_clone_field(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<Self> {
+        if owner.name != "clone" || !owner.item.has_body || !owner.item.has_self_param {
+            return None;
+        }
+        let FunctionContainer::TraitImpl {
+            trait_path,
+            self_ty,
+        } = &owner.item.container
+        else {
+            return None;
+        };
+        // The standard `Clone`: bare, or a `std`/`core` path; the owner's
+        // file may not import, glob or rename `Clone` from elsewhere
+        // (`impl dupe::Clone for Window`, `use dupe::Clone;`).
+        let trait_path = trait_path.trim().trim_start_matches("::");
+        if !matches!(
+            trait_path,
+            "Clone" | "std::clone::Clone" | "core::clone::Clone"
+        ) {
+            return None;
+        }
+        // `extern crate other as std;` makes `std::clone::Clone` foreign.
+        if let Some((root, _)) = trait_path.split_once("::")
+            && workspace_renames_to(index, root)
+        {
+            return None;
+        }
+        let owner_source = index
+            .files()
+            .get(&owner.file)
+            .filter(|facts| !facts.used_lexical_fallback)
+            .map(|facts| facts.data().source.clone())?;
+        if declaring_file_rebinds(&owner_source, "Clone", false, index) {
+            return None;
+        }
+        // `impl Clone for W<Foo>`: an instantiation of a generic type,
+        // whose type parameters ripr does not substitute.
+        if self_ty.contains('<') {
+            return None;
+        }
+        let receiver = declared_receiver(self_ty, index)?;
+        let ReceiverType::Named(type_name) = &receiver else {
+            return None;
+        };
+        let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+        let field = initialized_field_name(&probe.expression)?;
+        if !clone_tail_literal_spans(&owner.body, type_name, changed_line, &probe.expression)
+            || !field_compares_with_derived_equality(type_name, field, index)
+            || derives_clone(type_name, index)
+            || workspace_declares_trait(index, "Clone")
+            || other_definition_competes(owner, index, true)
+        {
+            return None;
+        }
+        Some(Self {
+            name: owner.name.clone(),
+            call: PinCall::Method {
+                receivers: vec![receiver],
+                // `Clone` is in the prelude; a workspace `trait Clone` is
+                // refused above and a foreign import in `admits`.
+                trait_scope: None,
+            },
+            path: ReturnPathGate::CloneReceiver,
+            returns_bool: false,
             trait_scope_by_file: RefCell::default(),
         })
     }
@@ -1012,8 +1101,30 @@ impl OwnerReturnPin {
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name) {
             return false;
         }
-        if !self.path.admits(expected) {
-            return false;
+        match (&self.path, call) {
+            // #6692: the clone must be compared with its own receiver, and
+            // the test's file must not import some other `Clone`.
+            (ReturnPathGate::CloneReceiver, CallShape::Method(receiver)) => {
+                let independent = match &self.call {
+                    PinCall::Method { receivers, .. } => receivers.iter().any(|receiver_type| {
+                        matches!(receiver_type, ReceiverType::Named(type_name)
+                            if clone_receiver_is_independent(test, receiver, type_name, index))
+                    }),
+                    PinCall::Bare => false,
+                };
+                if expected.trim() != receiver
+                    || imports_foreign(&test.file, "Clone")
+                    || !independent
+                {
+                    return false;
+                }
+            }
+            (ReturnPathGate::CloneReceiver, CallShape::Bare) => return false,
+            (path, _) => {
+                if !path.admits(expected) {
+                    return false;
+                }
+            }
         }
         let test_source = index
             .files()
@@ -1100,6 +1211,7 @@ impl ReturnPathGate {
             Self::Any => true,
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
             Self::Exact(value) => expected.trim() == *value,
+            Self::CloneReceiver => false,
         }
     }
 }
@@ -1448,8 +1560,12 @@ const NEGATING_KEYWORDS: &[&str] = &[
 /// combinator that skips its argument (`map_or(0, ..)` on `None`). A pin on
 /// such an input never evaluates the changed part, so the tail's value is
 /// not established to come through it.
+///
+/// A binary bitwise `|` evaluates both operands on every input, so it is
+/// not conditional (#6675); every other pipe (`||`, `|=`, a closure's
+/// parameter list) still is. See [`has_non_bitwise_pipe`].
 fn evaluates_conditionally(masked_tail: &str) -> bool {
-    if masked_tail.contains('|') || masked_tail.contains("&&") {
+    if has_non_bitwise_pipe(masked_tail) || masked_tail.contains("&&") {
         return true;
     }
     if [
@@ -1471,6 +1587,450 @@ fn evaluates_conditionally(masked_tail: &str) -> bool {
                         .starts_with(['(', ':'])
             })
     })
+}
+
+/// #6692: whether the changed line (`changed_line`, offset from the body's
+/// first line) lies in a struct literal of `type_name` (or `Self`) that is
+/// the whole tail of `body`, and that literal is the body's only exit: no
+/// `?`, no `return`, no macro that may hide an exit, and no part evaluated
+/// only on some inputs. The changed line must be one whole field
+/// initializer of that literal's own braces (depth 1): a field of a nested
+/// literal or an argument of a call inside a field is not the outer
+/// field's value.
+fn clone_tail_literal_spans(
+    body: &str,
+    type_name: &str,
+    changed_line: usize,
+    expression: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let Some(open) = body_block_open(&masked) else {
+        return false;
+    };
+    let Some(close) = matching_close(&masked, open, b'{', b'}') else {
+        return false;
+    };
+    let inner = &masked[open + 1..close];
+    if has_unbounded_macro(inner)
+        || inner.contains('?')
+        || !whole_word_offsets(inner, "return").is_empty()
+    {
+        return false;
+    }
+    let (after_semicolon, _) = top_level_tail_starts(inner);
+    let tail = &inner[after_semicolon..];
+    let tail_start = after_semicolon + (tail.len() - tail.trim_start().len());
+    let tail = tail.trim();
+    let Some(after_type) = tail
+        .strip_prefix(type_name)
+        .or_else(|| tail.strip_prefix("Self"))
+    else {
+        return false;
+    };
+    let after_type = after_type.trim_start();
+    if !after_type.starts_with('{') {
+        return false;
+    }
+    let literal_open = tail.len() - after_type.len();
+    let Some(literal_close) = matching_close(tail, literal_open, b'{', b'}') else {
+        return false;
+    };
+    if literal_close + 1 != tail.len() || evaluates_conditionally(tail) {
+        return false;
+    }
+    let line_of = |offset: usize| masked[..open + 1 + offset].matches('\n').count();
+    let first = line_of(tail_start + literal_open);
+    let last = line_of(tail_start + literal_close);
+    if !(first < changed_line && changed_line < last) {
+        return false;
+    }
+    let Some(line_start) = masked
+        .match_indices('\n')
+        .nth(changed_line - 1)
+        .map(|(position, _)| position + 1)
+    else {
+        return false;
+    };
+    let line_end = masked[line_start..]
+        .find('\n')
+        .map_or(masked.len(), |position| line_start + position);
+    let literal_start = open + 1 + tail_start + literal_open;
+    let depth = masked[literal_start..line_start]
+        .bytes()
+        .fold(0_isize, |depth, byte| match byte {
+            b'{' | b'(' | b'[' => depth + 1,
+            b'}' | b')' | b']' => depth - 1,
+            _ => depth,
+        });
+    let line = masked[line_start..line_end].trim();
+    let field_text = |text: &str| collapse_whitespace(text.trim().trim_end_matches(',').trim());
+    depth == 1
+        && !line.contains(['{', '}'])
+        && field_text(&body[line_start..line_end]) == field_text(expression)
+}
+
+/// The field a struct-literal initializer names: `start: self.start,` and
+/// the shorthand `start,` both name `start`.
+fn initialized_field_name(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches(',').trim();
+    let name = match trimmed.find(':') {
+        Some(colon) if trimmed[colon..].starts_with("::") => return None,
+        Some(colon) => trimmed[..colon].trim(),
+        None => trimmed,
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    (is_plain_identifier(name) && !name.starts_with(|ch: char| ch.is_ascii_digit())).then_some(name)
+}
+
+/// How deep [`type_compares_by_value`] follows workspace field types.
+const EQUALITY_DEPTH_LIMIT: usize = 4;
+
+/// #6692 (RIPR-SPEC-0225 rules 3-4): whether `==` on `type_name` compares
+/// its field `field` by value through the derived comparison. `type_name`
+/// must have derived equality ([`derived_equality`]); `field` must carry no
+/// attribute and its type must compare by value. Anything ripr cannot read
+/// fails closed.
+fn field_compares_with_derived_equality(type_name: &str, field: &str, index: &RustIndex) -> bool {
+    derived_equality(type_name, index).is_some_and(|(facts, declaring)| {
+        let mut named = facts
+            .fields
+            .iter()
+            .filter(|candidate| candidate.name.as_deref() == Some(field));
+        match (named.next(), named.next()) {
+            (Some(found), None) => {
+                !found.has_attributes && type_compares_by_value(&found.ty, declaring, index, 0)
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The equality facts of `type_name` when its `==` is the derived one: it
+/// is declared in exactly one parser-backed indexed file, as the one type
+/// of that name there, with `PartialEq` in its `#[derive(..)]` list, no
+/// other attribute that may change equality, and no indexed file holds an
+/// `impl .. PartialEq .. for <type_name>` (gated or not). The declaring
+/// file's source comes back too: it decides what the field types' names
+/// refer to.
+fn derived_equality<'a>(
+    type_name: &str,
+    index: &'a RustIndex,
+) -> Option<(LocalTypeEquality, &'a str)> {
+    let mut declaring = index.files().values().filter(|facts| {
+        facts.source.contains(type_name)
+            && declares_type(&mask_comments_and_strings(&facts.source), type_name)
+    });
+    let declaring_file = declaring.next()?;
+    if declaring.next().is_some() || declaring_file.used_lexical_fallback {
+        return None;
+    }
+    let facts = local_type_equality(&declaring_file.source, type_name)?;
+    if !facts.derives.iter().any(|name| name == "PartialEq")
+        || facts.other_attributes
+        || facts.generic_params
+        || facts.qualified_derives
+        || declaring_file_rebinds(&declaring_file.source, "PartialEq", false, index)
+    {
+        return None;
+    }
+    let manual = index.files().values().any(|file| {
+        trait_impl_self_types(&file.source, "PartialEq")
+            .iter()
+            .any(|self_ty| path_base_name(strip_type_arguments(self_ty)) == Some(type_name))
+    });
+    (!manual).then_some((facts, &*declaring_file.data().source))
+}
+
+/// Whether `type_name` also derives `Clone` (a hand-written `impl Clone`
+/// beside it is cfg-gated or otherwise not the one every build runs).
+fn derives_clone(type_name: &str, index: &RustIndex) -> bool {
+    derived_equality(type_name, index)
+        .is_none_or(|(facts, _)| facts.derives.iter().any(|name| name == "Clone"))
+}
+
+/// Standard types whose `==` compares by value.
+const STD_VALUE_TYPES: &[&str] = &[
+    "bool", "char", "str", "String", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16",
+    "i32", "i64", "i128", "isize", "f32", "f64",
+];
+
+/// Standard containers whose `==` compares their type arguments by value.
+const STD_VALUE_CONTAINERS: &[&str] = &[
+    "Option", "Result", "Vec", "VecDeque", "Box", "Rc", "Arc", "BTreeMap", "BTreeSet", "HashMap",
+    "HashSet",
+];
+
+/// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
+/// standard value type, a reference, tuple, array or standard container of
+/// such types, or a workspace type with derived equality whose own fields
+/// do too, recursively. A workspace type of a standard name shadows it.
+/// A multi-segment path must be rooted in `std`, `core` or `alloc`
+/// (`foreign::String` is not `String`), and the declaring file must not
+/// bind the base name some other way ([`declaring_file_rebinds`]).
+fn type_compares_by_value(ty: &str, declaring: &str, index: &RustIndex, depth: usize) -> bool {
+    if depth > EQUALITY_DEPTH_LIMIT {
+        return false;
+    }
+    let ty = ty.trim();
+    if let Some(referent) = ty.strip_prefix('&') {
+        let referent = referent.trim_start();
+        let referent = if referent.starts_with('\'') {
+            referent
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, rest)| rest)
+        } else {
+            referent
+        };
+        let referent = referent.strip_prefix("mut ").unwrap_or(referent);
+        return type_compares_by_value(referent, declaring, index, depth + 1);
+    }
+    if let Some(inner) = ty.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+        return top_level_arguments(inner)
+            .into_iter()
+            .all(|element| type_compares_by_value(element, declaring, index, depth + 1));
+    }
+    if let Some(inner) = ty.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        let element = inner.split(';').next().unwrap_or(inner);
+        return type_compares_by_value(element, declaring, index, depth + 1);
+    }
+    let (path, arguments) = match ty.split_once('<') {
+        Some((path, rest)) => match rest.strip_suffix('>') {
+            Some(arguments) => (path.trim(), Some(arguments)),
+            None => return false,
+        },
+        None => (ty, None),
+    };
+    let Some(base) = path_base_name(path) else {
+        return false;
+    };
+    if let Some((root, _)) = path.trim_start_matches("::").split_once("::")
+        && (!STD_ROOTS.contains(&root.trim()) || workspace_renames_to(index, root.trim()))
+    {
+        return false;
+    }
+    let workspace_type = type_declared_in_workspace(base, index);
+    if declaring_file_rebinds(declaring, base, workspace_type, index) {
+        return false;
+    }
+    if workspace_type {
+        return arguments.is_none()
+            && derived_equality(base, index).is_some_and(|(facts, declaring)| {
+                facts.fields.iter().all(|field| {
+                    !field.has_attributes
+                        && type_compares_by_value(&field.ty, declaring, index, depth + 1)
+                })
+            });
+    }
+    match arguments {
+        None => STD_VALUE_TYPES.contains(&base),
+        Some(arguments) => {
+            STD_VALUE_CONTAINERS.contains(&base)
+                && top_level_arguments(arguments)
+                    .into_iter()
+                    .all(|argument| type_compares_by_value(argument, declaring, index, depth + 1))
+        }
+    }
+}
+
+/// The roots of standard library paths.
+const STD_ROOTS: &[&str] = &["std", "core", "alloc"];
+
+/// Whether `base`, named in a field type of a type declared in the file
+/// `declaring`, may denote something other than the standard type (or,
+/// when `workspace_type`, the one workspace declaration) of that name. It
+/// may when the file renames an item to it (`use x::Thing as String;`),
+/// aliases it (`type String = ..;`), or has a `use` that names it or globs
+/// (`use foreign::Vec;`, `use foreign::*;`) rooted outside `std`, `core`
+/// and `alloc`. A `crate`/`self`/`super` (or own-package) root is a
+/// workspace path: it may bring the workspace declaration, but never a
+/// standard name's own type, and only while no workspace `use` re-exports
+/// the name or a glob from elsewhere. Lexical and file-wide: a `use` in any
+/// module of the file counts. Anything else fails closed.
+fn declaring_file_rebinds(
+    declaring: &str,
+    base: &str,
+    workspace_type: bool,
+    index: &RustIndex,
+) -> bool {
+    if file_renames_to(declaring, base) || file_aliases_type(declaring, base) {
+        return true;
+    }
+    file_use_statements(declaring).iter().any(|statement| {
+        let names = contains_as_whole_word(statement, base);
+        if !(names || statement.contains('*')) {
+            return false;
+        }
+        match use_statement_first_segment(statement) {
+            Some(root) if STD_ROOTS.contains(&root) => workspace_renames_to(index, root),
+            // A workspace path that names a standard name imports some
+            // other item of it; a workspace glob brings only workspace items.
+            Some(root) if is_workspace_root(root, index) => {
+                (names && !workspace_type) || workspace_may_export_other(index, base)
+            }
+            _ => true,
+        }
+    })
+}
+
+/// `crate`, `self`, `super`, or the crate name of a workspace package.
+fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
+    matches!(root, "crate" | "self" | "super")
+        || index
+            .package_names
+            .iter()
+            .any(|name| name.replace('-', "_") == root)
+}
+
+/// Whether a workspace path may lead to some item named `base` other than
+/// its workspace declaration: a workspace `use` rooted outside the standard
+/// library and the workspace names `base` or globs (a re-export of a
+/// foreign item), or a workspace file renames an item to `base` or aliases
+/// a type as `base`.
+fn workspace_may_export_other(index: &RustIndex, base: &str) -> bool {
+    index.files().values().any(|facts| {
+        file_renames_to(&facts.source, base)
+            || file_aliases_type(&facts.source, base)
+            || file_use_statements(&facts.source).iter().any(|statement| {
+                (contains_as_whole_word(statement, base) || statement.contains('*'))
+                    && use_statement_first_segment(statement).is_none_or(|root| {
+                        !(STD_ROOTS.contains(&root) || is_workspace_root(root, index))
+                    })
+            })
+    })
+}
+
+/// Whether any indexed file renames an item to `name` (`extern crate
+/// other as std;`).
+fn workspace_renames_to(index: &RustIndex, name: &str) -> bool {
+    index
+        .files()
+        .values()
+        .any(|facts| file_renames_to(&facts.source, name))
+}
+
+/// The comma-separated items of `text` at bracket depth zero.
+fn top_level_arguments(text: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (offset, byte) in text.bytes().enumerate() {
+        match byte {
+            b'<' | b'(' | b'[' => depth += 1,
+            b'>' | b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                items.push(text[start..offset].trim());
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = text[start..].trim();
+    if !last.is_empty() {
+        items.push(last);
+    }
+    items
+}
+
+/// `Window<T>` -> `Window`.
+fn strip_type_arguments(self_ty: &str) -> &str {
+    self_ty.split('<').next().unwrap_or(self_ty).trim()
+}
+
+/// Whether masked `text` declares a struct, enum or union named `name`.
+fn declares_type(text: &str, name: &str) -> bool {
+    ["struct", "enum", "union"].iter().any(|keyword| {
+        whole_word_offsets(text, keyword)
+            .into_iter()
+            .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
+    })
+}
+
+/// Whether any indexed file declares a trait named `name`.
+fn workspace_declares_trait(index: &RustIndex, name: &str) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains(name) && {
+            let masked = mask_comments_and_strings(&facts.source);
+            whole_word_offsets(&masked, "trait")
+                .into_iter()
+                .any(|offset| starts_with_word(masked[offset + "trait".len()..].trim_start(), name))
+        }
+    })
+}
+
+/// Whether masked text holds a `|` that is not a binary bitwise OR (#6675):
+/// a `||` (lazy OR, or an empty closure), a `|=`, or a pipe in operand
+/// position, which opens a closure parameter list (`map(|x| ..)`,
+/// `move |x| ..`). A pipe is read as binary only when it directly follows a
+/// completed operand: an identifier or number that is not a keyword, or a
+/// closing `)`/`]` or `?`. A closure's closing pipe may follow its
+/// parameter name, but its opening pipe never follows an operand, so every
+/// closure still fails here. A pipe inside a macro invocation's
+/// arguments (`matches!(k, A | B)`) or anywhere in a tail that binds with
+/// `let` may separate pattern alternatives, which short-circuit, so it is
+/// never read as binary. Anything else fails closed.
+fn has_non_bitwise_pipe(masked: &str) -> bool {
+    const OPERAND_POSITION_KEYWORDS: &[&str] = &[
+        "async", "break", "else", "in", "let", "move", "mut", "return", "static", "yield",
+    ];
+    if !masked.contains('|') {
+        return false;
+    }
+    if contains_as_whole_word(masked, "let") {
+        return true;
+    }
+    let bytes = masked.as_bytes();
+    // One entry per open delimiter: whether it opens a macro's arguments.
+    let mut delimiters: Vec<bool> = Vec::new();
+    for (offset, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..offset].trim_end();
+                let opens_macro = before.strip_suffix('!').is_some_and(|head| {
+                    head.ends_with(|character: char| {
+                        character.is_alphanumeric() || character == '_'
+                    })
+                });
+                delimiters.push(opens_macro);
+                continue;
+            }
+            b')' | b']' | b'}' => {
+                delimiters.pop();
+                continue;
+            }
+            b'|' => {}
+            _ => continue,
+        }
+        if delimiters.iter().any(|opens_macro| *opens_macro) {
+            return true;
+        }
+        if matches!(bytes.get(offset + 1), Some(b'|' | b'='))
+            || (offset > 0 && bytes[offset - 1] == b'|')
+        {
+            return true;
+        }
+        let before = masked[..offset].trim_end();
+        let Some(previous) = before.bytes().last() else {
+            return true;
+        };
+        let binary = match previous {
+            b')' | b']' | b'?' => true,
+            byte if byte.is_ascii_alphanumeric() || byte == b'_' => {
+                let start = before
+                    .char_indices()
+                    .rev()
+                    .find(|(_, character)| {
+                        !(character.is_ascii_alphanumeric() || *character == '_')
+                    })
+                    .map_or(0, |(position, character)| position + character.len_utf8());
+                !OPERAND_POSITION_KEYWORDS.contains(&&before[start..])
+            }
+            _ => false,
+        };
+        if !binary {
+            return true;
+        }
+    }
+    false
 }
 
 /// `Option`/`Result`/`bool` methods that evaluate or apply an argument only
@@ -1904,11 +2464,27 @@ fn test_receiver_type(
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
 ) -> Option<ReceiverType> {
+    let mut bound: Option<ReceiverType> = None;
+    for binding in receiver_let_bindings(test, receiver)? {
+        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
+        match &bound {
+            None => bound = Some(receiver_type),
+            Some(existing) if *existing == receiver_type => {}
+            Some(_) => return None,
+        }
+    }
+    bound
+}
+
+/// The text after the name in every `let [mut] receiver [: T] = ..;` of the
+/// test body (the optional annotation and the initializer), or `None` when
+/// the name may be bound some other way ripr does not read.
+fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Vec<&'a str>> {
     let masked = mask_comments_and_strings(&test.body);
     if binds_outside_let(&masked, receiver) {
         return None;
     }
-    let mut bound: Option<ReceiverType> = None;
+    let mut bindings = Vec::new();
     for offset in whole_word_offsets(&masked, "let") {
         let pattern_start = offset + "let".len();
         let Some(relative_end) = top_level_semicolon(&masked[pattern_start..]) else {
@@ -1945,16 +2521,272 @@ fn test_receiver_type(
         if !(annotation.is_empty() || annotation.starts_with(':')) {
             return None;
         }
+        // The name's whole-word offset in the pattern (`let mut m`: not
+        // the `m` inside `mut`).
+        let name_at = whole_word_offsets(&statement[..pattern_end], receiver)
+            .first()
+            .copied()?;
         let binding = &test.body[pattern_start..statement_end];
-        let binding = &binding[binding.find(receiver)? + receiver.len()..];
-        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
-        match &bound {
-            None => bound = Some(receiver_type),
-            Some(existing) if *existing == receiver_type => {}
-            Some(_) => return None,
-        }
+        bindings.push(&binding[name_at + receiver.len()..]);
     }
-    bound
+    Some(bindings)
+}
+
+/// Methods that may run the `clone` under test.
+const CLONING_METHODS: &[&str] = &["clone", "clone_from", "cloned", "to_owned"];
+
+/// #6692: whether the clone's receiver was built without the clone under
+/// test, so a wrong `clone` cannot also have produced the value it is
+/// compared with (`let w: Window = base.clone(); assert_eq!(w.clone(), w)`
+/// passes for an idempotent wrong field). Every `let` of the receiver must
+/// initialize it with a `type_name { .. }` or `type_name(..)` literal, or a
+/// call to the type's one inherent constructor whose body clones nothing,
+/// and no part of an initializer may clone. The test may not reassign or
+/// mutably borrow the receiver. Anything else fails closed.
+fn clone_receiver_is_independent(
+    test: &TestSummary,
+    receiver: &str,
+    type_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    if receiver_is_reassigned(&masked, receiver) {
+        return false;
+    }
+    let Some(bindings) = receiver_let_bindings(test, receiver) else {
+        return false;
+    };
+    !bindings.is_empty()
+        && bindings
+            .into_iter()
+            .all(|binding| initializer_is_independent(binding, type_name, index))
+}
+
+/// Whether the test may change `receiver` after binding it: an assignment
+/// (`w = ..`, `w += ..`), or any `mut` before the name (`let mut w`,
+/// `&mut w`, `ref mut w`, `|mut w|`). A `let mut` binding alone refuses:
+/// a field write (`w.start = w.end`), a `&mut w.start` borrow or a
+/// `&mut self` method call (`w.set_start(9)`) all need one, and ripr does
+/// not read them.
+fn receiver_is_reassigned(masked: &str, receiver: &str) -> bool {
+    const COMPOUND: &[&str] = &["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+    whole_word_offsets(masked, receiver)
+        .into_iter()
+        .any(|offset| {
+            let after = masked[offset + receiver.len()..].trim_start();
+            let assigns =
+                (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+                    || COMPOUND.iter().any(|operator| after.starts_with(operator));
+            let before = masked[..offset].trim_end();
+            let mutable = before.strip_suffix("mut").is_some_and(|rest| {
+                !rest
+                    .as_bytes()
+                    .last()
+                    .is_some_and(|byte| is_ident_byte(*byte))
+            });
+            let let_binding = before.strip_suffix("let").is_some_and(|rest| {
+                !rest
+                    .as_bytes()
+                    .last()
+                    .is_some_and(|byte| is_ident_byte(*byte))
+            });
+            (assigns && !let_binding) || mutable
+        })
+}
+
+/// One receiver initializer: a `type_name { .. }` or `type_name(..)`
+/// literal, or a `type_name::ctor(..)` call to the type's one inherent
+/// constructor, whose fields or arguments are all [`is_trivial_expression`]
+/// without locals: no call, method, macro, index, block or local binding
+/// may supply a value (a helper or a local could carry a wrong clone's
+/// output, `Window::new(make(&base))`). The constructor body must be a
+/// bare `Self`/`type_name` literal of its parameters
+/// ([`constructor_body_is_plain_literal`]).
+fn initializer_is_independent(binding: &str, type_name: &str, index: &RustIndex) -> bool {
+    let masked = mask_comments_and_strings(binding);
+    let Some(equals) = masked.find('=') else {
+        return false;
+    };
+    let initializer = masked[equals + 1..].trim();
+    if CLONING_METHODS
+        .iter()
+        .any(|method| contains_as_whole_word(initializer, method))
+    {
+        return false;
+    }
+    let Some(rest) = initializer.strip_prefix(type_name) else {
+        return false;
+    };
+    if let Some(call) = rest.strip_prefix("::") {
+        let call_end = call
+            .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .unwrap_or(call.len());
+        let constructor = &call[..call_end];
+        let arguments = call[call_end..].trim_start();
+        if !arguments.starts_with('(')
+            || matching_close(arguments, 0, b'(', b')') != Some(arguments.len() - 1)
+            || !literal_items_are_trivial(&arguments[1..arguments.len() - 1], false, false)
+        {
+            return false;
+        }
+        let mut definitions = index.functions().iter().filter(|function| {
+            function.name == constructor
+                && !function.item.has_self_param
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::Inherent { self_ty } if path_base_name(self_ty) == Some(type_name)
+                )
+        });
+        let (Some(definition), None) = (definitions.next(), definitions.next()) else {
+            return false;
+        };
+        return constructor_body_is_plain_literal(&definition.body, type_name);
+    }
+    plain_literal(rest.trim_start(), false)
+}
+
+/// Whether `rest` (the text after a type name) is exactly one `{ .. }` or
+/// `( .. )` literal body whose items are trivial; `locals` admits plain
+/// lowercase bindings (a constructor's parameters) and field shorthand.
+fn plain_literal(rest: &str, locals: bool) -> bool {
+    let (open, close, braced) = match rest.as_bytes().first() {
+        Some(b'{') => (b'{', b'}', true),
+        Some(b'(') => (b'(', b')', false),
+        _ => return false,
+    };
+    matching_close(rest, 0, open, close) == Some(rest.len() - 1)
+        && literal_items_are_trivial(&rest[1..rest.len() - 1], braced, locals)
+}
+
+/// Whether every comma-separated item of a literal or argument list is a
+/// trivial expression; in a braced literal each item is `field: expr` (or,
+/// with `locals`, the shorthand `field`). A `..base` update refuses.
+fn literal_items_are_trivial(items: &str, braced: bool, locals: bool) -> bool {
+    if items.contains("..") {
+        return false;
+    }
+    top_level_arguments(items).into_iter().all(|item| {
+        if !braced {
+            return is_trivial_expression(item, locals);
+        }
+        match item.split_once(':') {
+            Some((field, value)) => {
+                is_plain_identifier(field.trim())
+                    && !value.starts_with(':')
+                    && is_trivial_expression(value, locals)
+            }
+            None => locals && is_plain_identifier(item.trim()),
+        }
+    })
+}
+
+/// Whether a constructor's (masked) body is nothing but a `Self { .. }`,
+/// `type_name { .. }`, `Self(..)` or `type_name(..)` literal of trivial
+/// items over its parameters: no `let`, call, method, macro or helper that
+/// could run a clone.
+fn constructor_body_is_plain_literal(definition: &str, type_name: &str) -> bool {
+    let masked = mask_comments_and_strings(definition);
+    let Some(open) = masked
+        .find('(')
+        .and_then(|params| matching_close(&masked, params, b'(', b')'))
+        .and_then(|params_close| {
+            masked[params_close..]
+                .find('{')
+                .map(|offset| params_close + offset)
+        })
+    else {
+        return false;
+    };
+    let Some(close) = matching_close(&masked, open, b'{', b'}') else {
+        return false;
+    };
+    if !masked[close + 1..].trim().is_empty() {
+        return false;
+    }
+    let tail = masked[open + 1..close].trim();
+    let Some(rest) = tail
+        .strip_prefix("Self")
+        .or_else(|| tail.strip_prefix(type_name))
+    else {
+        return false;
+    };
+    plain_literal(rest.trim_start(), true)
+}
+
+/// Primitive type names a trivial expression may cast to.
+const CAST_TYPES: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32",
+    "f64", "char", "bool",
+];
+
+/// Whether a (masked) expression only combines literals, `true`/`false`,
+/// constants and enum variants named by a path whose last segment starts
+/// uppercase, `as` casts to primitives and arithmetic, comparison and
+/// bitwise operators. Calls, methods, macros, indexing, blocks, closures,
+/// derefs, ranges, `?` and lowercase bindings (unless `locals`) refuse:
+/// any of them may carry a value the clone under test produced.
+fn is_trivial_expression(expression: &str, locals: bool) -> bool {
+    let bytes = expression.as_bytes();
+    if expression.trim().is_empty() {
+        return false;
+    }
+    let mut index = 0usize;
+    let mut after_as = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_digit() {
+            index += 1;
+            while index < bytes.len()
+                && (is_ident_byte(bytes[index])
+                    || (bytes[index] == b'.'
+                        && bytes.get(index + 1).is_some_and(u8::is_ascii_digit)))
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            let start = index;
+            while index < bytes.len()
+                && (is_ident_byte(bytes[index])
+                    || (bytes[index] == b':' && bytes.get(index + 1) == Some(&b':')))
+            {
+                index += if bytes[index] == b':' { 2 } else { 1 };
+            }
+            let path = &expression[start..index];
+            let last = path.rsplit("::").next().unwrap_or(path);
+            let next = bytes.get(index).copied();
+            let string_prefix = matches!(path, "b" | "r" | "br" | "c" | "cr")
+                && matches!(next, Some(b'"' | b'#' | b'\''));
+            let admitted = if after_as {
+                CAST_TYPES.contains(&path)
+            } else if path == "as" {
+                after_as = true;
+                continue;
+            } else {
+                string_prefix
+                    || matches!(path, "true" | "false")
+                    || last.starts_with(|character: char| character.is_ascii_uppercase())
+                    || (locals && path == last && is_plain_identifier(path))
+            };
+            after_as = false;
+            if !admitted || last.is_empty() {
+                return false;
+            }
+            continue;
+        }
+        if byte.is_ascii_whitespace()
+            || matches!(
+                byte,
+                b'"' | b'\'' | b'#' | b'-' | b'+' | b'/' | b'%' | b'&' | b'^' | b'<' | b'>' | b'='
+            )
+        {
+            index += 1;
+            continue;
+        }
+        return false;
+    }
+    !after_as
 }
 
 /// Whether `name` may be bound by a pattern that is not a `let`: a closure

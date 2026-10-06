@@ -411,8 +411,8 @@ pub(crate) fn needs_terminal_escape(ch: char) -> bool {
 /// different argument. Each such character becomes an adjacent
 /// `"$(printf '\ooo')"` segment, one octal escape per UTF-8 byte; everything
 /// else stays in `'...'` runs. Unlike `$'...'` this is POSIX, so `sh`, dash, bash
-/// and zsh all rebuild the exact bytes. PowerShell has no translation for the
-/// `$(...)` form, so that variant is withheld.
+/// and zsh all rebuild the exact bytes. `output::markdown::powershell_command`
+/// lifts each such argument and rebuilds it as a `[char]` expression.
 fn ansi_c_quote(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 8);
     let mut in_run = false;

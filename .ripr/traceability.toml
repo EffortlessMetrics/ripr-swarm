@@ -1430,6 +1430,12 @@ tests = [
   "crates/ripr/src/app/annotations.rs::tests::render_directory_as_comments_path_is_an_explicit_error",
   "crates/ripr/src/app/annotations.rs::tests::render_invalid_utf8_is_an_explicit_error",
   "crates/ripr/src/app/annotations.rs::tests::production_loader_has_no_exists_pre_check",
+  "crates/ripr/src/app/annotations.rs::tests::annotation_omits_placement_for_control_character_paths",
+  "crates/ripr/src/output/github.rs::tests::render_omits_file_placement_for_control_character_paths",
+  "crates/ripr/src/output/github.rs::tests::render_unplaced_location_shows_a_literal_percent_once",
+  "crates/ripr/src/output/ci_summary/annotations.rs::tests::control_character_paths_drop_the_placement_and_name_the_location",
+  "crates/ripr/src/output/workflow_escape.rs::tests::only_characters_a_property_cannot_carry_make_a_path_unplaceable",
+  "xtask/src/reports/annotations.rs::tests::control_character_paths_drop_the_placement_and_name_the_location",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_parses_required_revisions_and_out",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_requires_base_and_head",
@@ -11441,6 +11447,21 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::lexical_fallback_owner_is_not_established",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::item_container_stops_at_the_nearest_item",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tail_that_skips_its_changed_part_on_some_inputs_is_not_established",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::bitwise_pipe_reading_distinguishes_operand_position",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_compared_with_its_own_receiver_pins_its_fields",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_derived_equality_and_the_returned_literal",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_a_field_type_that_compares_by_value",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_a_receiver_built_without_the_clone",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_needs_the_changed_line_at_the_literals_own_depth",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_refuses_competitors_and_unreadable_shapes",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_allows_lint_tool_attributes_on_the_type",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_clone_field_pin_refuses_generic_types_and_instantiated_impls",
+  "crates/ripr/src/analysis/classify/reveal.rs::a_clone_field_owner_pin_is_credited_only_through_reveals_gates",
+  "crates/ripr/tests/bitwise_or_return_pin.rs::an_exact_pin_on_the_owner_call_exposes_a_returned_bitwise_or",
+  "crates/ripr/tests/bitwise_or_return_pin.rs::a_closure_tail_or_a_non_pinning_assertion_is_not_exposed",
+  "crates/ripr/tests/clone_field_whole_equality.rs::a_clone_compared_with_its_original_through_derived_equality_is_exposed",
+  "crates/ripr/tests/clone_field_whole_equality.rs::clone_field_credit_refuses_manual_equality_inequality_and_other_values",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::only_a_plain_assert_eq_against_an_owner_free_value_pins",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_assertion_outside_the_test_body_is_not_its_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_through_any_other_binding_of_the_name_is_not_a_pin",
@@ -11528,6 +11549,7 @@ code = [
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs",
 ]
 outputs = [
   "fixtures/predicate_boundary_oracle_refused/expected/check.json",
@@ -12465,12 +12487,16 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::perl_packet_backed_rows_agree_in_gap_evidence",
   "crates/ripr/src/output/human/explain.rs::tests::an_unconfirmed_observation_is_not_labelled_a_miss",
   "crates/ripr/src/lsp/tests.rs::hover_keeps_oracle_kind_on_a_matched_row_that_still_misses",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
 ]
 code = [
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/perl/mod.rs",
+  "crates/ripr/src/analysis/language/python/admission.rs",
+  "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/output/related_test_miss.rs",
   "crates/ripr/src/output/human/explain.rs",
   "crates/ripr/src/lsp/hover.rs",
@@ -12810,7 +12836,11 @@ metrics = [
 id = "RIPR-SPEC-0228"
 name = "Rust field writes are probed and observed, not unknown"
 spec = "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::let_binding_type_annotations_are_not_field_construction",
+  "crates/ripr/src/analysis/probes/lexical.rs::tests::struct_literal_fields_keep_field_construction_beside_let_bindings",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::reordered_replacement_does_not_repeat_the_removed_static_unknown",
+]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/syntax/ra.rs",

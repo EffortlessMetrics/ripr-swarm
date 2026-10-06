@@ -3714,6 +3714,28 @@ mod tests {
             rooted(&plain_full, &plain_root),
             "a private glob in another crate's root must not refuse this crate's tests"
         );
+
+        // #6909: a `cfg_attr` path has no static target, so the full index
+        // stops routing crate-local sites; the named mode must admit the
+        // file rather than route its private glob from the withheld side.
+        let path_root = temp_root("dependent-scope-macro-bindings-cfg-attr-path")?;
+        write_dependent_scope_workspace(
+            &path_root,
+            "use proptest::prelude::*;\n\n#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n\n\
+             pub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(&path_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+        let (path_full, _, _) = scoped_findings(&path_root, DependentScopeMode::Full)?;
+        let (path_named, _, _) = scoped_findings(&path_root, DependentScopeMode::NameAdmitted)?;
+        assert_ne!(
+            rooted(&path_full, &path_root),
+            rooted(&plain_full, &plain_root),
+            "fixture premise: the unresolvable path keeps the private glob workspace-wide"
+        );
+        assert_eq!(
+            path_named, path_full,
+            "a crate root with a `cfg_attr` path must be decided like the full closure"
+        );
         Ok(())
     }
 
