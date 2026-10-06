@@ -9,7 +9,8 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    is_structural_delimiter_line, parser_probe_shapes_for_changed_line, should_ignore_changed_line,
+    is_structural_delimiter_line, parser_probe_shapes_for_changed_line_against,
+    should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
@@ -77,8 +78,14 @@ pub(crate) fn probes_for_file_with_relations(
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
             continue;
         }
-        let parser_shapes =
-            parser_probe_shapes_for_changed_line(index, &changed.path, added.new_side_line, text);
+        let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
+        let parser_shapes = parser_probe_shapes_for_changed_line_against(
+            index,
+            &changed.path,
+            added.new_side_line,
+            text,
+            removed_counterpart.as_deref(),
+        );
         let parser_shapes = parser_shapes
             .into_iter()
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
@@ -111,7 +118,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(shape.start_line, &canonical_text, changed),
+                    removed_before(shape.start_line, &canonical_text, changed),
                     Some(canonical_text.clone()),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
@@ -124,7 +131,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     added,
                     shape.family,
-                    nearby_removed_line(added.new_side_line, text, changed),
+                    removed_before(added.new_side_line, text, changed),
                     Some(text.to_string()),
                 )));
             }
@@ -149,7 +156,7 @@ pub(crate) fn probes_for_file_with_relations(
                 &build_context,
                 added,
                 family,
-                nearby_removed_line(added.new_side_line, text, changed),
+                removed_before(added.new_side_line, text, changed),
                 Some(text.to_string()),
             )));
         }
@@ -781,6 +788,49 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// The removed line this added line replaced, paired by position inside one
+/// replacement block. The diff parser gives every removed line of a block
+/// the new-side coordinate where the block's added run starts, so the k-th
+/// added line pairs with the k-th removed line when both runs have the same
+/// length. Unequal runs pair nothing: shape selection treats a removed line
+/// as proof that a field was left unchanged, and a guessed pairing (such as
+/// the first removed line sharing a type name with every added line) would
+/// turn that proof against the edited field.
+fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) -> Option<String> {
+    let run_start = added_run_start(added_new_side_line, changed);
+    let mut run_len = 0usize;
+    while changed
+        .added_lines
+        .iter()
+        .any(|line| line.new_side_line == run_start + run_len)
+    {
+        run_len += 1;
+    }
+    let removed = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if removed.len() != run_len {
+        return None;
+    }
+    removed
+        .get(added_new_side_line.checked_sub(run_start)?)
+        .map(|line| line.text.trim().to_string())
+}
+
+/// A probe's `before` text: the positional counterpart when the replacement
+/// block pairs one, so it names the same old line that shape selection
+/// compared against, else the nearest token-sharing removed line.
+fn removed_before(
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+) -> Option<String> {
+    replaced_line_counterpart(added_new_side_line, changed)
+        .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
 }
 
 fn nearby_removed_line(
