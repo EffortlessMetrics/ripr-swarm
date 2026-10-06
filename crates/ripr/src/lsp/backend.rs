@@ -4269,8 +4269,10 @@ fn bounded_failure_message(message: &str) -> String {
 /// The attempt's token, not the error text, says whether the work stopped
 /// because a checkpoint handed it an abort. A wrapped cancellation is still a
 /// cancellation; an ordinary failure that reads like one is still a failure.
-/// The observed abort is sticky: a later unrelated failure in the same attempt
-/// is named by the abort that already stopped the work.
+/// The observed abort is sticky for a sequential walk, whose later failure
+/// cannot happen once the abort stopped it. A parallel batch that propagates
+/// a sibling's ordinary failure instead names the attempt as that failure
+/// (#6721).
 fn analysis_error_was_cancellation(
     cancellation: &crate::analysis::cancellation::AnalysisCancellationToken,
 ) -> bool {
