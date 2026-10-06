@@ -7091,6 +7091,7 @@ JSON shape:
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
       "no_movement_reason": null,
+      "after_discriminate_state": "yes",
       "after_missing_discriminators": [],
       "after_open_legs": []
     }
@@ -7261,7 +7262,12 @@ Field contract:
   rendered evidence movement.
 - `after_missing_discriminators` — the after-side missing-discriminator list,
   so consumers can tell a satisfied discriminator from a still-open one when
-  the class did not move.
+  the class did not move. `null` when the after snapshot never recorded the
+  field: only an explicitly present list can establish satisfaction.
+- `after_discriminate_state` — the after-side discriminate leg state, or
+  `null` when the after side never recorded it. An empty missing list alone
+  never establishes satisfaction, because several seam kinds never name
+  missing discriminators while their discriminate leg stays weak.
 - `after_open_legs` — the after-side RIPR legs that are not `yes`, each with
   its recorded state (for example `discriminate (weak)`); a leg absent from
   the after record renders as `stage (not recorded)` — an unknown gate, not
@@ -7370,6 +7376,7 @@ JSON shape:
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
       "no_movement_reason": null,
+      "after_discriminate_state": "yes",
       "after_missing_discriminators": [],
       "after_open_legs": []
     }
@@ -7439,8 +7446,8 @@ Field contract:
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
   movement, related-test count movement, `gap_movement`,
-  `no_movement_reason`, `after_missing_discriminators`, and
-  `after_open_legs`.
+  `no_movement_reason`, `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -7830,12 +7837,14 @@ Field contract:
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
 - `seam.guidance_note` - refined guidance for an `unchanged` seam whose
-  evidence moved, read from the verify row's `after_missing_discriminators`
-  and `after_open_legs`. When the discriminators are satisfied it names the
-  gating after-side leg instead of repeating the add-discriminator
-  instruction; when discriminators are still missing it names the first one.
-  It is `null` for other buckets, for true no-movement, and for verify
-  documents that predate the after-side signals.
+  evidence moved, read from the verify row's `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`. Satisfaction needs both
+  an explicitly empty missing list and a `yes` discriminate leg; a recorded
+  weaker leg keeps targeted strengthen-the-oracle guidance, an unrecorded
+  discriminate state says satisfaction is unknown, and a still-missing list
+  names the first missing discriminator. The note is `null` for other
+  buckets, for true no-movement, and for verify documents that predate the
+  after-side signals.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
   takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
@@ -7858,7 +7867,9 @@ Field contract:
   an `unchanged` seam whose discriminators are satisfied but whose class
   did not move, both `next_recommendation` and `next_action.recommended_action`
   carry the refined `seam.guidance_note` plus an investigate-the-gate step
-  instead of the static add-discriminator lines.
+  instead of the static add-discriminator lines; a still-weak discriminate
+  leg likewise replaces both lines with the note plus a strengthen-the-oracle
+  step.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,

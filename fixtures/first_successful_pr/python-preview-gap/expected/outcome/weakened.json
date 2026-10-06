@@ -40,6 +40,7 @@
     {
       "activate_delta": null,
       "after": "ungripped",
+      "after_discriminate_state": "missing",
       "after_missing_discriminators": [
         "amount == threshold (equality boundary not observed)"
       ],

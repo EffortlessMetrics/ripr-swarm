@@ -119,6 +119,7 @@ fn targeted_test_outcome_movement_json(movement: &TargetedTestOutcomeMovement) -
         "related_test_delta": movement.related_test_delta,
         "no_movement_reason": movement.no_movement_reason.as_deref(),
         "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
         "after_open_legs": movement.after_open_legs
     })
 }
@@ -172,6 +173,7 @@ fn agent_verify_movement_json(movement: &TargetedTestOutcomeMovement) -> Value {
         "related_test_delta": movement.related_test_delta,
         "no_movement_reason": movement.no_movement_reason.as_deref(),
         "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
         "after_open_legs": movement.after_open_legs
     })
 }
