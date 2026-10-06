@@ -380,7 +380,9 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
 /// store. Anchored to those lines so a path or branch that merely contains
 /// "corrupt" does not read as damage.
 fn git_stderr_names_object_damage(stderr: &str) -> bool {
-    const MARKERS: [&str; 5] = [
+    const MARKERS: [&str; 7] = [
+        "unable to read",
+        "Could not read",
         "unable to unpack",
         "inflate:",
         "bad object",
@@ -434,7 +436,9 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
     {
         return None;
     }
-    let repair = if git_stderr_names_object_damage(&reason) {
+    // The whole stderr, not the displayed line: an `error:` line about a ref
+    // can precede the `fatal:` line that names the object damage.
+    let repair = if git_stderr_names_object_damage(&String::from_utf8_lossy(&output.stderr)) {
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {
@@ -2604,6 +2608,9 @@ mod tests {
             "error: inflate: data stream error (incorrect header check)\n"
         ));
         assert!(git_stderr_names_object_damage("fatal: bad object HEAD\n"));
+        assert!(git_stderr_names_object_damage(
+            "error: refs/heads/feat does not point to a valid object!\nerror: Could not read 0123abc\nfatal: bad object HEAD\n"
+        ));
         // A path or branch that contains the word is not damage.
         assert!(!git_stderr_names_object_damage(
             "fatal: ambiguous argument 'corrupt_input.rs': unknown revision\n"
