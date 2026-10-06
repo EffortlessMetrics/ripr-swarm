@@ -4,7 +4,7 @@ use crate::analysis::classify::{
     TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
     callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
     has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
@@ -42,6 +42,10 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// the change had it been credited, so only that one may be presented
     /// as a possible static limit.
     pub(in crate::analysis) assertion_refusal: Option<AssertionRefusalNote>,
+    /// When Observe is `rust_assertion_context_unestablished`: every refused
+    /// related `assert_eq!` was refused for an analyzer limit, so the gap
+    /// rests on what ripr could not read (RIPR-SPEC-0240).
+    pub(in crate::analysis) refusals_are_analyzer_limits: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -405,6 +409,30 @@ impl ClassifiedProbeEvidence {
                 note.location, note.reason
             ));
         }
+        let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
+            // Only tests that could have credited an oracle: a refused
+            // assertion in a name-only test cannot stand in for the missing
+            // oracle of a reach-bearing one.
+            let credits = oracle_crediting_relations(&context.related_tests);
+            let mut refusals = context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| credits(*reason))
+                .flat_map(|(test, _)| {
+                    test.assertions.iter().filter_map(|assertion| {
+                        pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        )
+                    })
+                });
+            refusals
+                .next()
+                .is_some_and(|first| first.is_analyzer_limit())
+                && refusals.all(|refusal| refusal.is_analyzer_limit())
+        };
 
         Self {
             ripr,
@@ -421,6 +449,7 @@ impl ClassifiedProbeEvidence {
             discriminate,
             reach_ruled_out,
             assertion_refusal,
+            refusals_are_analyzer_limits,
         }
     }
 

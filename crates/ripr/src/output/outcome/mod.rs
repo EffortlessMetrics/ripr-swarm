@@ -254,6 +254,30 @@ pub(crate) fn targeted_test_outcome_report_from_json(
     build_targeted_test_outcome_report(&before, &after, before_path, after_path, heads)
 }
 
+/// Report over caller-validated heads (#5301 item 7). `agent verify`
+/// validates both snapshots first, so re-parsing each 100MB+ document a
+/// fourth time just to read `artifact.repository.head` is dead work: the
+/// validated heads are byte-identical on every path that reaches the report
+/// (validation enforces full-SHA heads, and `snapshot_repository_head`'s
+/// trim is the identity on full SHAs). Callers without validated artifacts
+/// keep the parsing entry point above.
+pub(crate) fn targeted_test_outcome_report_from_json_with_heads(
+    before_json: &str,
+    after_json: &str,
+    before_path: String,
+    after_path: String,
+    before_head: Option<String>,
+    after_head: Option<String>,
+) -> Result<TargetedTestOutcomeReport, String> {
+    let heads = OutcomeHeadIdentity {
+        before_repository_head: before_head,
+        after_repository_head: after_head,
+    };
+    let before = parse_repo_exposure_static_seams(before_json)?;
+    let after = parse_repo_exposure_static_seams(after_json)?;
+    build_targeted_test_outcome_report(&before, &after, before_path, after_path, heads)
+}
+
 /// Compare explicit static before evidence with current targeted-rerun facts.
 ///
 /// The caller must supply the prior artifact explicitly.  A missing selected
