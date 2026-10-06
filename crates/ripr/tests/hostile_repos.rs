@@ -677,12 +677,8 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                     .trim()
                     .to_string();
                 let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
-                let mut permissions = fs::metadata(&object)
-                    .map_err(|e| format!("object missing: {e}"))?
-                    .permissions();
-                permissions.set_readonly(false);
-                fs::set_permissions(&object, permissions)
-                    .map_err(|e| format!("chmod failed: {e}"))?;
+                // Loose objects are read-only; replace the file instead.
+                fs::remove_file(&object).map_err(|e| format!("object missing: {e}"))?;
                 fs::write(&object, b"junk").map_err(|e| format!("write failed: {e}"))
             },
             &["git fsck"],
