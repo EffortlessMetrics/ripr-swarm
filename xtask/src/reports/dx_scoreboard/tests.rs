@@ -809,6 +809,9 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     // An argument that mimics the population marker cannot hide the rest.
     let mut marker = receipt.clone();
     marker["repos"][0]["cargo_mutants_args"] = json!([" population=[]"]);
+    // A different harness timeout turns slow caught mutants into timeouts.
+    let mut timed = receipt.clone();
+    timed["repos"][0]["mutant_timeout_secs"] = json!(5);
     for changed in [
         &swapped,
         &moved,
@@ -817,8 +820,44 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         &recorded,
         &reselected,
         &marker,
+        &timed,
     ] {
         assert_eq!(comparable_against(changed)?, vec![Some(false); 4]);
+    }
+    // An unrecorded cargo-mutants version could hide an instrument change,
+    // so it is not comparable even against a baseline that also lacks it.
+    let mut unversioned = receipt.clone();
+    unversioned["repos"][1]["cargo_mutants_version"] = Value::Null;
+    let unversioned_samples = parse_ingest(&unversioned, &config)?;
+    let unversioned_baseline = build_report(
+        &config,
+        &["trust".to_string()],
+        &unversioned_samples,
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &unversioned_samples,
+        &context("r"),
+        Some(&unversioned_baseline),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.gap_claim_agreement")?["baseline"]["comparable"].as_bool(),
+        Some(false)
+    );
+    for (field, malformed) in [
+        ("cargo_mutants_version", json!("")),
+        ("cargo_mutants_version", json!(27)),
+        ("mutant_timeout_secs", json!(0)),
+        ("mutant_timeout_secs", json!("60")),
+    ] {
+        let mut bad = receipt.clone();
+        bad["repos"][0][field] = malformed;
+        assert!(mutation_spot_check_to_input(&bad).is_err(), "{field}");
     }
     let samples = parse_ingest(&swapped, &config)?;
     let report = build_report(

@@ -305,6 +305,8 @@ struct RepoRun {
     /// recorded anywhere this harness can read.
     cargo_mutants_args: Option<Vec<String>>,
     cargo_mutants_version: Option<String>,
+    /// The harness's per-mutant timeout; `None` for a supplied `mutants.out`.
+    mutant_timeout_secs: Option<u64>,
     mutant_set_sha256: String,
     metrics: Value,
     records: Vec<Record>,
@@ -409,6 +411,8 @@ fn spot_check_repo(
         } else {
             Some(options.mutants_args.get(name).cloned().unwrap_or_default())
         },
+        mutant_timeout_secs: (!options.mutants_out.contains_key(name))
+            .then_some(options.mutant_timeout_secs),
         mutant_set_sha256: mutant_set_sha256(&mutant_records)
             .map_err(|err| format!("`{name}`: {err}"))?,
         cargo_mutants_version: outcomes
@@ -999,7 +1003,13 @@ fn agreement(family: &str, outcome: &str) -> &'static str {
 fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
         BTreeMap::new();
-    let mut scored: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    // Both families are always reported, so a run that scores only one
+    // still ingests; the empty family carries a null rate (#6135 review).
+    let mut scored: BTreeMap<&str, BTreeMap<&str, usize>> =
+        ["claims_discriminator", "claims_no_discriminator"]
+            .into_iter()
+            .map(|family| (family, BTreeMap::new()))
+            .collect();
     let mut seams_scored: BTreeMap<&str, BTreeSet<(String, String)>> = BTreeMap::new();
     let mut disagreements: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     let mut example_seams = BTreeSet::new();
@@ -1077,6 +1087,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
             "exposure_run_status": repo.exposure_run_status,
             "cargo_mutants_args": repo.cargo_mutants_args,
             "cargo_mutants_version": repo.cargo_mutants_version,
+            "mutant_timeout_secs": repo.mutant_timeout_secs,
             "mutant_set_sha256": repo.mutant_set_sha256,
             "calibration_metrics": repo.metrics,
             "pairings": pairing_counts(&repo.records),
@@ -1769,6 +1780,7 @@ mod tests {
             exposure_run_status: None,
             cargo_mutants_args: Some(Vec::new()),
             cargo_mutants_version: Some("27.1.0".to_string()),
+            mutant_timeout_secs: Some(60),
             mutant_set_sha256: "0".repeat(64),
             metrics: Value::Null,
             records,
@@ -1795,6 +1807,50 @@ mod tests {
             .filter_map(|outcome| outcome.pointer("/scenario/Mutant").cloned())
             .collect::<Vec<_>>();
         Ok(mutant_genres(&Value::Array(mutants)))
+    }
+
+    #[test]
+    fn a_run_scoring_one_family_still_ingests() -> Result<(), String> {
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "missed"}}
+            ]),
+            json!([]),
+            json!([]),
+            json!([]),
+        );
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "i > 0"}]});
+        let genres = [(
+            "src/a.rs:3:9: replace > with < in f".to_string(),
+            "BinaryOperator".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let mut run = repo_run(classify_records(&calibration, &exposure, &genres)?);
+        run.metrics = json!({"mutants_total": 1});
+        let report = build_report(&[run], 5);
+        let clean = &report["scored_families"]["claims_discriminator"];
+        assert_eq!(clean["mutants_scored"], 0);
+        assert!(clean["agreement_rate"].is_null());
+        assert_eq!(
+            report["scored_families"]["claims_no_discriminator"]["mutants_scored"],
+            1
+        );
+        let input = crate::reports::dx_scoreboard::mutation_spot_check_to_input(&report)?;
+        let ids: Vec<_> = input["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["id"].as_str())
+            .collect();
+        assert!(ids.contains(&"trust.gap_claim_agreement"), "{ids:?}");
+        assert!(
+            !ids.contains(&"trust.discriminator_claim_agreement"),
+            "{ids:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1985,7 +2041,11 @@ mod tests {
             pairings["excluded"],
             json!({"unmatched_no_containing_seam": 2})
         );
-        assert_eq!(report["scored_families"], json!({}));
+        // Nothing is scored, yet both families stay present with null rates.
+        for family in ["claims_discriminator", "claims_no_discriminator"] {
+            assert_eq!(report["scored_families"][family]["mutants_scored"], 0);
+            assert!(report["scored_families"][family]["agreement_rate"].is_null());
+        }
         Ok(())
     }
 }

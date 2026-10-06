@@ -35,9 +35,10 @@ passes one argument to that repository's cargo-mutants run, and can be
 repeated. Use it to narrow the run (`--file`, `--re`) or to choose packages
 (`--package`, `--workspace`, which can widen it). The receipt records the
 arguments, so the run can be reproduced, and the scoreboard marks rates from
-runs with extra arguments. A supplied `--mutants-out` records
-`cargo_mutants_args: null`, because the harness cannot see how that run was
-invoked. Every repository also records `mutant_set_sha256`, a digest of the
+runs with extra arguments. Each repository also records the
+`mutant_timeout_secs` it ran with. A supplied `--mutants-out` records
+`cargo_mutants_args: null` and `mutant_timeout_secs: null`, because the
+harness cannot see how that run was invoked. Every repository also records `mutant_set_sha256`, a digest of the
 sorted mutant names, so two receipts over different mutant selections never
 read as the same population on the scoreboard.
 Each value is one argument (`--re=decode`, not `--re decode`). Options the

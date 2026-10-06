@@ -1070,12 +1070,25 @@ fn population_member(repo: &Value) -> Option<Value> {
         Value::Array(args) if args.iter().all(Value::is_string) => Value::Array(args.clone()),
         _ => return None,
     };
+    let version = match &repo["cargo_mutants_version"] {
+        Value::Null => Value::Null,
+        Value::String(version) if !version.is_empty() => json!(version),
+        _ => return None,
+    };
+    // A shorter timeout turns slow caught mutants into timeouts, which are
+    // unscoreable, so it moves the pooled rate like a selection change.
+    let timeout = match &repo["mutant_timeout_secs"] {
+        Value::Null => Value::Null,
+        Value::Number(secs) if secs.as_u64().is_some_and(|secs| secs > 0) => json!(secs),
+        _ => return None,
+    };
     Some(json!({
         "name": name,
         "revision": revision,
-        "cargo_mutants_version": repo["cargo_mutants_version"],
+        "cargo_mutants_version": version,
         "mutant_set_sha256": mutant_set,
         "cargo_mutants_args": args,
+        "mutant_timeout_secs": timeout,
     }))
 }
 
@@ -1083,6 +1096,14 @@ fn population_member(repo: &Value) -> Option<Value> {
 /// evidence of each of its samples. `None` when a sample predates the suffix,
 /// does not decode, or disagrees with another sample, so none of those can
 /// pass as a known population.
+fn has_unknown_cargo_mutants_version(population: Option<&Value>) -> bool {
+    population.and_then(Value::as_array).is_some_and(|members| {
+        members
+            .iter()
+            .any(|member| member["cargo_mutants_version"].is_null())
+    })
+}
+
 fn spot_check_population(row: &Value) -> Option<Value> {
     let samples = row["samples"].as_array()?;
     let mut populations = samples.iter().map(|sample| {
@@ -2070,7 +2091,9 @@ pub(crate) fn compare_with_baseline(
         // runs is a different population, not a trend.
         let before = spot_check_population(base_row);
         let now = spot_check_population(row);
-        if before.is_none() || before != now {
+        // An unrecorded cargo-mutants version could hide an instrument
+        // change, so it matches nothing, not even another unrecorded one.
+        if before.is_none() || before != now || has_unknown_cargo_mutants_version(now.as_ref()) {
             return json!({
                 "comparable": false,
                 "value": base_row["value"],
