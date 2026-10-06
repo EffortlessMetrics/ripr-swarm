@@ -179,8 +179,15 @@ mod tests {
                 "--nocapture",
             ])
             .env("RIPR_PANIC_HOOK_CHILD", "hostile")
+            .env("RUST_BACKTRACE", "0")
             .output()
             .map_err(|err| format!("failed to run hostile panic-hook child: {err}"))?;
+        if output.status.code() != Some(2) {
+            return Err(format!(
+                "hostile panic-hook child exited with {:?}",
+                output.status.code()
+            ));
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains('\u{1b}') || stderr.contains('\u{202e}') {
             return Err(format!("panic hook printed raw control text: {stderr:?}"));
