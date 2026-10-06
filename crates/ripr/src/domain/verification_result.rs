@@ -537,4 +537,31 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn command_spec_digest_ignores_display_but_covers_typed_route() -> Result<(), String> {
+        let spec = command_spec();
+        let base = command_spec_sha256(&spec).map_err(|error| error.to_string())?;
+
+        let mut relabeled = spec.clone();
+        relabeled.display = "cargo test boundary # /other/checkout".to_string();
+        let relabeled = command_spec_sha256(&relabeled).map_err(|error| error.to_string())?;
+        if relabeled != base {
+            return Err("a display-only change moved the command identity".to_string());
+        }
+
+        let mut reargued = spec.clone();
+        reargued.args.push("--exact".to_string());
+        let mut recwd = spec.clone();
+        recwd.cwd = "crates".to_string();
+        let mut rewritten = spec;
+        rewritten.network_policy = NetworkPolicy::Unrestricted;
+        for (label, changed) in [("args", reargued), ("cwd", recwd), ("policy", rewritten)] {
+            let digest = command_spec_sha256(&changed).map_err(|error| error.to_string())?;
+            if digest == base {
+                return Err(format!("a {label} change kept the command identity"));
+            }
+        }
+        Ok(())
+    }
 }
