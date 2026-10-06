@@ -736,6 +736,120 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
+    // The metric block mirrors scoreboards.toml (25% / 30 s floor on install,
+    // 25% / 60 s on time to first result) but is inlined so the test stays
+    // hermetic: update both copies when those thresholds change.
+    let config = parse_config(&MINIMAL.replace(
+        "[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    ))?;
+    let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
+        let mut receipt = first_run_receipt(true);
+        let steps = receipt["setup"]
+            .as_array_mut()
+            .ok_or("receipt setup missing")?;
+        for step in steps.iter_mut() {
+            if step["step"].as_str() == Some("install_published") {
+                step["secs"] = json!(secs);
+            }
+        }
+        parse_ingest(&receipt, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &with_install(128.0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &all_boards(),
+            &with_install(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    // 128 s allows the larger of 25% (32 s) and the 30 s floor: 160 s passes.
+    assert_eq!(
+        gate(158.0, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(170.0, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(170.0, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
+fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl because only the row
+    // converter emits walk seconds and failed steps; the summary receipt cannot
+    // fail the gate on either.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let boards = vec!["first_run".to_string()];
+    let rows = |walk: f64, check_exit: i32| -> Result<Vec<Sample>, String> {
+        let text = [
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":{walk},"budget":60,"better":"lower"}}"#),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":{check_exit},"budget":0,"better":"equal"}}"#),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &boards,
+        &rows(5.0, 0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |walk: f64, exit: i32| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &boards,
+            &rows(walk, exit)?,
+            &context("runner-a"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(gate(5.0, 0)?["gate"]["status"].as_str(), Some("pass"));
+    let slower = gate(20.0, 0)?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.walk_secs"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    let failed = gate(5.0, 1)?;
+    assert_eq!(failed["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&failed).contains("first_run.failed_steps"),
+        "{}",
+        gate_failure_message(&failed)
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,
@@ -1992,4 +2106,110 @@ fn the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard() -> Result<(),
     let _ = fs::remove_dir_all(&root);
     assert_eq!(text, "earlier step\n# DX scoreboard\n");
     Ok(())
+}
+
+#[test]
+fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
+    let cpuinfo = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD EPYC 7763 64-Core Processor\n\nprocessor\t: 1\nmodel name\t: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\n";
+    assert_eq!(
+        super::measure::cpu_model_slug(cpuinfo).as_deref(),
+        Some("amd-epyc-7763-64-core-processor")
+    );
+    assert_eq!(
+        super::measure::cpu_model_slug(
+            "model name\t: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\n"
+        )
+        .as_deref(),
+        Some("intel-r-xeon-r-platinum-8370c-cpu-2-80ghz")
+    );
+    assert_eq!(super::measure::cpu_model_slug("processor\t: 0\n"), None);
+    assert_eq!(super::measure::cpu_model_slug("model name\t:  \n"), None);
+    assert_eq!(
+        super::measure::cpu_model_slug(
+            "processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\nCPU part\t: 0xd0c\n"
+        )
+        .as_deref(),
+        Some("arm-0x41-0xd0c")
+    );
+    assert_eq!(
+        super::measure::cpu_model_slug("CPU implementer\t: 0x41\n"),
+        None
+    );
+}
+
+#[test]
+fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo()
+-> Result<(), String> {
+    // An empty `.git` makes git fall through to the enclosing repository,
+    // here the `parent` repo the test creates, and the pin checkout would
+    // then detach that repo's own working tree.
+    let root = std::env::temp_dir().join(format!("ripr-dx-own-checkout-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let parent = root.join("parent");
+    let corpus = parent.join("corpus");
+    fs::create_dir_all(corpus.join("serde").join(".git")).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&parent), args);
+    git(&["init", "--quiet"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "a",
+    ])?;
+    let parent_head = git(&["rev-parse", "HEAD"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "b",
+    ])?;
+    let parent_tip = git(&["symbolic-ref", "HEAD"])?;
+    let options = parse_options(&["--corpus-dir".to_string(), corpus.display().to_string()])?;
+    let entry = CorpusEntry {
+        id: "serde".to_string(),
+        url: String::new(),
+        // A pin the parent repo can check out, so only the guard stops it.
+        sha: parent_head.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+    };
+
+    let refused = super::measure::prepare_checkout(&entry, &options);
+    let tip_after = git(&["symbolic-ref", "HEAD"]);
+    let accepted = super::measure::verify_own_checkout(
+        &fs::canonicalize(&parent).map_err(|err| err.to_string())?,
+    );
+    let _ = fs::remove_dir_all(&root);
+
+    let err = refused.err().ok_or("a broken .git must be refused")?;
+    assert!(err.contains("is not its own git checkout"), "{err}");
+    assert_eq!(
+        tip_after?, parent_tip,
+        "the parent repo must stay on its branch"
+    );
+    accepted
+}
+
+#[test]
+fn a_checkout_whose_directory_name_ends_in_a_space_is_its_own_checkout() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!("ripr-dx-spaced-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let dir = root.join("demo ");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    super::measure::git(Some(&dir), &["init", "--quiet"])?;
+    let dir = fs::canonicalize(&dir).map_err(|err| err.to_string())?;
+    let verdict = super::measure::verify_own_checkout(&dir);
+    let _ = fs::remove_dir_all(&root);
+    verdict
 }

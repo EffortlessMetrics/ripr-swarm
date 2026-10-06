@@ -304,7 +304,6 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
-RIPR-SPEC-0197: a refused assert_eq! discloses why it was not credited; a refused context no longer claims no assertion or oracle was detected
 
 Command:
 `cargo xtask goldens bless rust_async_fn_owner --reason "..."`
@@ -342,7 +341,34 @@ Updated:
 ## Pending — rust_async_fn_owner (15)
 
 Reason:
-RIPR-SPEC-0197/RIPR-SPEC-0224: combine refusal disclosure with examined-test miss rows after merging main
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (16)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (17)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
 
 Command:
 `cargo xtask goldens bless rust_async_fn_owner --reason "..."`

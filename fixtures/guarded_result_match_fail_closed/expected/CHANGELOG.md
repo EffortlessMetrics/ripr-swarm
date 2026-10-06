@@ -180,33 +180,6 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
-RIPR-SPEC-0197: a refused assert_eq! discloses why it was not credited; a refused context no longer claims no assertion or oracle was detected
-
-Command:
-`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — guarded_result_match_fail_closed (14)
-
-Reason:
-RIPR-SPEC-0197: refusal guidance names the missing standard assert_eq! execution or binding
-
-Command:
-`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — guarded_result_match_fail_closed (15)
-
-Reason:
-RIPR-SPEC-0197: refusal wording names nested versus cfg-gated tests and points at the not-credited note
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
@@ -270,7 +243,34 @@ Updated:
 ## Pending — guarded_result_match_fail_closed (18)
 
 Reason:
-RIPR-SPEC-0197: static-limit guidance only for a refused assert_eq! that calls the changed owner; this refused Ok-arm assertion cannot observe the error path, so the generic establish-the-assertion step applies (#5359 Codex P1)
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (19)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (20)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`

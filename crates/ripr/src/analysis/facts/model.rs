@@ -231,7 +231,17 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
 /// and the cache kept admitting a target that now resolves outside the root
 /// (#5478). The link target covers a symlink retargeted to another symlink
 /// where no file identity is available (Windows); ctime cannot be set by a
-/// user and changes when a freed inode number is reused.
+/// user and changes when a freed inode number is reused, or when the file is
+/// rewritten in place in a later timestamp tick (kernels before Linux 6.13
+/// advance ctime per jiffy, so a rewrite within the same tick still matches).
+///
+/// Windows limit (#6755): std exposes no stable change time or file id there,
+/// so a file rewritten in place with the same length and a restored mtime
+/// keeps its fingerprint until the next index build. Accepted: it needs a
+/// deliberate mtime forgery between indexing and admission, the file stays
+/// inside the root, and re-hashing on every check would put file reads back
+/// on the admission hot path. Revisit when `MetadataExt::change_time`
+/// stabilizes.
 fn append_entry_fingerprint(output: &mut String, path: &Path) {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -775,7 +785,6 @@ pub struct FileFacts {
     pub path: PathBuf,
     pub functions: Vec<FunctionFact>,
     pub tests: Vec<TestFact>,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFact>,
@@ -804,6 +813,26 @@ pub struct FileFacts {
     /// cache and bound by its semantic payload digest. Reference-counted so
     /// child [`SourceText`] spans share this allocation (#5415 step 2).
     pub source: Arc<str>,
+}
+
+impl FileFacts {
+    /// File-level calls derived from per-function calls (#5415 step 3):
+    /// every test fn is also present in [`Self::functions`], so functions
+    /// alone reproduce the removed stored set — sorted by (line, name),
+    /// deduped by (line, name, text). Call text is the whole trimmed
+    /// source line, so the file level is effectively (line, name)-unique.
+    /// Test-gated: no production consumer reads the file-level set.
+    #[cfg(test)]
+    pub(crate) fn file_calls(&self) -> Vec<CallFact> {
+        let mut calls: Vec<CallFact> = self
+            .functions
+            .iter()
+            .flat_map(|function| function.calls.iter().cloned())
+            .collect();
+        calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
+        calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
+        calls
+    }
 }
 
 /// Producer-owned source role for one indexed Rust function (#3531).
@@ -1355,7 +1384,6 @@ pub(crate) struct FileFactsWire {
     pub path: PathBuf,
     pub functions: Vec<FunctionFactWire>,
     pub tests: Vec<TestFactWire>,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFactWire>,
@@ -1497,7 +1525,6 @@ impl From<&FileFacts> for FileFactsWire {
                 .iter()
                 .map(|fact| TestFactWire::attached(fact, &facts.source))
                 .collect(),
-            calls: facts.calls.clone(),
             returns: facts.returns.clone(),
             literals: facts.literals.clone(),
             probe_shapes: facts
@@ -1585,7 +1612,6 @@ impl FileFactsWire {
             path: self.path,
             functions,
             tests,
-            calls: self.calls,
             returns: self.returns,
             literals: self.literals,
             probe_shapes,
@@ -1740,7 +1766,7 @@ mod tests {
         assert!(facts.path.as_os_str().is_empty());
         assert!(facts.functions.is_empty());
         assert!(facts.tests.is_empty());
-        assert!(facts.calls.is_empty());
+        assert!(facts.file_calls().is_empty());
         assert!(facts.returns.is_empty());
         assert!(facts.literals.is_empty());
         assert!(facts.probe_shapes.is_empty());
@@ -1892,7 +1918,6 @@ mod tests {
                 impl_context: FunctionImplContext::Unknown,
             }],
             tests: Vec::new(),
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: vec![ProbeShapeFact {
@@ -1929,6 +1954,126 @@ mod tests {
             assert!(child.is_some_and(|arc| Arc::ptr_eq(arc, &decoded.source)));
         }
         assert_eq!(decoded, facts);
+        Ok(())
+    }
+
+    /// #5415 step 3: file-level calls are derived from per-function calls,
+    /// never stored — a stored copy would duplicate every per-function
+    /// call in memory and in cache JSON. Per-function calls stay.
+    #[test]
+    fn file_level_calls_are_not_stored_in_cache_json() -> Result<(), serde_json::Error> {
+        let source: Arc<str> = Arc::from("fn a() {\n    helper();\n}\n");
+        let call = CallFact {
+            line: 2,
+            name: "helper".to_string(),
+            text: "helper()".to_string(),
+        };
+        let facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![FunctionFact {
+                id: SymbolId("src/lib.rs::a".to_string()),
+                name: "a".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 1,
+                end_line: 3,
+                body: SourceText::shared_or_owned(&source, 0, "fn a() {\n    helper();\n}"),
+                calls: vec![call],
+                returns: Vec::new(),
+                literals: Vec::new(),
+                source_role: FunctionSourceRole::Production,
+                attrs: Vec::new(),
+                impl_attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+                item: FunctionItemFact::default(),
+                impl_context: FunctionImplContext::Unknown,
+            }],
+            tests: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            probe_shapes: Vec::new(),
+            used_lexical_fallback: false,
+            module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
+            role_provenance: SourceRoleProvenance::default(),
+            source: Arc::clone(&source),
+        };
+        let wire = serde_json::to_value(&facts)?;
+        assert!(
+            wire.get("calls").is_none(),
+            "file-level calls must be derived, not stored"
+        );
+        assert_eq!(
+            wire["functions"][0]["calls"].as_array().map(Vec::len),
+            Some(1),
+            "per-function calls are the retained authority"
+        );
+        Ok(())
+    }
+
+    /// #5415 step 3: the derived file-level set is pinned explicitly per
+    /// producer — an independent oracle, not a re-implementation of the
+    /// derivation. Each entry below was verified by hand against the
+    /// fixture source: declaration calls, nested-fn overlap collapsing
+    /// under the parser (the lexical scanner skips nested fn lines, so it
+    /// never overlaps), whole-trimmed-line text collapsing same-line
+    /// repeats, and test fns (also present in `functions`) adding no
+    /// second copy.
+    #[test]
+    fn derived_file_calls_match_pinned_producer_sets() -> Result<(), String> {
+        use crate::analysis::syntax::{
+            LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
+        };
+        const FIXTURE: &str = "\
+fn outer() {
+    helper(1);
+    fn inner() {
+        helper(2);
+    }
+    inner();
+}
+fn helper(n: u32) {
+    helper(n);
+}
+#[test]
+fn checks_helper() {
+    helper(3); helper(4);
+}
+";
+        // (line, name, text) in derived order. Both producers agree on this
+        // fixture; they differ only in per-function totals below.
+        const EXPECTED: [(usize, &str, &str); 9] = [
+            (1, "outer", "fn outer() {"),
+            (2, "helper", "helper(1);"),
+            (3, "inner", "fn inner() {"),
+            (4, "helper", "helper(2);"),
+            (6, "inner", "inner();"),
+            (8, "helper", "fn helper(n: u32) {"),
+            (9, "helper", "helper(n);"),
+            (12, "checks_helper", "fn checks_helper() {"),
+            (13, "helper", "helper(3); helper(4);"),
+        ];
+        let path = PathBuf::from("src/lib.rs");
+        let parser = RaRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
+        let lexical = LexicalRustSyntaxAdapter.summarize_file(&path, FIXTURE)?;
+        // The parser records the nested fn separately, so two of its 11
+        // per-function calls collapse; the lexical scanner holds 9
+        // disjoint per-function calls.
+        for (producer, facts, per_function_total) in
+            [("parser", &parser, 11), ("lexical", &lexical, 9)]
+        {
+            let per_function: usize = facts.functions.iter().map(|f| f.calls.len()).sum();
+            assert_eq!(
+                per_function, per_function_total,
+                "{producer} per-function shape changed; re-verify the pin"
+            );
+            let derived = facts.file_calls();
+            let simplified: Vec<(usize, &str, &str)> = derived
+                .iter()
+                .map(|call| (call.line, call.name.as_str(), call.text.as_str()))
+                .collect();
+            assert_eq!(simplified, EXPECTED, "{producer} derived set");
+        }
         Ok(())
     }
 
@@ -2051,7 +2196,6 @@ mod tests {
                 impl_context: FunctionImplContext::Unknown,
             }],
             tests: Vec::new(),
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: Vec::new(),
@@ -2340,11 +2484,127 @@ mod tests {
         Ok(())
     }
 
+    /// A file symlink for the swap fixtures below.
+    #[cfg(any(unix, windows))]
+    fn link_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        let result = std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        let result = std::os::windows::fs::symlink_file(target, link);
+        result
+    }
+
+    /// `link_file` for a fixture's first link: `Ok(false)` when this host may
+    /// not create symlinks. Unprivileged Windows hosts report
+    /// ERROR_PRIVILEGE_NOT_HELD (os error 1314) rather than PermissionDenied.
+    #[cfg(any(unix, windows))]
+    fn try_link_file(target: &Path, link: &Path) -> std::io::Result<bool> {
+        match link_file(target, link) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if cfg!(windows)
+                    && (error.kind() == std::io::ErrorKind::PermissionDenied
+                        || error.raw_os_error() == Some(1314)) =>
+            {
+                eprintln!("skipping symlink swap fixture: symlinks not permitted ({error})");
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// #6755: rewrite the test file in place with different bytes of the same
+    /// length and restore its mtime. On Unix the entry's ctime moves (a user
+    /// cannot set it), so the cached "current" answer is dropped. Windows has
+    /// no stable change time in std; there this rewrite is a documented limit.
+    #[cfg(unix)]
+    #[test]
+    fn in_place_rewrite_with_same_size_and_mtime_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-authority-in-place-rewrite-{}-{stamp}",
+            std::process::id()
+        ));
+        let _cleanup = FixtureCleanup(root.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let test_source = "#[test]\nfn source_test() { assert_eq!(1, 1); }\n";
+        let rewritten = "#[test]\nfn source_test() { assert_eq!(2, 2); }\n";
+        assert_eq!(test_source.len(), rewritten.len());
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (PathBuf::from("pkg/tests/lib.rs"), test_source),
+        ];
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).into(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, test_source));
+
+        use std::os::unix::fs::MetadataExt;
+        let file = root.join(test);
+        let before = std::fs::metadata(&file)?;
+        let modified = before.modified()?;
+        let ctime = |metadata: &std::fs::Metadata| (metadata.ctime(), metadata.ctime_nsec());
+        // Kernels before Linux 6.13 advance ctime once per jiffy (1-10 ms) and
+        // HFS+ once per second, so a rewrite in the same tick keeps it; repeat
+        // until the tick has moved, for up to three seconds.
+        let mut after = before.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            std::fs::write(&file, rewritten)?;
+            std::fs::File::options()
+                .write(true)
+                .open(&file)?
+                .set_modified(modified)?;
+            after = std::fs::metadata(&file)?;
+            if ctime(&after) != ctime(&before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_ne!(ctime(&after), ctime(&before), "fixture must move ctime");
+        assert_eq!(after.modified()?, modified, "fixture must keep the mtime");
+        assert_eq!(after.len(), test_source.len() as u64);
+
+        assert!(!authority.validates_target(test, source, test_source));
+        Ok(())
+    }
+
     /// #5478: swap the test file for a symlink to identical bytes outside the
     /// root, with the same size and mtime, after the cache saw it current.
     /// Under load the original write and the copy land in one mtime tick; the
     /// test pins that case by copying the mtime instead of racing for it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn symlink_swap_with_same_size_and_mtime_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2411,7 +2671,9 @@ mod tests {
             .open(&escaped)?
             .set_modified(modified)?;
         std::fs::remove_file(&original)?;
-        std::os::unix::fs::symlink(&escaped, &original)?;
+        if !try_link_file(&escaped, &original)? {
+            return Ok(());
+        }
         let followed = std::fs::metadata(&original)?;
         assert_eq!(
             followed.modified()?,
@@ -2427,7 +2689,7 @@ mod tests {
     /// #5478 review: a test file that is already a symlink inside the root,
     /// retargeted to an outside copy with the same size and mtime. Its
     /// `link` flag never changes, so the link target and identity must.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn symlink_retarget_with_same_size_and_mtime_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2464,7 +2726,9 @@ mod tests {
         let inside = root.join("pkg/tests/real.rs");
         std::fs::write(&inside, test_source)?;
         let link = root.join(&sources[1].0);
-        std::os::unix::fs::symlink("real.rs", &link)?;
+        if !try_link_file(Path::new("real.rs"), &link)? {
+            return Ok(());
+        }
         let files = sources
             .iter()
             .map(|(path, source)| {
@@ -2491,7 +2755,7 @@ mod tests {
             .open(&escaped)?
             .set_modified(modified)?;
         std::fs::remove_file(&link)?;
-        std::os::unix::fs::symlink(&escaped, &link)?;
+        link_file(&escaped, &link)?;
         let followed = std::fs::metadata(&link)?;
         assert_eq!(
             followed.modified()?,
@@ -2508,7 +2772,7 @@ mod tests {
     /// at an in-root file. Moving that file outside (same inode, size, mtime)
     /// and retargeting the intermediate link changes neither the test file's
     /// entry nor the followed file, only where the chain resolves.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn chained_symlink_retarget_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2545,8 +2809,10 @@ mod tests {
         let real = root.join("pkg/src/real.rs");
         std::fs::write(&real, test_source)?;
         let intermediate = root.join("pkg/src/intermediate.rs");
-        std::os::unix::fs::symlink(&real, &intermediate)?;
-        std::os::unix::fs::symlink(&intermediate, root.join(&sources[1].0))?;
+        if !try_link_file(&real, &intermediate)? {
+            return Ok(());
+        }
+        link_file(&intermediate, &root.join(&sources[1].0))?;
         let files = sources
             .iter()
             .map(|(path, source)| {
@@ -2568,9 +2834,10 @@ mod tests {
         let moved = outside.join("real.rs");
         std::fs::rename(&real, &moved)?;
         std::fs::remove_file(&intermediate)?;
-        std::os::unix::fs::symlink(&moved, &intermediate)?;
+        link_file(&moved, &intermediate)?;
+        // Compare canonical forms: Windows canonicalizes to a `\\?\` path.
         assert!(
-            std::fs::canonicalize(root.join(test))?.starts_with(&outside),
+            std::fs::canonicalize(root.join(test))?.starts_with(std::fs::canonicalize(&outside)?),
             "fixture must resolve outside the root"
         );
 

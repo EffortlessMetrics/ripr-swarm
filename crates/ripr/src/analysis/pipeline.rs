@@ -5296,6 +5296,7 @@ index 0000000..1111111 100644
             line_budget: 50,
             budget_disclosures: Vec::new(),
             selected_files: vec!["src/lib.rs".to_string()],
+            unselected_files: vec!["src/other.rs".to_string()],
             selected_changed_lines: 70,
             uninspected_files_lower_bound: usize::from(uninspected_lines > 0),
             uninspected_changed_lines_lower_bound: uninspected_lines,

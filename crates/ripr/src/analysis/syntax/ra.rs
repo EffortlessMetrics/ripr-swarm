@@ -387,7 +387,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     let module_declarations = module_declaration_facts(&source, &line_index);
     let mut functions = Vec::new();
     let mut tests = Vec::new();
-    let mut file_calls = Vec::new();
     let mut file_returns = Vec::new();
     let mut file_literals = Vec::new();
     let mut file_probe_shapes = Vec::new();
@@ -447,7 +446,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let (nested_fn_names, let_bindings) =
             collect_body_shadow_facts(&function, &|offset| line_index.line(offset), start_line);
 
-        file_calls.extend(calls.clone());
         file_returns.extend(returns.clone());
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
@@ -496,8 +494,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     disambiguate_duplicate_symbol_ids(&mut functions);
 
-    file_calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    file_calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     file_returns.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     file_returns.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     file_literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
@@ -520,7 +516,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         path: path_buf,
         functions,
         tests,
-        calls: file_calls,
         returns: file_returns,
         literals: file_literals,
         probe_shapes: file_probe_shapes,
@@ -1774,16 +1769,18 @@ fn extract_parser_oracles(
 /// over — a leaf ident like `snapshot_helper` must not classify, while
 /// `assert_snapshot` / `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
+    // `matches!` computes a bool. Only an asserting wrapper observes it;
+    // admitting the computation itself credits discarded values (#5713).
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     matches!(
         macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }
@@ -2381,7 +2378,6 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             path: std::path::PathBuf::from("nonexistent.rs"),
             functions: vec![],
             tests: vec![],
-            calls: vec![],
             returns: vec![],
             literals: vec![],
             probe_shapes: vec![],

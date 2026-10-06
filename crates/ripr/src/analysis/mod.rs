@@ -49,9 +49,10 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline_core, load_worktree_diff, no_merge_base_diagnosis,
-    parse_unified_diff, resolve_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes,
+    load_diff, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -70,6 +71,8 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
+#[cfg(all(test, feature = "lang-perl"))]
+pub(crate) use language::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
 };
@@ -79,6 +82,8 @@ pub(crate) use seam_classification::ClassifiedSeam;
 pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
+#[cfg(test)]
+pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
@@ -498,6 +503,99 @@ fn push_stable_path_text(output: &mut String, text: &str) {
         } else {
             output.push(character);
         }
+    }
+}
+
+/// The inverse of [`stable_path_text`]'s `%` layer: `%XX` with uppercase hex
+/// — the only spelling the encoder emits — decodes to its byte, so `%25`
+/// recovers a literal `%` and `%FF` a non-UTF-8 `0xFF` byte. Anything else
+/// (lowercase hex, a stray `%`, plain text) stays literal, so input the
+/// encoder never emitted cannot manufacture a separator or merge two
+/// distinct names (#6874). This is not URI decoding: the stable scheme is
+/// its own, and only its own spellings decode.
+pub(crate) fn decode_stable_path_text(text: &str) -> PathBuf {
+    let bytes = text.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest[0] == b'%'
+            && rest.len() >= 3
+            && let Some(high) = uppercase_hex_value(rest[1])
+            && let Some(low) = uppercase_hex_value(rest[2])
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+        } else {
+            decoded.push(rest[0]);
+            index += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(decoded))
+    }
+    #[cfg(not(unix))]
+    {
+        // The same-host encoder output is always valid UTF-8 (a lossy
+        // source plus ASCII escapes), so honest input always decodes;
+        // foreign text keeps its literal spelling and matches only itself.
+        String::from_utf8(decoded).map_or_else(|_| PathBuf::from(text), PathBuf::from)
+    }
+}
+
+fn uppercase_hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// The one renderer for a finding's file location across every surface
+/// (#5996): workspace-relative with the CLI `./` prefix when the location
+/// lives inside the analyzed root, its plain spelling otherwise — never the
+/// Windows verbatim `//?/` drive form, which external consumers cannot join
+/// against a workspace. A relative location passes through with stable
+/// separators, so a producer that already names the workspace (the CLI's
+/// `./src/main.rs`) keeps its exact rendering on every surface.
+pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
+    finding_location_text_with_platform(root, file, cfg!(windows))
+}
+
+/// The pure core of [`finding_location_text`]: the platform flag stands in
+/// for `cfg!(windows)` so the verbatim-prefix behavior is testable on every
+/// host, the same pure-over-platform pattern the human path renderer uses.
+pub(crate) fn finding_location_text_with_platform(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+) -> String {
+    let file = plain_drive_verbatim_path(file, windows);
+    let root = plain_drive_verbatim_path(root, windows);
+    let relative = file
+        .strip_prefix(&root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty());
+    match relative {
+        Some(relative) => format!("./{}", stable_path_text(relative)),
+        None => stable_path_text(&file),
+    }
+}
+
+/// Strip the Windows verbatim prefix from a drive-letter path: the verbatim
+/// spelling and the plain drive spelling name the same file, and every other
+/// surface renders the plain one. Other verbatim forms (`\\?\UNC\..`,
+/// `\\?\Volume{..}`) have no plain spelling, so they stay.
+fn plain_drive_verbatim_path(path: &Path, windows: bool) -> PathBuf {
+    if !windows {
+        return path.to_path_buf();
+    }
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -959,6 +1057,107 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    /// The decoder inverts the encoder's `%` layer on every platform: a
+    /// literal `%` round-trips, while lowercase hex and stray `%` — spellings
+    /// the encoder never emits — stay literal instead of manufacturing bytes
+    /// (#6874).
+    #[test]
+    fn decode_stable_path_text_inverts_the_encoder_percent_layer() {
+        assert_eq!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            PathBuf::from("pricing_%FF.rs")
+        );
+        assert_eq!(
+            decode_stable_path_text(&stable_path_text(Path::new("100% sure.rs"))),
+            PathBuf::from("100% sure.rs")
+        );
+        // Not URI decoding: only the encoder's own uppercase spellings decode.
+        assert_eq!(decode_stable_path_text("a%2fb"), PathBuf::from("a%2fb"));
+        assert_eq!(
+            decode_stable_path_text("100% sure.rs"),
+            PathBuf::from("100% sure.rs")
+        );
+        assert_eq!(decode_stable_path_text("%"), PathBuf::from("%"));
+    }
+
+    /// Non-UTF-8 bytes round-trip exactly, and the literal-`%` name never
+    /// merges with the invalid-byte name it resembles (#6874).
+    #[cfg(unix)]
+    #[test]
+    fn decode_stable_path_text_keeps_invalid_bytes_distinct() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = PathBuf::from(OsString::from_vec(b"pricing_\xff.rs".to_vec()));
+        assert_eq!(stable_path_text(&invalid), "pricing_%FF.rs");
+        assert_eq!(decode_stable_path_text("pricing_%FF.rs"), invalid);
+        assert_ne!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            decode_stable_path_text("pricing_%FF.rs")
+        );
+    }
+
+    /// #5996: one finding, one location string. The verbatim-root MCP form
+    /// and the absolute-root LSP form must both render as the CLI's
+    /// workspace-relative shape, and an already-relative CLI location must
+    /// keep its exact bytes.
+    #[test]
+    fn finding_location_text_renders_one_shape_for_every_root_spelling() {
+        let drive = "F:";
+        // MCP: a verbatim absolute root joined into every finding location.
+        let verbatim_root = PathBuf::from(format!(r"\\?\{drive}\repo"));
+        let verbatim_file = verbatim_root.join("src").join("main.rs");
+        assert_eq!(
+            finding_location_text_with_platform(&verbatim_root, &verbatim_file, true),
+            "./src/main.rs",
+            "the verbatim //?/ prefix must never reach a rendered location"
+        );
+        // LSP: a plain absolute root, same file bytes as the CLI form.
+        let absolute_root = PathBuf::from(format!(r"{drive}\repo"));
+        let absolute_file = absolute_root.join("src").join("main.rs");
+        assert_eq!(
+            finding_location_text_with_platform(&absolute_root, &absolute_file, true),
+            "./src/main.rs"
+        );
+        // CLI: the producer already joined the relative root; bytes stay.
+        assert_eq!(
+            finding_location_text_with_platform(Path::new("."), Path::new("./src/main.rs"), true),
+            "./src/main.rs"
+        );
+        // Outside the root renders plain absolute; other verbatim forms stay.
+        let outside = PathBuf::from(format!(r"{drive}\other\lib.rs"));
+        assert_eq!(
+            finding_location_text_with_platform(&absolute_root, &outside, true),
+            format!("{drive}/other/lib.rs")
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                &absolute_root,
+                Path::new(r"\\?\UNC\server\share\x.rs"),
+                true
+            ),
+            "//?/UNC/server/share/x.rs"
+        );
+        // Unix shapes are never verbatim-stripped: the prefix would be a
+        // filename character there.
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/src/main.rs"),
+                false
+            ),
+            "./src/main.rs"
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new(r"\\?\F:\repo\src\main.rs"),
+                false
+            ),
+            r"//?/F:/repo/src/main.rs"
         );
     }
 

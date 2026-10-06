@@ -151,7 +151,6 @@ pub(super) struct IndexedFileFacts {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileData {
     pub path: PathBuf,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFact>,
@@ -335,11 +334,10 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 11)?;
+        let mut state = serializer.serialize_struct("FileFacts", 10)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
-        state.serialize_field("calls", &self.calls)?;
         state.serialize_field("returns", &self.returns)?;
         state.serialize_field("literals", &self.literals)?;
         state.serialize_field("probe_shapes", &probe_shapes)?;
@@ -479,7 +477,6 @@ impl RustIndex {
             path: fact_path,
             functions,
             tests,
-            calls,
             returns,
             literals,
             probe_shapes,
@@ -519,7 +516,6 @@ impl RustIndex {
             IndexedFileFacts {
                 data: FileData {
                     path: fact_path,
-                    calls,
                     returns,
                     literals,
                     probe_shapes,
@@ -707,7 +703,6 @@ impl RustIndex {
         let file = self.files().get(path)?;
         let FileData {
             path,
-            calls,
             returns,
             literals,
             probe_shapes,
@@ -721,7 +716,6 @@ impl RustIndex {
             path,
             functions: file.functions.iter().cloned().collect(),
             tests: file.tests.iter().cloned().collect(),
-            calls,
             returns,
             literals,
             probe_shapes,
