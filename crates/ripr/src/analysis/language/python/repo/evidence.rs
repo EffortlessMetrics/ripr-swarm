@@ -49,11 +49,13 @@
 //! (#3554 PR B); read and parse failures are typed as
 //! [`PythonRepoLimitation::ParseFailure`] rows today.
 
+use super::super::assertion_selection::PythonAssertionFocus;
 use super::super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
     PythonRelatedCandidate, find_related_tests, owner_module_paths, related_test_candidates,
+    related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -581,7 +583,10 @@ fn build_production_file_evidence(
         .map(|owner| {
             (
                 related_test_candidates(owner, all_tests),
-                find_related_tests(owner, all_tests),
+                // The owner inventory has no changed line, so its rows keep
+                // the strongest assertion overall; each behavior item below
+                // re-projects the rows for its own line's family (#5572).
+                find_related_tests(owner, all_tests, None),
             )
         })
         .collect();
@@ -596,9 +601,8 @@ fn build_production_file_evidence(
         else {
             continue;
         };
-        let (candidates, related) = &owner_relations[index];
-        let item =
-            build_behavior_item(relative, owner, line, &text, candidates, related, all_tests);
+        let (candidates, _) = &owner_relations[index];
+        let item = build_behavior_item(relative, owner, line, &text, candidates, all_tests);
         if let Some(kind) = item.static_limit {
             limitations.push(PythonRepoLimitation::StaticLimit {
                 file: normalized_path(relative),
@@ -686,10 +690,14 @@ fn build_behavior_item(
     line: usize,
     text: &str,
     candidates: &[PythonRelatedCandidate<'_>],
-    related: &[RelatedTest],
     all_tests: &[PythonTest],
 ) -> PythonRepoBehaviorItem {
     let (family, delta) = classify_probe_shape(text);
+    // Same family-selected assertion identity the classifier uses for this
+    // line (#5572); repo mode has no old line.
+    let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
+    let related = related_tests_for_candidates(candidates, Some(&focus));
+    let related = related.as_slice();
     let static_limit = static_limit_for_change(text, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);

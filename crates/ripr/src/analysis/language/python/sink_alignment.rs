@@ -195,7 +195,7 @@ pub(super) fn dict_changed_keys_and_values(
 /// comparison. Conservative — when in doubt it returns `true` (credit stands) so a
 /// genuine discriminator is never dropped; it only returns `false` for an oracle
 /// that observes purely a sibling key or an aggregate.
-fn oracle_observes_changed_dict_element(
+pub(super) fn oracle_observes_changed_dict_element(
     oracle: &str,
     changed_keys: &[String],
     changed_values: &[String],

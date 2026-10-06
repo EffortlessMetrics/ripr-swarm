@@ -25,6 +25,7 @@ use super::super::{
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod admission;
+mod assertion_selection;
 mod bounded_read;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -923,6 +924,9 @@ impl PythonAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod assertion_selection_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;

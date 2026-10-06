@@ -4700,8 +4700,12 @@ mod tests {
         // card (`python_return_comparison_boundary`). #6652: the smoke twin in
         // `python_functools_memoization_not_indirection` adds one
         // `no_strong_oracle` repair card; the credited exact twin is `exposed`
-        // and does not carry a card.
-        if (direct, no_strong, orthogonal) != (6, 29, 11) {
+        // and does not carry a card. #5572: the error-path card of
+        // `python_adversarial_error_path_untaken_branch` no longer surfaces the
+        // alignment of its normal-value assertion, which is not relevant to the
+        // changed raise, so it moves from `direct` to `no_strong_oracle`; it
+        // stays agent-packet eligible either way.
+        if (direct, no_strong, orthogonal) != (5, 30, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));
