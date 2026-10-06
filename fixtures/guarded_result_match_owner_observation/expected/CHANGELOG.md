@@ -129,3 +129,18 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending - #5713 reviewed discarded-matcher calibration
+
+Reason:
+Retain the dedicated GuardedResultMatch observer and remove the duplicate generic bare ExactValue fact. The supported terminal guard and its assertions survive.
+
+Producer:
+Hosted required run37242804945 at613e800282fbf542435831660e4d23a8fa3a4b5a; immutable artifact11318434713, ZIP SHA2562353af6f2a55a514024683d93fb53d474228bd537e71a77bcd57898400b7b4a7.
+
+Transfer:
+Exact guarded producer-byte replacement after complete semantic review. No local build, rerun, normalization, or blanket blessing.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

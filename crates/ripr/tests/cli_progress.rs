@@ -652,7 +652,7 @@ fn pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged() -> Re
         .map_err(|error| format!("read loud pilot-summary.json: {error}"))?;
     let parsed: serde_json::Value = serde_json::from_slice(&loud_summary)
         .map_err(|error| format!("pilot-summary.json is not JSON: {error}"))?;
-    assert_eq!(parsed["schema_version"], "0.2");
+    assert_eq!(parsed["schema_version"], "0.3");
 
     // Removal experiment (#2608 closure rule): --quiet drops every progress
     // line while the emitted packet stays byte-identical.

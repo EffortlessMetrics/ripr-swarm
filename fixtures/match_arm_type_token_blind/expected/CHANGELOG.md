@@ -223,3 +223,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_type_token_blind (10)
+
+Reason:
+RIPR-SPEC-0229 (#5432): related tests that call the owner with an input selecting another arm name the changed arm as the missing input (re-blessed over #5578 wording)
+
+Command:
+`cargo xtask goldens bless match_arm_type_token_blind --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

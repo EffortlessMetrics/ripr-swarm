@@ -77,6 +77,9 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.copyTopVerifyCommand'));
     assert.ok(commands.includes('ripr.openReport'));
     assert.ok(commands.includes('ripr.showTopLimitation'));
+    // Repair-attempt status (#5366): attempt_status.test.ts drives the
+    // controller method directly, so registration is pinned here.
+    assert.ok(commands.includes('ripr.showAttemptStatus'));
   });
 
   test('trusted-host gate is limited to explicit untrusted harness mode', () => {
@@ -1522,6 +1525,13 @@ suite('Extension Smoke', () => {
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
       for (const [retryCommand, expectedCommand] of [
         ['ripr.refresh', 'ripr: Refresh Diagnostics'],
@@ -4007,11 +4017,38 @@ suite('Extension Smoke', () => {
 
       assert.strictEqual(context.client.requests.length, 1);
       assert.strictEqual(context.runRiprCalls.length, 1);
+      const args = context.runRiprCalls[0].args;
+      assert.strictEqual(args[args.indexOf('--base') + 1], 'origin/main');
       assert.deepStrictEqual(JSON.parse(context.clipboardWrites[0]), {
         fallback: true
       });
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('copyContext CLI fallback omits --base when ripr.baseRef is blank', async () => {
+    for (const baseRef of ['', '   ']) {
+      const context = createControllerTestContext({
+        baseRef,
+        lspResult: null,
+        cliResult: '{"fallback":true}\n'
+      });
+      try {
+        await context.controller.start();
+        await context.controller.copyContext({
+          uri: workspaceFileUri('src/lib.rs').toString(),
+          line: 9,
+          seam_id: 'abc123'
+        });
+
+        assert.strictEqual(context.runRiprCalls.length, 1);
+        const args = context.runRiprCalls[0].args;
+        assert.ok(!args.includes('--base'), `baseRef ${JSON.stringify(baseRef)} sent ${args.join(' ')}`);
+        assert.strictEqual(args[0], 'context');
+      } finally {
+        await context.dispose();
+      }
     }
   });
 
@@ -4893,6 +4930,7 @@ interface ControllerTestOptions {
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
+  baseRef?: string;
   lspResult?: unknown;
   lspError?: Error;
   cliResult?: string;
@@ -5306,7 +5344,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
         serverVersion: '',
         downloadBaseUrl: '',
         checkMode: 'draft',
-        baseRef: 'origin/main',
+        baseRef: options.baseRef ?? 'origin/main',
         includeUnchangedTests: options.includeUnchangedTests ?? true,
         seamDiagnostics: options.seamDiagnostics,
         diagnosticProfile: options.diagnosticProfile,

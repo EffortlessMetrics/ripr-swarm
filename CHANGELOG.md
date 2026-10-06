@@ -25,6 +25,19 @@ are scoped or reviewed.
   enable route (profile, flag, or language switch — following the
   effective session/repository source) instead of `recovery: null`
   (#6001).
+- LSP: TypeScript, JavaScript, and Perl preview findings the producer
+  admitted (`delivery_eligible`) now publish as advisory diagnostics in both
+  diagnostic profiles even while the shared repair-packet validator still
+  fails the packet; packet readiness keeps gating the code-action surface
+  only, and `diagnosticProfile = "full"` delivers what it documents
+  (#6847). `ripr/listActionableItems` canonical ids are now the producer
+  identities `ripr.collectContext` resolves — the probe `finding_id` for
+  findings, `seam_id` for seams — instead of the projection-local
+  `finding:<hash>`/canonical gap ids it previously listed and rejected with
+  `-32602`; the envelope adds `seam_evidence_identity` for the seam
+  continuation. RIPR-SPEC-0126's producer-signal precedence is corrected to
+  match: the preview packet verdict gates the repair-packet surface, not
+  diagnostic delivery (#6848).
 
 - Predicate same-test pairing no longer treats a boundary literal buried
   inside an argument expression as a boundary input. `gate(if false { 10 }
@@ -105,6 +118,32 @@ are scoped or reviewed.
   scraping `stop_states` (#5066).
 
 ### Fixed
+
+- Windows: `ripr agent card --json` now reports `selected_target.file`
+  with portable `/` separators for both existing and proposed targets,
+  instead of leaking native backslashes. `allowed_files` and
+  `forbidden_files` already used the shared normalized renderer and are
+  unchanged (#5440).
+- Discarded Rust `matches!` computations no longer count as assertion oracles
+  in parser, lexical or registered-harness facts. Actual asserting wrappers
+  retain pattern credit, including the weak whole-wildcard boundary from
+  #5410. Consumed multiline lexical and inline Trial Err guards retain their
+  assertion twins, with condition ownership and sibling coordinates preserved.
+  Balanced groups retain quoted/struct/block operands and a body opener on a
+  later row; quoted return text and recovered Err expressions cannot
+  manufacture a guard's assertion twin.
+  Wrapped discarded matcher statements cannot borrow a sibling assertion;
+  actual observers inside pure block scrutinees keep their own coordinates.
+  Negated block conditions retain consumed Err-guard twins and weak wildcard
+  grip. Terminal panic/bail names grant no divergence authority; unresolved or
+  shadowed macros remain outside this bounded Err-return grammar.
+  File-fact generation 1.26 and classified generations 1.37/0.43 invalidate
+  favorable or guard-blind predecessor facts
+  (RIPR-SPEC-0001, #5713). Fourteen canonical static controls extend the
+  existing honesty corpus, preserving absent, weak and strong observer
+  boundaries. Shared-validator negative controls reject strong and weak
+  false credit, missed strong credit, empty findings and removed consumers;
+  the current CLI compares raw JSON and human projections with those reports.
 
 - Agent receipt recovery commands preserve native Unix roots and relative or
   absolute workflow verify output paths when pasted from another directory.
