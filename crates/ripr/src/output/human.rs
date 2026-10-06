@@ -5934,14 +5934,19 @@ mod tests {
             None
         );
         let config = crate::config::RiprConfig::default();
-        let digest = super::sections::render_finding_digest_with_config(&finding, &config);
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
         assert!(
             digest.contains(&format!(" {} ({why})\n", direct.name)),
             "{digest}"
         );
         let mut advisory_first = finding.clone();
         advisory_first.related_tests.reverse();
-        let digest = super::sections::render_finding_digest_with_config(&advisory_first, &config);
+        let digest = super::sections::render_finding_digest_with_config(
+            &advisory_first,
+            &config,
+            Path::new("."),
+        );
         assert!(
             digest.contains(&format!(" {}\n", advisory.name)),
             "{digest}"
