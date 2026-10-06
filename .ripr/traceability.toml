@@ -469,6 +469,7 @@ tests = [
   "crates/ripr/src/analysis/facts/model.rs::tests::symlink_retarget_with_same_size_and_mtime_invalidates_cached_currentness",
   "crates/ripr/src/analysis/facts/model.rs::tests::chained_symlink_retarget_invalidates_cached_currentness",
   "crates/ripr/src/analysis/facts/model.rs::tests::non_utf8_lookalike_resolution_invalidates_cached_currentness",
+  "crates/ripr/src/analysis/facts/model.rs::tests::in_place_rewrite_with_same_size_and_mtime_invalidates_cached_currentness",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::absent_workspace_authority_invalidates_target_admission",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::duplicate_evidence_function_identity_invalidates_target",
   "crates/ripr/src/output/evidence_record.rs::tests::evidence_record_normalizes_static_limitation_categories",
@@ -906,6 +907,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_refuses_existing_workflow_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_refuses_existing_config_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_force_overwrites_existing_config",
+  "crates/ripr/tests/cli_smoke.rs::init_warns_when_the_root_is_not_a_git_work_tree",
+  "crates/ripr/src/cli/commands/init.rs::tests::non_git_root_warning_stays_quiet_inside_a_work_tree",
+  "crates/ripr/src/cli/commands/init.rs::tests::non_git_root_warning_names_only_the_established_outside",
   "crates/ripr/src/config.rs::tests::generated_init_config_matches_builtin_defaults",
   "crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults",
   "crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable",
@@ -12960,6 +12964,27 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0232-issue-lifecycle-contract-plan-pilot.md",
 ]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0239"
+name = "ripr plus last-good receipt"
+spec = "docs/specs/RIPR-SPEC-0239-ripr-plus-last-good-receipt.md"
+tests = [
+  "crates/ripr/src/app/ripr_plus.rs::tests::composed_receipt_is_kept_when_a_later_run_fails",
+  "crates/ripr/src/app/ripr_plus.rs::tests::error_receipt_from_an_earlier_failure_is_not_kept",
+  "crates/ripr/src/app/ripr_plus.rs::tests::failed_run_keeps_the_previous_real_receipt_beside_the_indeterminate_one",
+  "crates/ripr/src/app/ripr_plus.rs::tests::partial_preservation_is_reported_as_partial",
+  "crates/ripr/src/app/ripr_plus.rs::tests::no_surviving_copy_is_reported_as_not_kept",
+  "crates/ripr/tests/cli_smoke.rs::plus_failed_run_keeps_the_composed_receipt_and_check_keeps_none",
+  "crates/ripr/tests/cli_smoke.rs::plus_help_exits_cleanly",
+]
+code = [
+  "crates/ripr/src/app/ripr_plus.rs",
+]
+outputs = []
 metrics = [
   "unit_test_pass_rate",
 ]

@@ -26,10 +26,12 @@
 //! receipt-composition subcommand.
 //!
 //! Output: `target/ripr/reports/ripr-plus.{json,md}`. A run whose named
-//! artifact cannot be read or composed, and that would replace a receipt whose
-//! status is not `indeterminate`, first copies it to
-//! `target/ripr/reports/ripr-plus.last-good.{json,md}`; that copy describes an
-//! earlier run and is never current evidence.
+//! artifact cannot be read or composed first copies the receipt it would
+//! replace to `target/ripr/reports/ripr-plus.last-good.{json,md}` when an
+//! earlier run composed that receipt: any status other than `indeterminate`,
+//! or `indeterminate` with cause `quality_evidence_incomplete`. An earlier
+//! failed run's error receipt is never kept. The copy describes an earlier run
+//! and is never current evidence.
 
 use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
@@ -50,6 +52,8 @@ const LAST_GOOD_IS_STALE: &str =
 /// The same limit as a standalone sentence, for messages that name no copy
 /// before it.
 const LAST_GOOD_IS_STALE_SENTENCE: &str = "A kept copy describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
+/// The cause every composed receipt carries; `qualify_legacy_receipt` sets it.
+const COMPOSED_RECEIPT_CAUSE: &str = "quality_evidence_incomplete";
 const NO_COPY_KEPT_SENTENCE: &str =
     "Any last-good copy still on disk is from an earlier run and is not current evidence.";
 
@@ -100,8 +104,8 @@ fn compose_and_write_receipt(
     }
 }
 
-/// Before an `indeterminate` receipt replaces the receipt on disk, sets aside
-/// the previous one when it was a real result, so a mistyped path does not
+/// Before an error receipt replaces the receipt on disk, sets aside the
+/// previous one when an earlier run composed it, so a mistyped path does not
 /// cost the last good receipt. The canonical path still carries the
 /// `indeterminate` record, so no reader mistakes a failed run for a pass.
 /// Returns a sentence for the error message, empty when nothing was kept.
@@ -110,12 +114,28 @@ fn keep_last_good_receipt(repo: &Path) -> String {
     let Ok(previous) = fs::read_to_string(&json_path) else {
         return String::new();
     };
-    let status = serde_json::from_str::<Value>(&previous)
-        .ok()
+    let previous_value = serde_json::from_str::<Value>(&previous).ok();
+    let status = previous_value
+        .as_ref()
         .and_then(|value| value["status"].as_str().map(str::to_string));
-    match status.as_deref() {
-        None | Some("indeterminate") => String::new(),
-        Some(status) => {
+    let cause = previous_value
+        .as_ref()
+        .and_then(|value| value["machine_readable_cause"].as_str().map(str::to_string));
+    // "Last good" means the last receipt a run actually composed (#6295). Every
+    // composed receipt is `indeterminate` with cause
+    // `quality_evidence_incomplete`, so that pair is kept; an error receipt
+    // (any other indeterminate cause) describes no composition and is not.
+    let label = match (status.as_deref(), cause.as_deref()) {
+        (None, _) => None,
+        (Some("indeterminate"), Some(COMPOSED_RECEIPT_CAUSE)) => Some(format!(
+            "status `indeterminate`, cause `{COMPOSED_RECEIPT_CAUSE}`"
+        )),
+        (Some("indeterminate"), _) => None,
+        (Some(status), _) => Some(format!("status `{status}`")),
+    };
+    match label {
+        None => String::new(),
+        Some(previous_label) => {
             // The shared guarded writer: regular-file destinations only, replaced
             // atomically, so a planted link cannot redirect the copy.
             let json_result = write_parented_file(
@@ -151,7 +171,7 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                         RIPR_PLUS_LAST_GOOD_JSON.to_string()
                     };
                     format!(
-                        " The previous receipt (status `{status}`) is kept at {kept_at}; {LAST_GOOD_IS_STALE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+                        " The previous receipt ({previous_label}) is kept at {kept_at}; {LAST_GOOD_IS_STALE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
                     )
                 }
                 (json, markdown) => {
@@ -172,11 +192,11 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                         // file left from an even earlier run is still no
                         // evidence for this one.
                         format!(
-                            " The previous receipt (status `{status}`) could not be kept ({failures}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+                            " The previous receipt ({previous_label}) could not be kept ({failures}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
                         )
                     } else {
                         format!(
-                            " The previous receipt (status `{status}`) was only partly kept ({failures}). Kept: {}. {LAST_GOOD_IS_STALE_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
+                            " The previous receipt ({previous_label}) was only partly kept ({failures}). Kept: {}. {LAST_GOOD_IS_STALE_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
                             kept.join(" and ")
                         )
                     }
@@ -264,10 +284,13 @@ Outputs:
   target/ripr/reports/ripr-plus.last-good.md    (only after a read or compose failure)
 
 When the named artifact cannot be read or composed, the run still writes an
-`indeterminate` receipt to ripr-plus.json. If the receipt it replaces has a
-status other than `indeterminate`, that receipt and its Markdown, when present,
-are first copied to ripr-plus.last-good.{json,md}. A --check failure on a
-composed receipt writes that receipt and keeps no last-good copy.
+`indeterminate` receipt to ripr-plus.json. If an earlier run composed the
+receipt it replaces (any status other than `indeterminate`, or `indeterminate`
+with cause `quality_evidence_incomplete`), that receipt and its Markdown, when
+present, are first copied to ripr-plus.last-good.{json,md}. An earlier failed
+run's error receipt is never kept. A --check failure on a composed receipt
+writes that receipt and makes no last-good copy; a copy an earlier failure
+left stays until a later failure replaces it.
 The copy describes an earlier run, may be stale for the current HEAD, and is
 not current evidence.
 
@@ -303,7 +326,7 @@ pub(crate) fn qualify_legacy_receipt(mut receipt: Value) -> Result<Value, String
     fields.insert("candidate_binding".to_string(), json!("not_established"));
     fields.insert(
         "machine_readable_cause".to_string(),
-        json!("quality_evidence_incomplete"),
+        json!(COMPOSED_RECEIPT_CAUSE),
     );
     fields.insert(
         "incomplete_evidence".to_string(),
@@ -1201,7 +1224,7 @@ mod tests {
         assert_eq!(
             kept_again.map_err(|err| err.to_string())?,
             r#"{"status":"pass"}"#,
-            "an indeterminate receipt must never become the last good one"
+            "an error receipt must never become the last good one"
         );
         Ok(())
     }
@@ -1260,7 +1283,9 @@ mod tests {
             .map_err(|err| format!("block saved md: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
         let json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let md_still_blocked = repo.join(RIPR_PLUS_LAST_GOOD_MD).is_dir();
         let _ = fs::remove_dir_all(&repo);
+        assert!(md_still_blocked, "{kept}");
         assert!(kept.contains("only partly kept"), "{kept}");
         assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
         assert!(!kept.contains("ripr-plus.last-good.json:"), "{kept}");
@@ -1297,7 +1322,11 @@ mod tests {
                 .map_err(|err| format!("block {blocked}: {err}"))?;
         }
         let kept = keep_last_good_receipt(&repo);
+        let json_still_blocked = repo.join(RIPR_PLUS_LAST_GOOD_JSON).is_dir();
+        let md_still_blocked = repo.join(RIPR_PLUS_LAST_GOOD_MD).is_dir();
         let _ = fs::remove_dir_all(&repo);
+        // Neither copy was written over its blocked destination (#6714).
+        assert!(json_still_blocked && md_still_blocked, "{kept}");
         assert!(kept.contains("could not be kept"), "{kept}");
         assert!(!kept.contains("partly kept"), "{kept}");
         assert!(!kept.contains("Kept:"), "{kept}");
@@ -1328,7 +1357,9 @@ mod tests {
             .map_err(|err| format!("block saved json: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
         let md = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let json_still_blocked = repo.join(RIPR_PLUS_LAST_GOOD_JSON).is_dir();
         let _ = fs::remove_dir_all(&repo);
+        assert!(json_still_blocked, "{kept}");
         assert!(kept.contains("only partly kept"), "{kept}");
         assert!(
             kept.contains("Kept: target/ripr/reports/ripr-plus.last-good.md."),
@@ -1336,6 +1367,115 @@ mod tests {
         );
         assert!(kept.contains("may be stale for the current HEAD"), "{kept}");
         assert_eq!(md.map_err(|err| err.to_string())?, "good receipt");
+        Ok(())
+    }
+
+    /// A receipt `ripr plus` composed is the last good one, even though every
+    /// composed receipt is `indeterminate` (#6295).
+    #[test]
+    fn composed_receipt_is_kept_when_a_later_run_fails() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-keep-composed-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&repo).map_err(|err| format!("mkdir {}: {err}", repo.display()))?;
+        let summary = repo.join("summary.json");
+        fs::write(
+            &summary,
+            json!({
+                "schema_version": "0.1",
+                "format": "repo-exposure-summary-json",
+                "basis": "canonical_actionable_gap",
+                "metadata": {"head": "abc", "root": "repo"},
+                "metrics": {"unsuppressed_exposure_gaps": 2, "suppressed_exposure_gaps": 0, "raw_seams": 3},
+                "reason_breakdown": {},
+                "top_files": []
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("write summary: {err}"))?;
+        let composed = compose_and_write_receipt(
+            &repo,
+            &RiprPlusOptions {
+                repo_exposure_summary: Some(summary),
+                gap_ledger: None,
+                check: false,
+            },
+            "deadbeef",
+        );
+        let composed_json = fs::read_to_string(repo.join(RIPR_PLUS_JSON));
+        let composed_md = fs::read_to_string(repo.join(RIPR_PLUS_MD));
+        let failed = compose_and_write_receipt(
+            &repo,
+            &RiprPlusOptions {
+                repo_exposure_summary: None,
+                gap_ledger: Some(repo.join("missing.json")),
+                check: false,
+            },
+            "deadbeef",
+        );
+        let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let kept_md = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_MD));
+        let _ = fs::remove_dir_all(&repo);
+
+        composed?;
+        let composed_json = composed_json.map_err(|err| err.to_string())?;
+        let receipt: Value = serde_json::from_str(&composed_json)
+            .map_err(|err| format!("composed receipt is not JSON: {err}"))?;
+        assert_eq!(receipt["status"], "indeterminate");
+        assert_eq!(receipt["machine_readable_cause"], COMPOSED_RECEIPT_CAUSE);
+        let message = match failed {
+            Err(message) => message,
+            Ok(()) => return Err("a missing ledger must fail".to_string()),
+        };
+        assert!(
+            message.contains(
+                "The previous receipt (status `indeterminate`, cause `quality_evidence_incomplete`) is kept at"
+            ),
+            "{message}"
+        );
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, composed_json);
+        assert_eq!(
+            kept_md.map_err(|err| err.to_string())?,
+            composed_md.map_err(|err| err.to_string())?
+        );
+        Ok(())
+    }
+
+    /// An earlier failed run's error receipt describes no composition, so it
+    /// never becomes the last good copy.
+    #[test]
+    fn error_receipt_from_an_earlier_failure_is_not_kept() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-error-not-kept-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        for cause_text in ["failed to read ledger", "the scan timed out after 1000 ms"] {
+            let receipt = error_ripr_plus_receipt("deadbeef", cause_text);
+            fs::write(repo.join(RIPR_PLUS_JSON), receipt.to_string())
+                .map_err(|err| format!("seed json: {err}"))?;
+            fs::write(repo.join(RIPR_PLUS_MD), "error receipt")
+                .map_err(|err| format!("seed md: {err}"))?;
+            let kept = keep_last_good_receipt(&repo);
+            assert_eq!(kept, "", "{cause_text}");
+            assert!(
+                !repo.join(RIPR_PLUS_LAST_GOOD_JSON).exists(),
+                "{cause_text}"
+            );
+            assert!(!repo.join(RIPR_PLUS_LAST_GOOD_MD).exists(), "{cause_text}");
+        }
+        let _ = fs::remove_dir_all(&repo);
         Ok(())
     }
 
