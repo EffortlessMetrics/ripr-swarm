@@ -514,15 +514,14 @@ fn target_root(file: &Path, index: &RustIndex, src_dirs: &BTreeSet<PathBuf>) -> 
 }
 
 impl OwnerPinSyntax {
-    /// Trusted names that a scoped definition or import makes ambiguous for
-    /// `test`. Filled by the workspace scan in `refusal`.
-    /// Trusted names a crate-local site makes ambiguous for `test`: those in
-    /// the test's own recognized root, or every one when that root is not
-    /// established.
+    /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
     }
 
+    /// Trusted names a crate-local site makes ambiguous for `test`: those in
+    /// the test's own recognized root, or every one when that root is not
+    /// established.
     fn crate_names_for(&self, test: &TestSummary, index: &RustIndex) -> Vec<String> {
         let by_root = self.crate_macro_bindings.borrow();
         let Some(by_root) = by_root.as_ref().filter(|by_root| !by_root.is_empty()) else {
@@ -534,6 +533,8 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// Trusted names that a scoped definition or import makes ambiguous for
+    /// `test`. Filled by the workspace scan in `refusal`.
     fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
         self.scoped_macro_bindings
             .borrow()

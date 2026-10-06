@@ -1298,7 +1298,7 @@ fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
         ),
         ("benches/b.rs", "pub use other::assert_eq;"),
         // An unresolved `#[macro_use] mod` may `#[macro_export]` its macros.
-        ("benches/b.rs", "#[macro_use]\nmod gen;"),
+        ("benches/b.rs", "#[macro_use]\nmod generated;"),
         ("src/tests/b.rs", "#[macro_use]\nextern crate bencher;"),
         ("src/other.rs", "#[macro_use]\nextern crate bencher;"),
     ] {
