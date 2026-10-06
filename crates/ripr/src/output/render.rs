@@ -3,11 +3,13 @@ use super::{
     repo_seams, sarif, suppressions,
 };
 use crate::analysis;
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::app::{AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// Path (relative to the analyzed workspace root) where the
 /// test-efficiency report is expected when rendering `ripr+` badge formats.
@@ -291,7 +293,10 @@ pub(crate) fn detect_ts_full_repo_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<TsFullRepoGuidance> {
-    detect_ts_full_repo_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_ts_full_repo_guidance(root, classified);
+    trace_latency_phase("guidance_ts_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly.
@@ -299,7 +304,10 @@ pub(crate) fn detect_python_repo_exposure_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<repo_exposure::PythonRepoExposureGuidance> {
-    detect_python_repo_exposure_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_python_repo_exposure_guidance(root, classified);
+    trace_latency_phase("guidance_python_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Detect whether a TypeScript diff-first guidance disclosure should fire.
