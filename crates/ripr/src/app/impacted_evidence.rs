@@ -43,6 +43,16 @@ pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
 /// directory) and the compatibility `cargo xtask impacted-evidence` route
 /// (rooted at the xtask workspace), so refusal and routing logic has one owner.
 pub fn run_impacted_evidence_at(repo: &Path, args: &[String]) -> Result<(), String> {
+    run_impacted_evidence_with(repo, args, require_pr_evidence)
+}
+
+/// The run with its evidence loader injected, so a test can stand in for a
+/// concurrent run that writes outputs while the evidence is being read.
+fn run_impacted_evidence_with(
+    repo: &Path,
+    args: &[String],
+    load_pr_evidence: impl FnOnce(&Path, &str) -> Result<PrEvidenceInput, String>,
+) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
@@ -51,7 +61,7 @@ pub fn run_impacted_evidence_at(repo: &Path, args: &[String]) -> Result<(), Stri
     // Taken before the evidence is read, so a refusal removes only outputs
     // that already existed when this run started (#5307).
     let previous = stamp_outputs(repo);
-    let input = require_pr_evidence(repo, &options.pr_evidence)
+    let input = load_pr_evidence(repo, &options.pr_evidence)
         .map_err(|err| refuse_with_stale_cleanup(repo, err, options.check, &previous))?;
     let packet = packet_from_input(&options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
@@ -1035,6 +1045,42 @@ mod tests {
             "{message}"
         );
         assert!(!json_left && !md_left);
+        Ok(())
+    }
+
+    /// The production path takes its stamp before reading the evidence: an
+    /// output a concurrent run writes while the evidence is read is left in
+    /// place (#6719). Moving the stamp after the read would remove it.
+    #[test]
+    fn output_written_while_evidence_is_read_is_left_by_the_real_run() -> Result<(), String> {
+        let repo = fresh_repo("run-concurrent-write")?;
+        fs::create_dir_all(repo.join("target/xtask/impacted-evidence"))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
+        fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
+        let result = run_impacted_evidence_with(&repo, &[], |repo, _relative| {
+            fs::write(repo.join(IMPACTED_JSON), r#"{"status":"concurrent"}"#)
+                .map_err(|err| err.to_string())?;
+            Err("PR evidence is missing or unreadable.".to_string())
+        });
+        let json = fs::read_to_string(repo.join(IMPACTED_JSON));
+        let md_left = repo.join(IMPACTED_MD).exists();
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        let message = match result {
+            Ok(()) => return Err("a refused load must refuse the run".to_string()),
+            Err(message) => message,
+        };
+        assert_eq!(
+            json.map_err(|err| err.to_string())?,
+            r#"{"status":"concurrent"}"#,
+            "{message}"
+        );
+        assert!(md_left, "{message}");
+        assert!(!message.contains("Removed stale"), "{message}");
+        assert!(
+            message.contains(&format!("Left {IMPACTED_JSON} and {IMPACTED_MD} in place")),
+            "{message}"
+        );
         Ok(())
     }
 
