@@ -130,6 +130,13 @@ mod tests {
         if std::env::var_os("RIPR_PANIC_HOOK_CHILD").is_some() {
             super::run_startup(|| {
                 let trigger = std::env::var("RIPR_PANIC_HOOK_CHILD").unwrap_or_default();
+                // Repository text in a panic message, formatted with Display
+                // (not Debug) so the raw characters reach the hook.
+                assert!(
+                    trigger != "hostile",
+                    "{}",
+                    "hostile\u{1b}[2Jmessage\u{202e}rtl"
+                );
                 assert_eq!(trigger, "trigger", "panic hook regression");
                 Ok(())
             });
@@ -163,6 +170,30 @@ mod tests {
                     "panic-hook child omitted the formatted report; stderr: {stderr}"
                 ));
             }
+        }
+
+        let output = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "tests::panic_boundary_reports_and_exits_with_code_two",
+                "--nocapture",
+            ])
+            .env("RIPR_PANIC_HOOK_CHILD", "hostile")
+            .env("RUST_BACKTRACE", "0")
+            .output()
+            .map_err(|err| format!("failed to run hostile panic-hook child: {err}"))?;
+        if output.status.code() != Some(2) {
+            return Err(format!(
+                "hostile panic-hook child exited with {:?}",
+                output.status.code()
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains('\u{1b}') || stderr.contains('\u{202e}') {
+            return Err(format!("panic hook printed raw control text: {stderr:?}"));
+        }
+        if !stderr.contains("hostile\\u{1b}[2Jmessage\\u{202e}rtl") {
+            return Err(format!("panic hook omitted the escaped message: {stderr}"));
         }
 
         let hostile = super::format_panic_report("a\u{1b}[2Jb\u{202e}c", None);

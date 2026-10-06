@@ -10,7 +10,7 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-06.1. Cases: 204.
 | False silent (of not fully discriminated) | 0/98 | 0.0000 |
 | Ideal verdict | 82/204 | 0.4020 |
 | Abstained (limited or silent where acceptable) | 58/204 | 0.2843 |
-| Findings with a contradiction | 2/280 | 0.0071 |
+| Findings with a contradiction | 2/275 | 0.0073 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 

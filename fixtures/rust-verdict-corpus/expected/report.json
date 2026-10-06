@@ -52,8 +52,8 @@
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 280,
-    "rate": "0.0071"
+    "denominator": 275,
+    "rate": "0.0073"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
