@@ -877,8 +877,18 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
         ],
         &[],
     )?;
-    if repair.stderr.contains("panicked") || leaks(&repair.stdout) || leaks(&repair.stderr) {
-        return Err(format!("repair before leaked\n{:?}", repair.stderr));
+    // The seam id is deliberately unknown: the announcement is printed first,
+    // then the command refuses with a typed code (2 or 3), never success or a
+    // panic exit.
+    if !matches!(repair.code, Some(2 | 3))
+        || repair.stderr.contains("panicked")
+        || leaks(&repair.stdout)
+        || leaks(&repair.stderr)
+    {
+        return Err(format!(
+            "repair before did not refuse cleanly (code {:?}) or leaked\n{:?}",
+            repair.code, repair.stderr
+        ));
     }
     if !repair
         .stderr
