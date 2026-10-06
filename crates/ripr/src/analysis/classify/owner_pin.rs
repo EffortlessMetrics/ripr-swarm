@@ -87,6 +87,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
+    /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
+    target_roots: OnceCell<TargetRoots>,
     withheld: WithheldMacroBindings,
 }
 
@@ -225,13 +227,19 @@ impl OwnerPinSyntax {
                         declaration.to_string(),
                     ))
                 };
-                let test_root = target_root(&test.file, index);
-                let workspace = self
-                    .workspace_macro_sites
-                    .borrow_mut()
-                    .entry((name.clone(), test_root.clone()))
-                    .or_insert_with(|| {
-                        workspace_macro_binding_site(&name, test_root.as_deref(), index, &resolved)
+                let test_root = self.target_roots(index).root(&test.file, index);
+                let workspace =
+                    self.workspace_macro_sites
+                        .borrow_mut()
+                        .entry((name.clone(), test_root.clone()))
+                        .or_insert_with(|| {
+                            workspace_macro_binding_site(
+                                &name,
+                                test_root.as_deref(),
+                                index,
+                                self.target_roots(index),
+                                &resolved,
+                            )
                             .or_else(|| self.withheld.sites.get(&name).cloned())
                             .or_else(|| {
                                 self.withheld.root_sites.iter().find_map(
@@ -244,8 +252,8 @@ impl OwnerPinSyntax {
                                     },
                                 )
                             })
-                    })
-                    .clone();
+                        })
+                        .clone();
                 let site =
                     workspace.or_else(|| test_macro_binding_site(&name, test, index, &resolved));
                 AssertionRefusal::MacroBinding { name, site }
@@ -293,7 +301,8 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped, by_root) = trusted_macro_sites_in(index, &module_resolved);
+            let (mut global, scoped, by_root) =
+                trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
             let mut by_root = by_root;
             for (root, names) in &self.withheld.by_root {
@@ -407,19 +416,61 @@ type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, 
 /// every file while any `include!` is unresolved in the workspace: an
 /// ambiguous, cfg-conflicting, capped or unindexed include leaves its
 /// fragment, and the fragment's module children, looking like a root.
-fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
-    // An unresolvable `#[path]` records no module edge either, so its
-    // target can look like a root of its own.
-    if !index.include_limitations.is_empty()
-        || index.files().iter().any(|(_, facts)| {
-            facts
-                .module_declarations
-                .iter()
-                .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
-        })
-    {
-        return None;
+#[derive(Clone, Debug)]
+struct TargetRoots {
+    /// An unresolved `include!`, or an unresolvable `#[path]` (which
+    /// records no module edge for its target), may compile any file into
+    /// another crate, so no file is charged to one root.
+    disabled: bool,
+    /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
+    /// `examples/` and `build.rs` roots beside one.
+    src_dirs: BTreeSet<PathBuf>,
+    /// Per-file answers, so repeated admissions do not recompute them.
+    memo: RefCell<BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl TargetRoots {
+    fn new(index: &RustIndex) -> Self {
+        // A lexical-fallback file records no module declarations, so its
+        // children get no edge either.
+        let disabled = !index.include_limitations.is_empty()
+            || index.files().iter().any(|(_, facts)| {
+                facts.used_lexical_fallback
+                    || facts
+                        .module_declarations
+                        .iter()
+                        .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
+            });
+        let src_dirs = index
+            .files()
+            .iter()
+            .flat_map(|(path, _)| path.ancestors().skip(1))
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            .map(Path::to_path_buf)
+            .collect();
+        Self {
+            disabled,
+            src_dirs,
+            memo: RefCell::default(),
+        }
     }
+
+    fn root(&self, file: &Path, index: &RustIndex) -> Option<PathBuf> {
+        if self.disabled {
+            return None;
+        }
+        if let Some(root) = self.memo.borrow().get(file) {
+            return root.clone();
+        }
+        let root = target_root(file, index, &self.src_dirs);
+        self.memo
+            .borrow_mut()
+            .insert(file.to_path_buf(), root.clone());
+        root
+    }
+}
+
+fn target_root(file: &Path, index: &RustIndex, src_dirs: &BTreeSet<PathBuf>) -> Option<PathBuf> {
     let facts = index.files().get(file)?;
     let provenance = &facts.role_provenance;
     if provenance.earliest_unresolved_reason.is_some()
@@ -451,10 +502,7 @@ fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
         .collect();
     let package_has_src = |package: &[&str]| {
         let prefix: PathBuf = package.iter().chain(&["src"]).collect();
-        index
-            .files()
-            .iter()
-            .any(|(path, _)| path.starts_with(&prefix))
+        src_dirs.contains(&prefix)
     };
     let recognized = match names.as_slice() {
         [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _] => true,
@@ -471,12 +519,16 @@ impl OwnerPinSyntax {
     /// Trusted names a crate-local site makes ambiguous for `test`: those in
     /// the test's own recognized root, or every one when that root is not
     /// established.
+    fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
+        self.target_roots.get_or_init(|| TargetRoots::new(index))
+    }
+
     fn crate_names_for(&self, test: &TestSummary, index: &RustIndex) -> Vec<String> {
         let by_root = self.crate_macro_bindings.borrow();
-        let Some(by_root) = by_root.as_ref() else {
+        let Some(by_root) = by_root.as_ref().filter(|by_root| !by_root.is_empty()) else {
             return Vec::new();
         };
-        match target_root(&test.file, index) {
+        match self.target_roots(index).root(&test.file, index) {
             Some(root) => by_root.get(&root).into_iter().flatten().cloned().collect(),
             None => by_root.values().flatten().cloned().collect(),
         }
@@ -647,6 +699,7 @@ fn workspace_macro_binding_site(
     name: &str,
     test_root: Option<&Path>,
     index: &RustIndex,
+    roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
@@ -655,12 +708,12 @@ fn workspace_macro_binding_site(
     index.files().iter().find_map(|(path, facts)| {
         // The same rule as the decision: a crate-local site in another
         // recognized root does not reach this test.
-        let site_root = target_root(path, index);
         let reaches = |site: &MacroBindingSite| {
             !site.crate_local
-                || site_root.is_none()
                 || test_root.is_none()
-                || site_root.as_deref() == test_root
+                || roots
+                    .root(path, index)
+                    .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
         };
         macro_binding_sites(name, path, &facts.source, index, module_resolved)
             .into_iter()
@@ -711,6 +764,7 @@ fn macro_binding_sites(
 /// scoped sites in source order.
 fn trusted_macro_sites_in(
     index: &RustIndex,
+    roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
     let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
@@ -739,10 +793,7 @@ fn trusted_macro_sites_in(
         for (path, name, site) in sites {
             if site.scope.is_some() {
                 scoped.entry(path).or_default().push((name, site));
-            } else if let Some(root) = site
-                .crate_local
-                .then(|| target_root(&path, index))
-                .flatten()
+            } else if let Some(root) = site.crate_local.then(|| roots.root(&path, index)).flatten()
             {
                 by_root.entry(root).or_default().insert(name);
             } else {

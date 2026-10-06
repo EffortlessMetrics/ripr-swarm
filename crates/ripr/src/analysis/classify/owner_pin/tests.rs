@@ -1188,6 +1188,46 @@ fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Res
 }
 
 #[test]
+fn an_unresolvable_path_attribute_or_lexical_fallback_disables_root_routing() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let base = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(
+        TargetRoots::new(&base).root(Path::new(TESTS), &base),
+        Some(PathBuf::from(TESTS))
+    );
+    // `#[cfg_attr(.., path = "..")]` has no static target, so its file
+    // records no module edge and could look like a root of its own.
+    let declaring = "#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n";
+    let unknown = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        ("src/main.rs", declaring),
+    ]);
+    assert!(
+        unknown
+            .files()
+            .get(Path::new("src/main.rs"))
+            .is_some_and(|facts| facts
+                .module_declarations
+                .iter()
+                .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)),
+        "the fixture must declare an unresolvable `#[path]`"
+    );
+    assert_eq!(
+        TargetRoots::new(&unknown).root(Path::new(TESTS), &unknown),
+        None
+    );
+    let mut fallback = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let mut facts = summarize_file(PathBuf::from("src/other.rs"), String::new());
+    facts.used_lexical_fallback = true;
+    fallback.insert_file_only(PathBuf::from("src/other.rs"), facts);
+    assert_eq!(
+        TargetRoots::new(&fallback).root(Path::new(TESTS), &fallback),
+        None
+    );
+}
+
+#[test]
 fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
     let packages = BTreeSet::from(["core".to_string()]);
     let mut withheld = WithheldMacroBindings::default();
@@ -1702,7 +1742,8 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         ),
     ] {
         let index = index(&files);
-        let (ambiguous, _, _) = trusted_macro_sites_in(&index, &unresolved);
+        let (ambiguous, _, _) =
+            trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
             ambiguous.len() == NON_RETURNING_MACROS.len(),
