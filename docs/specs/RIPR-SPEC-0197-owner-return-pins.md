@@ -334,7 +334,9 @@ string literal is not a call or a reference. These rules hold for
   `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
   indexed `src/`). humantime's `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
-  `tests/*.rs` assertions. Exported definitions, `pub` imports, sites in
+  `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
+  `#[macro_export]` its macros, so it stays workspace-wide like exported
+  definitions. Exported definitions, `pub` imports, sites in
   another macro's arguments, unparsed files, and any file or test whose
   root is not recognized stay workspace-wide. So does any file another
   crate can also compile: an `include!` fragment or a module below one (a

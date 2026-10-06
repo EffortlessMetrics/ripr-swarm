@@ -1125,8 +1125,38 @@ fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Res
     // Real composition: `src/lib.rs` is included by two binaries, so the
     // include resolver leaves it without a parent and its `asserts` child
     // composes under it as if it were a crate root of its own.
+    let shadowed = include_fragment_refusal(
+        "shadow",
+        LIB_WITH_ASSERTS,
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }\n",
+    )?;
+    assert!(matches!(
+        shadowed,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    // Control: the same layout whose module defines no macro raises no
+    // macro-binding refusal.
+    let plain = include_fragment_refusal("plain", LIB_WITH_ASSERTS, "pub fn g() {}\n")?;
+    assert!(!matches!(
+        plain,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    Ok(())
+}
+
+const LIB_WITH_ASSERTS: &str = "#[macro_use]\nmod asserts;\npub fn f() -> u32 {\n    1\n}\n";
+
+fn include_fragment_refusal(
+    label: &str,
+    lib: &str,
+    asserts: &str,
+) -> Result<Option<AssertionRefusal>, String> {
     let root = std::env::temp_dir().join(format!(
-        "ripr-owner-pin-include-fragment-{}",
+        "ripr-owner-pin-include-fragment-{label}-{}",
         std::process::id()
     ));
     let files = [
@@ -1134,14 +1164,8 @@ fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Res
             "Cargo.toml",
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         ),
-        (
-            "src/lib.rs",
-            "#[macro_use]\nmod asserts;\npub fn f() -> u32 {\n    1\n}\n",
-        ),
-        (
-            "src/asserts.rs",
-            "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }\n",
-        ),
+        ("src/lib.rs", lib),
+        ("src/asserts.rs", asserts),
         (
             "src/main.rs",
             "include!(\"lib.rs\");\nfn main() {}\n#[cfg(test)]\nmod tests;\n",
@@ -1176,15 +1200,13 @@ fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Res
     let test = index
         .tests()
         .iter()
-        .find(|test| test.file == Path::new("src/tests.rs"));
-    assert!(test.is_some(), "the fixture test must be indexed");
-    let Some(test) = test else { return Ok(()) };
-    assert!(
-        OwnerPinSyntax::default()
-            .refusal(test, &test.assertions[0], &index)
-            .is_some()
-    );
-    Ok(())
+        .find(|test| test.file == Path::new("src/tests.rs"))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .first()
+        .ok_or("the fixture assertion must be indexed")?;
+    Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
 }
 
 #[test]
@@ -1275,6 +1297,8 @@ fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
             "#[macro_export] macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
         ),
         ("benches/b.rs", "pub use other::assert_eq;"),
+        // An unresolved `#[macro_use] mod` may `#[macro_export]` its macros.
+        ("benches/b.rs", "#[macro_use]\nmod gen;"),
         ("src/tests/b.rs", "#[macro_use]\nextern crate bencher;"),
         ("src/other.rs", "#[macro_use]\nextern crate bencher;"),
     ] {

@@ -400,7 +400,15 @@ fn macro_binding_ambiguities(
                         .syntax()
                         .parent()
                         .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
-                    ambiguous.extend(all(line, MacroBindingKind::MacroUse(item), true));
+                    // `#[macro_use] extern crate` only imports into this crate. An
+                    // unresolved `#[macro_use] mod` may `#[macro_export]` its macros,
+                    // which other crates reach through a glob, so it stays
+                    // workspace-wide.
+                    let extern_crate = attr
+                        .syntax()
+                        .parent()
+                        .is_some_and(|parent| ast::ExternCrate::can_cast(parent.kind()));
+                    ambiguous.extend(all(line, MacroBindingKind::MacroUse(item), extern_crate));
                     continue;
                 }
             }
