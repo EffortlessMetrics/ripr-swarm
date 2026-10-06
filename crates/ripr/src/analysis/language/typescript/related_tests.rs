@@ -699,6 +699,9 @@ pub(crate) fn sort_related_candidates(candidates: &mut [TypeScriptRelatedCandida
             .rank()
             .cmp(&left.relation.rank())
             .then_with(|| {
+                // Candidate ordering has no changed line here, so it keeps
+                // the strength-only rank (#5525 changes the row projection,
+                // not the related-test ranking).
                 let left_rank = strongest_assertion(&left.test.assertions)
                     .map(|assertion| assertion.oracle_strength.rank())
                     .unwrap_or(0);
@@ -1887,7 +1890,12 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
     )
 }
 
-/// Find related tests for `owner` in `all_tests`.
+/// Find related tests for `owner` in `all_tests`, projecting each row from
+/// its strongest assertion overall.
+///
+/// This entry point has no changed line, so no probe family: it is the
+/// test-only owner-level relation check. The classifier projects rows through
+/// [`related_tests_for_candidates`] with the changed line's family instead.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
 /// tests in different packages are excluded from the candidate set.
@@ -1898,6 +1906,7 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
 /// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (default).
+#[cfg(test)]
 pub(crate) fn find_related_tests(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
@@ -1905,14 +1914,41 @@ pub(crate) fn find_related_tests(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<RelatedTest> {
-    related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
-        .into_iter()
+    let candidates =
+        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    related_tests_for_candidates(&candidates, owner, alias_map, workspace_root, None)
+}
+
+/// Project the public `RelatedTest` rows for already-discovered candidates.
+///
+/// Each row's `oracle_kind`, `oracle_strength` and `oracle` text come from
+/// one assertion: the one [`select_family_relevant_assertion`] picks for
+/// `probe_family` (#5525, RIPR-SPEC-0224), filtered through the same
+/// `ts_oracle_kind_matches_seam` authority the classifier uses. A test whose
+/// assertions all observe another behavior family shows no oracle rather than
+/// the strongest wrong-family assertion. `probe_family` is `None` only where
+/// no changed line exists; every assertion then applies.
+///
+/// A candidate that does not observe an owner-name call keeps an unknown
+/// oracle, exactly as before: its assertions observe something else.
+pub(crate) fn related_tests_for_candidates(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    probe_family: Option<&ProbeFamily>,
+) -> Vec<RelatedTest> {
+    candidates
+        .iter()
         .map(|candidate| {
-            let strongest =
-                candidate_observes_owner_call(&candidate, owner, alias_map, workspace_root)
-                    .then(|| strongest_assertion(&candidate.test.assertions))
+            let selected =
+                candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
+                    .then(|| {
+                        select_family_relevant_assertion(&candidate.test.assertions, probe_family)
+                            .assertion()
+                    })
                     .flatten();
-            let (oracle_kind, oracle_strength, oracle_text) = match strongest {
+            let (oracle_kind, oracle_strength, oracle_text) = match selected {
                 Some(assertion) => (
                     assertion.oracle_kind.clone(),
                     assertion.oracle_strength.clone(),

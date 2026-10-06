@@ -145,6 +145,34 @@ assertion than the strength-only pick surfaces
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
 
+### Family-relevant assertion selection (TypeScript)
+
+TypeScript classification already judges assertions one at a time through
+`ts_oracle_kind_matches_seam` (RIPR-SPEC-0104). Each related-test row now
+projects the same choice instead of the test's strongest assertion overall
+(#5525):
+
+1. Keep the assertions whose oracle kind `ts_oracle_kind_matches_seam`
+   admits for the changed probe family. No second family table exists.
+2. The strongest one wins. Equal strength is broken by the later source
+   line, then the rendered oracle text, observed expression, expected value,
+   matcher and kind. The order of the assertion inventory never decides; the
+   later line keeps the previous projection for equal candidates.
+3. The row's `oracle_kind`, `oracle_strength` and `oracle` text, and every
+   other fact read from it, come from that one assertion.
+4. A test whose assertions all observe another family shows no oracle
+   (`unknown`) rather than the strongest wrong-family assertion.
+
+Exposure verdicts and the aggregate strongest-family result are unchanged:
+the classifier already reads the same rule. Owner-level candidate ordering
+and Bun bridge rows have no TypeScript probe family and keep the strongest
+assertion. Delegation stays fail-closed: the repair-packet target row and
+verify command are chosen by row strength, so when a row's selected strength
+differs from the strength-only pick the finding adds
+`typescript_assertion_selection: no_<family>_relevant_assertion (<test>)` or
+`typescript_assertion_selection: other_behavior_assertion_passed_over
+(<test>)`, and `typescript_gap_record_for` emits no repair packet for it.
+
 ## Required Evidence
 
 - A unit test that a test whose assertions match nothing is listed as
@@ -211,6 +239,14 @@ selection.
   inventories, reordering, stronger orthogonal assertions, single assertions,
   handler lines, the later-line tie-break, static-limit suppression, and the
   classified row and evidence sharing one selection).
+- `crates/ripr/src/analysis/language/typescript/assertion_selection_tests.rs`
+  — the TypeScript selection controls (parsed inventories with an
+  `old_differs` column, Jest/Vitest, AVA, Node assert and chai forms,
+  reordering, the later-line tie-break, unmerged facts, row moves, and
+  classifier rows matching the aggregate family result).
+- `crates/ripr/src/output/typescript_packet_projection.rs`
+  (`moved_assertion_selection_is_never_agent_packet_eligible`) — a moved row
+  keeps the finding out of the repair packet.
 - `crates/ripr/src/app/tests/python_family_selection_packets.rs` — end-to-end
   check output through the gap ledger: no-family-relevant and passed-over
   cards are never agent-packet eligible, and a changed raise keeps its class
@@ -230,6 +266,9 @@ selection.
 | `crates/ripr/src/analysis/language/python/assertion_selection.rs` | family-relevant assertion selection per related test |
 | `crates/ripr/src/analysis/language/python/{classify,related_tests,boundary,no_behavior,static_limits}.rs`, `python/repo/evidence.rs` | consumers of the one selection; non-delegatable alignment reasons |
 | `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |
+| `crates/ripr/src/analysis/language/typescript/assertion_selection.rs` | TypeScript family-relevant assertion selection per related test |
+| `crates/ripr/src/analysis/language/typescript/{related_tests,classifier}.rs` | row projection from the selection; `typescript_assertion_selection` move disclosure |
+| `crates/ripr/src/output/typescript_packet_projection.rs` | no repair packet for a finding with a moved row |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 
 ## Metrics
