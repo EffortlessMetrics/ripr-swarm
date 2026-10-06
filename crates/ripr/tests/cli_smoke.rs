@@ -23727,6 +23727,136 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
     Ok(())
 }
 
+/// #5252 item 8: missing-base advice must not assume an `origin` remote.
+/// In a remote-less repo the repair names the add-remote step instead of a
+/// `git fetch` that would exit without fetching anything.
+#[test]
+fn check_missing_base_advice_does_not_assume_origin_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-no-origin");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let remotes = run_command("git", Some(&root), &["remote"])?;
+    assert!(
+        remotes.status.success() && String::from_utf8_lossy(&remotes.stdout).trim().is_empty(),
+        "fixture must carry no remotes: {remotes:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-ref-5252"),
+        "the failure must name the ref: {stderr}"
+    );
+    assert!(
+        stderr.contains("No git remote is configured") && stderr.contains("git remote add"),
+        "a remote-less repo must get the add-remote step: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: with exactly one remote the missing-base advice names that
+/// remote instead of prescribing `origin`.
+#[test]
+fn check_missing_base_advice_names_the_single_configured_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-one-remote");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // `remote add` touches config only: no network.
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "fork", "https://example.test/fork.git"],
+    )?;
+    assert!(
+        add.status.success(),
+        "fixture must gain a `fork` remote: {add:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch fork`)"),
+        "one configured remote is read, not assumed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: a remote-qualified missing ref names its own configured
+/// remote even when several remotes exist, so a branch tracking `fork` with
+/// a missing `origin/main` is told to fetch `origin`, not a bare fetch that
+/// would follow the branch upstream to `fork`.
+#[test]
+fn check_missing_base_advice_names_a_configured_remote_qualifier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-qualified");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    for (name, url) in [
+        ("fork", "https://example.test/fork.git"),
+        ("origin", "https://example.test/origin.git"),
+    ] {
+        let add = run_command("git", Some(&root), &["remote", "add", name, url])?;
+        assert!(
+            add.status.success(),
+            "fixture must gain a `{name}` remote: {add:?}"
+        );
+    }
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "origin/main",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch origin`)"),
+        "a configured qualifier names its own remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
 /// #5252 item 4: two unresolvable refs must warn once per ref (naming the
 /// ref), and the renderer-owned preflight spellings must use one separator
 /// style per document like the `next_command` lines already do.
