@@ -130,6 +130,9 @@ rule only for an assertion whose context was admitted.
      inherent associated function of that name and declares `-> Self` (or
      `-> T`), or `Result`/`Option` of it followed by `?`, `.unwrap()` or
      `.expect(..)`; or a byte-slice expression (`&[..][..]`, `&b".."[..]`).
+     An inline receiver `T::f(..).name(..)` is typed exactly as
+     `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
+     `Stack::depth` under the same constructor-signature rules.
      A name bound by any other pattern (a closure parameter, a `for` or
      match-arm pattern, a destructuring `let`, a nested `fn`, the test's
      parameters, a macro that mentions it) leaves the type unestablished. A
@@ -164,7 +167,14 @@ rule only for an assertion whose context was admitted.
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
-   and the pinned value must itself be `Ok(..)` (or `Some(..)`). An owner
+   and the pinned value must itself be `Ok(..)` (or `Some(..)`). The mirror
+   case covers a changed early `return None;` (or `return Err(..);`): it
+   pins only when it is the body's one `return` of that value, every other
+   `return` and the tail build one `Some(..)` (or `Ok(..)`) call, the body
+   has no `?`, no `return` sits in a closure or `async`/`const` block, and
+   the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
+   `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
+   the motivating shape. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
@@ -312,6 +322,25 @@ string literal is not a call or a reference. These rules hold for
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
   crate with indexed files is workspace-owned.
+- A crate-local binding reaches only tests compiled in the same crate. A
+  site is crate-local when it cannot leave the crate whose module tree holds
+  its file: a private `use` or glob, `#[macro_use] extern crate`,
+  `#![no_implicit_prelude]`, or a `macro_rules!` without `#[macro_export]`
+  (a `macro` 2.0 item without visibility). Its crate is the root reached
+  through resolved module edges, recognized only when that root is a Cargo
+  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, and
+  `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
+  indexed `src/`). humantime's `benches/datetime_format.rs`
+  (`#[macro_use] extern crate bencher;`) no longer refuses the library's
+  `tests/*.rs` assertions. Exported definitions, `pub` imports, sites in
+  another macro's arguments, unparsed files, and any file or test whose
+  root is not recognized stay workspace-wide. A withheld file in the
+  dependent scope is routed by root only when its own path is a `src/lib.rs`,
+  `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
+  closure; every other withheld site stays workspace-wide. Limits: a
+  `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
+  file at a default target path that some other target includes through
+  `#[path]` is still judged by its default root.
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
@@ -552,8 +581,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
   names; inherent receivers; bare calls (associated twin, free twin, local
   binding, `for`/closure/parameter/macro bindings, `use .. as` renames);
-  the return-path gate, including conditionally evaluated tails and spaced
-  macros; plain `assert_eq!` against an owner-free value, `#[should_panic]`
+  the return-path gate, including conditionally evaluated tails, spaced
+  macros and the sole early `return None;`/`Err` source
+  (`an_early_return_is_pinned_when_it_is_the_only_source_of_its_value`);
+  inline constructor receivers
+  (`an_inline_constructor_types_the_receiver_like_a_binding`); crate-local
+  bindings in another target
+  (`a_crate_local_binding_in_another_target_does_not_reach_the_test`); plain `assert_eq!` against an owner-free value, `#[should_panic]`
   and assertions outside the test body; by-value prelude method names;
   constructor signatures; macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
