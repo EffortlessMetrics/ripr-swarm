@@ -15,15 +15,19 @@ use crate::analysis::SeamLimitInfo;
 use crate::analysis::SeamLimitSource;
 use crate::analysis::TypeScriptRepoReadiness;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::seams::SeamGripClass;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
+use crate::output::json::escape_into as json_escape_into;
 use crate::output::markdown::{code_span, inline_prose_literal, table_cell_text};
 use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Guidance disclosure emitted when a predominantly TypeScript/JavaScript
 /// workspace is scanned in repo-exposure mode and contributes zero seams.
@@ -248,13 +252,24 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
 ) -> Result<(), String> {
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
     let seams = SeamJsons::new(classified, PRERENDERED_SEAM_JSON_BUDGET_BYTES);
+    let source_subject_started = Instant::now();
     let source_subject = repo_exposure_source_subject(&seams, &context.root);
+    trace_latency_phase(
+        "serialize_source_subject",
+        "ok",
+        source_subject_started.elapsed(),
+    );
     let mut hasher = Sha256Writer::new();
     let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
         python_guidance,
         generated_skip,
     };
+    // The hash pass renders the full document into memory: no destination
+    // I/O happens here. The write pass below renders it again into `out`,
+    // so `serialize_write_pass` minus `serialize_hash_pass` is the I/O
+    // cost (#6898).
+    let hash_started = Instant::now();
     write_repo_exposure_json_document(
         limit_info,
         disclosures,
@@ -264,9 +279,11 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         &mut hasher,
     )
     .map_err(|err| format!("hash repo exposure JSON failed: {err}"))?;
+    trace_latency_phase("serialize_hash_pass", "ok", hash_started.elapsed());
     let content_sha256 = hasher.finish();
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
+    let write_started = Instant::now();
     write_repo_exposure_json_document(
         limit_info,
         disclosures,
@@ -275,7 +292,9 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         &seams,
         out,
     )
-    .map_err(|err| format!("write repo exposure JSON failed: {err}"))
+    .map_err(|err| format!("write repo exposure JSON failed: {err}"))?;
+    trace_latency_phase("serialize_write_pass", "ok", write_started.elapsed());
+    Ok(())
 }
 
 /// Render a producer-owned repo-exposure artifact for non-streaming library
@@ -322,11 +341,14 @@ struct SeamJsons<'a> {
 
 impl<'a> SeamJsons<'a> {
     fn new(classified: &'a [ClassifiedSeam], budget_bytes: usize) -> Self {
+        let gaps_started = Instant::now();
         let canonical_gaps = canonical_gap_identities(classified);
+        trace_latency_phase("serialize_gap_identities", "ok", gaps_started.elapsed());
         let mut prefix = Vec::new();
         let mut total = 0usize;
         // A zero budget (the plain streaming writer) keeps nothing, so it
         // renders no entry just to discard it.
+        let prerender_started = Instant::now();
         for entry in classified.iter().take_while(|_| budget_bytes > 0) {
             let seam_json = render_seam_json(entry, &canonical_gaps);
             total = total.saturating_add(seam_json.len());
@@ -335,6 +357,11 @@ impl<'a> SeamJsons<'a> {
             }
             prefix.push(seam_json);
         }
+        trace_latency_phase(
+            "serialize_seam_prerender",
+            "ok",
+            prerender_started.elapsed(),
+        );
         Self {
             classified,
             canonical_gaps,
@@ -358,7 +385,10 @@ fn render_seam_json(
     entry: &ClassifiedSeam,
     canonical_gaps: &BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
 ) -> String {
-    let mut seam_json = String::new();
+    // A rendered seam averages ~12KB on the reference workload; 8KB costs
+    // at most one regrowth while never over-reserving into the kept prefix
+    // (#6898).
+    let mut seam_json = String::with_capacity(8 * 1024);
     push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
     seam_json
 }
@@ -845,67 +875,69 @@ fn push_classified_json(
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
+    // #6898: this hot loop renders every seam up to four times per
+    // snapshot (prerender, source subject, hash pass, write pass), so it
+    // writes fields straight into `out` instead of `format!` temporaries.
+    // The emitted bytes are unchanged; only the intermediate allocations
+    // are gone.
     out.push_str("    {\n");
-    out.push_str(&format!(
-        "      \"seam_id\": \"{}\",\n",
-        json_escape(seam.id().as_str())
-    ));
-    out.push_str(&format!("      \"kind\": \"{}\",\n", seam.kind().as_str()));
-    out.push_str(&format!(
-        "      \"file\": \"{}\",\n",
-        json_escape(&display_path(seam.file()))
-    ));
-    out.push_str(&format!("      \"line\": {},\n", seam.display_line()));
+    let _ = write!(out, "      \"seam_id\": \"");
+    json_escape_into(out, seam.id().as_str());
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"kind\": \"{}\",", seam.kind().as_str());
+    let _ = write!(out, "      \"file\": \"");
+    json_escape_into(out, &display_path(seam.file()));
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"line\": {},", seam.display_line());
     if let Some(span) = seam.span() {
-        out.push_str(&format!("      \"column\": {},\n", span.start_column));
-        out.push_str(&format!("      \"end_line\": {},\n", span.end_line));
-        out.push_str(&format!("      \"end_column\": {},\n", span.end_column));
+        let _ = writeln!(out, "      \"column\": {},", span.start_column);
+        let _ = writeln!(out, "      \"end_line\": {},", span.end_line);
+        let _ = writeln!(out, "      \"end_column\": {},", span.end_column);
     }
-    out.push_str(&format!(
-        "      \"owner\": \"{}\",\n",
-        json_escape(seam.owner())
-    ));
-    out.push_str(&format!(
-        "      \"expression\": \"{}\",\n",
-        json_escape(seam.expression())
-    ));
-    out.push_str(&format!(
-        "      \"grip_class\": \"{}\",\n",
-        entry.class.as_str()
-    ));
-    out.push_str(&format!(
-        "      \"headline_eligible\": {},\n",
+    let _ = write!(out, "      \"owner\": \"");
+    json_escape_into(out, seam.owner());
+    out.push_str("\",\n");
+    let _ = write!(out, "      \"expression\": \"");
+    json_escape_into(out, seam.expression());
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"grip_class\": \"{}\",", entry.class.as_str());
+    let _ = writeln!(
+        out,
+        "      \"headline_eligible\": {},",
         entry.class.is_headline_eligible()
-    ));
+    );
 
     out.push_str("      \"evidence\": {\n");
-    out.push_str(&format!(
-        "        \"reach\": \"{}\",\n",
+    let _ = writeln!(
+        out,
+        "        \"reach\": \"{}\",",
         evidence.reach.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"activate\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"activate\": \"{}\",",
         evidence.activate.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"propagate\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"propagate\": \"{}\",",
         evidence.propagate.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"observe\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"observe\": \"{}\",",
         evidence.observe.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"discriminate\": \"{}\"\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"discriminate\": \"{}\"",
         evidence.discriminate.state.as_str()
-    ));
+    );
     out.push_str("      },\n");
 
     let related_total = evidence.related_tests.len();
     let related_rendered = related_total.min(MAX_RELATED_TESTS_PER_SEAM_JSON);
-    out.push_str(&format!(
-        "      \"related_tests_total\": {related_total},\n"
-    ));
+    let _ = writeln!(out, "      \"related_tests_total\": {related_total},");
     out.push_str("      \"related_tests\": [");
     if related_rendered > 0 {
         out.push('\n');
@@ -916,35 +948,32 @@ fn push_classified_json(
             .enumerate()
         {
             out.push_str("        {");
-            out.push_str(&format!(
-                "\"name\": \"{}\", ",
-                json_escape(grip.test_name.as_str())
-            ));
-            out.push_str(&format!(
-                "\"file\": \"{}\", ",
-                json_escape(&display_path(&grip.file))
-            ));
-            out.push_str(&format!("\"line\": {}, ", grip.line));
-            out.push_str(&format!(
-                "\"oracle_kind\": \"{}\", ",
-                grip.oracle_kind.as_str()
-            ));
-            out.push_str(&format!(
+            let _ = write!(out, "\"name\": \"");
+            json_escape_into(out, grip.test_name.as_str());
+            out.push_str("\", ");
+            let _ = write!(out, "\"file\": \"");
+            json_escape_into(out, &display_path(&grip.file));
+            out.push_str("\", ");
+            let _ = write!(out, "\"line\": {}, ", grip.line);
+            let _ = write!(out, "\"oracle_kind\": \"{}\", ", grip.oracle_kind.as_str());
+            let _ = write!(
+                out,
                 "\"oracle_strength\": \"{}\", ",
                 grip.oracle_strength.as_str()
-            ));
-            out.push_str(&format!(
-                "\"evidence_summary\": \"{}\", ",
-                json_escape(grip.evidence_summary.as_str())
-            ));
-            out.push_str(&format!(
+            );
+            let _ = write!(out, "\"evidence_summary\": \"");
+            json_escape_into(out, grip.evidence_summary.as_str());
+            out.push_str("\", ");
+            let _ = write!(
+                out,
                 "\"relation_reason\": \"{}\", ",
                 grip.relation_reason.as_str()
-            ));
-            out.push_str(&format!(
+            );
+            let _ = write!(
+                out,
                 "\"relation_confidence\": \"{}\"",
                 grip.relation_confidence.as_str()
-            ));
+            );
             out.push('}');
             if idx + 1 != related_rendered {
                 out.push(',');
@@ -957,7 +986,9 @@ fn push_classified_json(
 
     out.push_str("      \"observed_values\": [");
     for (idx, value) in evidence.observed_values.iter().enumerate() {
-        out.push_str(&format!("\"{}\"", json_escape(value.value.as_str())));
+        out.push('"');
+        json_escape_into(out, value.value.as_str());
+        out.push('"');
         if idx + 1 != evidence.observed_values.len() {
             out.push_str(", ");
         }
@@ -968,11 +999,11 @@ fn push_classified_json(
     if !evidence.missing_discriminators.is_empty() {
         out.push('\n');
         for (idx, missing) in evidence.missing_discriminators.iter().enumerate() {
-            out.push_str(&format!(
-                "        {{\"value\": \"{}\", \"reason\": \"{}\"}}",
-                json_escape(missing.value.as_str()),
-                json_escape(missing.reason.as_str())
-            ));
+            let _ = write!(out, "        {{\"value\": \"");
+            json_escape_into(out, missing.value.as_str());
+            let _ = write!(out, "\", \"reason\": \"");
+            json_escape_into(out, missing.reason.as_str());
+            out.push_str("\"}");
             if idx + 1 != evidence.missing_discriminators.len() {
                 out.push(',');
             }
