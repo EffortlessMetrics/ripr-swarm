@@ -10,9 +10,9 @@ export interface RunOutcome {
 
 /**
  * Classifies a finished mocha run and returns the rejection reason, or
- * undefined for a clean run. A suite whose "before all"/"before each" hook
- * died executed none of its tests, so that outcome is reported as a setup
- * death with the named hook instead of an ordinary test failure (#6845).
+ * undefined for a clean run. A failed "before all"/"before each" hook is
+ * named as a setup death with what did and did not execute, instead of
+ * reading as an ordinary failure count (#6845).
  */
 export function validateRunOutcome({
   executed,
@@ -20,11 +20,18 @@ export function validateRunOutcome({
   failedBeforeHooks,
 }: RunOutcome): string | undefined {
   if (failedBeforeHooks.length > 0) {
-    return [
-      `${failedBeforeHooks.length} suite setup hook failed before its tests ran:`,
-      ...failedBeforeHooks.map((title) => `- ${title}`),
-      'The affected suite executed no tests; this is not an ordinary test failure.'
-    ].join('\n');
+    const lines = [
+      `${failedBeforeHooks.length} suite setup hook failed before its remaining tests ran:`,
+      ...failedBeforeHooks.map((title) => `- ${title}`)
+    ];
+    const otherFailures = Math.max(0, failures - failedBeforeHooks.length);
+    if (otherFailures > 0) {
+      lines.push(`${otherFailures} other test(s) failed in this run.`);
+    }
+    if (executed > 0) {
+      lines.push(`${executed} test(s) did execute in this run, earlier or in other suites.`);
+    }
+    return lines.join('\n');
   }
   if (executed === 0) {
     return 'test run executed zero tests; result is not_run';
