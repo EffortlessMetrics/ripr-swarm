@@ -13,6 +13,7 @@ Start here:
   File: fixtures/match_arm_shared_result_no_promotion/input/src/lib.rs:3
   Static exposure: weak (weakly_exposed, warning, confidence 0.84)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:route:match_arm:match_arm:lit73656e736f72
   Changed behavior: "sensor" =>
   Missing discriminator (1 of 2): "sensor"
   Related test: tests/route.rs:7 sibling_proof_arm_is_observed (no test input selects arm `"sensor" =>`)

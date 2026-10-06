@@ -13,6 +13,7 @@ Start here:
   File: fixtures/guarded_result_match_fail_closed/input/src/lib.rs:62
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Canonical gap: gap:rust:src/lib.rs:expect_response:error_variant:error_path:ok_build_response_id.trim_method
   Changed behavior: Ok(build_response(id.trim(), method)?)
   Missing discriminator (1 of 4): No detected assertion observes the changed value, error, field, or effect
   Related test (1 of 5): tests/protocol.rs:43 message_only_error_predicate_never_pins (assertion not credited: ripr could not establish that it runs as the standard macro)

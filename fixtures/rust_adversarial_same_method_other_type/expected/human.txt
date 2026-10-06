@@ -13,6 +13,7 @@ Start here:
   File: fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs:22
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
   Changed behavior: (0, Some(self.remaining))
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 5): tests/size_hints.rs:4 combinations_inexact_size_hints (ripr could not confirm that this assertion observes the changed behavior)

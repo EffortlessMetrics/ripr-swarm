@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::authenticate
+  canonical gap: gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -47,6 +48,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::authenticate
+  canonical gap: gap:rust:src/lib.rs:authenticate:return_value:return_value:err_autherror_revokedtoken
 
 Static exposure
   exposed (info, confidence 1.00)

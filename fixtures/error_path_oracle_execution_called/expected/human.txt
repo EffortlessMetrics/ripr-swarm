@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: fixtures/error_path_oracle_execution_called/input/src/lib.rs:5
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
   Changed behavior: let n = rdr.read(&mut buf)?;
   Related test: src/lib.rs:21 reports_read_failure
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

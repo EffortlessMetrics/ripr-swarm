@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:880ed6e6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -83,6 +95,18 @@
     },
     {
       "id": "probe:src_lib.rs:side_effect:95da2a37",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,

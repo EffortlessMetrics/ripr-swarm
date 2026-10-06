@@ -13,6 +13,7 @@ Start here:
   File: fixtures/boundary_named_constant/input/src/lib.rs:30
   Static exposure: unknown (infection_unknown, warning, confidence 0.66)
   Why unknown: the change reaches a sink but infection could not be determined statically
+  Canonical gap: gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping
   Changed behavior: amount >= FREE_SHIPPING
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Related test (1 of 2): tests/pricing.rs:17 shipping_boundary

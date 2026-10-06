@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:5c979117",
+      "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "try_parse_summary",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_parsesummaryerror_malformedsource"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -92,6 +104,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:f573bd5d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "try_parse_summary",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_parsesummaryerror_malformedsource"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -173,6 +197,18 @@
     },
     {
       "id": "probe:src_lib.rs:error_path:5c979117.2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "try_parse_summary",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_parsesummaryerror_malformedsource"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -254,6 +290,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:f573bd5d.2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "try_parse_summary",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_parsesummaryerror_malformedsource"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -1269,6 +1317,18 @@
     },
     {
       "id": "probe:src_lib.rs:error_path:c82815a4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:theme_summary:error_variant:error_path:try_theme_summary_raw_.map_err_into_into",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:theme_summary:error_variant:error_path:try_theme_summary_raw_.map_err_into_into",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "theme_summary",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "try_theme_summary_raw_.map_err_into_into"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -1341,6 +1401,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:4ccb1836",
+      "canonical_gap_id": "gap:rust:src/lib.rs:theme_summary:return_value:return_value:try_theme_summary_raw_.map_err_into_into",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:theme_summary:return_value:return_value:try_theme_summary_raw_.map_err_into_into",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "theme_summary",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "try_theme_summary_raw_.map_err_into_into"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,

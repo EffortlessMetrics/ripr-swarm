@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -54,6 +55,7 @@ Probe
   family: static_unknown
   delta:  unknown
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0
 
 Static exposure
   static_unknown (note, confidence 0.50)

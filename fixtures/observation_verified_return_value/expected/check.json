@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:bc806f88",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute_score:return_value:return_value:x*scale_factor",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute_score:return_value:return_value:x*scale_factor",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute_score",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "x*scale_factor"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -91,6 +103,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:35a08f71",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute_score:static_unknown:static_unknown:x+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute_score:static_unknown:static_unknown:x+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute_score",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "x+1"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,

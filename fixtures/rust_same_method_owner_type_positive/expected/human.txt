@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: fixtures/rust_same_method_owner_type_positive/input/src/lib.rs:22
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
   Changed behavior: (0, Some(self.remaining))
   Related test: tests/size_hints.rs:4 while_some_size_hint_upper_bound
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

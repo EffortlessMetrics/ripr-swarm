@@ -13,6 +13,7 @@ Start here:
   File: fixtures/binding_value_family_matrix/input/src/lib.rs:12
   Static exposure: unknown (propagation_unknown, note, confidence 0.66)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:open==want
   Changed behavior: label.starts_with("pre-")
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/matrix.rs:14 starts_with_boundary_is_observed

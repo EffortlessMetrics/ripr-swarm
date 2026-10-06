@@ -18,6 +18,7 @@ Probe
   family: match_arm
   delta:  control
   owner:  src/lib.rs::seconds
+  canonical gap: gap:rust:src/lib.rs:seconds:match_arm:match_arm:unit_fortnight
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)

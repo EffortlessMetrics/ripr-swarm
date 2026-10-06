@@ -13,6 +13,7 @@ Start here:
   File: fixtures/decimal_field_observer_non_member_access/input/src/lib.rs:7
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Canonical gap: gap:rust:src/lib.rs:default_config:return_value:return_value:config_timeout_secs_30_retries_1
   Changed behavior: Config { timeout_secs: 30, retries: 1, }
   Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
   Related test: tests/config.rs:7 decimal_observation_does_not_name_retries (asserts, but not on the changed value)

@@ -13,6 +13,7 @@ Start here:
   File: fixtures/observation_unverified_call_deletion/input/src/lib.rs:10
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:store_result:call_deletion:call_deletion:cache.insert_lit726573756c745f6b6579_result
   Changed behavior: cache.insert("result_key", result)
   Missing discriminator: No strong discriminator was detected
   Related test: tests/store_tests.rs:4 store_result_runs_without_panic (assertion too weak to tell the old behavior from the new)

@@ -13,6 +13,7 @@ Start here:
   File: fixtures/snapshot_oracle/input/src/lib.rs:2
   Static exposure: weak (weakly_exposed, warning, confidence 0.84)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:render_status:predicate_boundary:predicate:code==299
   Changed behavior: if code <= 299 {
   Missing discriminator (1 of 2): code == 299
   Related test: tests/rendering.rs:4 renders_error_status_snapshot (no test input reaches `code == 299`)
