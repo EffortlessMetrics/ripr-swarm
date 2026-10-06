@@ -2885,9 +2885,11 @@ Field contract:
 
 - `schema_version` — currently `"0.2"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
-  consumers in lockstep. The top-level `artifact` envelope below is additive
-  and keeps this version, per the repo-exposure envelope (#2203) and
-  gate-subject (#5474) precedents.
+  consumers in lockstep. `0.1` → `0.2`: seams gained the additive `column` /
+  `end_line` / `end_column` span coordinates (#5336). The top-level
+  `artifact` envelope below is additive within `0.2` and does not bump the
+  version, per the repo-exposure envelope (#2203) and gate-subject (#5474)
+  precedents.
 - `artifact` — additive producer identity envelope (#6609), the same shared
   projection `repo-exposure-json` carries with two token differences:
   `kind` is `"repo_seams"` and `analysis.format` / `analysis.command` name
