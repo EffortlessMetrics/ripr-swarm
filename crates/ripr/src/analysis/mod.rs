@@ -1105,6 +1105,17 @@ mod tests {
             ),
             "/repo/sub/../../outside.rs"
         );
+        // The guard runs after the verbatim rewrite, so a verbatim drive
+        // path with `..` falls back too. Same spelling on both hosts: where
+        // the drive path does not parse, the strip already fails.
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new(r"\\?\F:\repo"),
+                Path::new(r"\\?\F:\repo\..\outside.rs"),
+                true
+            ),
+            "F:/repo/../outside.rs"
+        );
     }
 
     #[cfg(unix)]
