@@ -311,3 +311,18 @@ fn a_field_matching_another_literal_on_the_same_line_is_still_edited() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn a_field_that_was_the_head_of_a_longer_value_is_still_edited() -> Result<(), String> {
+    // The old `flag: foo && bar` begins with the new `flag: foo`, but the
+    // field's value changed; the untouched `enabled: true` is not the subject.
+    let source = "pub struct Packet {\n    flag: bool,\n    enabled: bool,\n}\npub fn packet(foo: bool) -> Packet {\n    Packet { flag: foo, enabled: true }\n}\n";
+    let probes =
+        probes_for_replaced_line(source, 6, "    Packet { flag: foo && bar, enabled: true }")?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["flag: foo"],
+        "{probes:?}"
+    );
+    Ok(())
+}

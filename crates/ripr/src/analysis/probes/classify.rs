@@ -293,7 +293,16 @@ fn token_run_count(haystack: &str, needle: &str) -> usize {
                 || before.is_none_or(|ch| !is_word(ch));
             let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
                 || after.is_none_or(|ch| !is_word(ch));
-            open_start && open_end
+            // The occurrence must be a whole syntactic unit, not the head or
+            // tail of a longer expression: `flag: foo` inside the old
+            // `flag: foo && bar` is not the unchanged field. Rejecting a
+            // match only makes a shape read as changed, which falls back to
+            // the distance tie-break.
+            let next = haystack[start + needle.len()..].trim_start().chars().next();
+            let previous = haystack[..start].trim_end().chars().next_back();
+            let closes = next.is_none_or(|ch| matches!(ch, ',' | '}' | ')' | ']' | ';' | '{'));
+            let opens = previous.is_none_or(|ch| !"&|+-*/%<>=!^.".contains(ch));
+            open_start && open_end && closes && opens
         })
         .count()
 }
