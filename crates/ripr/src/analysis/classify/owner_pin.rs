@@ -45,7 +45,7 @@ use crate::analysis::extract::{
     outer_assertion_condition, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::drop_in::DropInManifests;
-use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
+use crate::analysis::facts::{FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
@@ -408,7 +408,16 @@ type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, 
 /// ambiguous, cfg-conflicting, capped or unindexed include leaves its
 /// fragment, and the fragment's module children, looking like a root.
 fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
-    if !index.include_limitations.is_empty() {
+    // An unresolvable `#[path]` records no module edge either, so its
+    // target can look like a root of its own.
+    if !index.include_limitations.is_empty()
+        || index.files().iter().any(|(_, facts)| {
+            facts
+                .module_declarations
+                .iter()
+                .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
+        })
+    {
         return None;
     }
     let facts = index.files().get(file)?;
@@ -1229,7 +1238,12 @@ fn early_return_gate(
     } else {
         return None;
     };
-    if inner.contains('?') || !returns_leave_the_function(body) {
+    // `return Err(if .. { A } else { B })`: a pin on `A` never evaluates a
+    // changed `B`, as on the tail path.
+    if inner.contains('?')
+        || !returns_leave_the_function(body)
+        || evaluates_conditionally(&mask_comments_and_strings(changed))
+    {
         return None;
     }
     let mut changed_returns = 0usize;

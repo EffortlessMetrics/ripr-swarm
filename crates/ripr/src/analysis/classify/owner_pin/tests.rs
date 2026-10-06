@@ -442,6 +442,23 @@ fn an_early_err_return_needs_to_be_the_only_err_source() {
             "{body}"
         );
     }
+    // A pin on one branch of a conditional `Err` never evaluates the other.
+    for (body, changed) in [
+        (
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(if x == -1 { E::A } else { E::B });\n    }\n    Ok(x)\n}",
+            "return Err(if x == -1 { E::A } else { E::B });",
+        ),
+        (
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(match x { -1 => E::A, _ => E::B });\n    }\n    Ok(x)\n}",
+            "return Err(match x { -1 => E::A, _ => E::B });",
+        ),
+    ] {
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
 }
 
 #[test]

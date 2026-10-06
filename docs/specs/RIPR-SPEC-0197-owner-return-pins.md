@@ -171,7 +171,9 @@ rule only for an assertion whose context was admitted.
    case covers a changed early `return None;` (or `return Err(..);`): it
    pins only when it is the body's one `return` of that value, every other
    `return` and the tail build one `Some(..)` (or `Ok(..)`) call, the body
-   has no `?`, no `return` sits in a closure or `async`/`const` block, and
+   has no `?`, no `return` sits in a closure, `async`/`const` block or
+   nested `fn`, the changed value evaluates all of its parts (no `if`,
+   `match`, `&&`/`||` or skipping combinator, as for the tail), and
    the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
    `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
    the motivating shape. An owner
@@ -341,7 +343,9 @@ string literal is not a call or a reference. These rules hold for
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
-  module children otherwise look like a crate root of their own. A withheld file in the
+  module children otherwise look like a crate root of their own. The same
+  holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
+  records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
   `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
   closure; every other withheld site stays workspace-wide. Limits: a
