@@ -13228,14 +13228,21 @@ Field contract:
   also when status cannot choose honestly: an unreadable attempt manifest,
   several current awaiting attempts, several open seams, an unreadable
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
+  a complete pilot summary that ranked no seam because it withheld every
+  seam as a static limitation (`withheld_static_limitations_total` > 0),
   or a complete pilot summary that ranked no seam, recorded no repair card
   (`python_first_use` absent, `null`, or status `no_python_findings` or
   `no_repair_cards`) and routed the code to `ripr check`
   (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
-  `pilot_found_no_repair_target`, `pilot_routed_to_check_no_repair_target`)
-  then names the choices. The last names the recorded check command and the
+  `pilot_found_no_repair_target`,
+  `pilot_withheld_static_limitations_no_repair_target`,
+  `pilot_routed_to_check_no_repair_target`) then names the choices. The
+  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  reads the count as "at least N" and names raising the seam limits and
+  rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
@@ -15350,11 +15357,11 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
-`pilot-summary.json` uses schema `0.2`:
+`pilot-summary.json` uses schema `0.3`:
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "complete",
@@ -15381,6 +15388,7 @@ target/ripr/pilot/pilot-summary.md
     "pilot_summary_md"
   ],
   "actionable_seams_total": 1,
+  "withheld_static_limitations_total": 0,
   "top_actionable_seams": [
     {
       "seam_id": "67fc764ba37d77bd",
@@ -15538,7 +15546,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "partial",
@@ -15564,6 +15572,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
   ],
   "max_seams": 5,
   "actionable_seams_total": null,
+  "withheld_static_limitations_total": null,
   "top_actionable_seams": [],
   "next": {
     "retry_command": "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000"
@@ -15573,7 +15582,9 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`.
+- `schema_version` — currently `"0.3"`. `0.3` withholds static limitations
+  from the ranking and adds `withheld_static_limitations_total` (#5497);
+  `actionable_seams_total` no longer counts `opaque` or `*_unknown` seams.
 - `scope` — always `"repo"`.
 - `status` — `"complete"` when repo exposure and agent seam packet artifacts
   were written, or `"partial"` when the command stopped at a diagnostic summary.
@@ -15592,10 +15603,22 @@ Field contract:
   summaries write only `pilot_summary_json` and `pilot_summary_md`.
 - `max_seams` — cap requested by `--max-seams`.
 - `actionable_seams_total` — number of seams considered actionable by the pilot
-  ranking policy, or `null` for partial summaries where analysis did not finish.
+  ranking policy (the gap classes below), or `null` for partial summaries where
+  analysis did not finish.
+- `withheld_static_limitations_total` — seams pilot did not rank because their
+  class is `opaque` or an `*_unknown` class: the classifier stopped on a stage
+  it could not establish, so the seam is a static limitation, not a gap. They
+  stay in `repo-exposure.json` with their evidence. `pilot-summary.md` and the
+  terminal disclose the count; when it is nonzero and nothing ranked, both say
+  the empty ranking is not a clean result. After a seam limit cut the
+  classified seams, the count covers the kept seams only: Markdown and the
+  terminal read it as "at least N", the terminal also names the limit, and
+  the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
+  cut seams were never classified. `null` for partial summaries.
 - `top_actionable_seams[]` — ranked seams using class order
-  `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
-  then `opaque`, with evidence tie-breakers for missing discriminator, related
+  `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
+  withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
   owning function's (file plus owner) first seam in the whole ranking comes
   before any function's second, so adjacent seams of one function cannot fill
@@ -15644,9 +15667,13 @@ Field contract:
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, or when
-  `rust_excluded_from_scope` is present, `after_snapshot_command` and
-  `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, when
+  `rust_excluded_from_scope` is present, or when nothing ranked because every
+  seam was withheld (`withheld_static_limitations_total` > 0) and no Python
+  repair card applies, `after_snapshot_command` and `outcome_command` are
+  `null`: there is no seam to snapshot or measure. Agent status reads the
+  run's `repo-exposure.json` for the withheld warning; when that file is
+  missing or unreadable it cannot rule out a seam limit and names raising it.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
