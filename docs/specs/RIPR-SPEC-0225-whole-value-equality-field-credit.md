@@ -131,6 +131,9 @@ finding may read `exposed`, subject to every other stage.
 
 RIPR-SPEC-0197 rule 6 (clone field pins, #6692) consumes rules 3 and 4 for a
 field of a hand-written `Clone::clone` literal compared with its own receiver.
+The "No credit" list below, including its separate-binding bullet, governs
+this spec's literal comparisons; it does not govern rule 6's receiver, whose
+independence rule 6 gates itself.
 
 ### No credit
 

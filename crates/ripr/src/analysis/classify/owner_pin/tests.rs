@@ -301,6 +301,22 @@ fn inherent_method_needs_a_receiver_of_its_own_type() {
         let Some(pin) = pin else { return };
         assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{binding}");
     }
+    // #6773 review: a receiver whose name also occurs inside `mut`
+    // (`let mut m`) is read at its whole-word position.
+    for (binding, admitted) in [
+        ("let mut m = Stack::new();", 1),
+        ("let mut m: Stack = Stack::new();", 1),
+        ("let mut m = Vec::<u32>::new();", 0),
+    ] {
+        let tests = format!(
+            "use demo::Stack;\n\n#[test]\nfn depth_counts() {{\n    {binding}\n    assert_eq!(m.depth(), 1);\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "depth", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{binding}");
+    }
 }
 
 #[test]
@@ -1135,14 +1151,69 @@ fn a_clone_field_pin_needs_derived_equality_and_the_returned_literal() {
         "        Window {\n            start: self.start,\n            end: self.end,\n        }\n",
         "        let copy = Window {\n            start: self.start,\n            end: self.end,\n        };\n        Window::new(copy.end, copy.start)\n",
     );
+    // #6773 review: a manual `PartialEq<Rhs>` beside the derive, a shadowed
+    // `PartialEq` derive (imported from elsewhere, or a qualified derive
+    // path), a derived `Clone` beside the hand-written one, and generic
+    // parameters on the type all fail closed.
+    let manual_rhs_eq = WINDOW_LIB.to_string()
+        + "impl PartialEq<u32> for Window {\n    fn eq(&self, other: &u32) -> bool { self.end == *other }\n}\n";
+    let imported_derive = WINDOW_LIB.to_string() + "use some_crate::PartialEq;\n";
+    let renamed_derive = WINDOW_LIB.to_string() + "use some_crate::Thing as PartialEq;\n";
+    let qualified_derive = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[derive(Debug, some_crate::PartialEq, Eq)]",
+    );
+    let derived_clone = WINDOW_LIB.replace(
+        "#[derive(Debug, PartialEq, Eq)]",
+        "#[derive(Debug, PartialEq, Eq, Clone)]",
+    );
+    let defaulted_generic =
+        WINDOW_LIB.replace("pub struct Window {", "pub struct Window<T = u32> {");
+    // #6773 review: a foreign `Clone` on the owner side.
+    let foreign_clone_path =
+        WINDOW_LIB.replace("impl Clone for Window", "impl dupe::Clone for Window");
+    let foreign_clone_import = WINDOW_LIB.to_string() + "use dupe::Clone;\n";
+    let std_clone_path =
+        WINDOW_LIB.replace("impl Clone for Window", "impl std::clone::Clone for Window");
     for lib in [
         manual_eq,
         gated_derive,
         local_trait,
         early_exit,
         bound_first,
+        manual_rhs_eq,
+        imported_derive,
+        renamed_derive,
+        qualified_derive,
+        derived_clone,
+        defaulted_generic,
+        foreign_clone_path,
+        foreign_clone_import,
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Fixture controls: the plain library and a `std`-rooted `Clone` path
+    // still establish.
+    assert!(clone_field_pin(WINDOW_LIB, WINDOW_TESTS).1.is_some());
+    assert!(clone_field_pin(&std_clone_path, WINDOW_TESTS).1.is_some());
+}
+
+/// #6773 review: `struct W<String> { x: String }` names a type parameter
+/// `String`, and `impl Clone for W<Foo>` instantiates it with a type whose
+/// `PartialEq` may ignore the value; a renamed `impl Eq2 for W<Foo>` may
+/// also stand beside the derive. A generic declaration or an instantiated
+/// self type never establishes.
+#[test]
+fn a_clone_field_pin_refuses_generic_types_and_instantiated_impls() {
+    let generic = "#[derive(Debug, PartialEq)]\npub struct W<String> {\n    pub x: String,\n}\n\npub struct Foo;\n\nimpl PartialEq for Foo {\n    fn eq(&self, _: &Self) -> bool {\n        true\n    }\n}\n\nimpl Clone for W<Foo> {\n    fn clone(&self) -> Self {\n        W {\n            x: Foo,\n        }\n    }\n}\n";
+    let renamed_eq = generic.replace(
+        "impl PartialEq for Foo",
+        "use std::cmp::PartialEq as Eq2;\n\nimpl Eq2 for W<Foo> {\n    fn eq(&self, _: &Self) -> bool {\n        true\n    }\n}\n\nimpl PartialEq for Foo",
+    );
+    let tests = "use demo::W;\n\n#[test]\nfn compares() {\n    let w = W { x: demo::Foo };\n    assert_eq!(w.clone(), w);\n}\n";
+    for lib in [generic.to_string(), renamed_eq] {
+        let (_, pin) = clone_field_pin_at(&lib, tests, "x: Foo,", "x: Foo,");
         assert!(pin.is_none(), "{lib}");
     }
 }
@@ -1291,6 +1362,16 @@ fn a_clone_field_pin_needs_a_receiver_built_without_the_clone() {
         ("    let w = Window::new(*START, 9);", false),
         ("    let w = Window::new(start!(), 9);", false),
         ("    let w = Window::built(3, 9);", false),
+        // Assignment detection on its own (no `mut` anywhere).
+        (
+            "    let w = Window::new(3, 9);\n    w = Window::new(0, 0);",
+            false,
+        ),
+        ("    let w = Window::new(3, 9);\n    w += 1;", false),
+        (
+            "    let w = Window::new(3, 9);\n    let w = w.clone();",
+            false,
+        ),
         ("    let w = Window::default();", false),
         ("    let w = Window::from(3);", false),
         ("    let w = Window::copied(&Window::new(3, 9));", false),

@@ -122,6 +122,13 @@ pub(crate) struct LocalTypeEquality {
     pub(crate) other_attributes: bool,
     /// Every field of the type, across all variants of an enum.
     pub(crate) fields: Vec<LocalTypeField>,
+    /// Whether the type declares any generic parameter (type, const or
+    /// lifetime): a parameter may be named like a standard type, and an
+    /// instantiation-specific `impl` may coexist with the derive.
+    pub(crate) generic_params: bool,
+    /// Whether a `#[derive(..)]` entry is a path (`foo::PartialEq`), which
+    /// may name a derive other than the standard one.
+    pub(crate) qualified_derives: bool,
 }
 
 /// Equality facts of the one non-test struct, enum or union named `name`
@@ -218,10 +225,24 @@ pub(crate) fn local_type_equality(source: &str, name: &str) -> Option<LocalTypeE
             }
         }
     }
+    let generic_params = match &adt {
+        ast::Adt::Struct(item) => item.generic_param_list(),
+        ast::Adt::Union(item) => item.generic_param_list(),
+        ast::Adt::Enum(item) => item.generic_param_list(),
+    }
+    .is_some_and(|list| list.generic_params().next().is_some());
+    let qualified_derives = ast::HasAttrs::attrs(&adt).any(|attr| {
+        let text = attr.syntax().text().to_string();
+        text.trim()
+            .strip_prefix("#[")
+            .is_some_and(|rest| rest.trim_start().starts_with("derive") && rest.contains("::"))
+    });
     Some(LocalTypeEquality {
         derives,
         other_attributes,
         fields,
+        generic_params,
+        qualified_derives,
     })
 }
 

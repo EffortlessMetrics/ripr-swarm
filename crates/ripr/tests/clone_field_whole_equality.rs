@@ -160,6 +160,14 @@ fn clone_field_credit_refuses_manual_equality_inequality_and_other_values() -> R
             ExposureClass::Exposed,
             "{derive} {assertion}: {finding:?}"
         );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| format!("{:?}", fact.flow_sink).contains("StructField")),
+            "the struct-field gap must survive without a credited pin: {derive} {assertion}: {finding:?}"
+        );
     }
     Ok(())
 }

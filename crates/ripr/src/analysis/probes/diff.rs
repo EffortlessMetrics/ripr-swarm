@@ -2048,16 +2048,80 @@ mod tests {
                     && probe.family == ProbeFamily::StaticUnknown),
             "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
         );
-        // A raw string's inner `"` would flip the plain string scan: the
-        // swap of `"a" b` and `b "a"` inside one is content, never a reorder.
+        // A raw string's inner `"` flips the plain string scan: `r#"a" b"#`
+        // and `r#"a"b"#` hold different values, yet the plain scan drops the
+        // space it misreads as outside a string, so their sorted characters
+        // agree. The raw-string guard keeps the removed probe.
         let raw = "f(r#\"a\" b\"#) | y";
-        let raw_swapped = swap(raw, "y | f(r#\"b \"a\"#)");
+        let raw_changed = "f(r#\"a\"b\"#) | y";
+        assert_eq!(
+            sorted_code_characters(raw),
+            sorted_code_characters(raw_changed),
+            "premise: the plain scan misreads the raw string"
+        );
+        let raw_swapped = swap(raw, raw_changed);
         assert!(
             raw_swapped
                 .removed_lines
                 .first()
                 .is_some_and(|line| !has_adjacent_reordered_added_line(line, &raw_swapped)),
             "a raw-string line is never read as a reorder"
+        );
+        // An adjacent character-equal added line whose probe does not carry
+        // the removed text as `before` (positional pairing gives it the
+        // other removed line) does not suppress the removed probe.
+        let paired_elsewhere = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![
+                ChangedLine {
+                    line: 36,
+                    new_side_line: 36,
+                    text: "u16::from(lo) | (u16::from(hi) << 8)".to_string(),
+                },
+                ChangedLine {
+                    line: 37,
+                    new_side_line: 37,
+                    text: String::new(),
+                },
+            ],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 36,
+                    new_side_line: 36,
+                    text: "let total = base + 1;".to_string(),
+                },
+                ChangedLine {
+                    line: 37,
+                    new_side_line: 36,
+                    text: removed.to_string(),
+                },
+            ],
+        };
+        assert!(
+            paired_elsewhere
+                .removed_lines
+                .get(1)
+                .is_some_and(|line| has_adjacent_reordered_added_line(line, &paired_elsewhere)),
+            "premise: the added line is an adjacent reorder of the removed one"
+        );
+        let paired_probes = probes_for_file(
+            Path::new("workspace"),
+            &paired_elsewhere,
+            &RustIndex::default(),
+        );
+        assert!(
+            paired_probes
+                .iter()
+                .filter(|probe| probe.expression != removed)
+                .all(|probe| probe.before.as_deref() != Some(removed)),
+            "premise: no added probe carries the removed text: {paired_probes:?}"
+        );
+        assert!(
+            paired_probes
+                .iter()
+                .any(|probe| probe.expression == removed
+                    && probe.family == ProbeFamily::StaticUnknown),
+            "without a carrying added probe the removed static-unknown stays: {paired_probes:?}"
         );
         assert!(has_unpaired_quote_literal("x == '\"' | y"));
         assert!(has_unpaired_quote_literal("br\"a\" | y"));

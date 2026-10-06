@@ -203,28 +203,41 @@ rule only for an assertion whose context was admitted.
 6. Clone field pins (#6692). A `field_construction` probe on field `f` of
    a hand-written `impl Clone for T` is confirmed by
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is
-   `clone` with a `self` receiver in an `impl Clone for T` block, and the
+   `clone` with a `self` receiver in an `impl Clone for T` block whose
+   trait is the standard one (bare `Clone`, `std::clone::Clone` or
+   `core::clone::Clone`; `impl dupe::Clone for T` is refused, and so is an
+   owner file that imports, globs or renames `Clone` from elsewhere) and
+   whose self type has no generic arguments (`impl Clone for W<Foo>` is
+   refused), and the
    changed line lies in a `T { .. }` or `Self { .. }` literal that is the
    body's whole tail and only exit: no `?`, no `return`, no macro outside
    the non-returning set, and no part evaluated only on some inputs (rule
    3's tail gate). `T` is declared once in the workspace with
    `PartialEq` in a plain `#[derive(..)]` list (not behind `cfg_attr`),
-   carries no other attribute that may change equality, and has no
-   hand-written `impl PartialEq for T` in the workspace. `f` carries no
+   carries no other attribute that may change equality, declares no generic
+   parameter (type, const or lifetime: `struct W<String>` names a parameter
+   `String`, and an instantiation-specific `impl` may stand beside the
+   derive), has no path-qualified derive entry (`#[derive(foo::PartialEq)]`),
+   does not also derive `Clone` (the hand-written clone may be gated beside
+   it), and has no hand-written `impl PartialEq<..> for T` in the workspace
+   (any `Rhs`). The declaring file may not import, glob or rename
+   `PartialEq` from outside `std`/`core`/`alloc` (a shadowed derive macro),
+   by the same reading as the field-type names below. `f` carries no
    attribute, and its type compares by value as RIPR-SPEC-0225 rule 4
    defines (a standard value type, a reference, tuple, array or standard
    container of such types, or a workspace type that meets these equality
-   rules recursively). The value-type list extends RIPR-SPEC-0225 rule 4
-   with `Box`, `Rc`, `Arc`, `VecDeque`, the `BTreeMap`/`BTreeSet`/`HashMap`/
-   `HashSet` collections and the float types; a workspace type with generic
-   arguments fails closed. A standard name must denote the standard type: a
+   rules recursively, each with its own declaring file). Rule 4's standard
+   containers are read here as `Option`, `Result`, `Vec`, `VecDeque`, `Box`,
+   `Rc`, `Arc` and the `BTreeMap`/`BTreeSet`/`HashMap`/`HashSet`
+   collections; a workspace type with generic arguments or parameters fails
+   closed. A standard name must denote the standard type: a
    multi-segment type path must be rooted in `std`, `core` or `alloc`
    (`foreign::String` and `crate::String` are refused, and so is any root a
    workspace file renames to, `extern crate other as std;`), and the file
    declaring the field's type may not rename an item to the base name
    (`use x::Thing as String;`), alias it (`type String = ..;`), or name it
    or glob in a `use` rooted elsewhere (`use foreign::Vec;`,
-   `use foreign::*;`). A `crate`/`self`/`super` or own-package `use` may
+   `use foreign::*;`). A `crate`/`self`/`super` or workspace-package `use` may
    bring only a workspace-declared type of that name, and a workspace glob
    counts only while no workspace file re-exports the name or a glob from
    elsewhere, renames to it or aliases it. The scan is file-wide, not
@@ -240,9 +253,12 @@ rule only for an assertion whose context was admitted.
    a call to `T`'s one inherent constructor, and every field initializer or
    argument is a trivial expression: literals, `true`/`false`, constants and
    variants named by a path whose last segment starts uppercase
-   (`u32::MAX`, `Kind::A`), `as` casts to primitives, and arithmetic,
-   comparison and bitwise operators. A call, method, macro, index, block,
-   closure, deref, range, `..base` update or local binding refuses
+   (`u32::MAX`, `Kind::A`), `as` casts to primitives, and only the operator
+   characters `+`, `-`, `/`, `%`, `&`, `^`, `<`, `>` and `=` (so `+`, `-`,
+   `/`, `%`, `&`, `&&`, `^`, `<<`, `>>`, comparisons and a `&` reference).
+   `*`, `|`, `!`, `?`, parentheses, brackets and braces refuse, and so does a
+   call, method, macro, index, block, closure, deref, range, `..base`
+   update or local binding
    (`Window::new(make(&base), 9)`, `Window { start: helper(&base), .. }`,
    `Window::new(s, 9)`): any of them may carry a wrong clone's output. The
    constructor's body must be nothing but a `Self`/`T` literal of trivial
@@ -264,7 +280,7 @@ rule only for an assertion whose context was admitted.
    `FieldValue` missing discriminator for that probe only when reveal
    credits it: the pinning assertion matched in a test that may supply the
    oracle (not a name-only relation next to a reach-bearing test) and the
-   pin survived the foreign same-name import and cross-package same-name
+   pin remained after the foreign same-name import and cross-package same-name
    defeats (`RevealOutcome::owner_pin_credited`). The finding may then
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
@@ -605,11 +621,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `shared_return_admission_uses_the_outer_invocation_identity`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
-  and `bitwise_pipe_reading_distinguishes_operand_position`.
+  and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API
+  controls in `crates/ripr/tests/bitwise_or_return_pin.rs`.
 - Clone field pins (#6692): `a_clone_compared_with_its_own_receiver_pins_its_fields`,
   `a_clone_field_pin_needs_derived_equality_and_the_returned_literal` and
   `a_clone_field_pin_needs_a_field_type_that_compares_by_value` and
-  `a_clone_field_pin_needs_a_receiver_built_without_the_clone` in the same
+  `a_clone_field_pin_needs_a_receiver_built_without_the_clone` and
+  `a_clone_field_pin_refuses_generic_types_and_instantiated_impls` in the same
   test module; `a_clone_field_owner_pin_is_credited_only_through_reveals_gates`
   in `analysis/classify/reveal.rs`; the public-API controls in
   `crates/ripr/tests/clone_field_whole_equality.rs`.

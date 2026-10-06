@@ -413,14 +413,27 @@ impl OwnerReturnPin {
         else {
             return None;
         };
-        if path_base_name(trait_path) != Some("Clone") {
+        // The standard `Clone`: bare, or a `std`/`core` path; the owner's
+        // file may not import, glob or rename `Clone` from elsewhere
+        // (`impl dupe::Clone for Window`, `use dupe::Clone;`).
+        let trait_path = trait_path.trim().trim_start_matches("::");
+        if !matches!(
+            trait_path,
+            "Clone" | "std::clone::Clone" | "core::clone::Clone"
+        ) {
             return None;
         }
-        let parser_backed = index
+        let owner_source = index
             .files()
             .get(&owner.file)
-            .is_some_and(|facts| !facts.used_lexical_fallback);
-        if !parser_backed {
+            .filter(|facts| !facts.used_lexical_fallback)
+            .map(|facts| facts.data().source.clone())?;
+        if declaring_file_rebinds(&owner_source, "Clone", false, index) {
+            return None;
+        }
+        // `impl Clone for W<Foo>`: an instantiation of a generic type,
+        // whose type parameters ripr does not substitute.
+        if self_ty.contains('<') {
             return None;
         }
         let receiver = declared_receiver(self_ty, index)?;
@@ -431,6 +444,7 @@ impl OwnerReturnPin {
         let field = initialized_field_name(&probe.expression)?;
         if !clone_tail_literal_spans(&owner.body, type_name, changed_line, &probe.expression)
             || !field_compares_with_derived_equality(type_name, field, index)
+            || derives_clone(type_name, index)
             || workspace_declares_trait(index, "Clone")
             || other_definition_competes(owner, index, true)
         {
@@ -1033,7 +1047,12 @@ fn derived_equality<'a>(
         return None;
     }
     let facts = local_type_equality(&declaring_file.source, type_name)?;
-    if !facts.derives.iter().any(|name| name == "PartialEq") || facts.other_attributes {
+    if !facts.derives.iter().any(|name| name == "PartialEq")
+        || facts.other_attributes
+        || facts.generic_params
+        || facts.qualified_derives
+        || declaring_file_rebinds(&declaring_file.source, "PartialEq", false, index)
+    {
         return None;
     }
     let manual = index.files().values().any(|file| {
@@ -1042,6 +1061,13 @@ fn derived_equality<'a>(
             .any(|self_ty| path_base_name(strip_type_arguments(self_ty)) == Some(type_name))
     });
     (!manual).then_some((facts, &*declaring_file.data().source))
+}
+
+/// Whether `type_name` also derives `Clone` (a hand-written `impl Clone`
+/// beside it is cfg-gated or otherwise not the one every build runs).
+fn derives_clone(type_name: &str, index: &RustIndex) -> bool {
+    derived_equality(type_name, index)
+        .is_none_or(|(facts, _)| facts.derives.iter().any(|name| name == "Clone"))
 }
 
 /// Standard types whose `==` compares by value.
@@ -1817,8 +1843,13 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
         if !(annotation.is_empty() || annotation.starts_with(':')) {
             return None;
         }
+        // The name's whole-word offset in the pattern (`let mut m`: not
+        // the `m` inside `mut`).
+        let name_at = whole_word_offsets(&statement[..pattern_end], receiver)
+            .first()
+            .copied()?;
         let binding = &test.body[pattern_start..statement_end];
-        bindings.push(&binding[binding.find(receiver)? + receiver.len()..]);
+        bindings.push(&binding[name_at + receiver.len()..]);
     }
     Some(bindings)
 }

@@ -14,4 +14,6 @@
   credit. The compared value must be built from literals or constants (no
   helper call, local or `let mut` binding), the field type must be the
   standard or workspace type it names, and a test related only by name gives
-  no credit next to a test that reaches the change (#6692).
+  no credit next to a test that reaches the change. Generic types, a foreign
+  `Clone` or `PartialEq`, and a type that also derives `Clone` give no credit
+  (#6692).

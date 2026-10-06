@@ -1720,7 +1720,7 @@ fn assertion_matches_probe_detail(
 /// its terminating `;` — the callee-independent half of
 /// `use_statements_import_foreign_callee_name`, so one scan of a file serves every
 /// callee and every probe (see `FileUseStatements`).
-pub(in crate::analysis) fn file_use_statements(source: &str) -> Vec<String> {
+pub(in crate::analysis::classify) fn file_use_statements(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     all_use_statements(&masked)
         .iter()
@@ -1942,7 +1942,7 @@ fn is_ident_byte(byte: u8) -> bool {
 /// The first path segment of a `use` statement (the keyword is still
 /// present): `use crate::x::y;` -> `crate`, `use a::b::{c};` -> `a`. An
 /// empty segment (a brace-rooted `use {..};`) signals no path prefix.
-pub(in crate::analysis) fn use_statement_first_segment(statement: &str) -> Option<&str> {
+pub(in crate::analysis::classify) fn use_statement_first_segment(statement: &str) -> Option<&str> {
     let rest = statement.trim_start().strip_prefix("use")?;
     // `use ::name::..` roots the path at the extern crate `name`, the same
     // crate `use name::..` names.
