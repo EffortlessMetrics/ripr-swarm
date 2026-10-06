@@ -31,9 +31,10 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
 /// producer spelling drift: a canonicalized `\\?\X:` file still matches a
 /// plain `--root`, and drive-letter case drift matches on Windows, so
 /// committed-history reads and worktree reads render the same relative path
-/// (#5254 item 6). A file that is not under the root (or a relative root,
-/// which keeps its spelling per [`repository_relative_path`]) falls back to
-/// the full stable spelling rather than inventing a location.
+/// (#5254 item 6). A file that is not under the root — including a
+/// `..` remainder that would resolve above it — or a relative root (which
+/// keeps its spelling per [`repository_relative_path`]) falls back to the
+/// full stable spelling rather than inventing a location.
 pub(crate) fn repository_relative_path_text(root: &Path, file: &Path) -> String {
     repository_relative_path_text_on(root, file, cfg!(windows))
 }
@@ -51,6 +52,12 @@ pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows
     if is_absolute_on(&root.to_string_lossy(), windows)
         && let Ok(relative) = file.strip_prefix(root)
         && !relative.as_os_str().is_empty()
+        // `strip_prefix` is lexical: `/repo/../outside.rs` strips to
+        // `../outside.rs`, which resolves outside the root. Any parent
+        // component escapes, so only a clean remainder strips.
+        && !relative
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
     {
         return display_path(relative);
     }
@@ -73,7 +80,8 @@ pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows
 /// non-Unix `stable_path_text` branch this feeds is itself lossy. Comparison
 /// is segment-wise, so a root matches only whole leading segments and never
 /// a longer sibling (`repo` vs `repo2`). `None` when the file is not under
-/// the root, the root is not absolute, or the remainder is empty.
+/// the root, the root is not absolute, the remainder is empty, or the
+/// remainder holds a `..` that would resolve above the root.
 fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<String> {
     // Both sides must be absolute: a relative file whose first segments
     // happen to equal a UNC server/share (or a drive-relative `C:foo`
@@ -88,7 +96,13 @@ fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<St
             return None;
         }
     }
-    Some(file_segments[root_segments.len()..].join("/"))
+    let remainder = &file_segments[root_segments.len()..];
+    // A parent component in the remainder resolves above the root, so the
+    // file is not under it: fall back to the full spelling.
+    if remainder.iter().any(|segment| segment == "..") {
+        return None;
+    }
+    Some(remainder.join("/"))
 }
 
 /// Split a Windows path into comparable segments: separators unified,
@@ -141,11 +155,13 @@ fn is_absolute_on(root_text: &str, windows: bool) -> bool {
     is_windows_drive_path(&plain) || plain.starts_with("//")
 }
 
-/// Whether the unified text starts with a drive-letter root (`X:`).
+/// Whether the unified text starts with an absolute drive-letter root
+/// (`X:/`). A bare `X:` prefix is drive-relative on Windows, not rooted.
 fn is_windows_drive_path(unified: &str) -> bool {
-    unified.len() >= 2
+    unified.len() >= 3
         && unified.as_bytes()[0].is_ascii_alphabetic()
         && unified.as_bytes()[1] == b':'
+        && unified.as_bytes()[2] == b'/'
 }
 
 /// Render path-like text with stable slash separators for JSON and Markdown output.
@@ -449,6 +465,53 @@ mod tests {
                 true
             ),
             "server/share/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn relative_path_text_rejects_a_parent_escape() {
+        // `strip_prefix` is lexical: the remainder can name a path above
+        // the root. Such a file is not under the root, so it keeps the
+        // full spelling instead of serving a `..` escape on the wire.
+        assert_eq!(
+            repository_relative_path_text_on(
+                Path::new("/repo"),
+                Path::new("/repo/../outside.rs"),
+                false
+            ),
+            "/repo/../outside.rs"
+        );
+        // A non-leading parent still escapes.
+        assert_eq!(
+            repository_relative_path_text_on(
+                Path::new("/repo"),
+                Path::new("/repo/a/../../outside.rs"),
+                false
+            ),
+            "/repo/a/../../outside.rs"
+        );
+        // Same rule through the Windows slow path (assembled parts: no
+        // drive-letter literals in the tree).
+        let drive = "F:";
+        let root_text = format!(r"{drive}\repo");
+        let root = Path::new(&root_text);
+        let escape_text = format!(r"{drive}\repo\..\outside.rs");
+        assert_eq!(
+            repository_relative_path_text_on(root, Path::new(&escape_text), true),
+            format!(r"{drive}/repo/../outside.rs")
+        );
+    }
+
+    #[test]
+    fn relative_path_text_keeps_drive_relative_roots() {
+        // `X:foo` is drive-relative on Windows, not rooted: the root is
+        // not absolute, so the file keeps its spelling.
+        let drive = "F:";
+        let root_text = format!(r"{drive}repo");
+        let file_text = format!(r"{drive}repo/file.rs");
+        assert_eq!(
+            repository_relative_path_text_on(Path::new(&root_text), Path::new(&file_text), true),
+            format!(r"{drive}repo/file.rs")
         );
     }
 

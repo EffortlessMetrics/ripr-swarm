@@ -12052,7 +12052,9 @@ tests = [
   "crates/ripr/src/output/path.rs::tests::relative_path_text_tolerates_verbatim_and_case_drift_on_windows",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_falls_back_to_the_full_spelling",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_strips_verbatim_producer_paths_natively_on_windows",
-  "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_verbatim_spellings_natively_on_unix"
+  "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_verbatim_spellings_natively_on_unix",
+  "crates/ripr/src/output/path.rs::tests::relative_path_text_rejects_a_parent_escape",
+  "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_drive_relative_roots"
 ]
 code = [
   "crates/ripr/src/mcp/workspace.rs",
