@@ -49,11 +49,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// `agent status`, and fixture-setup snapshot production, which redirects the
 /// child stdout into a file the way the shell redirect would).
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
-        .output()
-        .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
+    run_ripr_with_env_opt(current_dir, args, None)
 }
 
 /// [`run_ripr`] with one child-scoped environment override. The variable is
@@ -64,10 +60,22 @@ fn run_ripr_with_env(
     env_key: &str,
     env_value: &str,
 ) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
-        .env(env_key, env_value)
+    run_ripr_with_env_opt(current_dir, args, Some((env_key, env_value)))
+}
+
+/// The one spawn site behind [`run_ripr`] and [`run_ripr_with_env`], so the
+/// file keeps a single direct-spawn construction for the `ripr` binary.
+fn run_ripr_with_env_opt(
+    current_dir: &Path,
+    args: &[&str],
+    env_override: Option<(&str, &str)>,
+) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(current_dir).args(args);
+    if let Some((key, value)) = env_override {
+        command.env(key, value);
+    }
+    command
         .output()
         .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
 }
