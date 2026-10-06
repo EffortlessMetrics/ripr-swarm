@@ -373,6 +373,7 @@ mod tests {
 
     #[test]
     fn record_order_breaks_late_ties_on_run_details_then_span_conflict() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
         let base = MutationOutcomeRecord {
             mutant_id: None,
             seam_id: None,
@@ -398,23 +399,43 @@ mod tests {
             duration: Some("2s".to_string()),
             ..base.clone()
         };
-        use std::cmp::Ordering::{Equal, Greater, Less};
+        // A later duration with an earlier test_command: only the
+        // duration-before-test_command order puts it after `base`.
+        let slower_other_command = MutationOutcomeRecord {
+            duration: Some("2s".to_string()),
+            test_command: Some("cargo nextest".to_string()),
+            ..base.clone()
+        };
         // Records equal on every earlier field order by span_conflict alone.
         assert_eq!(compare_outcome_records(&base, &conflicted), Less);
         assert_eq!(compare_outcome_records(&conflicted, &base), Greater);
-        assert_eq!(compare_outcome_records(&base, &base.clone()), Equal);
+        assert_eq!(compare_outcome_records(&base, &base), Equal);
         // test_command outranks span_conflict, and duration outranks both.
         assert_eq!(compare_outcome_records(&base, &other_command), Greater);
         assert_eq!(compare_outcome_records(&conflicted, &slower), Less);
+        assert_eq!(
+            compare_outcome_records(&slower_other_command, &base),
+            Greater
+        );
 
         let mut records = vec![
             slower.clone(),
+            slower_other_command.clone(),
             conflicted.clone(),
             other_command.clone(),
             base.clone(),
         ];
         records.sort_by(compare_outcome_records);
-        assert_eq!(records, vec![other_command, base, conflicted, slower]);
+        assert_eq!(
+            records,
+            vec![
+                other_command,
+                base,
+                conflicted,
+                slower_other_command,
+                slower
+            ]
+        );
     }
 
     #[test]
