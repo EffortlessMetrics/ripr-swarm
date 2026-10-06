@@ -16,11 +16,12 @@
   test's input into the helper's activation rows.
 - The wrapper pairing above reads only boundary rows from the asserting
   test itself, so a same-line boundary input in another test file no longer
-  pairs with an unrelated wrapper assertion, and a scalar buried in a
-  compound wrapper argument (`order_discount(std::cmp::max(10, 50))`,
-  `order_discount(10 * 2)`) no longer pairs with the boundary; a match guard that only reads
-  the forwarded parameter (`n if n > qty =>`) no longer counts as rebinding
-  it.
+  pairs with an unrelated wrapper assertion.
+- A scalar buried in a compound wrapper argument
+  (`order_discount(std::cmp::max(10, 50))`, `order_discount(10 * 2)`) no
+  longer pairs with the helper's boundary.
+- A match guard that only reads the forwarded parameter (`n if n > qty =>`)
+  no longer counts as rebinding it.
 - A test that calls a forwarding intermediate caller of a changed helper is
   no longer stopped by an outer wrapper above it that drops the result; the
   forwarding check runs only up to the highest caller a related test calls

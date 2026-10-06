@@ -88,13 +88,17 @@ pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing
 A private helper reached only through a wrapper (RIPR-SPEC-0159 chain,
 #6694 / #6672) pairs on the wrapper call: an admitted discriminating
 assertion whose subject is one call of the chain's entry, that names no
-second entry call and no owner call, pairs when activation recorded a
+second entry call and no owner call, and whose entry arguments are each a
+plain identifier, a whole scalar literal or a path (a scalar buried in a
+compound argument such as `entry(std::cmp::max(10, 50))` or `entry(10 * 2)`
+does not pair, since activation binds its first scalar), pairs when activation recorded a
 boundary `==` row bound down the chain from that assertion's line. This
 holds only when every hop hands its call's result to its caller's return:
 the caller body has no `return` or `?`, it does not rebind or assign a
 parameter it forwards to the hop, and its tail is the hop call itself or
 `if <call> { A } else { B }` (or `if !<call>`) where `A` and `B` are
-distinct literals. A discarded, let-bound, transformed, branch-guarded or
+literals of distinct values (`05` and `5` are equal; an escaped string or
+char literal never counts as distinct). A discarded, let-bound, transformed, branch-guarded or
 computed-branch result, or a rebound forwarded parameter, keeps the
 pairing missing (and RIPR-SPEC-0159 makes propagation unknown). A match
 guard that only reads a forwarded parameter (`n if n > qty =>`) is not a

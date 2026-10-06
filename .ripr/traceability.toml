@@ -9855,6 +9855,9 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::same_file_wrapper_test_keeps_the_helper_call_relation",
   "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_dropping_wrapper_is_not_credited",
   "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_rebinds_the_parameter_does_not_credit_the_boundary",
+  "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::buried_scalar_in_a_wrapper_argument_does_not_pair",
 ]
 fixtures = [
   "fixtures/helper_chain_one_hop",
@@ -10875,7 +10878,9 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_transforming_wrapper_is_not_credited",
   "crates/ripr/tests/helper_wrapper_reach.rs::return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited",
   "crates/ripr/tests/helper_wrapper_reach.rs::return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop",
-  "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper"
+  "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::buried_scalar_in_a_wrapper_argument_does_not_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper"
 ]
 fixtures = [
   "fixtures/split_test_boundary_oracle",

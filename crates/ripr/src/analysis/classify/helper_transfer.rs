@@ -795,8 +795,10 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
         // A comma-less block arm before this one (`None => if f { 1 } else
         // { 2 } Some(qty) =>`) leaves its own `=>` and `if` in the arm
         // text, which could cut this arm's pattern away (#6780 review
-        // round 2): answer "rebinds" (fail closed).
-        if has_top_level_arrow(arm) || mentions(match_arm_pattern(arm)) {
+        // round 2): when that arm text names the parameter at all, answer
+        // "rebinds" (fail closed). Rustfmt writes block arms without
+        // commas, so an arm text that never names it stays forwarding.
+        if (has_top_level_arrow(arm) && mentions(arm)) || mentions(match_arm_pattern(arm)) {
             return true;
         }
     }
@@ -1228,9 +1230,43 @@ mod tests {
             "fn w(qty: u32, n: u32) -> u32 { match n { 0 => 0, m if is_bulk(qty) => m, _ => 1 } }",
             // A guard-like word inside the pattern is not a guard.
             "fn w(qty: u32, n: Diff) -> u32 { match n { Diff { iff } if iff > qty => 1, _ => 0 } }",
+            // #6780 review round 3: a comma-less block arm (rustfmt's
+            // layout) that never names the parameter is not a rebinding.
+            "fn w(qty: u32, n: Option<u32>, f: bool) -> u32 { let k = is_bulk(qty); match n { None => {\n if f { 1 } else { 2 }\n }\n Some(m) => m, } }",
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }
+    }
+
+    // #6780 review round 3: the abstention applies only when every
+    // owner-reaching relation is the chain; one direct owner call lifts it.
+    #[test]
+    fn helper_only_reach_requires_chain_relations_without_a_direct_call() {
+        let helper = test_summary_calling("entry", "entry(10)");
+        let direct = test_summary_calling("is_bulk", "is_bulk(10)");
+        let near = test_summary_calling("other", "other(1)");
+        assert!(helper_only_reach(&[(
+            &helper,
+            RelationReason::HelperOwnerCall
+        )]));
+        assert!(helper_only_reach(&[
+            (&helper, RelationReason::HelperOwnerCall),
+            (&near, RelationReason::SameTestFile),
+        ]));
+        assert!(!helper_only_reach(&[
+            (&helper, RelationReason::HelperOwnerCall),
+            (&direct, RelationReason::DirectOwnerCall),
+        ]));
+        assert!(!helper_only_reach(&[
+            (&direct, RelationReason::DirectOwnerCall),
+            (&helper, RelationReason::HelperOwnerCall),
+        ]));
+        assert!(!helper_only_reach(&[(
+            &direct,
+            RelationReason::DirectOwnerCall
+        )]));
+        assert!(!helper_only_reach(&[(&near, RelationReason::SameTestFile)]));
+        assert!(!helper_only_reach(&[]));
     }
 
     #[test]
