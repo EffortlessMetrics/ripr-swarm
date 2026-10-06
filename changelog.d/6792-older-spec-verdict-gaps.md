@@ -1,3 +1,4 @@
+<!-- section: Fixed -->
 - A builder default that the test overrides through a setter before asserting
   no longer credits the constructor's `return_value` as `exposed` (#6613).
 - An exact pin reached only through a wrapper whose body passes the owner to a
