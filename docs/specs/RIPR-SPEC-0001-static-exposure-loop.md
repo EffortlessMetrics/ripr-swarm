@@ -222,6 +222,71 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+A computed argument or operand is not the literal it contains. An owner-call,
+table-row, or builder-method argument that applies a binary arithmetic,
+bitwise, or shift operator (`order_discount(base + 1)`, `.amount(base + 10)`,
+`1 << 4`, `16usize - 1`; a sign is a float exponent only directly after the
+`e`/`E` of a decimal mantissa such as `1e-5`; an operand may end in a call,
+index, block or `?`, as in `name.len() + 10`, `{ x } + 1` or `parse(s)? - 1`)
+or repeats an array element (`&[b'f'; 16]`, whose `16` is a length) yields no
+input value. A table-row or builder line is split at top-level commas with
+full `()`/`[]`/`{}` depth, and a char or byte literal such as `','` or `b'('`
+is one value, never a delimiter, so `(',', true)` passes `','`. Below the
+line itself, only a constructor or variant whose last path segment is
+UpperCamel (`Some(10)`, `Token::Num(5)`, `Case { n: 1 }`), `vec![..]`, or a
+bare tuple or array passes its contents through; a method call
+(`x.min(10)`, `10.min(x)`), a lowercase function or macro call, an index, or
+a block computes its argument. A table-row or builder line nested deeper than
+32 levels is not read. It leaves the changed boundary unresolved only when its
+test also calls the owner (or the helper chain's entry) with an argument that
+is not an exact value, and only after the exact owner calls show no boundary
+input, so a deep row feeding something else hides neither a credited
+`score(10)` nor a missing input beside `score(20)`. When the owner is called
+but every call passes only computed arguments, a compared operand that is
+neither a parameter, a literal, nor a constant (a local counter `count`) is
+unresolved, so a stray test literal such as an array length never reads as a
+weak gap. A comparison
+operand that computes its value (`CURRENT - 2 > version`, `s.len() < 2 + 2`)
+contributes no boundary literal, so `CURRENT - 2` is never read as the
+boundary `2`. A compound condition
+(`&&`, `||`) is read one top-level comparison at a time, so a literal inside a
+computed operand of one comparison is not the boundary of the whole condition.
+
+Unresolved boundary input example:
+
+```rust
+let mut count = 0;
+for _ in hex {
+    count += 1;
+    if 16 < count { return Err(TooLong); }
+}
+```
+
+An input RIPR cannot read is not a missing input. When a changed comparison's
+operand is neither a parameter, a value the bounded evaluator folds from a
+related test's exact inputs, a literal, nor a named constant (a local
+accumulator such as `count`, `s.len()`, `name.split_whitespace().count()`),
+including when neither operand is readable (`out.len() != data.len() / 2`), or
+when a related test feeds the compared parameter a computed argument, directly
+or through a resolved helper hop whose call-site argument is computed
+(`score(y + 1)`), no input row says which side of the boundary a test reaches.
+A computed argument counts only when it is one definite value: its variables
+are all bound to exact values or constants (`base + 1` with `let base = 9;`,
+`[b'f'; 16]`), or, at a hop, to the caller's parameters under exact entry
+rows. A computation over a value RIPR cannot bind (the loop variable in
+`can_retire(age + 1)`) is no more readable than that bare variable, which
+yields no input row without unresolving the boundary. RIPR does not name a
+missing equality discriminator for it; `ripr check` reports `infection
+unknown` with `Changed boundary input is unresolved` and the operand or
+parameter it could not read. A test input literal that merely equals a
+literal in the comparison does not credit such a boundary; only an exact
+observed equality does. Exact inputs that all sit off the boundary keep
+the missing equality discriminator.
+
+The human report's "Why unknown" line for `infection_unknown` says the change
+"reaches a sink" only when the propagation stage is `yes`; otherwise it says
+no sink the change reaches was established.
+
 Named-constant boundary example:
 
 ```rust
@@ -248,6 +313,14 @@ owner's own source file through the shared named-constant lookup in
 - declarations are counted after any same-line `#[...]` attributes, so
   `#[cfg(a)] const LIMIT: u32 = 10;` beside a second `LIMIT` makes the lookup
   ambiguous rather than resolving to the unattributed one;
+- a constant offset by an integer literal (`CURRENT - 2`, `LIMIT + 1`)
+  resolves to the constant's value plus the offset when the constant itself
+  resolves (`const CURRENT: u32 = 7;` makes `CURRENT - 2` the boundary `5`);
+  the offset literal alone is never the boundary, and a test argument naming
+  the constant is not the offset boundary by identity; when the constant's
+  value is not a plain decimal literal (`10u32`, `0x10`, a computed
+  initializer), the offset boundary is unresolved (`infection unknown`), not a
+  missing input;
 - a constant declared once with a computed or suffixed initializer keeps the
   missing equality-boundary discriminator, and its reason says RIPR cannot see
   the constant's value and that passing the constant itself is recognized;
@@ -284,6 +357,33 @@ Fixture coverage:
 - `let_bound_owner_argument_is_an_owner_input`
 - `let_bound_owner_argument_fails_closed_on_mut_shadowed_or_computed_bindings`
 - `owner_input_values_exclude_assertion_expected_values`
+- `computed_value_expressions_are_told_apart_from_spelled_values`
+- `computed_owner_argument_yields_no_exact_input_value`
+- `given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing`
+- `given_literal_inputs_off_the_boundary_then_missing_boundary_is_still_reported`
+- `given_local_accumulator_boundary_then_boundary_is_unresolved_not_missing`
+- `given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing`
+- `unresolved_boundary_input_is_unknown_not_weak`
+- `computed_comparison_operand_is_not_its_contained_literal`
+- `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
+- `constant_offset_operands_name_the_constant_and_signed_offset`
+- `offset_integer_values_add_only_to_plain_decimal_constants`
+- `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`
+- `given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing`
+- `given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing`
+- `free_identifiers_name_only_the_variables_an_expression_reads`
+- `unresolved_boundary_input_is_not_credited_by_a_matching_input_literal`
+- `literal_kind_filter_reads_only_the_spelled_boundary_literals`
+- `suffixed_or_shifted_arguments_are_computed_end_to_end`
+- `table_and_builder_lines_skip_computed_arguments`
+- `char_literal_table_rows_are_owner_inputs_end_to_end`
+- `computed_builder_argument_is_not_credited_end_to_end`
+- `deeply_nested_table_line_is_unreadable_not_a_crash`
+- `computed_only_call_with_local_counter_boundary_is_unknown_not_weak`
+- `method_call_builder_argument_is_not_credited_end_to_end`
+- `all_dropped_boundary_literals_read_the_no_literal_boundary_reason`
+- `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
+- `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`

@@ -273,3 +273,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (14)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674): the operand splitter cannot cut 'let clamped = if value >= 0' cleanly, so the boundary is unresolved (infection_unknown) instead of a garbled missing discriminator; no owner_shape line, standard guidance for the emitted class
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (15)
+
+Reason:
+RIPR-SPEC-0001: the human 'Why unknown' line for infection_unknown says 'reaches a sink' only when propagation is yes (CodeRabbit review on #6796); propagation is not yes here, so the line no longer claims a sink
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
