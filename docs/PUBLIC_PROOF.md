@@ -12,7 +12,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
 | `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
-| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | 10078ef | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz` |
+| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | e4fe06c | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz` |
 | `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.8 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-40 bars. ripr meets 14, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+40 bars. ripr meets 13, is below the bar on 22, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
@@ -58,15 +58,15 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
 | corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
 | corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |
-| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **37.5%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **35.3%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **68.0%** | >= 80.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks that land in a function no higher pick named | 100.0% | >= 90.0% | meets the bar | no earlier measurement |
-| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | 50 picks | >= 50 picks | meets the bar | no earlier measurement |
-| ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **6 picks** | >= 12 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **10 picks** | <= 8 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **12 picks** | >= 24 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | **22 picks** | <= 16 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **8.3%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **5.9%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **53.1%** | >= 80.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks that land in a function no higher pick named | **71.9%** | >= 90.0% | below the bar | no earlier measurement |
+| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | **32 picks** | >= 50 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **1 pick** | >= 12 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **11 picks** | <= 8 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **1 pick** | >= 24 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | 16 picks | <= 16 picks | meets the bar | no earlier measurement |
 
 Not measured, and why:
 
