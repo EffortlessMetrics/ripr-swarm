@@ -45,7 +45,8 @@ use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, evidence_record_json_value,
-    evidence_record_with_verify_command, workflow_snapshot_verify_command,
+    evidence_record_with_bound_verify_command, workflow_snapshot_verify_command,
+    workflow_snapshot_verify_command_for,
 };
 use crate::output::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_eligible};
@@ -62,6 +63,7 @@ use crate::repair_guidance::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
@@ -292,10 +294,17 @@ fn render_agent_seam_packets_json_with_root(
     // verify route — the after phase verifies against the attempt's retained
     // before snapshot, not the repository-global path another attempt can
     // overwrite — so its embedded records keep every verify projection null.
-    let embedded_verify_command = match context {
+    // A standalone document binds its `next` block to the selected root, so
+    // its embedded verify names that root too (#3948, #3999): pasted from
+    // another directory it verifies the same repository.
+    let embedded_verify = match context {
         PacketCommandContext::Prepared { .. } => None,
-        PacketCommandContext::Portable | PacketCommandContext::Standalone { .. } => {
-            Some(workflow_snapshot_verify_command())
+        PacketCommandContext::Portable => Some((
+            workflow_snapshot_verify_command(),
+            crate::agent::command_specs::PORTABLE_ROOT,
+        )),
+        PacketCommandContext::Standalone { root } => {
+            Some((workflow_snapshot_verify_command_for(root), root))
         }
     };
     out.push_str("  \"packets\": [");
@@ -308,7 +317,9 @@ fn render_agent_seam_packets_json_with_root(
             entry,
             canonical_gaps.get(entry.seam.id()),
             causal_projection,
-            embedded_verify_command.as_deref(),
+            embedded_verify
+                .as_ref()
+                .map(|(command, root)| (command.as_str(), Path::new(*root))),
         );
         if idx + 1 != actionable.len() {
             out.push_str(",\n");
@@ -2150,7 +2161,7 @@ fn push_packet_json(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
     causal_projection: Option<&CausalDeltaArtifact>,
-    verify_command: Option<&str>,
+    verify: Option<(&str, &Path)>,
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -2503,10 +2514,14 @@ fn push_packet_json(
     // records keep every verify projection null: an orchestrator following the
     // typed spec can never verify against a snapshot another attempt can
     // overwrite.
-    let evidence_record = evidence_record_json_value(&evidence_record_with_verify_command(
+    let evidence_record = evidence_record_json_value(&evidence_record_with_bound_verify_command(
         entry,
         canonical_gap,
-        verify_command,
+        verify.map(|(command, _)| command),
+        verify.map_or(
+            Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+            |(_, root)| root,
+        ),
     ));
     out.push_str("      \"evidence_record\": ");
     out.push_str(&evidence_record.to_string());

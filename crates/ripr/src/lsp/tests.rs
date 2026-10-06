@@ -2251,6 +2251,37 @@ fn lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit() -> Result<(), 
     {
         return Err("saved tracked source edit did not reach the LSP diagnostic batch".to_string());
     }
+    // #3948: the production projection binds every finding's drill-in to the
+    // workspace folder, never the server process's `--root .`.
+    let bound_prefix = format!(
+        "ripr explain --root {} ",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &root.path().to_string_lossy()
+        ))
+    );
+    let explain_commands = diagnostics
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .filter_map(|diagnostic| {
+            diagnostic
+                .data
+                .as_ref()
+                .and_then(|data| data.get("explain_command"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    if explain_commands.is_empty() {
+        return Err("published finding diagnostics carried no explain_command".to_string());
+    }
+    if let Some(unbound) = explain_commands
+        .iter()
+        .find(|command| !command.starts_with(&bound_prefix) || !command.contains(" --worktree "))
+    {
+        return Err(format!(
+            "published explain_command is not bound to the workspace root: {unbound}"
+        ));
+    }
     Ok(())
 }
 
@@ -2491,8 +2522,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
     }
 }
 
-#[test]
-fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), String> {
+fn witness_finding() -> Finding {
     let mut finding = sample_finding();
     finding.recommended_next_step = None;
     finding.canonical_gap = Some(sample_canonical_gap());
@@ -2523,6 +2553,12 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         miss: None,
     }];
 
+    finding
+}
+
+#[test]
+fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), String> {
+    let finding = witness_finding();
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let witness = diagnostic
         .data
@@ -2590,6 +2626,85 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert_eq!(
         context_target.and_then(|target| target.get("witness")),
         Some(&witness)
+    );
+    Ok(())
+}
+
+/// #3948: the LSP diagnostic witness names the workspace root and the
+/// session's worktree diff source, not the portable `--root .`, in the raw
+/// payload, the witness and the hover alike; equivalent checkouts still share
+/// one payload digest.
+#[test]
+fn diagnostic_witness_command_binds_the_workspace_root() -> Result<(), String> {
+    let finding = witness_finding();
+    let project = |root: &Path| -> Result<(String, Diagnostic), String> {
+        let input = crate::app::CheckInput {
+            root: root.to_path_buf(),
+            ..crate::app::CheckInput::default()
+        };
+        let navigation = crate::app::finding_navigation_with_worktree(&input, None, false, true);
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            root,
+            std::slice::from_ref(&finding),
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            )
+            .with_navigation(Some(&navigation)),
+        )?;
+        let diagnostic = grouped
+            .into_values()
+            .flatten()
+            .next()
+            .ok_or("expected the witness finding to project")?;
+        Ok((navigation.explain_command(&finding.id), diagnostic))
+    };
+
+    let (expected, diagnostic) = project(Path::new("/workspace"))?;
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        "/workspace",
+    ));
+    assert!(
+        expected.starts_with(&format!("ripr explain --root {root} "))
+            && expected.contains("--worktree"),
+        "the session route names the workspace and its worktree diff: {expected}"
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    assert_eq!(data["explain_command"], expected.as_str());
+    assert_eq!(data["witness"]["explain_command"], expected.as_str());
+    let hover = super::hover::finding_hover_response(&finding, &diagnostic);
+    let HoverContents::Markup(markup) = hover.contents else {
+        return Err("expected witness hover markdown".to_string());
+    };
+    assert!(
+        markup.value.contains(&format!("- explain: `{expected}`")),
+        "hover must show the bound command: {}",
+        markup.value
+    );
+    assert!(!markup.value.contains("--root ."), "{}", markup.value);
+
+    let (_, relocated) = project(Path::new("/elsewhere/check out's"))?;
+    assert_ne!(
+        relocated
+            .data
+            .as_ref()
+            .map(|data| data["explain_command"].clone()),
+        Some(data["explain_command"].clone()),
+        "each checkout's command names its own root"
+    );
+    assert_eq!(
+        super::diagnostics::normalized_diagnostic_payload_digest(
+            Path::new("/workspace"),
+            &[diagnostic]
+        ),
+        super::diagnostics::normalized_diagnostic_payload_digest(
+            Path::new("/elsewhere/check out's"),
+            &[relocated]
+        ),
+        "equivalent checkouts share one cache identity"
     );
     Ok(())
 }

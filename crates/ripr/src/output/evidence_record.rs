@@ -96,8 +96,18 @@ const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pi
 /// from the shared constants so the family cannot drift from the `next`
 /// block.
 pub(crate) fn workflow_snapshot_verify_command() -> String {
-    format!(
-        "ripr agent verify --root . --before {WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT} --after {WORKFLOW_AFTER_SNAPSHOT_ARTIFACT} --json"
+    workflow_snapshot_verify_command_for(crate::agent::command_specs::PORTABLE_ROOT)
+}
+
+/// [`workflow_snapshot_verify_command`] naming `root`, rendered by the same
+/// builder as the packet's `next.verify`, so a standalone packet's embedded
+/// verify replays against the repository it was produced for (#3948).
+pub(crate) fn workflow_snapshot_verify_command_for(root: &str) -> String {
+    crate::agent::loop_commands::agent_verify_command(
+        root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
     )
 }
 
@@ -366,6 +376,25 @@ pub(crate) fn evidence_record_with_verify_command(
     canonical_gap: Option<&CanonicalGapIdentity>,
     verify_command: Option<&str>,
 ) -> EvidenceRecord {
+    evidence_record_with_bound_verify_command(
+        entry,
+        canonical_gap,
+        verify_command,
+        std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+    )
+}
+
+/// [`evidence_record_with_verify_command`] for a verify display bound to a
+/// selected root (#3948, #3999). The display names the concrete root so it
+/// replays from any directory; typed recovery binds that same root, so the
+/// parsed `command_specs.verify` keeps the portable argv and a display whose
+/// root was substituted afterwards still fails closed.
+pub(crate) fn evidence_record_with_bound_verify_command(
+    entry: &ClassifiedSeam,
+    canonical_gap: Option<&CanonicalGapIdentity>,
+    verify_command: Option<&str>,
+    verify_root: &std::path::Path,
+) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
     let recommended_test = recommended_test_for(entry);
     let actionability = actionability_for(entry, &missing_records);
@@ -386,6 +415,7 @@ pub(crate) fn evidence_record_with_verify_command(
         &actionability,
         &static_limitations,
         &raw_findings,
+        verify_root,
     );
 
     EvidenceRecord {
@@ -628,6 +658,7 @@ fn canonical_item_for(
     actionability: &EvidenceRecordActionability,
     static_limitations: &[EvidenceRecordStaticLimitation],
     raw_findings: &[EvidenceRecordRawFinding],
+    verify_root: &std::path::Path,
 ) -> EvidenceRecordCanonicalItem {
     let evidence_state = evidence_state_for(entry, actionability);
     let gap_state = evidence_state.as_str();
@@ -681,13 +712,12 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The canonical verify display is the portable `--root .` shape,
-            // so recovery needs no concrete selected root.
+            // The verify display is the portable `--root .` shape or one
+            // bound to `verify_root`; recovery binds the same root, so either
+            // yields the portable argv.
             .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(
-                    display,
-                    std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
-                )
+                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
+                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
             }),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
@@ -699,6 +729,26 @@ fn canonical_item_for(
         }),
         confidence: alignment_confidence_for(gap_state, static_limitations),
     }
+}
+
+/// Typed spec for the producer's own bound snapshot verify display (#3948).
+/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
+/// pastes correctly, but display recovery refuses those characters in any
+/// word. The producer knows its inputs, so it rebuilds the display from them
+/// and grants the trusted spec only on a byte-for-byte match; any other or
+/// substituted display still recovers nothing.
+fn bound_snapshot_verify_spec(
+    display: &str,
+    verify_root: &std::path::Path,
+) -> Option<crate::domain::CommandSpec> {
+    let root = crate::agent::loop_commands::bound_root(&verify_root.to_string_lossy());
+    let spec = crate::agent::command_specs::agent_verify_command_spec(
+        &root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
+    );
+    (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
 fn alignment_related_test_for_recommended_target(
@@ -2911,6 +2961,50 @@ mod tests {
             return Err(format!(
                 "workflow family must not name pilot paths: {args:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #3948: a standalone root with shell punctuation renders a quoted,
+    /// pasteable verify display that display recovery refuses; the producer's
+    /// own display still carries its typed spec with the portable argv, and a
+    /// display naming another root does not.
+    #[test]
+    fn bound_verify_keeps_its_typed_spec_for_punctuated_roots() -> Result<(), String> {
+        let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        for root in ["/tmp/design & tests", "/tmp/cost$center/repo"] {
+            let display = workflow_snapshot_verify_command_for(root);
+            let json = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new(root),
+            ));
+            let spec = &json["canonical_item"]["command_specs"]["verify"];
+            if spec["human_display"] != display.as_str() {
+                return Err(format!("{root}: verify spec lost its display: {spec}"));
+            }
+            let args: Vec<&str> = spec["args"]
+                .as_array()
+                .ok_or_else(|| format!("{root}: verify spec has no args: {spec}"))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            if !args.windows(2).any(|pair| pair == ["--root", "."]) {
+                return Err(format!("{root}: concrete root entered argv: {args:?}"));
+            }
+
+            let elsewhere = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new("/tmp/other checkout"),
+            ));
+            if elsewhere["canonical_item"]["command_specs"]["verify"] != Value::Null {
+                return Err(format!(
+                    "{root}: a display bound to another root gained a typed spec"
+                ));
+            }
         }
         Ok(())
     }
