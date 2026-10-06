@@ -2871,6 +2871,18 @@ pub(crate) fn classify_change_with_alias_state(
             candidate.test.name
         ));
     }
+    // No recognized assertion is not the same as no assertion: an
+    // oracle-eligible related test without one says which it is (#5524).
+    for candidate in related_candidates.iter().filter(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate.test.assertion_admission != TypeScriptAssertionAdmission::Recognized
+    }) {
+        evidence.push(format!(
+            "test_assertion_admission: {} ({})",
+            candidate.test.assertion_admission.as_str(),
+            candidate.test.name
+        ));
+    }
     // Resolved from the probe's own delta evidence (#3281) before the probe
     // moves into the finding: TypeScript probes are seeded from head-side
     // added lines.
