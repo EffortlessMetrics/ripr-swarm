@@ -315,7 +315,7 @@ pub fn resolve_effective_base(
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
             .unwrap_or_else(|| {
-                let fetch = missing_ref_repair(root, git_timeout);
+                let fetch = missing_ref_repair(root, explicit, git_timeout);
                 format!(
                     "the base `{explicit}` does not resolve to a commit (the analysis did not \
                      run). {fetch} or pass `--base <ref>` for a ref this repository has."
@@ -722,25 +722,105 @@ fn verify_head_revision(
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
                      run). {} or pass `--head <ref>` for a ref this repository has.",
-                    missing_ref_repair(root, git_timeout)
+                    missing_ref_repair(root, head, git_timeout)
                 )
             })),
         _ => Ok(()),
     }
 }
 
+/// The configured remotes, or `None` when Git cannot answer. A failed
+/// probe never invents a remote list: callers fall back to the
+/// default-remote advice.
+fn configured_remotes(root: &Path, git_timeout: Option<Duration>) -> Option<Vec<String>> {
+    let output = crate::git::run_git_output_with_deadline(root, &["remote"], git_timeout).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Some(
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Whether a remote name is safe to interpolate into a suggested command.
+/// Remote names cannot contain whitespace, but a hostile or exotic name
+/// must still never turn the advice into a flag, a path, or a second
+/// command: a leading `-` would parse as a flag and a leading `.` (such as
+/// `..`) would make git read the argument as a path instead of the
+/// configured remote.
+fn remote_name_is_plain(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|cell| cell.is_ascii_alphanumeric() || matches!(cell, '_' | '.' | '-'))
+}
+
 /// The repair for a revision that does not resolve. `git fetch` never
 /// deepens a shallow clone, so an ancestor such as `HEAD~5` needs the
-/// unshallow repair there.
-fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static str {
+/// unshallow repair there. Otherwise the advice follows the repo's own
+/// remote configuration instead of prescribing `origin`: a remote-qualified
+/// ref (`origin/main`) names its own remote when that remote is configured
+/// (fetching it restores the ref even when the branch tracks elsewhere) and
+/// names the add-remote step when it is not; an unqualified ref with no
+/// remote names the add-remote step, with exactly one remote names that
+/// remote, and with several remotes (or a probe that cannot answer) falls
+/// back to plain `git fetch`, which follows the default remote. Per-remote
+/// ref discovery for an unqualified ref (which of several remotes tracks
+/// it) would need network probes and stays out.
+fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Duration>) -> String {
     if is_shallow_repository(root, git_timeout) {
-        "This is a shallow clone: fetch the missing history with `git fetch \
+        return "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
-    } else {
-        // #5252 item 8: plain `git fetch` follows the repo's own default
-        // remote; naming `origin` prescribed a remote the repo may lack.
-        "Fetch the ref (for example `git fetch`)"
+            .to_string();
     }
+    let remotes = configured_remotes(root, git_timeout);
+    if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
+        return advice;
+    }
+    match remotes.as_deref() {
+        Some([]) => format!(
+            "No git remote is configured: add the remote hosting `{missing_ref}` (for example `git remote add <name> <url>`), then fetch it"
+        ),
+        Some([only]) if remote_name_is_plain(only) => {
+            format!("Fetch the ref (for example `git fetch {only}`)")
+        }
+        _ => {
+            // #5252 item 8: plain `git fetch` follows the repo's own default
+            // remote; naming `origin` prescribed a remote the repo may lack.
+            // A probe that cannot answer lands here too: `None` must never
+            // collapse into `Some([])` and report "no remote" unobserved.
+            "Fetch the ref (for example `git fetch`)".to_string()
+        }
+    }
+}
+
+/// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
+/// must be both plain (it is interpolated into a suggested command) and
+/// configured (otherwise the advice would prescribe a remote the repo
+/// lacks). `None` when the ref is unqualified, the qualifier is hostile, or
+/// the remote list is unknown: all three fall through to the count-based
+/// arms rather than inventing a fetch that cannot restore the ref.
+fn qualified_remote_advice(missing_ref: &str, remotes: Option<&[String]>) -> Option<String> {
+    let (qualifier, _) = missing_ref.split_once('/')?;
+    if !remote_name_is_plain(qualifier) {
+        return None;
+    }
+    let configured = remotes?;
+    if configured.iter().any(|remote| remote == qualifier) {
+        return Some(format!(
+            "Fetch the ref (for example `git fetch {qualifier}`)"
+        ));
+    }
+    Some(format!(
+        "No `{qualifier}` remote is configured: add the remote hosting `{missing_ref}` (for example `git remote add {qualifier} <url>`), then fetch it"
+    ))
 }
 
 /// Cooperative ceiling for the PR-evidence packet diff (#4363). A `--binary`
@@ -2070,6 +2150,204 @@ mod tests {
         assert!(
             !err.contains("ambiguous argument") && !err.contains("separate paths from revisions"),
             "raw git usage advice must not reach the user, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn remote_name_is_plain_allows_plain_names_and_denies_hostile_ones() {
+        for plain in ["origin", "fork", "upstream-1", "my.remote_name"] {
+            assert!(remote_name_is_plain(plain), "{plain}");
+        }
+        // Negative cases: anything that could become a flag, a second
+        // command, or a substitution falls back to plain `git fetch`.
+        for hostile in [
+            "",
+            "-x",
+            "--upload-pack=x",
+            "a b",
+            "a;b",
+            "a|b",
+            "a&b",
+            "$(x)",
+            "`x`",
+            "a/b",
+            "a\\b",
+            "..",
+            "é",
+        ] {
+            assert!(!remote_name_is_plain(hostile), "{hostile}");
+        }
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_add_remote_step_when_no_remote_exists() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-no-remote")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let repair = missing_ref_repair(&dir, "no-such-ref-5252", None);
+        assert!(
+            repair.contains("No git remote is configured")
+                && repair.contains("`no-such-ref-5252`")
+                && repair.contains("git remote add"),
+            "a remote-less repo must get the add-remote step naming the ref, got: {repair}"
+        );
+        assert!(
+            !repair.contains("git fetch origin"),
+            "the repair must not prescribe a remote the repo lacks, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_single_configured_remote() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-one-remote")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // `remote add` touches config only: no network.
+        run_git_checked(
+            &dir,
+            &["remote", "add", "fork", "https://example.test/fork.git"],
+        )?;
+
+        let repair = missing_ref_repair(&dir, "fork/main", None);
+        assert_eq!(
+            repair, "Fetch the ref (for example `git fetch fork`)",
+            "one configured remote is read, not assumed"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_falls_back_to_plain_fetch_for_several_remotes_or_probe_failure()
+    -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-two-remotes")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "fork", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "mirror", "https://example.test/mirror.git"],
+        )?;
+
+        // Unqualified: no qualifier names a remote, so several remotes fall
+        // back to the default-remote fetch (a `fork/main` ref would take the
+        // qualified arm instead).
+        let repair = missing_ref_repair(&dir, "no-such-ref-5252", None);
+        assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
+
+        // A probe that cannot answer never invents a remote list either. A
+        // bare directory is the wrong fixture here: `.cargo/config.toml`
+        // points `TEMP` at the workspace `target/`, so git discovery walks up
+        // to the enclosing checkout and honestly reports *its* remote. A file
+        // path cannot be a work tree on any host, so the probe fails closed.
+        let file_root = unique_fixture_path("missing-ref-file-root");
+        ignore_remove_dir_all(&file_root);
+        fs::write(&file_root, "not a directory")?;
+        let repair = missing_ref_repair(&file_root, "main", None);
+        assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
+
+        ignore_remove_dir_all(&dir);
+        let _ = fs::remove_file(&file_root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_a_configured_remote_qualifier_despite_several_remotes()
+    -> std::io::Result<()> {
+        // #5252 item 8 (Devin): a branch tracking `fork` with a missing
+        // `origin/main` needs `git fetch origin`, not a bare fetch that
+        // follows the branch upstream to `fork`.
+        let dir = unique_fixture_root("missing-ref-qualified")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "fork", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/origin.git"],
+        )?;
+
+        let repair = missing_ref_repair(&dir, "origin/main", None);
+        assert_eq!(repair, "Fetch the ref (for example `git fetch origin`)");
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_add_remote_step_for_an_unconfigured_qualifier()
+    -> std::io::Result<()> {
+        // The qualifier must be configured, not merely well-formed: naming
+        // `git fetch origin` when no `origin` remote exists prescribes a
+        // remote the repo lacks.
+        let dir = unique_fixture_root("missing-ref-unconfigured-qualifier")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "fork", "https://example.test/fork.git"],
+        )?;
+
+        let repair = missing_ref_repair(&dir, "origin/main", None);
+        assert!(
+            repair.contains("No `origin` remote is configured")
+                && repair.contains("`origin/main`")
+                && repair.contains("git remote add origin <url>"),
+            "an unconfigured qualifier must name the add-remote step, got: {repair}"
+        );
+        assert!(
+            !repair.contains("git fetch origin"),
+            "the repair must not fetch an unconfigured remote, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_keeps_a_qualified_ref_generic_when_remotes_are_unknown()
+    -> std::io::Result<()> {
+        // Probe failure (`None`) must never collapse into "no remote": with
+        // an unanswerable probe even a well-formed `origin/main` falls back
+        // to plain `git fetch` instead of reporting an unobserved absence.
+        let file_root = unique_fixture_path("missing-ref-qualified-unknown");
+        ignore_remove_dir_all(&file_root);
+        fs::write(&file_root, "not a directory")?;
+        let repair = missing_ref_repair(&file_root, "origin/main", None);
+        assert_eq!(repair, "Fetch the ref (for example `git fetch`)");
+        let _ = fs::remove_file(&file_root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_never_interpolates_a_hostile_qualifier() -> std::io::Result<()> {
+        // A qualifier that is not plain falls through to the count-based arms
+        // instead of reaching a suggested command.
+        let dir = unique_fixture_root("missing-ref-hostile-qualifier")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let repair = missing_ref_repair(&dir, "--upload-pack=x/main", None);
+        assert!(
+            repair.contains("No git remote is configured"),
+            "a hostile qualifier must fall through to the generic arm, got: {repair}"
+        );
+        assert!(
+            !repair.contains("git fetch --") && !repair.contains("git remote add --"),
+            "a hostile qualifier must never reach a suggested command, got: {repair}"
         );
 
         ignore_remove_dir_all(&dir);

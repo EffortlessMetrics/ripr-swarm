@@ -6274,7 +6274,18 @@ tests = [
   "crates/ripr/src/output/first_pr.rs::tests::shallow_range_without_merge_base_points_at_unshallow",
   "crates/ripr/src/output/first_pr.rs::tests::unrelated_git_range_writes_recovery_packet",
   "crates/ripr/src/analysis/diff/parse.rs::tests::symlink_sections_record_no_changed_source_lines",
-  "crates/ripr/src/analysis/diff/parse.rs::tests::plain_file_boundary_after_symlink_section_keeps_source_lines"
+  "crates/ripr/src/analysis/diff/parse.rs::tests::plain_file_boundary_after_symlink_section_keeps_source_lines",
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_does_not_assume_origin_remote",
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_single_configured_remote",
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_a_configured_remote_qualifier",
+  "crates/ripr/src/analysis/diff/load.rs::tests::remote_name_is_plain_allows_plain_names_and_denies_hostile_ones",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_add_remote_step_when_no_remote_exists",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_single_configured_remote",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_falls_back_to_plain_fetch_for_several_remotes_or_probe_failure",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_a_configured_remote_qualifier_despite_several_remotes",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_add_remote_step_for_an_unconfigured_qualifier",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_keeps_a_qualified_ref_generic_when_remotes_are_unknown",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_never_interpolates_a_hostile_qualifier"
 ]
 fixtures = []
 code = [
