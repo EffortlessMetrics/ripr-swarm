@@ -721,13 +721,13 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
             return true;
         }
     }
-    // Match-arm patterns: the text before each `=>` back to the previous
-    // `{`, `,` or `}`.
+    // Match-arm patterns: the text before each `=>` back to the enclosing
+    // `{` or a top-level `,`, cut at a top-level `if` guard. A guard only
+    // reads the parameter (`n if n > qty =>`); the pattern before it can
+    // bind it (`Some(qty) if .. =>`, `Foo { qty } =>`).
     for (at, _) in inner.match_indices("=>") {
-        let start = inner[..at]
-            .rfind(['{', ',', '}'])
-            .map_or(0, |index| index + 1);
-        if mentions(&inner[start..at]) {
+        let start = match_arm_start(&inner[..at]);
+        if mentions(match_arm_pattern(&inner[start..at])) {
             return true;
         }
     }
@@ -747,6 +747,49 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
         }
     }
     false
+}
+
+/// Where the match arm ending at the end of `before` starts: after the
+/// nearest unmatched opening bracket or top-level `,`, scanning backward so
+/// a struct pattern's own braces (`Foo { qty }`) stay inside the arm. A
+/// preceding block arm without a comma is kept in the arm text, which can
+/// only report a rebinding, never hide one.
+fn match_arm_start(before: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth == 0 => return at + 1,
+            '(' | '[' | '{' => depth -= 1,
+            ',' if depth == 0 => return at + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// The pattern part of a match arm: `arm` before its last `if` keyword
+/// outside any bracket. Patterns cannot contain `if`, so the last top-level
+/// one opens the guard; without a guard the whole arm is the pattern.
+fn match_arm_pattern(arm: &str) -> &str {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut depth = 0usize;
+    let mut guard = None;
+    for (at, character) in arm.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            'i' if depth == 0
+                && arm[at..].starts_with("if")
+                && !arm[..at].chars().next_back().is_some_and(is_word)
+                && !arm[at + 2..].chars().next().is_some_and(is_word) =>
+            {
+                guard = Some(at);
+            }
+            _ => {}
+        }
+    }
+    guard.map_or(arm, |at| &arm[..at])
 }
 
 /// `text` is exactly one direct call of `callee` (nothing before or after).
@@ -1057,6 +1100,10 @@ mod tests {
             "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) => qty, None => 0 } }",
             "fn w(qty: u32) -> u32 { [1].iter().map(|qty| qty + 1).sum() }",
             "fn w(qty: u32) -> u32 { match qty { n @ 1..=3 => n, qty @ _ => qty } }",
+            // A guarded arm whose pattern binds the parameter still rebinds.
+            "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) if qty > 3 => qty, _ => 0 } }",
+            "fn w(qty: Line) -> u32 { match qty { Line { qty } => qty } }",
+            "fn w(qty: u32, n: Line) -> u32 { match n { Line { qty, .. } if qty > 1 => qty, _ => 0 } }",
         ] {
             assert!(caller_rebinds_parameter(body, "qty"), "{body}");
         }
@@ -1064,6 +1111,11 @@ mod tests {
             "fn w(qty: u32) -> u32 { if is_bulk(qty) { 5 } else { 0 } }",
             "fn w(qty: u32) -> bool { qty <= 3 || qty == 9 || qty >= 7 }",
             "fn w(qty: u32) -> u32 { let other = qty + 1; other }",
+            // CodeRabbit (#6780): a match guard only reads the parameter.
+            "fn w(qty: u32, n: u32) -> u32 { match n { n if n > qty => 1, _ => 0 } }",
+            "fn w(qty: u32, n: u32) -> u32 { match n { 0 => 0, m if is_bulk(qty) => m, _ => 1 } }",
+            // A guard-like word inside the pattern is not a guard.
+            "fn w(qty: u32, n: Diff) -> u32 { match n { Diff { iff } if iff > qty => 1, _ => 0 } }",
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }

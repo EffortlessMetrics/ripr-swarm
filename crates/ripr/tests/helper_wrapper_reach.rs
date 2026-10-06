@@ -226,6 +226,75 @@ fn match_arm_behind_a_dropping_wrapper_is_not_credited() -> Result<(), String> {
     Ok(())
 }
 
+// #6780 review B2: a wrapper that transforms the helper's result before
+// returning it is not a forwarding hop either, so the match arm abstains.
+#[test]
+fn match_arm_behind_a_transforming_wrapper_is_not_credited() -> Result<(), String> {
+    let transforming = "    p * (100 - discount_percent(t)) / 100";
+    let tests = "        assert_eq!(discounted_cents(10_000, Tier::Gold), 8_500);";
+    let finding = family_finding(&tier_source(transforming, tests), TIER_DIFF, "match_arm")?;
+    assert_eq!(
+        relation_of(&finding, "gold_discount_applies"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+const UNIT_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn unit_cents(qty: u32) -> u32 {\n-    qty * 3\n+    qty * 4\n }\n";
+
+fn unit_source(wrapper_body: &str, tests: &str) -> String {
+    format!(
+        "fn unit_cents(qty: u32) -> u32 {{\n    qty * 4\n}}\n\npub fn order_cents(qty: u32) -> u32 {{\n{wrapper_body}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn two_units_cost_eight_cents() {{\n{tests}\n    }}\n}}\n"
+    )
+}
+
+// #6780 review B2: a return-value change in a helper whose wrapper drops
+// or transforms the helper's result is not credited through the wrapper pin.
+#[test]
+fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> Result<(), String>
+{
+    for (wrapper, tests) in [
+        (
+            "    let _ = unit_cents(qty);\n    qty",
+            "        assert_eq!(order_cents(2), 2);",
+        ),
+        (
+            "    unit_cents(qty) + 1",
+            "        assert_eq!(order_cents(2), 9);",
+        ),
+    ] {
+        let finding = family_finding(&unit_source(wrapper, tests), UNIT_DIFF, "return_value")?;
+        assert_eq!(
+            relation_of(&finding, "two_units_cost_eight_cents"),
+            Some("helper_owner_call"),
+            "{wrapper}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+// Control: the same return-value change behind a forwarding wrapper is not
+// stopped at the hop.
+#[test]
+fn return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop() -> Result<(), String> {
+    let finding = family_finding(
+        &unit_source("    unit_cents(qty)", "        assert_eq!(order_cents(2), 8);"),
+        UNIT_DIFF,
+        "return_value",
+    )?;
+    assert!(
+        !finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("helper_result_not_forwarded"),
+        "{finding}"
+    );
+    Ok(())
+}
+
 // Control for the dropping wrapper: the same arm behind a wrapper that
 // returns the helper's result keeps its ordinary verdict path (not the
 // hop stop).

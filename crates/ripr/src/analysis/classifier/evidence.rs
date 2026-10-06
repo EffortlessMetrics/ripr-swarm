@@ -211,6 +211,18 @@ impl ClassifiedProbeEvidence {
                 &activation,
                 context.helper_chain.as_ref(),
                 &assertion_admitted,
+                &|test: &TestSummary| {
+                    activation_evidence_with_value_facts(
+                        context.probe,
+                        context.owner_fn,
+                        &[test],
+                        &flow_sinks,
+                        context.helper_chain.as_ref(),
+                        context.index,
+                        context.workspace_complete,
+                        context.test_value_facts,
+                    )
+                },
             ) {
             StageEvidence::new(
                 StageState::Weak,

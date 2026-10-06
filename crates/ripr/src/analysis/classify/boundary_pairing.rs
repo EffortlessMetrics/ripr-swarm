@@ -33,6 +33,11 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 ///
 /// Non-predicate probes are not this gate; the caller must not use a `true`
 /// result to promote a family this function does not judge.
+///
+/// `test_activation` recomputes activation from one test alone. The wrapper
+/// entry path reads only those rows (#6780 review): `ValueFact` carries no
+/// source test, so a row from the run-wide `activation` cannot be told apart
+/// from a same-line row of another test in another file.
 pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -40,6 +45,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     activation: &ActivationEvidence,
     helper_chain: Option<&HelperChain>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    test_activation: &dyn Fn(&TestSummary) -> ActivationEvidence,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
         return false;
@@ -62,6 +68,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             activation,
             forwarding_entry,
             assertion_admitted,
+            test_activation,
         )
     })
 }
@@ -73,8 +80,11 @@ fn test_pairs_boundary_input_with_oracle(
     activation: &ActivationEvidence,
     forwarding_entry: Option<&str>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    test_activation: &dyn Fn(&TestSummary) -> ActivationEvidence,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
+    // Computed at most once per test, and only when the entry path is live.
+    let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
         if !assertion_admitted(test, assertion) || !assertion_is_discriminating(assertion) {
             return false;
@@ -82,25 +92,40 @@ fn test_pairs_boundary_input_with_oracle(
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, activation)
             || assertion_observes_bound_name(assertion, &bound_names)
             || forwarding_entry.is_some_and(|entry| {
-                assertion_observes_boundary_entry_call(owner, entry, assertion, activation)
+                assertion_names_one_entry_call(owner, entry, assertion)
+                    && assertion_observes_boundary_entry_call(
+                        owner,
+                        entry,
+                        assertion,
+                        own_rows.get_or_init(|| test_activation(test)),
+                    )
             })
     })
+}
+
+fn assertion_names_one_entry_call(
+    owner: &FunctionSummary,
+    entry: &str,
+    assertion: &OracleFact,
+) -> bool {
+    let subject = assertion_subject(&assertion.text);
+    owner_call_count(&subject, entry) == 1
+        && owner_call_count(&assertion.text, entry) == 1
+        && owner_call_count(&assertion.text, &owner.name) == 0
 }
 
 /// The assertion's subject is one call of the chain's entry, the assertion
 /// names neither the owner nor a second entry call, and activation already
 /// recorded a boundary `==` row bound down the chain from this assertion's
-/// line (the transferred row carries the entry call's text).
+/// line (the transferred row carries the entry call's text). `activation`
+/// must hold only rows recomputed from the assertion's own test.
 fn assertion_observes_boundary_entry_call(
     owner: &FunctionSummary,
     entry: &str,
     assertion: &OracleFact,
     activation: &ActivationEvidence,
 ) -> bool {
-    let subject = assertion_subject(&assertion.text);
-    owner_call_count(&subject, entry) == 1
-        && owner_call_count(&assertion.text, entry) == 1
-        && owner_call_count(&assertion.text, &owner.name) == 0
+    assertion_names_one_entry_call(owner, entry, assertion)
         && activation.observed_values.iter().any(|fact| {
             // The transferred row's provenance starts with the entry call's
             // line text. That line must hold this assertion, exactly one
@@ -399,7 +424,15 @@ mod tests {
         tests: &[&TestSummary],
         activation: &ActivationEvidence,
     ) -> bool {
-        has_same_test_boundary_oracle_pairing(probe, owner, tests, activation, None, &|_, _| true)
+        has_same_test_boundary_oracle_pairing(
+            probe,
+            owner,
+            tests,
+            activation,
+            None,
+            &|_, _| true,
+            &|_| activation.clone(),
+        )
     }
 
     #[test]
@@ -862,6 +895,7 @@ mod tests {
                 activation,
                 chain,
                 &|_, _| true,
+                &|_| activation.clone(),
             )
         };
         assert!(pairs(Some(&chain), &activation));
@@ -900,6 +934,7 @@ mod tests {
             &activation,
             Some(&wrapper_chain(FORWARDING_WRAPPER)),
             &|_, _| true,
+            &|_| activation.clone(),
         ));
     }
 
@@ -922,6 +957,7 @@ mod tests {
             activation,
             Some(&wrapper_chain(wrapper_body)),
             &|_, _| true,
+            &|_| activation.clone(),
         )
     }
 
@@ -946,6 +982,7 @@ mod tests {
             &transferred_boundary_row(1, line),
             Some(&wrapper_chain(FORWARDING_WRAPPER)),
             &|_, _| true,
+            &|_| transferred_boundary_row(1, line),
         ));
     }
 
@@ -974,6 +1011,63 @@ mod tests {
             plain,
             &transferred_boundary_row(1, plain),
             FORWARDING_WRAPPER,
+        ));
+    }
+
+    // #6780 review (CodeRabbit): a transferred boundary row from test A must
+    // not pair test B's wrapper pin on the same line in another file. Both
+    // write the same entry call text; only A binds `qty` to the boundary.
+    #[test]
+    fn another_tests_same_line_row_does_not_pair_the_wrapper_pin() {
+        let probe = predicate_probe("10 <= qty");
+        let owner = bulk_owner();
+        let line = "assert_eq!(order_discount(qty), 5);";
+        let mut boundary_test = test_summary(
+            "boundary_input_without_admitted_oracle",
+            &format!("let qty = 10;\n{line}"),
+            vec![call("order_discount", line)],
+            Vec::new(),
+            &["10", "5"],
+        );
+        boundary_test.file = PathBuf::from("tests/a.rs");
+        let mut far_oracle = exact(line);
+        far_oracle.line = 2;
+        let mut far_test = test_summary(
+            "far_input_with_oracle",
+            &format!("let qty = 3;\n{line}"),
+            vec![call("order_discount", line)],
+            vec![far_oracle],
+            &["3", "5"],
+        );
+        far_test.file = PathBuf::from("tests/b.rs");
+        // The run-wide row carries only line and text: it cannot name A.
+        let run_wide = transferred_boundary_row(2, line);
+        let own_rows = |test: &TestSummary| {
+            if test.file == boundary_test.file && test.name == boundary_test.name {
+                transferred_boundary_row(2, line)
+            } else {
+                ActivationEvidence::default()
+            }
+        };
+        let chain = wrapper_chain(FORWARDING_WRAPPER);
+        assert!(!has_same_test_boundary_oracle_pairing(
+            &probe,
+            Some(&owner),
+            &[&boundary_test, &far_test],
+            &run_wide,
+            Some(&chain),
+            &|_, _| true,
+            &own_rows,
+        ));
+        // Control: the same far test pairs when its own rows hold the boundary.
+        assert!(has_same_test_boundary_oracle_pairing(
+            &probe,
+            Some(&owner),
+            &[&boundary_test, &far_test],
+            &run_wide,
+            Some(&chain),
+            &|_, _| true,
+            &|_| transferred_boundary_row(2, line),
         ));
     }
 
