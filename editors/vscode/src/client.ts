@@ -3622,9 +3622,9 @@ interface RiprAnalysisStatusPayload {
   run_status?: string;
   attempt_id?: string | null;
   snapshot_id?: string | null;
-  retry_command?: string;
-  /** #5999: present exactly when refresh cannot lift the run (budget-bound
-   * partial scope); `detail` names the raise + restart route. */
+  /** #5999: null exactly when refresh cannot lift the run (budget-bound
+   * partial scope); the recovery object then names the actual route. */
+  retry_command?: string | null;
   retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
   pending?: boolean;
