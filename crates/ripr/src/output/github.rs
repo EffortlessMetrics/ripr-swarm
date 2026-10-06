@@ -183,7 +183,10 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 String::new(),
                 format!(
                     "{}{message}",
-                    unplaced_location_prefix(&display_path, finding.probe.location.line)
+                    unplaced_location_prefix(
+                        &display_path,
+                        &finding.probe.location.line.to_string()
+                    )
                 ),
             )
         } else {

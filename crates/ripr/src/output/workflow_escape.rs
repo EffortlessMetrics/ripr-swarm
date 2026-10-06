@@ -32,9 +32,11 @@ pub(crate) fn path_is_unplaceable(path: &str) -> bool {
 }
 
 /// Message prefix naming the location of an annotation that could not be
-/// placed on its file.
-pub(crate) fn unplaced_location_prefix(path: &str, line: usize) -> String {
-    let location = if line == 0 {
+/// placed on its file. `line` is the display text of the line number; an empty
+/// or `0` line names the file alone. The path is shown as given: stable path
+/// text keeps its `%XX` notation, which is what keeps distinct names distinct.
+pub(crate) fn unplaced_location_prefix(path: &str, line: &str) -> String {
+    let location = if line.is_empty() || line == "0" {
         path.to_string()
     } else {
         format!("{path}:{line}")
@@ -107,7 +109,10 @@ pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable};
+    use super::{
+        escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
+        unplaced_location_prefix,
+    };
 
     #[test]
     fn only_characters_a_property_cannot_carry_make_a_path_unplaceable() {
@@ -117,6 +122,20 @@ mod tests {
         // CR and LF encode as %0D/%0A, which GitHub decodes faithfully.
         assert!(!path_is_unplaceable("a\r\nb"));
         assert!(!path_is_unplaceable("src/a,b:c%dé.rs"));
+    }
+
+    #[test]
+    fn unplaced_prefix_names_the_escaped_location_with_or_without_a_line() {
+        assert_eq!(
+            unplaced_location_prefix("a\u{1b}b.rs", "7"),
+            "Location (file name has control characters, so not placed): a\\u{1b}b.rs:7. "
+        );
+        for no_line in ["", "0"] {
+            assert_eq!(
+                unplaced_location_prefix("a\u{1b}b.rs", no_line),
+                "Location (file name has control characters, so not placed): a\\u{1b}b.rs. "
+            );
+        }
     }
 
     #[test]

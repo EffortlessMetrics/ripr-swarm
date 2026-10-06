@@ -191,7 +191,7 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
     if path_is_unplaceable(&path) {
         // A property cannot carry a control or bidi character: omit the
         // placement and name the escaped location in the message (#6309).
-        let prefix = unplaced_location_prefix(&path, line as usize);
+        let prefix = unplaced_location_prefix(&path, &line.to_string());
         return Ok(format!(
             "::warning title={}::{}",
             escape_property(&title),

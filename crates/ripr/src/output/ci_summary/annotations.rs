@@ -10,6 +10,9 @@
 //! brief command is not interpolated: it points at the runner's checkout.
 
 use super::jq::{Fail, add, at, each_at, index, interpolated, truthy};
+use crate::output::workflow_escape::{
+    escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
+};
 use serde_json::Value;
 
 /// One `::warning` line per placed comment in a `comments.json` document,
@@ -63,9 +66,21 @@ fn annotation(comment: &Value) -> Result<Option<String>, Fail> {
         Value::String(String::new())
     };
     let message = add(reason, suffix)?;
-    let path = escape_property(string(path)?);
-    let line = escape_property(&interpolated(line));
-    let message = escape_data(string(&message)?);
+    let path_text = string(path)?;
+    let line_text = interpolated(line);
+    let message_text = string(&message)?;
+    if path_is_unplaceable(path_text) {
+        // A property cannot carry a control or bidi character: omit the
+        // placement and name the escaped location in the message (#6309).
+        let prefix = unplaced_location_prefix(path_text, &line_text);
+        return Ok(Some(format!(
+            "::warning title=RIPR targeted test guidance::{}",
+            escape_data(&format!("{prefix}{message_text}"))
+        )));
+    }
+    let path = escape_property(path_text);
+    let line = escape_property(&line_text);
+    let message = escape_data(message_text);
     Ok(Some(format!(
         "::warning file={path},line={line},title=RIPR targeted test guidance::{message}"
     )))
@@ -76,12 +91,33 @@ fn string(value: &Value) -> Result<&str, Fail> {
     value.as_str().ok_or(Fail)
 }
 
-fn escape_data(text: &str) -> String {
-    text.replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-}
+#[cfg(test)]
+mod tests {
+    use super::render_workflow_annotations;
 
-fn escape_property(text: &str) -> String {
-    escape_data(text).replace(':', "%3A").replace(',', "%2C")
+    #[test]
+    fn control_character_paths_drop_the_placement_and_name_the_location() -> Result<(), String> {
+        // #6309: a property cannot carry ESC, so the placed form would name a
+        // file that does not exist.
+        let document = serde_json::json!({
+            "comments": [
+                { "placement": { "path": "src/a\u{1b}[2Jb.rs", "line": 7 },
+                  "reason": "Pin the value" },
+                { "placement": { "path": "src/ok,file.rs", "line": 3 },
+                  "reason": "Pin the value" }
+            ]
+        });
+        let rendered = render_workflow_annotations(&document).map_err(|(_, err)| err)?;
+        assert_eq!(
+            rendered,
+            concat!(
+                "::warning title=RIPR targeted test guidance::",
+                "Location (file name has control characters, so not placed): ",
+                "src/a\\u{1b}[2Jb.rs:7. Pin the value\n",
+                "::warning file=src/ok%2Cfile.rs,line=3,",
+                "title=RIPR targeted test guidance::Pin the value\n"
+            )
+        );
+        Ok(())
+    }
 }
