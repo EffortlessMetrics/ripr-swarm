@@ -17,7 +17,33 @@
 //! double-encoding yields `%2525`. Unicode passes through raw in all three:
 //! the escape map has no UTF-8 branch.
 
+use crate::agent::loop_commands::needs_terminal_escape;
 use crate::output::human::terminal_safe;
+
+/// True when a repository path holds a control or bidi character that no
+/// workflow-command property can carry faithfully. GitHub decodes only
+/// `%25 %0D %0A %3A %2C` in property values, so `%1B` (or any other escape)
+/// stays literal text and the annotation would name a file that does not
+/// exist. Such paths omit `file=`/`line=` and name the escaped location in
+/// the message instead (#6309). `\r` and `\n` stay placeable: they encode as
+/// `%0D`/`%0A`.
+pub(crate) fn path_is_unplaceable(path: &str) -> bool {
+    path.chars().any(|c| c != '\r' && needs_terminal_escape(c))
+}
+
+/// Message prefix naming the location of an annotation that could not be
+/// placed on its file.
+pub(crate) fn unplaced_location_prefix(path: &str, line: usize) -> String {
+    let location = if line == 0 {
+        path.to_string()
+    } else {
+        format!("{path}:{line}")
+    };
+    format!(
+        "Location (file name has control characters, so not placed): {}. ",
+        terminal_safe(location)
+    )
+}
 
 /// Escape workflow-command *data* (the message after `::`).
 ///
@@ -81,7 +107,17 @@ pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_data, escape_property, escape_property_pre_encoded};
+    use super::{escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable};
+
+    #[test]
+    fn only_characters_a_property_cannot_carry_make_a_path_unplaceable() {
+        assert!(path_is_unplaceable("a\u{1b}b"));
+        assert!(path_is_unplaceable("a\u{202e}b"));
+        assert!(path_is_unplaceable("a\u{7}b"));
+        // CR and LF encode as %0D/%0A, which GitHub decodes faithfully.
+        assert!(!path_is_unplaceable("a\r\nb"));
+        assert!(!path_is_unplaceable("src/a,b:c%dé.rs"));
+    }
 
     #[test]
     fn control_and_bidi_characters_print_as_escapes_in_every_form() {
