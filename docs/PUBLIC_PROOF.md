@@ -382,7 +382,7 @@ Measured on the pinned corpus repositories at the revisions in the receipt, with
 
 ## First run
 
-A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured.
+A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction, and reads each verdict against the tests that catch the edit in that crate; it does not judge verdict accuracy in general. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured.
 
 | Crate | Verdict, ripr 0.10.0 | Verdict, ripr 0.11.0 (a7a089e) | Workflow lines, ripr 0.10.0 | Workflow lines, ripr 0.11.0 (a7a089e) |
 | --- | --- | --- | --- | --- |
