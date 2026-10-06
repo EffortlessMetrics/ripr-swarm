@@ -10,4 +10,4 @@
 - VS Code: `ripr.baseRef` defaults to empty, which resolves the repository
   default branch like `ripr check`, instead of `origin/main`. Repositories on
   `master` no longer fail their first editor refresh. When no default branch
-  resolves, the status bar names `ripr.baseRef` as the fix.
+  resolves, the status bar names `ripr.baseRef` as the fix (#5292).

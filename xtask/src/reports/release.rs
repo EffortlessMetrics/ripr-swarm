@@ -152,6 +152,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         github_workflow_check(&installed_binary),
         vsix_packaging_check(),
         extension_version_match_check(version, crate_version.as_deref()),
+        init_pin_version_check(version),
         known_limits_docs_check(),
     ];
     let status = release_readiness_status(&checks).to_string();
@@ -2814,6 +2815,83 @@ fn extension_version_check_from(
     }
 }
 
+const INIT_WORKFLOW_SOURCE: &str = "crates/ripr/src/cli/commands/init_workflow.rs";
+
+fn init_pin_version_check(version: &str) -> ReleaseReadinessCheck {
+    let pinned = fs::read_to_string(INIT_WORKFLOW_SOURCE)
+        .ok()
+        .and_then(|source| latest_released_version_in(&source));
+    init_pin_version_check_from(version, pinned.as_deref())
+}
+
+/// The string value of `const LATEST_RELEASED_VERSION: &str = "...";`.
+fn latest_released_version_in(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let rest = line
+            .trim()
+            .strip_prefix("const LATEST_RELEASED_VERSION: &str = \"")?;
+        let (value, _) = rest.split_once('"')?;
+        Some(value.to_string())
+    })
+}
+
+/// `ripr init --ci github` self-pins the generated workflow at or below
+/// `LATEST_RELEASED_VERSION`. A stable release commit must carry the constant
+/// at the release version (docs/RELEASE.md, Post-Publish); otherwise every
+/// published generator pins its predecessor and warns that it is unreleased.
+/// A release candidate must never move it (#5208).
+fn init_pin_version_check_from(version: &str, pinned: Option<&str>) -> ReleaseReadinessCheck {
+    let id = "init-pin-version";
+    let command = "compare LATEST_RELEASED_VERSION in crates/ripr/src/cli/commands/init_workflow.rs to the requested release version";
+    let Some(pinned) = pinned else {
+        return readiness_check(
+            id,
+            "fail",
+            true,
+            command,
+            "could not read LATEST_RELEASED_VERSION",
+            Vec::new(),
+            vec![format!(
+                "no `const LATEST_RELEASED_VERSION: &str = \"...\";` line in {INIT_WORKFLOW_SOURCE}"
+            )],
+        );
+    };
+    let prerelease = version.contains('-');
+    let problem = match (prerelease, pinned == version) {
+        (false, false) => Some(format!(
+            "LATEST_RELEASED_VERSION is {pinned} != requested release version {version}; the release commit bumps it with the package version (docs/RELEASE.md, Post-Publish)"
+        )),
+        (true, true) => Some(format!(
+            "LATEST_RELEASED_VERSION is the release candidate {version}; it names stable releases only (#5208)"
+        )),
+        _ => None,
+    };
+    match problem {
+        None => readiness_check(
+            id,
+            "pass",
+            true,
+            command,
+            if prerelease {
+                "LATEST_RELEASED_VERSION stays at the last stable release for a release candidate"
+            } else {
+                "ripr init --ci github pins the release version being cut"
+            },
+            vec![INIT_WORKFLOW_SOURCE.to_string()],
+            Vec::new(),
+        ),
+        Some(problem) => readiness_check(
+            id,
+            "fail",
+            true,
+            command,
+            "generated CI workflows would pin the wrong ripr release",
+            Vec::new(),
+            vec![problem],
+        ),
+    }
+}
+
 fn missing_required_needles(text: &str, required: &[&str]) -> Vec<String> {
     required
         .iter()
@@ -3227,11 +3305,12 @@ mod tests {
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, create_external_doctor_fixture,
-        extension_version_check_from, extract_packaged_crate, missing_required_needles,
-        package_version, parse_release_readiness_args, read_crate_version, readiness_check,
-        release_readiness_json, release_readiness_markdown, release_readiness_status,
-        validate_binary_identity, validate_doctor_result, validate_installed_version,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        extension_version_check_from, extract_packaged_crate, init_pin_version_check_from,
+        latest_released_version_in, missing_required_needles, package_version,
+        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
+        release_readiness_markdown, release_readiness_status, validate_binary_identity,
+        validate_doctor_result, validate_installed_version, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
@@ -3732,6 +3811,60 @@ mod tests {
                 value: lock.map(str::to_string),
             },
         ]
+    }
+
+    #[test]
+    fn init_pin_version_check_binds_the_constant_to_stable_releases() -> Result<(), String> {
+        let source =
+            "const OTHER: &str = \"9.9.9\";\nconst LATEST_RELEASED_VERSION: &str = \"0.10.0\";\n";
+        if latest_released_version_in(source).as_deref() != Some("0.10.0") {
+            return Err("expected to read 0.10.0 from the const line".to_string());
+        }
+        if latest_released_version_in("const OTHER: &str = \"1.0.0\";").is_some() {
+            return Err("an unrelated const must not be read as the pin".to_string());
+        }
+        // The real source must parse, or the readiness check would fail
+        // closed at the cut for a reason unrelated to the bump.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no parent directory".to_string())?
+            .to_path_buf();
+        let real = fs::read_to_string(root.join(super::INIT_WORKFLOW_SOURCE))
+            .map_err(|err| format!("failed to read init_workflow.rs: {err}"))?;
+        if latest_released_version_in(&real).is_none() {
+            return Err("LATEST_RELEASED_VERSION unreadable in init_workflow.rs".to_string());
+        }
+        for (version, pinned, expected, label) in [
+            ("0.11.0", Some("0.11.0"), "pass", "stable release, bumped"),
+            (
+                "0.11.0",
+                Some("0.10.0"),
+                "fail",
+                "stable release, not bumped",
+            ),
+            (
+                "0.11.0-rc.1",
+                Some("0.10.0"),
+                "pass",
+                "candidate keeps the stable pin",
+            ),
+            (
+                "0.11.0-rc.1",
+                Some("0.11.0-rc.1"),
+                "fail",
+                "candidate moved the pin",
+            ),
+            ("0.11.0", None, "fail", "unreadable constant"),
+        ] {
+            let check = init_pin_version_check_from(version, pinned);
+            if check.status != expected || !check.required {
+                return Err(format!(
+                    "{label}: expected required {expected}, got {}/{}",
+                    check.status, check.required
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

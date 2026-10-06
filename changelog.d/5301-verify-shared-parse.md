@@ -1,5 +1,5 @@
-<!-- section: Performance -->
-- `ripr agent verify`: each snapshot is parsed twice per verify
+<!-- section: Changed -->
+- Performance: `ripr agent verify`: each snapshot is parsed twice per verify
   instead of four times. Validation no longer re-parses the document
   as an untyped value just to re-prove well-formedness, and the
   outcome report reuses the validated repository heads instead of
