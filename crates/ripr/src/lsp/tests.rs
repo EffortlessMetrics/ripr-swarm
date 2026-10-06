@@ -2251,6 +2251,37 @@ fn lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit() -> Result<(), 
     {
         return Err("saved tracked source edit did not reach the LSP diagnostic batch".to_string());
     }
+    // #3948: the production projection binds every finding's drill-in to the
+    // workspace folder, never the server process's `--root .`.
+    let bound_prefix = format!(
+        "ripr explain --root {} ",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &root.path().to_string_lossy()
+        ))
+    );
+    let explain_commands = diagnostics
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .filter_map(|diagnostic| {
+            diagnostic
+                .data
+                .as_ref()
+                .and_then(|data| data.get("explain_command"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    if explain_commands.is_empty() {
+        return Err("published finding diagnostics carried no explain_command".to_string());
+    }
+    if let Some(unbound) = explain_commands
+        .iter()
+        .find(|command| !command.starts_with(&bound_prefix) || !command.contains(" --worktree "))
+    {
+        return Err(format!(
+            "published explain_command is not bound to the workspace root: {unbound}"
+        ));
+    }
     Ok(())
 }
 
@@ -2655,7 +2686,7 @@ fn diagnostic_witness_command_binds_the_workspace_root() -> Result<(), String> {
     );
     assert!(!markup.value.contains("--root ."), "{}", markup.value);
 
-    let (_, relocated) = project(Path::new("/elsewhere/checkout"))?;
+    let (_, relocated) = project(Path::new("/elsewhere/check out's"))?;
     assert_ne!(
         relocated
             .data
@@ -2670,7 +2701,7 @@ fn diagnostic_witness_command_binds_the_workspace_root() -> Result<(), String> {
             &[diagnostic]
         ),
         super::diagnostics::normalized_diagnostic_payload_digest(
-            Path::new("/elsewhere/checkout"),
+            Path::new("/elsewhere/check out's"),
             &[relocated]
         ),
         "equivalent checkouts share one cache identity"

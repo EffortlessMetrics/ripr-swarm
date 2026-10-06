@@ -15146,8 +15146,10 @@ Field contract:
   Explicit standalone per-seam CLI `agent packet` and the repo-wide
   `ripr pilot` packet (`agent-seam-packets.json`) bind these `next` commands
   to the selected repository root, so even `--root .` prints an absolute
-  root and absolute redirects. Embedded per-record `verify_command` values
-  keep the portable `--root .` form (#3999).
+  root and absolute redirects. Their embedded per-record `verify_command`
+  values bind the same root, and the typed verify spec is recovered against
+  it, so the concrete root never enters argv (#3948, #3999). Portable packets
+  keep the `--root .` form.
   Their optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
   The `ripr check --format agent-seam-packets-json` wrapper omits this
@@ -15799,13 +15801,16 @@ under the built-in saved-workspace default. Clients or repo policy can pass
 Diff-scoped finding diagnostics may carry the same versioned producer witness
 as `ripr context --json`. The witness is placed in diagnostic `data.witness`
 and the copy-context action forwards it unchanged. Hover, context packets,
-and diagnostic data therefore share one typed fact set:
+and diagnostic data therefore share one typed fact set. The diagnostic's
+`explain_command` binds the workspace folder's absolute root and
+`--worktree`, never the language server's process directory (#3948); the
+normalized payload digest projects that root away:
 
 ```jsonc
 {
   "data": {
     "schema_version": "0.1",
-    "explain_command": "ripr explain --root . probe:pricing:88:error_path",
+    "explain_command": "ripr explain --root /work/repo --worktree probe:pricing:88:error_path",
     "witness": {
       "kind": "static_discriminator_gap",
       "probe_family": "error_path",
@@ -15829,7 +15834,7 @@ and diagnostic data therefore share one typed fact set:
         "oracle_location": { "file": "tests/pricing.rs", "line": 12 }
       },
       "suggested_assertion": null,
-      "explain_command": "ripr explain --root . probe:pricing:88:error_path",
+      "explain_command": "ripr explain --root /work/repo --worktree probe:pricing:88:error_path",
       "confidence": { "value": 0.75, "basis": "static_only" },
       "limitations": [
         {
