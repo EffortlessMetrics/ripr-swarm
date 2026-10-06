@@ -386,7 +386,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.40";
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
-/// `0.46`: seams gain optional span geometry (#5336), the same semantic
+/// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
 
@@ -468,7 +468,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
-/// `0.46`: seams gain optional span geometry (#5336), the same semantic
+/// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.46";
 
@@ -3897,7 +3897,7 @@ mod tests {
         // 1.21 -> 1.22: file-level `calls` are derived, not stored
         // (#5415 step 3); legacy payloads carry a dead copy.
         // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
-        // 1.29: probe shapes gain the parser-owned end byte (#5336).
+        // 1.28 -> 1.29: probe shapes gain the parser-owned end byte (#5336).
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.29");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
@@ -3953,7 +3953,7 @@ mod tests {
         // 1.33 -> 1.34: a statically contradicted exact-value assertion
         // keeps at most weak oracle credit and keeps the gap open (#6026).
         // 1.38: compose #5713 with landed #6701; refuse both predecessors.
-        // 1.40: probe shapes gain the parser-owned end byte (#5336).
+        // 1.39 -> 1.40: probe shapes gain the parser-owned end byte (#5336).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.40");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -3986,7 +3986,7 @@ mod tests {
         // 0.39 -> 0.40: same statically-contradicted-exact-value transition
         // as the outer cache (#6026).
         // 0.44: same combined #5713/#6701 transition as full 1.38.
-        // 0.46: seams gain optional span geometry (#5336).
+        // 0.45 -> 0.46: seams gain optional span geometry (#5336).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.46");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.46");
     }

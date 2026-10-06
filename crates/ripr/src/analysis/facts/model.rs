@@ -1380,8 +1380,6 @@ pub(crate) struct ProbeShapeFactWire {
     pub start_line: usize,
     pub end_line: usize,
     pub start_byte: usize,
-    /// Carried verbatim: `text` is a trimmed display snippet, so the span
-    /// end cannot be re-derived from it on decode (#5336).
     pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: WireText,
@@ -1961,6 +1959,7 @@ mod tests {
         let decoded: FileFacts = serde_json::from_value(wire)?;
         assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
         assert_eq!(decoded.probe_shapes[0].text.as_str(), "assert!(true)");
+        assert_eq!(decoded.probe_shapes[0].end_byte, 40);
         for child in [
             decoded.functions[0].body.shared_source(),
             decoded.probe_shapes[0].text.shared_source(),
