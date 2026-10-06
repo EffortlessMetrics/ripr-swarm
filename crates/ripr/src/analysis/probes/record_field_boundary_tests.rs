@@ -326,3 +326,30 @@ fn a_field_that_was_the_head_of_a_longer_value_is_still_edited() -> Result<(), S
     );
     Ok(())
 }
+
+#[test]
+fn an_unchanged_call_beside_an_operator_still_reads_unchanged() -> Result<(), String> {
+    // The whole-unit rule is for record fields only. `f(a)` follows `=` and
+    // precedes `+`, yet it is the same call on both lines; `g(b)` is the edit.
+    let source = "fn f(v: u8) -> u8 { v }\nfn g(v: u8) -> u8 { v }\npub fn sum(a: u8, b: u8) -> u8 {\n    let x = f(a) + g(b);\n    x\n}\n";
+    let path = PathBuf::from("src/lib.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        files: BTreeMap::from([(path.clone(), facts)]),
+        ..Default::default()
+    });
+    let shapes = super::classify::parser_probe_shapes_for_changed_line_against(
+        &index,
+        &path,
+        4,
+        "let x = f(a) + g(b);",
+        Some("let x = f(a) + g(c);"),
+    );
+    let calls = shapes
+        .iter()
+        .filter(|shape| shape.family == ProbeFamily::CallDeletion)
+        .map(|shape| shape.text)
+        .collect::<Vec<_>>();
+    assert_eq!(calls, vec!["g(b)"], "{calls:?}");
+    Ok(())
+}

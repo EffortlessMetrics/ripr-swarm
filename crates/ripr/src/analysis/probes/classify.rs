@@ -44,15 +44,18 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     changed_text: &str,
     removed_text: Option<&str>,
 ) -> Vec<ParserProbeShape<'a>> {
-    let selection_key = |shape_text: &str| {
+    let selection_key = |family: &ProbeFamily, shape_text: &str| {
         shape_match_rank(shape_text, changed_text).map(|(category, distance)| {
             // Unchanged only when the old line holds every occurrence the new
             // line has: with two literals on one line, an edited field whose
             // new text matches the *other* literal's old field is new.
             let needle = shape_text.trim();
             let unchanged = removed_text.is_some_and(|removed| {
-                let before = token_run_count(removed, needle);
-                before > 0 && before >= token_run_count(changed_text, needle)
+                // Only a record field is bounded by `,`/`}`; other families
+                // (calls, predicates) sit inside larger expressions by design.
+                let whole_unit = *family == ProbeFamily::FieldConstruction;
+                let before = token_run_count(removed, needle, whole_unit);
+                before > 0 && before >= token_run_count(changed_text, needle, whole_unit)
             });
             (category, unchanged, distance)
         })
@@ -100,8 +103,8 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
                 continue;
             }
             let current = &selected[position];
-            let candidate_key = selection_key(candidate.text);
-            let current_key = selection_key(current.text);
+            let candidate_key = selection_key(&candidate.family, candidate.text);
+            let current_key = selection_key(&current.family, current.text);
             if candidate_key < current_key
                 || (candidate_key == current_key && candidate.text < current.text)
             {
@@ -268,7 +271,7 @@ fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
 /// or digit character on either side, so `b: 2` is not found inside `b: 20`
 /// and a removed line's trailing `// version: 0x2` comment does not make the
 /// edited `version: 0x2` field read as unchanged.
-fn token_run_count(haystack: &str, needle: &str) -> usize {
+fn token_run_count(haystack: &str, needle: &str, whole_unit: bool) -> usize {
     if needle.is_empty() {
         return 0;
     }
@@ -293,7 +296,7 @@ fn token_run_count(haystack: &str, needle: &str) -> usize {
                 || before.is_none_or(|ch| !is_word(ch));
             let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
                 || after.is_none_or(|ch| !is_word(ch));
-            // The occurrence must be a whole syntactic unit, not the head or
+            // A record field must be a whole syntactic unit, not the head or
             // tail of a longer expression: `flag: foo` inside the old
             // `flag: foo && bar` is not the unchanged field. Rejecting a
             // match only makes a shape read as changed, which falls back to
@@ -302,7 +305,7 @@ fn token_run_count(haystack: &str, needle: &str) -> usize {
             let previous = haystack[..start].trim_end().chars().next_back();
             let closes = next.is_none_or(|ch| matches!(ch, ',' | '}' | ')' | ']' | ';' | '{'));
             let opens = previous.is_none_or(|ch| !"&|+-*/%<>=!^.".contains(ch));
-            open_start && open_end && closes && opens
+            open_start && open_end && (!whole_unit || (closes && opens))
         })
         .count()
 }
