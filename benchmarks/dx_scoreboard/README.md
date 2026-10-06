@@ -216,6 +216,15 @@ run that ingests those reports leaves them uncompared. To re-record, take the
 The nightly `.github/workflows/dx-scoreboard.yml` runs the full corpus with
 the gate and uploads the report as an artifact.
 
+The `first_run` board is measured by `.github/workflows/first-run-install.yml`,
+which runs nightly and on demand (never on a pull request). It does a cold
+`cargo install ripr --locked` from crates.io, walks the first-run path, and
+ingests the receipt. It gates against
+`metrics/dx-scoreboard/first-run-baseline.json`; until that file exists the
+lane records the report ungated. To start gating, dispatch the workflow on
+`ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
+baseline file. Install seconds compare only against a same-runner baseline.
+
 ## Claim boundary
 
 Numbers hold for the recorded revision, binary, runner class, and pinned

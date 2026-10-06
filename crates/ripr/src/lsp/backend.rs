@@ -3225,10 +3225,13 @@ impl Backend {
             // shadow the new seam-evidence hover. Prefer the
             // seam-bearing diagnostic, then the finding-bearing one.
             // Caught by chatgpt-codex on PR #242.
-            let overlapping: Vec<&Diagnostic> = diagnostics
+            let mut overlapping: Vec<&Diagnostic> = diagnostics
                 .iter()
                 .filter(|d| diagnostic_covers_position(d, position))
                 .collect();
+            // A line-level diagnostic covers its whole line, so it must not
+            // shadow a column-precise one the cursor is on.
+            overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
@@ -4660,6 +4663,12 @@ impl Backend {
             // responses nor docs may represent it as that contract. The
             // immutable handle binding lands with #1602.
             "snapshot_id": snapshot.refresh.snapshot_id,
+            // The seam continuation identity (#6848 review): a listed seam
+            // `canonical_id` resolves through `ripr.collectContext` /
+            // `ripr.collectEvidenceContext` only together with this value as
+            // `evidence_identity` (`seam_command_stale_reason` rejects a
+            // seam id cited without one on a current snapshot).
+            "seam_evidence_identity": snapshot.evidence_identity(),
             "selected_count": result.selected.len(),
             "omitted_count": result.omitted.len(),
             "total_count": result.total_canonical_items,
@@ -11079,6 +11088,14 @@ mod list_actionable_items_tests {
         // snapshot (see the handler's interim-binding comment; the immutable
         // #1602 handle contract is a later slice).
         assert_eq!(response["snapshot_id"], "snapshot:test-handler");
+        // The seam continuation identity (#6848 review): exactly the value
+        // `seam_command_stale_reason` compares a cited `evidence_identity`
+        // against, so a listed seam id plus this field resolves through the
+        // collectContext seam route.
+        assert_eq!(
+            response["seam_evidence_identity"],
+            serde_json::json!({ "snapshot_id": "snapshot:test-handler" })
+        );
         assert_eq!(response["selected_count"], 1);
         assert_eq!(response["omitted_count"], 0);
         assert_eq!(response["total_count"], 1);
@@ -11365,6 +11382,7 @@ mod list_actionable_items_tests {
                 "omitted",
                 "omitted_count",
                 "omitted_truncated",
+                "seam_evidence_identity",
                 "selected",
                 "selected_count",
                 "snapshot_id",

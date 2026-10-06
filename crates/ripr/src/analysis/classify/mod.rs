@@ -1,4 +1,5 @@
 mod activation;
+mod arm_selection;
 mod boundary_pairing;
 mod context;
 mod decision;
@@ -18,9 +19,11 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, comparison_operands,
-    literal_operand_value, local_boundary,
+    ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts,
+    activation_evidence_with_value_facts, comparison_operands, literal_operand_value,
+    local_boundary,
 };
+pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
@@ -30,7 +33,7 @@ pub(in crate::analysis) use decision::{
     recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
-pub(in crate::analysis) use helper_transfer::resolve_chain;
+pub(in crate::analysis) use helper_transfer::{callee_is_unique, resolve_chain};
 pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
