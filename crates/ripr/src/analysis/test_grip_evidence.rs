@@ -2003,7 +2003,7 @@ fn guarded_result_oracle_matches_seam_variant(
     oracle_text: &str,
     ok_value_observed: Option<bool>,
 ) -> bool {
-    use super::classify::{enum_variant_values, exact_error_variant};
+    use super::classify::{changed_error_variant, enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;
 
     let Some(owner_terminal) = seam.owner().rsplit("::").next() else {
@@ -2033,7 +2033,9 @@ fn guarded_result_oracle_matches_seam_variant(
             pins.iter().any(|pin| pin == &seam_variant)
                 && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
         }
-        _ => match exact_error_variant(seam.expression()) {
+        // The shared identity owner (#6695): an `ok_or(Type::Variant)?`
+        // seam compares pins the same way an `Err(Type::Variant)` one does.
+        _ => match changed_error_variant(seam.expression()) {
             Some(seam_variant) => {
                 pins.iter().any(|pin| pin == &seam_variant)
                     && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)

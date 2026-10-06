@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-06.1. Cases: 204.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 63/203 | 0.3103 |
+| False verdicts (all cases) | 63/204 | 0.3088 |
 | False actionable (of discriminated) | 57/106 | 0.5377 |
-| False exposed (of not fully discriminated) | 6/97 | 0.0619 |
-| False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 81/203 | 0.3990 |
-| Abstained (limited or silent where acceptable) | 59/203 | 0.2906 |
-| Findings with a contradiction | 2/273 | 0.0073 |
+| False exposed (of not fully discriminated) | 6/98 | 0.0612 |
+| False silent (of not fully discriminated) | 0/98 | 0.0000 |
+| Ideal verdict | 82/204 | 0.4020 |
+| Abstained (limited or silent where acceptable) | 59/204 | 0.2892 |
+| Findings with a contradiction | 2/275 | 0.0073 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 57/169 | 51/86 | 6/83 | 0/83 | 73/169 | 39/169 |
+| authored | 170 | 57/170 | 51/86 | 6/84 | 0/84 | 74/170 | 39/170 |
 | upstream | 34 | 6/34 | 6/20 | 0/14 | 0/14 | 8/34 | 20/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -80,7 +80,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `ledger-sku-family-end` | authored | discriminated | credited | limited | infection_unknown | abstained | no | none |
 | `accounts-balance-add` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `accounts-trailer-crc` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
+| `accounts-parse-too-long-variant` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
 | `accounts-last-byte-unchecked` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
@@ -88,7 +88,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `checkout-fee-err-return-guard` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
+| `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
 | `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
@@ -224,6 +224,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `sibling-pin-insufficient-matches-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 
