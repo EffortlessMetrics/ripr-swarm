@@ -23759,7 +23759,8 @@ fn init_warns_when_the_root_is_not_a_git_work_tree() -> Result<(), String> {
     assert_success(&quiet);
     let quiet_stderr = String::from_utf8_lossy(&quiet.stderr);
     assert!(
-        !quiet_stderr.contains("not inside a Git work tree"),
+        !quiet_stderr.contains("not inside a Git work tree")
+            && !quiet_stderr.contains("Git could not confirm the root"),
         "init inside a work tree must stay quiet: {quiet_stderr}"
     );
     let _ = std::fs::remove_dir_all(&bare);
