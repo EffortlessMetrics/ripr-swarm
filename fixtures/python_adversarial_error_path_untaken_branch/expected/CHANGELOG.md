@@ -422,7 +422,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — python_adversarial_error_path_untaken_branch (17)
+## Pending — python_adversarial_error_path_untaken_branch (18)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
