@@ -49,7 +49,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// `agent status`, and fixture-setup snapshot production, which redirects the
 /// child stdout into a file the way the shell redirect would).
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    run_ripr_with_env_opt(current_dir, args, None)
+    run_ripr_with_env_opt(current_dir, args, None, None)
 }
 
 /// [`run_ripr`] with one child-scoped environment override. The variable is
@@ -60,20 +60,37 @@ fn run_ripr_with_env(
     env_key: &str,
     env_value: &str,
 ) -> Result<Output, String> {
-    run_ripr_with_env_opt(current_dir, args, Some((env_key, env_value)))
+    run_ripr_with_env_opt(current_dir, args, Some((env_key, env_value)), None)
 }
 
-/// The one spawn site behind [`run_ripr`] and [`run_ripr_with_env`], so the
-/// file keeps a single direct-spawn construction for the `ripr` binary.
+/// [`run_ripr`] with one variable removed from the child environment, so a
+/// silence assertion stays hermetic when the developer runs the suite with
+/// that switch set in the ambient environment (#6917). Setting it to an
+/// empty value would still enable presence-gated tracing.
+fn run_ripr_without_env(
+    current_dir: &Path,
+    args: &[&str],
+    env_key: &str,
+) -> Result<Output, String> {
+    run_ripr_with_env_opt(current_dir, args, None, Some(env_key))
+}
+
+/// The one spawn site behind [`run_ripr`], [`run_ripr_with_env`], and
+/// [`run_ripr_without_env`], so the file keeps a single direct-spawn
+/// construction for the `ripr` binary.
 fn run_ripr_with_env_opt(
     current_dir: &Path,
     args: &[&str],
     env_override: Option<(&str, &str)>,
+    env_remove: Option<&str>,
 ) -> Result<Output, String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
     command.current_dir(current_dir).args(args);
     if let Some((key, value)) = env_override {
         command.env(key, value);
+    }
+    if let Some(key) = env_remove {
+        command.env_remove(key);
     }
     command
         .output()
@@ -1878,8 +1895,10 @@ fn before_phase_emits_persist_trace_when_enabled(base: &Path, bash: &Path) -> Re
         }
     }
     // Without the switch the same phase stays silent and `--json` stdout
-    // keeps its repair_attempt document.
-    let untraced = run_ripr(
+    // keeps its repair_attempt document. The switch is removed from the
+    // child environment (not merely unset by omission) so ambient developer
+    // tracing cannot leak into the silence oracle.
+    let untraced = run_ripr_without_env(
         &journey.launch_dir,
         &[
             "agent",
@@ -1892,6 +1911,7 @@ fn before_phase_emits_persist_trace_when_enabled(base: &Path, bash: &Path) -> Re
             "--phase",
             "before",
         ],
+        "RIPR_PERSIST_LATENCY_TRACE",
     )?;
     assert_success(&untraced, "ripr agent repair --phase before --json")?;
     let untraced_stderr = String::from_utf8_lossy(&untraced.stderr);
