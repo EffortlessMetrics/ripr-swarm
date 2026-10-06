@@ -807,7 +807,13 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
 /// lacks). `None` when the ref is unqualified, the qualifier is hostile, or
 /// the remote list is unknown: all three fall through to the count-based
 /// arms rather than inventing a fetch that cannot restore the ref.
+/// Explicit `refs/*` paths are never remote-qualified (`refs/heads/x` has no
+/// `refs` remote). An unconfigured qualifier is ambiguous — a missing remote
+/// or a mistyped branch — so the add-remote step stays conditional.
 fn qualified_remote_advice(missing_ref: &str, remotes: Option<&[String]>) -> Option<String> {
+    if missing_ref.starts_with("refs/") {
+        return None;
+    }
     let (qualifier, _) = missing_ref.split_once('/')?;
     if !remote_name_is_plain(qualifier) {
         return None;
@@ -819,7 +825,7 @@ fn qualified_remote_advice(missing_ref: &str, remotes: Option<&[String]>) -> Opt
         ));
     }
     Some(format!(
-        "No `{qualifier}` remote is configured: add the remote hosting `{missing_ref}` (for example `git remote add {qualifier} <url>`), then fetch it"
+        "No `{qualifier}` remote is configured. If it hosts `{missing_ref}`, add it with `git remote add {qualifier} <url>` and fetch it; otherwise, check the local branch name or use an existing ref"
     ))
 }
 
@@ -2305,13 +2311,45 @@ mod tests {
         assert!(
             repair.contains("No `origin` remote is configured")
                 && repair.contains("`origin/main`")
-                && repair.contains("git remote add origin <url>"),
-            "an unconfigured qualifier must name the add-remote step, got: {repair}"
+                && repair.contains("git remote add origin <url>")
+                && repair.contains("check the local branch name"),
+            "an unconfigured qualifier must name the conditional add-remote step, got: {repair}"
         );
         assert!(
             !repair.contains("git fetch origin"),
             "the repair must not fetch an unconfigured remote, got: {repair}"
         );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_ignores_explicit_ref_paths_for_qualifier_detection() -> std::io::Result<()>
+    {
+        // Explicit `refs/*` paths are never remote-qualified: `refs/heads/x`
+        // has no `refs` remote, and `refs/remotes/origin/main` must not be
+        // misread as qualified by `refs`. Both fall through to the
+        // count-based arms.
+        let dir = unique_fixture_root("missing-ref-explicit-ref-path")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/origin.git"],
+        )?;
+
+        for explicit in ["refs/heads/x", "refs/remotes/origin/main"] {
+            let repair = missing_ref_repair(&dir, explicit, None);
+            assert_eq!(
+                repair, "Fetch the ref (for example `git fetch origin`)",
+                "an explicit ref path must fall through to the singleton arm, got: {repair}"
+            );
+            assert!(
+                !repair.contains("`refs`"),
+                "no `refs` remote may be named, got: {repair}"
+            );
+        }
 
         ignore_remove_dir_all(&dir);
         Ok(())

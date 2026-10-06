@@ -6285,7 +6285,8 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_a_configured_remote_qualifier_despite_several_remotes",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_add_remote_step_for_an_unconfigured_qualifier",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_keeps_a_qualified_ref_generic_when_remotes_are_unknown",
-  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_never_interpolates_a_hostile_qualifier"
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_never_interpolates_a_hostile_qualifier",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_ignores_explicit_ref_paths_for_qualifier_detection"
 ]
 fixtures = []
 code = [
