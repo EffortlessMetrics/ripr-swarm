@@ -944,7 +944,7 @@ mod tests {
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
             });
-        let item = GapItem::from_finding(&boundary)?;
+        let item = GapItem::from_finding(&boundary, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
@@ -960,7 +960,7 @@ mod tests {
         boundary.activation.missing_discriminators.clear();
         boundary.missing.clear();
         boundary.class = crate::domain::ExposureClass::Exposed;
-        let item = GapItem::from_finding(&boundary)?;
+        let item = GapItem::from_finding(&boundary, Path::new("/test-root"))?;
         if !item.repair_readiness.ready {
             return Err(format!(
                 "an exposed Rust finding with a populated gap and nothing missing must pass the discriminator gate: {:?}",

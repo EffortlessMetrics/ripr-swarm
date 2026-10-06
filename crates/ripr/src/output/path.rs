@@ -71,9 +71,9 @@ pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows
 /// purpose: `Path::components` parses Windows prefixes only on Windows, so a
 /// component implementation would be untestable in the Linux matrix, and the
 /// non-Unix `stable_path_text` branch this feeds is itself lossy. Comparison
-/// is segment-wise so `C:/repo` never matches `C:/repo2/f`. `None` when the
-/// file is not under the root, the root is not absolute, or the remainder is
-/// empty.
+/// is segment-wise, so a root matches only whole leading segments and never
+/// a longer sibling (`repo` vs `repo2`). `None` when the file is not under
+/// the root, the root is not absolute, or the remainder is empty.
 fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<String> {
     // Both sides must be absolute: a relative file whose first segments
     // happen to equal a UNC server/share (or a drive-relative `C:foo`
