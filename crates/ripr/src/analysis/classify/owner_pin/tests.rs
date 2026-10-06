@@ -2454,6 +2454,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     line: 3,
                     kind,
                     scope: None,
+                    crate_local: false,
                 },
             )
         }),
