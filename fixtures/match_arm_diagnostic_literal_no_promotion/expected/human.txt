@@ -11,15 +11,15 @@ Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: fixtures/match_arm_diagnostic_literal_no_promotion/input/src/lib.rs:3
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Static exposure: weak (weakly_exposed, warning, confidence 0.84)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: "sensor" =>
-  Missing discriminator: No strong discriminator was detected
-  Related test: tests/route.rs:7 sibling_assertion_mentions_sensor_only_in_its_message (ripr could not confirm that this assertion observes the changed behavior)
+  Missing discriminator (1 of 2): "sensor"
+  Related test: tests/route.rs:7 sibling_assertion_mentions_sensor_only_in_its_message (no test input selects arm `"sensor" =>`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach route: sibling_assertion_mentions_sensor_only_in_its_message
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection weak: No related test call selects arm `"sensor" =>`; observed `kind` values: `"focused-test"`
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

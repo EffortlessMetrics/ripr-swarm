@@ -214,6 +214,17 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     Ok(config)
 }
 
+/// Whether config discovery would find a `ripr.toml` entry for this root
+/// (directly, or in an ancestor up to the repository boundary). Consumers
+/// that report the configuration posture need this when [`load_for_root`]
+/// fails: a present-but-unloadable entry is detected-not-loaded, while a
+/// failure with no config entry anywhere (for example the marker-based
+/// language auto-enable refusing an unavailable language) leaves the file
+/// posture at built-in defaults (#6825).
+pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
+    discover_config_path(root).is_some()
+}
+
 fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
     let mut config = RiprConfig::default();
     if detect_python_project(root) {

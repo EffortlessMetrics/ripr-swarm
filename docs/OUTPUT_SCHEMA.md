@@ -1060,7 +1060,9 @@ The evidence-first fields are additive in schema `0.2`:
   that it runs as the standard macro. `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
-  `missing_discriminators` (the `left == right` entry).
+  `missing_discriminators` (the `left == right` entry); on a match-arm probe,
+  no related test's input selects the changed arm (the
+  `No related test call selects arm` entry, RIPR-SPEC-0229).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
   `observation_unconfirmed`: the oracle has the right shape but ripr could not

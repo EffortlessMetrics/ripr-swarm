@@ -740,6 +740,18 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    if matches!(probe.family, ProbeFamily::MatchArm)
+        && let Some(fact) = missing_match_arm_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            index,
+            workspace_complete,
+        )
+    {
+        missing.push(fact);
+    }
     if missing.is_empty()
         && observed_values
             .iter()
@@ -973,6 +985,165 @@ fn missing_error_variant_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+    })
+}
+
+/// Opens the reason of a match-arm missing discriminator; infection reads
+/// it to keep an unselected arm from counting as activated.
+pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
+
+/// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
+/// discriminator when every related test calls the owner directly and every
+/// call's scrutinee input provably selects a different arm (`reason(Some(5))`
+/// against `None => 0`). One unreadable use of the owner, one variable or
+/// computed input, one wildcard or refutable alternative, or one related
+/// test that never names the owner leaves the arm unnamed: such a test may
+/// select the arm in a way this reading cannot see.
+fn missing_match_arm_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<MissingDiscriminatorFact> {
+    let owner = owner_fn?;
+    // A same-named function elsewhere makes a direct call ambiguous, and a
+    // partial index cannot show that the name is unique.
+    if related_tests.is_empty()
+        || !workspace_complete
+        || !super::helper_transfer::callee_is_unique(&owner.name, index)
+    {
+        return None;
+    }
+    let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
+        .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Built once per probe: the helper walk below looks names up for every
+    // related test.
+    let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for function in index.functions() {
+        functions_by_name
+            .entry(function.name.as_str())
+            .or_default()
+            .push(function);
+    }
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
+            return None;
+        }
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    let pattern = selector.pattern_text();
+    Some(MissingDiscriminatorFact {
+        value: pattern.to_string(),
+        reason: format!(
+            "{ARM_UNSELECTED_REASON_PREFIX} `{pattern} =>`; observed `{}` values: {}",
+            selector.scrutinee(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        flow_sink: flow_sinks
+            .iter()
+            .find(|sink| sink.kind == FlowSinkKind::MatchArm)
+            .or_else(|| first_visible_flow_sink(flow_sinks))
+            .cloned(),
+    })
+}
+
+/// Whether the test may run the owner through something its own body does
+/// not show: a call to an indexed function whose body names the owner (a
+/// helper such as `check_none()`), or a macro other than the standard
+/// assertion and formatting macros, whose expansion is not read.
+fn may_reach_owner_unread(
+    test: &TestSummary,
+    owner: &str,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+) -> bool {
+    const READ_MACROS: &[&str] = &[
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "vec",
+        "format",
+        "print",
+        "println",
+        "eprint",
+        "eprintln",
+        "dbg",
+        "panic",
+        "matches",
+    ];
+    // Follow helpers transitively: `check_none()` may call `inner(None)`,
+    // which calls the owner. The test's own `fn name()` header reads as a
+    // call to itself; only a different indexed function is a helper.
+    let mut pending = test
+        .body_calls()
+        .map(|call| call.name.as_str())
+        .filter(|name| *name != owner)
+        .collect::<Vec<_>>();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|function| !(function.name == test.name && function.file == test.file))
+        {
+            if super::reveal::contains_as_whole_word(&function.body, owner) {
+                return true;
+            }
+            pending.extend(
+                function
+                    .calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .filter(|callee| *callee != owner),
+            );
+        }
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let bytes = masked.as_bytes();
+    // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
+    // `exercise !()`), so both are skipped before reading the delimiter
+    // and the name.
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let name_end = masked[..offset].trim_end().len();
+        let name_start = masked[..name_end]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &masked[name_start..name_end];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !READ_MACROS.contains(&name)
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
     })
 }
 
@@ -2302,6 +2473,38 @@ mod tests {
             "inline commented match aliases must not resolve boundary operands; got {:?}",
             activation.missing_discriminators
         );
+    }
+
+    #[test]
+    fn an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced() {
+        let unread = |body: &str| {
+            may_reach_owner_unread(
+                &test_with_body_call(body, 11, "reason(Some(5))"),
+                "reason",
+                &std::collections::BTreeMap::new(),
+            )
+        };
+        for spelling in [
+            "exercise!()",
+            "exercise! ()",
+            "exercise !()",
+            "exercise ! [x]",
+        ] {
+            assert!(
+                unread(&format!(
+                    "fn t() {{\n    assert_eq!(reason(Some(5)), 6);\n    {spelling};\n}}\n"
+                )),
+                "{spelling}"
+            );
+        }
+        for read in [
+            "assert_eq! (reason(Some(5)), 6);",
+            "assert!(!(reason(Some(5)) == 0));",
+            "if !(reason(Some(5)) == 0) { return; }",
+            "assert!(reason(Some(5)) != (0));",
+        ] {
+            assert!(!unread(&format!("fn t() {{\n    {read}\n}}\n")), "{read}");
+        }
     }
 
     fn test_with_body_call(body: &str, call_line: usize, call: &str) -> TestSummary {

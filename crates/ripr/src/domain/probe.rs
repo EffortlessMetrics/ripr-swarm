@@ -286,18 +286,27 @@ pub struct MissingDiscriminatorFact {
     pub flow_sink: Option<FlowSinkFact>,
 }
 
-/// The missing discriminator that names an input boundary a test never
-/// reaches. Only predicate probes produce one, and its value is always
-/// `left == right` (`classify::activation::missing_boundary_discriminator`);
-/// error-variant and field facts name an assertion that is missing instead.
+/// Opens the reason of a match-arm missing discriminator that names an arm
+/// no related test's input selects (RIPR-SPEC-0229). Shared so the analyzer
+/// that writes it and the miss renderer that reads it agree.
+pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
+
+/// The missing discriminator that names an input no test supplies: for a
+/// predicate probe the boundary `left == right` it never reaches
+/// (`classify::activation::missing_boundary_discriminator`), for a match-arm
+/// probe the arm no test input selects. Error-variant and field facts name
+/// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
     family: &ProbeFamily,
 ) -> Option<&'a MissingDiscriminatorFact> {
-    if *family != ProbeFamily::Predicate {
-        return None;
+    match family {
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        ProbeFamily::MatchArm => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
+        _ => None,
     }
-    facts.iter().find(|fact| fact.value.contains(" == "))
 }
 
 /// The missing discriminator that names an exact assertion no test makes
