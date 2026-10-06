@@ -318,9 +318,10 @@ mod tests {
             let json: serde_json::Value =
                 serde_json::from_str(&crate::output::json::render(&output))
                     .map_err(|error| format!("parse check JSON: {error}"))?;
-            let context: serde_json::Value =
-                serde_json::from_str(&crate::output::json::render_context_packet(&finding, 8))
-                    .map_err(|error| format!("parse context packet: {error}"))?;
+            let context: serde_json::Value = serde_json::from_str(
+                &crate::output::json::render_context_packet(&finding, 8, std::path::Path::new(".")),
+            )
+            .map_err(|error| format!("parse context packet: {error}"))?;
             for rows in [
                 &json["findings"][0]["related_tests"],
                 &context["related_tests"],
@@ -343,6 +344,7 @@ mod tests {
                 &finding,
                 &crate::config::RiprConfig::default(),
                 "ripr explain probe",
+                std::path::Path::new("."),
             );
             let (evidence, verdict) = explain
                 .split_once("Why this verdict")
@@ -397,8 +399,12 @@ mod tests {
                     .map_err(|error| format!("parse check JSON: {error}"))?;
                 without_miss_keys(&mut report);
                 let mut context: serde_json::Value =
-                    serde_json::from_str(&crate::output::json::render_context_packet(finding, 8))
-                        .map_err(|error| format!("parse context packet: {error}"))?;
+                    serde_json::from_str(&crate::output::json::render_context_packet(
+                        finding,
+                        8,
+                        std::path::Path::new("."),
+                    ))
+                    .map_err(|error| format!("parse context packet: {error}"))?;
                 without_miss_keys(&mut context);
                 // The currentness-filtered projections (#6586): SARIF results,
                 // GitHub annotations and the diff badge only see

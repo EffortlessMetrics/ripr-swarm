@@ -1130,7 +1130,7 @@ mod tests {
         };
         let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
             .ok_or("the direct row should have a reason")?;
-        let item = GapItem::from_finding(&finding)?;
+        let item = GapItem::from_finding(&finding, std::path::Path::new("."))?;
         let rows = item.evidence_core["related_tests"]
             .as_array()
             .ok_or("expected related_tests in gap evidence")?;
