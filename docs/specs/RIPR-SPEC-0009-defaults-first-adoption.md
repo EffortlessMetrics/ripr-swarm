@@ -205,7 +205,8 @@ line, and a failed load never fails pilot (#1169).
 When a seam limit (the repo-exposure inventory limit or the pilot seam budget)
 cut the classified seams before ranking, `pilot-summary.md` must say so under
 "What Was Inspected": it names how many seams were ranked out of the outermost
-total (the inventory total when both limits cut), reads the actionable count as
+total (when both limits cut, the budget's analyzed count over the inventory's
+total), reads the actionable count as
 "at least N", and reads each "Also in this function" count as "at least N",
 because seams past the cut were never counted (#6602). Without a limit, the
 wording is unchanged.
@@ -532,6 +533,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::check_repo_badge_plus_json_emits_repo_scope_metadata`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_admits_gap_classes_only`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_with_only_limitations_is_not_a_clean_result`
+- `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`

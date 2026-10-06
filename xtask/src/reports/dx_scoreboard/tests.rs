@@ -736,6 +736,120 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
+    // The metric block mirrors scoreboards.toml (25% / 30 s floor on install,
+    // 25% / 60 s on time to first result) but is inlined so the test stays
+    // hermetic: update both copies when those thresholds change.
+    let config = parse_config(&MINIMAL.replace(
+        "[[metric]]\nid = \"first_run.friction_events\"",
+        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    ))?;
+    let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
+        let mut receipt = first_run_receipt(true);
+        let steps = receipt["setup"]
+            .as_array_mut()
+            .ok_or("receipt setup missing")?;
+        for step in steps.iter_mut() {
+            if step["step"].as_str() == Some("install_published") {
+                step["secs"] = json!(secs);
+            }
+        }
+        parse_ingest(&receipt, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &with_install(128.0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &all_boards(),
+            &with_install(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    // 128 s allows the larger of 25% (32 s) and the 30 s floor: 160 s passes.
+    assert_eq!(
+        gate(158.0, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(170.0, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(170.0, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
+fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl because only the row
+    // converter emits walk seconds and failed steps; the summary receipt cannot
+    // fail the gate on either.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let boards = vec!["first_run".to_string()];
+    let rows = |walk: f64, check_exit: i32| -> Result<Vec<Sample>, String> {
+        let text = [
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":{walk},"budget":60,"better":"lower"}}"#),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":{check_exit},"budget":0,"better":"equal"}}"#),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &boards,
+        &rows(5.0, 0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |walk: f64, exit: i32| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &boards,
+            &rows(walk, exit)?,
+            &context("runner-a"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(gate(5.0, 0)?["gate"]["status"].as_str(), Some("pass"));
+    let slower = gate(20.0, 0)?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.walk_secs"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    let failed = gate(5.0, 1)?;
+    assert_eq!(failed["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&failed).contains("first_run.failed_steps"),
+        "{}",
+        gate_failure_message(&failed)
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,

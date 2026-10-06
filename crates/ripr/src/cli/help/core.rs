@@ -491,6 +491,9 @@ Server-executed commands (workspace/executeCommand), with their arguments:
   `ripr/listActionableItems` (custom request) lists the delivered and
   omitted diagnostics by canonical id, and under `hidden_gaps` the gaps the
   default actionable profile never publishes because they have no repair
-  route, such as a new function no test calls. Set `[lsp] diagnostic_profile =
-  "full"` in ripr.toml to publish those as diagnostics too.
+  route, such as a new function no test calls. Each listed canonical id and
+  hidden-gap finding_id is accepted by `ripr.collectContext` (seam ids
+  together with the envelope's `seam_evidence_identity`). Set `[lsp]
+  diagnostic_profile = "full"` in ripr.toml to publish those as diagnostics
+  too.
 "#;

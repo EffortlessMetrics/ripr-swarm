@@ -2,6 +2,7 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::arm_selection::ArmSelector;
 use super::propagation_witness::{
     assertion_observes_direct_collection, direct_collection_mutation_receiver,
 };
@@ -38,10 +39,15 @@ fn reveal_evidence(
             assertion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
         },
+        None,
     );
     (observe, discriminate, related)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
 pub(in crate::analysis) fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
@@ -50,6 +56,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>, usize) {
     if related_tests.is_empty() {
         return (
@@ -76,6 +83,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         same_name_import_defeats,
         cross_package_name_defeats,
         return_admission,
+        arm_selector,
     );
     let (related, related_tests_total) = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
@@ -256,6 +264,10 @@ fn match_arm_variant_tokens(expression: &str) -> Vec<String> {
     variants
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
 fn analyze_related_assertions(
     probe: &Probe,
     analysis_expression: &str,
@@ -264,6 +276,7 @@ fn analyze_related_assertions(
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
@@ -360,6 +373,8 @@ fn analyze_related_assertions(
             let name = symbol.0.rsplit("::").next()?;
             (!name.is_empty()).then_some(name)
         }),
+        arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
+        arm_inputs_readable: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -464,6 +479,24 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
+        // RIPR-SPEC-0229: an arm selection is read only in a test whose every
+        // mention of the owner is a direct call this module reads. A
+        // `let reason = |x| ..` closure or any other local use of the name
+        // may shadow the owner, so its calls say nothing about the owner.
+        // A `let` bound to an owner call may carry the arm's result to the
+        // expected side, so such a test confirms nothing either. A test that
+        // never names the owner (it reaches it only through a wrapper) passes
+        // no input to read, so its tokens confirm as before selection (#6297).
+        let arm_selector = match_context
+            .arm_selector
+            .filter(|selector| selector.mentioned_by(test));
+        let match_context = RevealMatchContext {
+            arm_selector,
+            arm_inputs_readable: arm_selector.is_some_and(|selector| {
+                selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
+            }),
+            ..match_context
+        };
         // Refusing credit must not manufacture the singleton-test fallback
         // for an otherwise unrelated surviving oracle.
         let assertion_count = test.assertions.len();
@@ -698,6 +731,16 @@ struct RevealMatchContext<'a> {
     /// callee observes the owner's returned `Result` — the exact sink for
     /// the value/error families — without any changed-line token overlap.
     owner_callee: Option<&'a str>,
+    /// RIPR-SPEC-0229: the changed arm's pattern and the owner-call input
+    /// position its `match` reads, when established. An assertion whose
+    /// compared operand is a direct owner call passing an input that
+    /// selects this arm confirms observation of the arm; once established,
+    /// selection is the only confirmation (selection outranks tokens).
+    arm_selector: Option<&'a ArmSelector>,
+    /// RIPR-SPEC-0229: whether the current test's every owner mention is a
+    /// direct call the selector reads. A `let reason = |x| ..` closure or
+    /// any other local use of the name may shadow the owner.
+    arm_inputs_readable: bool,
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -743,7 +786,7 @@ fn match_arm_pattern_has_guard(expression: &str) -> bool {
 /// Byte index of the `=` in the first `=>` outside string/character literals
 /// and comments. A fat arrow inside literal content or a comment never
 /// separates a match arm from its body.
-fn find_fat_arrow(text: &str) -> Option<usize> {
+pub(super) fn find_fat_arrow(text: &str) -> Option<usize> {
     let opaque = lex_opaque_ranges(text);
     let bytes = text.as_bytes();
     let mut index = 0usize;
@@ -817,7 +860,7 @@ fn is_rust_word_continue_at(text: &str, index: usize) -> bool {
 /// `text`, covering cooked (`"..."`, `b"..."`) and raw (`r"..."`,
 /// `r#"..."#`, `br...`) spellings. Comments and character literals never
 /// produce spans.
-fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
+pub(super) fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
     lex_strings(text)
         .into_iter()
         .map(|(start, end, _)| (start, end))
@@ -927,7 +970,7 @@ fn block_comment_end(text: &str, start: usize) -> usize {
 /// its span with no value, and an unterminated literal extends to the end
 /// of the text with no value, so downstream structural scans fail closed
 /// instead of reading past it.
-fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
+pub(super) fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
     let mut literals = Vec::new();
     let mut index = 0usize;
     let bytes = text.as_bytes();
@@ -1135,7 +1178,7 @@ fn char_literal_end(text: &str, start: usize) -> Option<usize> {
 /// the complete expression must be a syntactically bare owner call with one
 /// direct string-literal argument. Qualified paths, methods, wrappers,
 /// conditionals, blocks, variables, and transformed/nested inputs fail closed.
-fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
+pub(super) fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
     let opaque = lex_opaque_ranges(text);
     let mut arguments = Vec::new();
     let mut start = 0usize;
@@ -1172,7 +1215,7 @@ fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
     Some(arguments)
 }
 
-fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
+pub(super) fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
     let opaque = lex_opaque_ranges(text);
     let mut depth = 0usize;
 
@@ -1364,6 +1407,8 @@ fn assertion_matches_probe_detail_with_literals(
         family,
         wrapper_seam,
         owner_callee,
+        arm_selector,
+        arm_inputs_readable,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -1465,7 +1510,19 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if let Some(selector) = arm_selector
+        && matches!(family, ProbeFamily::MatchArm)
+    {
+        // RIPR-SPEC-0229 selection outranks tokens: once the arm's
+        // scrutinee is a direct owner input, a variant token or argument
+        // literal anywhere in the assertion confirms nothing; only a
+        // readable owner call whose input selects the arm does. Same owner
+        // ambiguity defeats as the literal rule below.
+        arm_inputs_readable
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && selector.assertion_selects(&assertion.text)
+    } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
                 .iter()
@@ -1548,6 +1605,8 @@ fn assertion_matches_probe_detail(
             family,
             wrapper_seam: false,
             owner_callee,
+            arm_selector: None,
+            arm_inputs_readable: false,
         },
         assertion,
         assertion_count,
@@ -1574,6 +1633,57 @@ fn file_use_statements(source: &str) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// One imported item of a `use` declaration: its full path with
+/// whitespace removed (`a::b::C`, `a::E::*`) and the `as` rename, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UsePath {
+    pub(super) path: String,
+    pub(super) alias: Option<String>,
+}
+
+/// Every `use` declaration of `source` flattened into one path per item,
+/// with brace lists expanded (`use a::{b, c::*};` -> `a::b`, `a::c::*`).
+pub(super) fn flattened_use_paths(source: &str) -> Vec<UsePath> {
+    let mut out = Vec::new();
+    for statement in file_use_statements(source) {
+        if let Some(rest) = statement.trim_start().strip_prefix("use") {
+            flatten_use_items("", rest, &mut out);
+        }
+    }
+    out
+}
+
+fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
+    for item in split_top_level_commas(items) {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item.find('{') {
+            None => {
+                let words = item.split_whitespace().collect::<Vec<_>>();
+                let (path, alias) = match words.iter().position(|word| *word == "as") {
+                    Some(at) => (
+                        words[..at].concat(),
+                        words.get(at + 1).map(|w| w.to_string()),
+                    ),
+                    None => (words.concat(), None),
+                };
+                out.push(UsePath {
+                    path: format!("{prefix}{path}"),
+                    alias,
+                });
+            }
+            Some(open) => {
+                if let Some(close) = matching_brace_close(item, open) {
+                    let head = item[..open].split_whitespace().collect::<String>();
+                    flatten_use_items(&format!("{prefix}{head}"), &item[open + 1..close], out);
+                }
+            }
+        }
+    }
 }
 
 /// #3731 review (F11, F22): whether the related test's file imports the
@@ -2800,6 +2910,7 @@ mod tests {
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                 },
+                None,
             )
             .1
         };
@@ -3147,6 +3258,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(total, 9);
         assert_eq!(related.len(), 8);
@@ -3212,6 +3324,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(total, 9, "every examined test is counted");
         assert_eq!(related.len(), 8);
@@ -3483,6 +3596,8 @@ mod tests {
                 family: &family,
                 wrapper_seam: false,
                 owner_callee: Some("route"),
+                arm_selector: None,
+                arm_inputs_readable: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -4730,6 +4845,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(
@@ -4780,6 +4896,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             discriminate.state,
@@ -4801,6 +4918,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             own_crate.state,
@@ -4841,6 +4959,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             discriminate.state,
@@ -4883,6 +5002,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(
@@ -5050,6 +5170,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             defeated.state,
@@ -5074,6 +5195,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             confirmed.state,
@@ -5585,6 +5707,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
             },
+            None,
         );
         assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
     }
@@ -5761,6 +5884,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(

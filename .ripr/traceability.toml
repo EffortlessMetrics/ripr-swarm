@@ -919,6 +919,10 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_repo_badge_plus_json_emits_repo_scope_metadata",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_admits_gap_classes_only",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_summary_with_only_limitations_is_not_a_clean_result",
+  "crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines",
@@ -4553,6 +4557,7 @@ tests = [
   "crates/ripr/src/cli/mod.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings",
   "crates/ripr/src/output/first_pr.rs::tests::write_first_pr_records_producing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_missing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_other_ripr_version",
@@ -12764,14 +12769,58 @@ metrics = [
 id = "RIPR-SPEC-0229"
 name = "Match-arm selection names the unselected arm"
 spec = "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::sibling_variant_input_selects_other_arm",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::matching_input_selects_and_any_selecting_call_wins",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::opaque_or_unreadable_inputs_never_select_other",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::receiver_scrutinee_reads_glob_imported_variants",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::refutable_or_unprovable_patterns_stay_unknown",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::computed_or_rebound_scrutinee_establishes_nothing",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_match_the_call_may_skip_never_credits_the_arm",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_changed_pattern_never_credits_and_names_only_when_both_miss",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_earlier_arm_that_may_match_blocks_selection",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::non_ascii_receivers_and_mut_self_methods_are_read_safely",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::review_false_credit_shapes_stay_unjudged",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::typed_mutable_receivers_establish_nothing",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_free_owner_called_through_a_foreign_path_is_not_read",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_inequality_never_selects",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_bare_variant_imported_from_another_enum_is_not_read",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_test_names_the_owner_through_its_body_or_an_imported_alias",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_change_pairs_with_its_own_removed_arm",
+  "crates/ripr/src/output/related_test_miss.rs::tests::an_unselected_arm_miss_names_the_arm_as_a_missing_input",
+  "crates/ripr/src/output/human/explain.rs::tests::an_unselected_arm_is_an_input_to_select_not_an_assertion_to_make",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::own_crate_call_with_a_sibling_input_names_the_unselected_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
+]
+fixtures = [
+  "fixtures/match_arm_blind",
+  "fixtures/match_arm_expected_side_trap",
+  "fixtures/match_arm_selected_credit",
+]
 code = [
   "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/arm_selection.rs",
+  "crates/ripr/src/analysis/classify/infection.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/related_test_miss.rs",
+  "crates/ripr/src/output/human/explain.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0229-match-arm-selection-discriminator.md",
+  "fixtures/match_arm_blind/expected/check.json",
+  "fixtures/match_arm_expected_side_trap/expected/check.json",
+  "fixtures/match_arm_expected_side_trap/expected/human.txt",
+  "fixtures/match_arm_selected_credit/expected/check.json",
+  "fixtures/match_arm_selected_credit/expected/human.txt",
 ]
 metrics = [
   "match_arm_unselected_arm_named",

@@ -38,6 +38,10 @@ id = "pilot-ranking"
 paths = ["target/ripr/reports/pilot-ranking.json", "target/ripr/reports/pilot-ranking.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "first-run-install"
+paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
+
+[[artifact_family]]
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
@@ -170,6 +174,16 @@ commands = ["cargo build --release -p ripr --bin ripr", "cargo xtask pilot-ranki
 estimated_lem = 15
 artifact_families = ["pilot-ranking"]
 description = "Pilot ranking answer key: nightly, on demand, and at draft-to-ready on pilot ranking or seam grading changes; fails only when pooled top-5 or top-10 precision, scored share or function diversity regresses past its margin against the committed baseline, or a pinned crate cannot be fetched."
+
+[[lane]]
+id = "first-run-install"
+posture = "advisory"
+workflow = ".github/workflows/first-run-install.yml"
+jobs = ["first-run"]
+commands = ["cargo xtask first-run --install-published", "cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl", "cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl --baseline metrics/dx-scoreboard/first-run-baseline.json --gate"]
+estimated_lem = 15
+artifact_families = ["first-run-install"]
+description = "First-run install: nightly and on demand only; times a cold crates.io install and the first-run walk on ubuntu-latest and, once a same-runner baseline is committed, fails when install time, time to first useful result or friction regresses past its margin."
 
 [[lane]]
 id = "public-proof"

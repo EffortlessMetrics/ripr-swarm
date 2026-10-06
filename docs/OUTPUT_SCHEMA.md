@@ -1060,7 +1060,9 @@ The evidence-first fields are additive in schema `0.2`:
   that it runs as the standard macro. `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
-  `missing_discriminators` (the `left == right` entry).
+  `missing_discriminators` (the `left == right` entry); on a match-arm probe,
+  no related test's input selects the changed arm (the
+  `No related test call selects arm` entry, RIPR-SPEC-0229).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
   `observation_unconfirmed`: the oracle has the right shape but ripr could not
@@ -7906,12 +7908,27 @@ Success payload (200-level result object, no `protocol_version`,
   NOT the immutable snapshot-handle contract reserved for #1602; the
   `riprAgent` capability advertises `snapshot_handles: false` until that
   contract lands. `null` when the snapshot carries no generation identity.
+- `seam_evidence_identity` — the current snapshot's seam evidence identity
+  (`{"snapshot_id": ...}`). Pass it as `evidence_identity` when continuing a
+  listed seam `canonical_id` through `ripr.collectContext` or
+  `ripr.collectEvidenceContext`; the seam routes reject a seam id cited
+  without it on a current snapshot (#6848).
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
 - `selected` — `[{canonical_id, document}]` for every delivered diagnostic
   (already bounded by the workspace item budget). `canonical_id` is the
-  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
-  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+  producer identity the continuation route resolves: the finding's probe id
+  (`data.finding_id`) for finding diagnostics, the seam id for seam
+  diagnostics, and the ledger-canonical gap id for gap-ledger diagnostics.
+  Every listed finding, seam, or gap canonical id is accepted by
+  `ripr.collectContext` (#6848): finding ids directly, seam ids together
+  with this envelope's `seam_evidence_identity` as `evidence_identity`,
+  gap-ledger ids through the ledger route. Producer-less disclosures (the
+  diff-scope guard) fall back to a deterministic `location:` id with no
+  `ripr.collectContext` continuation; their content is the workspace-status
+  limitation surface. The finding id follows the canonical group's current
+  primary, so a gap's listed id can change when a new primary probe rotates
+  in; the id listed by a given snapshot always resolves for that snapshot.
 - `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
   200 entries. `reason` is `profile_filtered`, `document_item_limit`,
   `workspace_item_limit`, or `serialized_byte_limit`.
@@ -13228,14 +13245,21 @@ Field contract:
   also when status cannot choose honestly: an unreadable attempt manifest,
   several current awaiting attempts, several open seams, an unreadable
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
+  a complete pilot summary that ranked no seam because it withheld every
+  seam as a static limitation (`withheld_static_limitations_total` > 0),
   or a complete pilot summary that ranked no seam, recorded no repair card
   (`python_first_use` absent, `null`, or status `no_python_findings` or
   `no_repair_cards`) and routed the code to `ripr check`
   (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
-  `pilot_found_no_repair_target`, `pilot_routed_to_check_no_repair_target`)
-  then names the choices. The last names the recorded check command and the
+  `pilot_found_no_repair_target`,
+  `pilot_withheld_static_limitations_no_repair_target`,
+  `pilot_routed_to_check_no_repair_target`) then names the choices. The
+  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  reads the count as "at least N" and names raising the seam limits and
+  rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
@@ -15350,11 +15374,11 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
-`pilot-summary.json` uses schema `0.2`:
+`pilot-summary.json` uses schema `0.3`:
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "complete",
@@ -15381,6 +15405,7 @@ target/ripr/pilot/pilot-summary.md
     "pilot_summary_md"
   ],
   "actionable_seams_total": 1,
+  "withheld_static_limitations_total": 0,
   "top_actionable_seams": [
     {
       "seam_id": "67fc764ba37d77bd",
@@ -15538,7 +15563,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "partial",
@@ -15564,6 +15589,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
   ],
   "max_seams": 5,
   "actionable_seams_total": null,
+  "withheld_static_limitations_total": null,
   "top_actionable_seams": [],
   "next": {
     "retry_command": "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000"
@@ -15573,7 +15599,9 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`.
+- `schema_version` — currently `"0.3"`. `0.3` withholds static limitations
+  from the ranking and adds `withheld_static_limitations_total` (#5497);
+  `actionable_seams_total` no longer counts `opaque` or `*_unknown` seams.
 - `scope` — always `"repo"`.
 - `status` — `"complete"` when repo exposure and agent seam packet artifacts
   were written, or `"partial"` when the command stopped at a diagnostic summary.
@@ -15592,10 +15620,22 @@ Field contract:
   summaries write only `pilot_summary_json` and `pilot_summary_md`.
 - `max_seams` — cap requested by `--max-seams`.
 - `actionable_seams_total` — number of seams considered actionable by the pilot
-  ranking policy, or `null` for partial summaries where analysis did not finish.
+  ranking policy (the gap classes below), or `null` for partial summaries where
+  analysis did not finish.
+- `withheld_static_limitations_total` — seams pilot did not rank because their
+  class is `opaque` or an `*_unknown` class: the classifier stopped on a stage
+  it could not establish, so the seam is a static limitation, not a gap. They
+  stay in `repo-exposure.json` with their evidence. `pilot-summary.md` and the
+  terminal disclose the count; when it is nonzero and nothing ranked, both say
+  the empty ranking is not a clean result. After a seam limit cut the
+  classified seams, the count covers the kept seams only: Markdown and the
+  terminal read it as "at least N", the terminal also names the limit, and
+  the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
+  cut seams were never classified. `null` for partial summaries.
 - `top_actionable_seams[]` — ranked seams using class order
-  `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
-  then `opaque`, with evidence tie-breakers for missing discriminator, related
+  `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
+  withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
   owning function's (file plus owner) first seam in the whole ranking comes
   before any function's second, so adjacent seams of one function cannot fill
@@ -15644,9 +15684,13 @@ Field contract:
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, or when
-  `rust_excluded_from_scope` is present, `after_snapshot_command` and
-  `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, when
+  `rust_excluded_from_scope` is present, or when nothing ranked because every
+  seam was withheld (`withheld_static_limitations_total` > 0) and no Python
+  repair card applies, `after_snapshot_command` and `outcome_command` are
+  `null`: there is no seam to snapshot or measure. Agent status reads the
+  run's `repo-exposure.json` for the withheld warning; when that file is
+  missing or unreadable it cannot rule out a seam limit and names raising it.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,

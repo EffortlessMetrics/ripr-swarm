@@ -2832,7 +2832,7 @@ mod tests {
             page.0
         );
         assert!(
-            page.0.contains("4f81060"),
+            page.0.contains("10078ef"),
             "ranking lane revision missing: {}",
             page.0
         );
