@@ -410,7 +410,8 @@ const SAFE_GLOBAL_VALUES: &[&str] = &["undefined", "NaN", "Infinity"];
 /// assertion, or a process exit.
 fn denied_global_member(object: &str, member: &str) -> bool {
     match object {
-        "Promise" => matches!(member, "reject" | "withResolvers"),
+        // `Promise.any` rejects when every input rejects, or none is given.
+        "Promise" => matches!(member, "any" | "reject" | "withResolvers"),
         "console" => member == "assert",
         "process" => matches!(
             member,
@@ -1574,10 +1575,13 @@ impl<'c> Scan<'c> {
                 self.context.import_class(import),
                 ImportClass::Production | ImportClass::NodeBuiltin
             ),
+            // A bare `Promise`, `console` or `process` value can be
+            // destructured or aliased past `denied_global_member`.
             Name::Global => {
                 SAFE_GLOBAL_VALUES.contains(&name)
                     || SAFE_GLOBAL_FUNCTIONS.contains(&name)
-                    || (SAFE_GLOBAL_OBJECTS.contains(&name) && name != "process")
+                    || (SAFE_GLOBAL_OBJECTS.contains(&name)
+                        && !matches!(name, "process" | "Promise" | "console"))
                     || is_error_constructor(name)
             }
         };
@@ -1754,7 +1758,9 @@ impl<'c> Scan<'c> {
             return;
         }
         let callee = call.callee.get_inner_expression();
-        if !self.callee_is_inert(callee, call.arguments.len()) {
+        if is_module_mock_without_factory(callee, &call.arguments)
+            || !self.callee_is_inert(callee, call.arguments.len())
+        {
             self.flag();
             return;
         }
@@ -1959,6 +1965,26 @@ fn registration_kind(name: &str) -> Option<RegistrationKind> {
     } else {
         None
     }
+}
+
+/// `vi.mock(path)` / `jest.doMock(path, options)`: without a factory the
+/// runner substitutes a manual mock from `__mocks__/`, test-support code that
+/// can fail the test under the production module's name.
+fn is_module_mock_without_factory(callee: &Expression<'_>, arguments: &[Argument<'_>]) -> bool {
+    let Expression::StaticMemberExpression(member) = callee else {
+        return false;
+    };
+    let is_runner_object = matches!(
+        member.object.get_inner_expression(),
+        Expression::Identifier(object) if matches!(object.name.as_str(), "vi" | "jest")
+    );
+    if !is_runner_object || !matches!(member.property.name.as_str(), "mock" | "doMock") {
+        return false;
+    }
+    !matches!(
+        arguments.get(1),
+        Some(Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_))
+    )
 }
 
 /// Whether a runner-module import's member chain is a mock or timer control:

@@ -178,6 +178,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             none,
         ),
         (
+            "vi.mock with a factory",
+            "import { vi, test } from 'vitest';\nvi.mock('../src/cart', () => ({ checkout: () => 1 }));\ntest('x', () => { checkout(1); });",
+            none,
+        ),
+        (
             "commonjs require of a runner",
             "const { test } = require('vitest');\ntest('x', () => { checkout(1); });",
             none,
@@ -271,6 +276,46 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
         (
             "setup forEach parameter default asserts",
             "const cases = [undefined];\ncases.forEach((value = fail('setup')) => { test('x', () => { checkout(value); }); });",
+            unresolved,
+        ),
+        (
+            "vi.mock without a factory loads a manual mock",
+            "import { vi, test } from 'vitest';\nvi.mock('../src/cart');\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "jest.mock without a factory in a hook",
+            "beforeEach(() => { jest.mock('../src/cart'); });\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "vi.doMock with options instead of a factory",
+            "import { vi, test } from 'vitest';\nvi.doMock('../src/cart', { spy: true });\ntest('x', () => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "Promise.any rejects on an empty list",
+            "test('x', async () => { await Promise.any([]); });",
+            unresolved,
+        ),
+        (
+            "Promise.reject taken by destructuring",
+            "test('x', async () => { const { reject: r } = Promise; await r.call(Promise, new Error('b')); });",
+            unresolved,
+        ),
+        (
+            "console.assert taken by destructuring",
+            "test('x', () => { const { assert: ca } = console; ca(checkout(1) === 2); });",
+            unresolved,
+        ),
+        (
+            "Promise.reject taken by a computed read",
+            "test('x', () => { const r = Promise['reject']; return r(new Error('e')); });",
+            unresolved,
+        ),
+        (
+            "array-pattern require is not a file import",
+            "const [same] = require('tap');\ntest('x', () => { same(checkout(1), 2); });",
             unresolved,
         ),
         (
