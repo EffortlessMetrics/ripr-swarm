@@ -1,12 +1,11 @@
 use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
-    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
-    activation_evidence_with_value_facts, body_contains_owner_call, callee_is_unique, classify,
-    confidence_score, contains_as_whole_word, current_path_witness,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, activation_evidence_with_value_facts, body_contains_owner_call,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
     has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
-    owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
