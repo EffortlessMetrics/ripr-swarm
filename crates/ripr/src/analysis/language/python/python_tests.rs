@@ -538,7 +538,7 @@ def test_expired_coupon_response_smoke(client):
     assert_eq!(relation, PythonRelationKind::ApiClientRouteCall);
     assert!(relation.uses_oracle());
 
-    let related = find_related_tests(owner, &tests);
+    let related = find_related_tests(owner, &tests, None);
     assert_eq!(related.len(), 1);
     assert_eq!(related[0].oracle_kind, OracleKind::SmokeOnly);
     assert_eq!(related[0].oracle_strength, OracleStrength::Smoke);
@@ -2735,7 +2735,7 @@ def test_apply_discount(amount):
     apply_discount(amount)
 "#,
     );
-    let related = find_related_tests(&owner, &tests);
+    let related = find_related_tests(&owner, &tests, None);
     if related.len() != 1 {
         return Err(format!(
             "expected one related test for parametrized matcher, got {}",

@@ -45,8 +45,8 @@ Weakness
 Next step
   Replace broad assertions with exact equality or a property that constrains the changed returned value.
 Drill in:
-  ripr explain --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
-  ripr context --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
+  ripr explain --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
+  ripr context --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
 
 WARNING ./src/lib.rs:22
   id: probe:src_lib.rs:return_value:d114ce99
@@ -87,5 +87,5 @@ Weakness
 Next step
   Replace broad assertions with exact equality or a property that constrains the changed returned value.
 Drill in:
-  ripr explain --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:d114ce99
-  ripr context --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:d114ce99
+  ripr explain --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:d114ce99
+  ripr context --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:d114ce99

@@ -25,8 +25,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/constant_declaration_probe_reconciliation/input --diff fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
-  ripr context --root fixtures/constant_declaration_probe_reconciliation/input --diff fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6
+  ripr explain --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
+  ripr context --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6
 
 More:
   Full evidence: rerun with --format human-full

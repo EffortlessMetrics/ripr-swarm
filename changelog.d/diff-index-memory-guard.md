@@ -6,4 +6,4 @@
   10,000 files. An edit in wasm-bindgen's 1,781-file `web-sys` crate was
   refused and now runs in 2.5 s cold and 1.7 s warm at 141 MB.
   The editor sidecar uses the same limits, so LSP refreshes on 1,200 to
-  10,000-file packages now produce diagnostics instead of a refusal.
+  10,000-file packages now produce diagnostics instead of a refusal (#6629).

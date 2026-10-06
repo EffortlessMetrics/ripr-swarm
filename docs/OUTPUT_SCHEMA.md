@@ -1103,6 +1103,15 @@ The evidence-first fields are additive in schema `0.2`:
   - `unknown` — no strong oracle observed the changed sink (or a `<module>`
     owner with no usable token).
 
+  On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
+  family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
+  gap ledger never delegates their repair card to an agent packet:
+  `no_family_relevant_assertion` (a related test's assertions all observe
+  another behavior family, so its row shows no oracle) and
+  `other_behavior_assertion_passed_over` (a row now shows a different
+  assertion than the strength-only pick, which can be equally strong).
+  `oracle_alignment` keeps what the selected assertions show.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
@@ -13828,7 +13837,8 @@ Field contract:
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
-  `vsix-packaging-path`, or `known-limits-docs`.
+  `vsix-packaging-path`, `extension-version-match`, `init-pin-version`, or
+  `known-limits-docs`.
 - `checks[].status` - `pass`, `warn`, `fail`, or `not_run`.
 - `checks[].required` - `true` for checks that must pass in the normal local
   readiness run. Release-only package and publish dry-run checks can be
