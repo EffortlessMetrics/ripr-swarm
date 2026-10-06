@@ -37,3 +37,28 @@ controls and never replace these canonical producer bytes.
 
 These are authored static controls, not compiled fixture-test execution,
 actual mutation outcomes, a representative population or an accuracy estimate.
+
+## 2026-10-05 refresh — intentional renderer drift (#5996, PR #6823)
+
+The fourteen reports were regenerated from the current producer at merge
+commit f2580e186 (branch fix/cross-surface-agentic-r3) because #5996 changes
+the renderer's finding-location form on purpose: locations render through the
+shared workspace-relative owner `analysis::finding_location_text`, so
+`probe.file` reads `./src/lib.rs` instead of the fixture-prefix join. This is
+the same intentional flip already re-blessed across 176 ordinary goldens
+under RIPR-SPEC-0002. Classifications, counts, probe families, oracle
+kinds/strengths and consumers are unchanged; the independent contract
+(score(1) == 2; eight discarded subjects reachable_unrevealed/unknown/none,
+two asserting wildcards weak, four exact/guarded asserting wrappers
+exposed/strong) was re-verified per case.
+
+Provenance: local build of the exact merge tree, `ripr --version` ->
+`ripr 0.11.0 (f2580e1861ebf778f6d96d49ce80aede9e1cc3a3)`, ripr.exe SHA256
+`723F31ACB987526268A98F9DE40B5EF6AA2B23F2612F67B9FA9D3974B2C250E4`, captured
+2026-10-05 by rerunning the fourteen source/diff pairs through the same
+commands the CLI-control test executes. Custody for a behavior-change
+regeneration is two-step: provisional local bytes plus the mandatory hosted
+byte-compare — the routed CI run at the same merge head re-executes this test
+against the hosted build and compares the committed bytes bit for bit, so the
+hosted run remains the binding check. The original hosted-only capture above
+stays the protocol for unchanged-behavior refreshes.
