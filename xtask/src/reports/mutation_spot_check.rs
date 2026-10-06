@@ -35,7 +35,7 @@
 //! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
 //! developer meets first.
 
-mod pilot;
+pub(crate) mod pilot;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
@@ -445,7 +445,7 @@ fn spot_check_repo(
 /// another commit would join stale outcomes to this checkout's seams. Every
 /// mutant diff carries the original lines it replaced; they must still match
 /// the checkout, or nothing from this directory is scored.
-fn require_mutants_match_checkout(
+pub(crate) fn require_mutants_match_checkout(
     name: &str,
     checkout: &Path,
     revision: &str,
@@ -683,7 +683,7 @@ fn run_text(
     Ok(output.stdout)
 }
 
-fn read_json(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
 }
@@ -711,7 +711,7 @@ struct Record {
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
-fn seam_expressions(exposure: &Value) -> BTreeMap<&str, &str> {
+pub(crate) fn seam_expressions(exposure: &Value) -> BTreeMap<&str, &str> {
     exposure
         .get("seams")
         .and_then(Value::as_array)
@@ -917,6 +917,22 @@ fn match_disposition(
     } else {
         CANONICAL_PRECISE
     }
+}
+
+/// The pilot judge's `seam` tier: an operator mutant of a predicate or return
+/// seam whose original operator token occurs in that seam's expression. This
+/// is the v1 pairing rule, kept for pilot picks, which carry no calibration
+/// join of their own; it never scores a verdict family.
+fn operator_mutant_of_expression(
+    genre: &str,
+    mutant: &str,
+    seam_kind: &str,
+    expression: &str,
+) -> bool {
+    matches!(genre, "BinaryOperator" | "UnaryOperator")
+        && matches!(seam_kind, "predicate_boundary" | "return_value")
+        && original_operator(mutant)
+            .is_some_and(|operator| contains_operator_token(expression, operator))
 }
 
 /// Audit diagnostic only: whether the mutant's original operator token

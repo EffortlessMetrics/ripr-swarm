@@ -7,7 +7,7 @@ Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-WARNING fixtures/wildcard_oracle_wildcard_original/input/src/lib.rs:2
+WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:519eff0d
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::score
+  canonical gap: gap:rust:src/lib.rs:score:return_value:return_value:value+1
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
