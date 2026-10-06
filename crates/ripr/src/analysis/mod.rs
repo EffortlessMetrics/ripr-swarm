@@ -453,7 +453,7 @@ use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
@@ -557,9 +557,11 @@ fn uppercase_hex_value(byte: u8) -> Option<u8> {
 /// (#5996): workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
-/// against a workspace. A relative location passes through with stable
-/// separators, so a producer that already names the workspace (the CLI's
-/// `./src/main.rs`) keeps its exact rendering on every surface.
+/// against a workspace. A remainder containing `..` resolves outside the
+/// root, so it keeps the plain spelling too. A relative location passes
+/// through with stable separators, so a producer that already names the
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
+/// surface.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
@@ -577,7 +579,15 @@ pub(crate) fn finding_location_text_with_platform(
     let relative = file
         .strip_prefix(&root)
         .ok()
-        .filter(|relative| !relative.as_os_str().is_empty());
+        .filter(|relative| !relative.as_os_str().is_empty())
+        // `strip_prefix` is lexical: `/repo/../outside.rs` strips to
+        // `../outside.rs`, which resolves outside the root. Any parent
+        // component escapes, so only a clean remainder strips (#6877).
+        .filter(|relative| {
+            !relative
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        });
     match relative {
         Some(relative) => format!("./{}", stable_path_text(relative)),
         None => stable_path_text(&file),
@@ -1158,6 +1168,43 @@ mod tests {
                 false
             ),
             r"//?/F:/repo/src/main.rs"
+        );
+    }
+
+    /// A `strip_prefix` remainder containing `..` resolves outside the root,
+    /// so it keeps the plain full spelling instead of serving a
+    /// workspace-joined `./..` escape on the wire (#6877).
+    #[test]
+    fn finding_location_text_rejects_a_parent_escape() {
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/../outside.rs"),
+                false
+            ),
+            "/repo/../outside.rs"
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/sub/../../outside.rs"),
+                false
+            ),
+            "/repo/sub/../../outside.rs"
+        );
+        // The guard runs after the verbatim rewrite, so a verbatim drive
+        // path with `..` falls back too. Same spelling on both hosts: where
+        // the drive path does not parse, the strip already fails. Built via
+        // `format!` like the sibling cases: a literal drive-absolute
+        // path trips check-local-context.
+        let drive = "F:";
+        let verbatim_root = PathBuf::from(format!(r"\\?\{drive}\repo"));
+        // Concatenated, not joined: `PathBuf::join("..")` would normalize
+        // the escape away before the renderer sees it.
+        let verbatim_escape = PathBuf::from(format!(r"\\?\{drive}\repo\..\outside.rs"));
+        assert_eq!(
+            finding_location_text_with_platform(&verbatim_root, &verbatim_escape, true),
+            format!("{drive}/repo/../outside.rs")
         );
     }
 

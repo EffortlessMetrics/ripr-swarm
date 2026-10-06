@@ -725,7 +725,7 @@ mod tests {
         let seams_md =
             render_check_with_config(&output, &OutputFormat::RepoSeamsMd, &RiprConfig::default())?;
 
-        assert!(seams_json.contains("\"schema_version\": \"0.1\""));
+        assert!(seams_json.contains("\"schema_version\": \"0.2\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
         remove_temp_root(&output.root)?;
@@ -807,7 +807,7 @@ mod tests {
         let sarif =
             render_check_with_config(&output, &OutputFormat::RepoSarif, &RiprConfig::default())?;
 
-        assert!(exposure_json.contains("\"schema_version\": \"0.3\""));
+        assert!(exposure_json.contains("\"schema_version\": \"0.4\""));
         assert!(exposure_json.contains("over_threshold"));
         let exposure_summary = render_check_with_config(
             &output,
