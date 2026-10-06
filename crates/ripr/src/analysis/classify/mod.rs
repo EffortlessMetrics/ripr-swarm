@@ -34,8 +34,8 @@ pub(in crate::analysis) use decision::{
 };
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use helper_transfer::{
-    HELPER_RESULT_NOT_FORWARDED, callee_is_unique, chain_forwards_owner_result, helper_only_reach,
-    resolve_chain,
+    HELPER_RESULT_NOT_FORWARDED, callee_is_unique, chain_forwards_to_observed_hops,
+    helper_only_reach, resolve_chain,
 };
 pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_pin::{

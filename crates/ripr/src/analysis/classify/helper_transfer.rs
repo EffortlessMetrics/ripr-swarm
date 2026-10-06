@@ -551,11 +551,50 @@ pub(crate) fn helper_only_reach(
 /// still holds, but the entry's oracle is not paired with the owner's
 /// boundary.
 pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain) -> bool {
-    !chain.hops.is_empty()
-        && chain.hops.iter().enumerate().all(|(step, hop)| {
+    hops_forward_owner_result(owner_name, &chain.hops)
+}
+
+/// [`chain_forwards_owner_result`] over only the hops the related tests
+/// observe (#6780 review): a test calling an intermediate hop caller
+/// (`middle(10)`) observes that caller's result, so hops above the highest
+/// hop any `helper_owner_call` test calls directly do not matter. The
+/// highest such hop across all those tests bounds the check; a test whose
+/// called hop cannot be determined checks the whole chain (fail closed).
+pub(crate) fn chain_forwards_to_observed_hops(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    let mut highest: Option<usize> = None;
+    for (test, reason) in related_tests {
+        if *reason != crate::domain::RelationReason::HelperOwnerCall {
+            continue;
+        }
+        let called = chain.hops.iter().rposition(|hop| {
+            test.calls.iter().any(|call| {
+                call.name == hop.caller.name && is_direct_call_site(&call.text, &hop.caller.name)
+            })
+        });
+        let Some(called) = called else {
+            return chain_forwards_owner_result(owner_name, chain);
+        };
+        highest = Some(highest.map_or(called, |top| top.max(called)));
+    }
+    match highest.and_then(|top| chain.hops.get(..=top)) {
+        Some(observed) => hops_forward_owner_result(owner_name, observed),
+        None => chain_forwards_owner_result(owner_name, chain),
+    }
+}
+
+fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
+    !hops.is_empty()
+        && hops.iter().enumerate().all(|(step, hop)| {
             let callee = match step.checked_sub(1) {
                 None => owner_name,
-                Some(below) => match chain.hops.get(below) {
+                Some(below) => match hops.get(below) {
                     Some(lower) => lower.caller.name.as_str(),
                     None => return false,
                 },
@@ -841,8 +880,28 @@ mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FunctionSummary};
-    use crate::domain::SymbolId;
+    use crate::domain::{RelationReason, SymbolId};
     use std::path::PathBuf;
+
+    fn test_summary_calling(name: &str, text: &str) -> crate::analysis::facts::TestSummary {
+        crate::analysis::facts::TestSummary {
+            name: "calls".to_string(),
+            file: PathBuf::from("tests/chain.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: text.into(),
+            calls: vec![CallFact {
+                name: name.to_string(),
+                line: 2,
+                text: text.to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
 
     fn function(file: &str, name: &str, calls: &[(&str, &str)]) -> FunctionSummary {
         FunctionSummary {
@@ -1150,6 +1209,48 @@ mod tests {
             stop_above: None,
         };
         assert!(!chain_forwards_owner_result("is_bulk", &chain));
+        // #6780 review: a test calling only `middle` observes `middle`'s
+        // forwarded result, so the dropping `entry` above it does not
+        // matter; a test calling `entry` (alone or beside one calling
+        // `middle`) still bounds the check at `entry`.
+        fn related<'a>(
+            tests: &[&'a crate::analysis::facts::TestSummary],
+        ) -> Vec<(&'a crate::analysis::facts::TestSummary, RelationReason)> {
+            tests
+                .iter()
+                .map(|test| (*test, RelationReason::HelperOwnerCall))
+                .collect()
+        }
+        let calling = |name: &str, text: &str| {
+            let mut test = test_summary_calling(name, text);
+            test.name = format!("calls_{name}");
+            test
+        };
+        let middle_test = calling("middle", "assert!(middle(10));");
+        let entry_test = calling("entry", "assert_eq!(entry(10), 5);");
+        assert!(chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test])
+        ));
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&entry_test])
+        ));
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test, &entry_test])
+        ));
+        // A helper-owner-call test whose hop cannot be found checks the
+        // whole chain.
+        let unknown = calling("other", "assert!(other(10));");
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test, &unknown])
+        ));
     }
 
     // #3296 review B2: only whole-token literals bind; an identifier

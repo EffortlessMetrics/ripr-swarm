@@ -2,7 +2,7 @@ use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ArmSelector, HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax,
     OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     TransitiveReachIndex, WrapperEntryPairing, activation_evidence_with_value_facts,
-    callee_is_unique, chain_forwards_owner_result, classify, confidence_score,
+    callee_is_unique, chain_forwards_to_observed_hops, classify, confidence_score,
     contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
     helper_only_reach, infection_evidence, local_flow_sinks, owner_may_be_reached_unseen,
     package_prefix, propagation_evidence_with_witness, reach_evidence,
@@ -114,8 +114,9 @@ impl ClassifiedProbeEvidence {
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
         // #6780 review B2: when the owner is reached only through the
         // RIPR-SPEC-0159 chain (no related test calls it directly), the
-        // tests observe the entry's result, not the owner's. Unless every
-        // hop hands the call's result to its caller's return, the owner's
+        // tests observe a hop caller's result, not the owner's. Unless every
+        // hop up to the highest one a test calls directly hands the call's
+        // result to its caller's return, the owner's
         // change is not shown to reach that result: propagation is unknown
         // (an abstention), never credit or an actionable gap.
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
@@ -123,7 +124,11 @@ impl ClassifiedProbeEvidence {
             (Some(owner), Some(chain))
                 if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
-                    && !chain_forwards_owner_result(&owner.name, chain) =>
+                    && !chain_forwards_to_observed_hops(
+                        &owner.name,
+                        chain,
+                        &context.related_tests,
+                    ) =>
             {
                 StageEvidence::new(
                     StageState::Unknown,
