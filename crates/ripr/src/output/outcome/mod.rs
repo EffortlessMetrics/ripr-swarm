@@ -453,17 +453,17 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
                 observed_value_strings,
             ),
             observed_values_complete: true,
-            missing_discriminators: evidence_record_values_or_legacy(
-                evidence_record,
-                seam,
-                "missing_discriminators",
-                missing_discriminator_strings,
-            ),
-            // Mirrors the evidence-record-first fallback above: presence in
-            // either consulted source counts.
-            missing_discriminators_present: evidence_record
-                .is_some_and(|record| record.get("missing_discriminators").is_some())
-                || seam.get("missing_discriminators").is_some(),
+            // The consulted source wins for both the list and presence (and
+            // presence additionally requires a well-formed string array):
+            // the evidence record when it names the key, else the seam.
+            missing_discriminators: {
+                let consulted = consulted_missing_discriminators_source(evidence_record, seam);
+                missing_discriminator_strings(consulted)
+            },
+            missing_discriminators_present: {
+                let consulted = consulted_missing_discriminators_source(evidence_record, seam);
+                missing_discriminators_well_formed(consulted)
+            },
             evidence_source: if evidence_record.is_some() {
                 "evidence_record".to_string()
             } else {
@@ -538,7 +538,9 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
     let related_tests_total = related_tests_total(None, finding);
     let observed_values = observed_value_strings(finding);
     let missing_discriminators = missing_discriminator_strings(finding);
-    let missing_discriminators_present = finding.get("missing_discriminators").is_some();
+    // A well-formed empty array is recorded (and satisfiable); a missing key
+    // or a malformed value is unrecorded, never `[]` promoted to satisfied.
+    let missing_discriminators_present = missing_discriminators_well_formed(finding);
 
     Some(StaticSeamRecord {
         seam_id: canonical_gap_id,
@@ -1029,6 +1031,38 @@ fn missing_discriminator_strings(seam: &Value) -> Vec<String> {
             })
             .collect::<Vec<_>>(),
         None => Vec::new(),
+    }
+}
+
+/// Mirrors the evidence-record-first selection in
+/// [`evidence_record_values_or_legacy`] for the missing-discriminators key:
+/// the evidence record wins when it names the key, otherwise the seam.
+fn consulted_missing_discriminators_source<'a>(
+    evidence_record: Option<&'a Value>,
+    seam: &'a Value,
+) -> &'a Value {
+    evidence_record
+        .filter(|record| record.get("missing_discriminators").is_some())
+        .unwrap_or(seam)
+}
+
+/// Presence means recorded *and* well-formed: a string array whose items all
+/// render through the [`missing_discriminator_strings`] rules. A well-formed
+/// empty array is recorded (satisfiable); a missing key or a malformed value
+/// (scalar, object, or an array with an unrenderable item) is unrecorded, so
+/// it can never surface downstream as a satisfied empty list.
+fn missing_discriminators_well_formed(source: &Value) -> bool {
+    match source
+        .get("missing_discriminators")
+        .and_then(Value::as_array)
+    {
+        Some(items) => items.iter().all(|item| {
+            if json_scalar_as_string(item).is_some() {
+                return true;
+            }
+            item.get("value").and_then(json_scalar_as_string).is_some()
+        }),
+        None => false,
     }
 }
 
@@ -2660,6 +2694,121 @@ mod tests {
         assert!(value["unchanged"][0]["after_missing_discriminators"].is_null());
         assert!(value["unchanged"][0]["after_discriminate_state"].is_null());
         Ok(())
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_marks_malformed_after_missing_list_unknown()
+    -> Result<(), String> {
+        // #6869 review: a malformed after value parses to an empty list, but
+        // that `[]` must not read as an explicitly satisfied list downstream.
+        let before = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [],
+      "missing_discriminators": ["threshold equality"]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [{"oracle_kind": "exact_value", "oracle_strength": "weak"}],
+      "missing_discriminators": "threshold equality"
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+
+        assert_eq!(report.unchanged.len(), 1);
+        let movement = &report.unchanged[0];
+        assert_eq!(movement.after_missing_discriminators, None);
+        assert_eq!(movement.after_discriminate_state, None);
+
+        let json = render_targeted_test_outcome_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("targeted-test outcome JSON should parse: {err}"))?;
+        assert!(value["unchanged"][0]["after_missing_discriminators"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn static_seam_record_from_check_finding_marks_malformed_missing_list_unrecorded()
+    -> Result<(), String> {
+        // #6869 review: the check-output producer must apply the same
+        // well-formedness rule as the repo-exposure producer.
+        let finding = serde_json::json!({
+            "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary",
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "file": "src/discount.py", "line": 2},
+            "missing_discriminators": {"value": "amount == threshold"},
+        });
+        let record = static_seam_record_from_check_finding(&finding)
+            .ok_or_else(|| "finding with a canonical gap id should parse".to_string())?;
+        assert!(record.missing_discriminators.is_empty());
+        assert!(!record.missing_discriminators_present);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_discriminators_well_formed_requires_a_renderable_string_array() {
+        // A well-formed empty array stays recorded (satisfiable); every other
+        // shape is unrecorded.
+        let cases = [
+            (serde_json::json!({}), false),
+            (serde_json::json!({"missing_discriminators": []}), true),
+            (
+                serde_json::json!({"missing_discriminators": ["threshold equality"]}),
+                true,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": [{"value": "x", "reason": "r"}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": "threshold equality"}),
+                false,
+            ),
+            (serde_json::json!({"missing_discriminators": 7}), false),
+            (
+                serde_json::json!({"missing_discriminators": {"value": "x"}}),
+                false,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": [{"reason": "r"}]}),
+                false,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": ["x", {"reason": "r"}]}),
+                false,
+            ),
+            (serde_json::json!({"missing_discriminators": [null]}), false),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                missing_discriminators_well_formed(&source),
+                expected,
+                "well-formedness of {source}"
+            );
+        }
     }
 
     #[test]
