@@ -1507,6 +1507,7 @@ fn push_probe_shape_with_text(
         start_line: line_index.line(start),
         end_line: line_index.line_for_range_end(end),
         start_byte: u32::from(start) as usize,
+        end_byte: u32::from(end) as usize,
         kind,
         text,
     });
