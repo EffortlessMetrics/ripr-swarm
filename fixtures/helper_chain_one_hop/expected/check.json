@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:ac178c7f",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_word_start",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "c==lit20"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

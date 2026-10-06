@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:c1a89389",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_boundary:call_deletion:call_deletion:err_pricingerror_other",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_boundary:call_deletion:call_deletion:err_pricingerror_other",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_boundary",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "err_pricingerror_other"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -93,6 +105,18 @@
     },
     {
       "id": "probe:src_lib.rs:error_path:06e60f72",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_boundary:error_variant:error_path:err_pricingerror_other",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_boundary:error_variant:error_path:err_pricingerror_other",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_boundary",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_pricingerror_other"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,

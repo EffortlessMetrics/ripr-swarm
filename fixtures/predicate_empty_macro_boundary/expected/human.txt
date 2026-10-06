@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:2
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
   Missing discriminator: amount == discount_threshold
   Related test: src/lib.rs:14 boundary (no test input reaches `amount == discount_threshold`)

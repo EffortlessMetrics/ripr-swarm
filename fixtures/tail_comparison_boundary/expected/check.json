@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:ca3e18b4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "ships_free",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "items==10"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -202,6 +214,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:b8337f94",
+      "canonical_gap_id": "gap:rust:src/lib.rs:ships_free:return_value:return_value:items>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:ships_free:return_value:return_value:items>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "ships_free",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "items>=10"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -383,6 +407,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:17db21a1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:earns_gift:predicate_boundary:predicate:items==5",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:earns_gift:predicate_boundary:predicate:items==5",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "earns_gift",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "items==5"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -506,6 +542,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:04f99ee4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:earns_gift:return_value:return_value:items>=5",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:earns_gift:return_value:return_value:items>=5",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "earns_gift",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "items>=5"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,

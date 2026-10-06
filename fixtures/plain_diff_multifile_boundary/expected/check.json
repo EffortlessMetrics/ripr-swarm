@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_a.rs:predicate:668eac8e",
+      "canonical_gap_id": "gap:rust:src/a.rs:beta:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/a.rs:beta:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/a.rs",
+        "owner": "beta",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -59,6 +71,18 @@
     },
     {
       "id": "probe:src_a.rs:predicate:e4b32cd5",
+      "canonical_gap_id": "gap:rust:src/a.rs:beta:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/a.rs:beta:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/a.rs",
+        "owner": "beta",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -107,6 +131,18 @@
     },
     {
       "id": "probe:src_b.rs:predicate:41d592e3",
+      "canonical_gap_id": "gap:rust:src/b.rs:delta:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/b.rs:delta:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/b.rs",
+        "owner": "delta",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -155,6 +191,18 @@
     },
     {
       "id": "probe:src_b.rs:predicate:9fc6214b",
+      "canonical_gap_id": "gap:rust:src/b.rs:delta:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/b.rs:delta:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/b.rs",
+        "owner": "delta",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,

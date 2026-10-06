@@ -18,6 +18,7 @@ Probe
   family: match_arm
   delta:  control
   owner:  src/lib.rs::route
+  canonical gap: gap:rust:src/lib.rs:route:match_arm:match_arm:lit73656e736f72
 
 Static exposure
   weakly_exposed (warning, confidence 0.84)

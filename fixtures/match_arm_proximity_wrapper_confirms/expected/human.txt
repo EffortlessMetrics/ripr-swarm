@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: ./src/lib.rs:23
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:seconds:match_arm:match_arm:unit_fortnight
   Changed behavior: Unit::Fortnight =>
   Related test (1 of 4): src/lib.rs:36 seconds_total
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

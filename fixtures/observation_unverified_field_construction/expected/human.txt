@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:9
   Static exposure: unknown (propagation_unknown, note, confidence 0.66)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Canonical gap: gap:rust:src/lib.rs:default_config:return_value:return_value:retries
   Changed behavior: retries,
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/item_tests.rs:4 config_exists

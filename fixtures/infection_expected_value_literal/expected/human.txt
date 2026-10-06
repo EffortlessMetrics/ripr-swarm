@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:19
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Canonical gap: gap:rust:src/lib.rs:fragile_fee:predicate_boundary:predicate:weight_grams==2_000
   Changed behavior: weight_grams >= 2_000
   Missing discriminator: No detected boundary input for the changed predicate
   Related test (1 of 2): tests/fees.rs:4 heavy_crate_pays_fragile_fee_and_eu_tax

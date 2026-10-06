@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:6
   Static exposure: no path (no_static_path, warning, confidence 0.43)
   Why no path: no related test was found that reaches this change
+  Canonical gap: gap:rust:src/lib.rs:untested_rounding:return_value:return_value:cents+49/100
   Changed behavior: (cents + 49) / 100
   Missing discriminator (1 of 3): No relevant oracle was detected
   Related test (1 of 2): src/lib.rs:14 discount_applies_at_100 (no call to the changed code found; linked by file location only)

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:09b3885a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:expect_response:error_variant:error_path:ok_build_response_id.trim_method",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:expect_response:error_variant:error_path:ok_build_response_id.trim_method",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "expect_response",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "ok_build_response_id.trim_method"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -270,6 +282,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:4a5bf6b6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:expect_response:return_value:return_value:ok_build_response_id.trim_method",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:expect_response:return_value:return_value:ok_build_response_id.trim_method",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "expect_response",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "ok_build_response_id.trim_method"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.66,

@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:2
   Static exposure: unknown (infection_unknown, warning, confidence 0.66)
   Why unknown: the change reaches a sink but infection could not be determined statically
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==100
   Changed behavior: amount >= 100
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
   Related test: tests/pricing.rs:16 fixture_builder_case_has_no_discount

@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: ./src/lib.rs:9
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
   Discriminator (observed, advisory): ParseError::InvalidData
   Related test (1 of 2): tests/messages.rs:12 rejects_short_payload_with_variant_pattern

@@ -409,10 +409,13 @@ pub(crate) fn budget_items(
 }
 
 /// Extract the canonical item id from a `ripr://gap/{id}` resource URI.
-/// Returns `None` for any other URI, including the exact status resource.
+///
+/// The producer gap id embeds a workspace-relative path (Python, and since
+/// #5268 Rust), so the suffix is read whole: the `ripr://gap/` prefix alone
+/// routes the URI, and only an empty suffix fails. Returns `None` for any
+/// other URI, including the exact status resource.
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://gap/")
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+    uri.strip_prefix("ripr://gap/").filter(|id| !id.is_empty())
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
@@ -1006,6 +1009,60 @@ mod tests {
         Ok(())
     }
 
+    /// #5268 residual: once the Rust producer populates canonical gaps, a
+    /// producer-shaped Rust finding (the pricing boundary seam) must obey the
+    /// same gate ordering as every other language — a producer-named missing
+    /// discriminator keeps the typed refusal ahead of the populated gap, and
+    /// clearing it (the boundary got pinned by a test) lets the same finding
+    /// through the discriminator gate.
+    #[test]
+    fn populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing()
+    -> Result<(), String> {
+        let mut boundary = finding()?;
+        boundary.language = Some(crate::domain::LanguageId::Rust);
+        boundary.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100".to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "discount".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "total==100".to_string(),
+        });
+        boundary
+            .activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 100".to_string(),
+                reason: "no test call pins the equality boundary".to_string(),
+                flow_sink: None,
+            });
+        let item = GapItem::from_finding(&boundary, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("missing_discriminator")
+        {
+            return Err(format!(
+                "a producer-named missing discriminator must keep the typed refusal even with the gap populated: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        // The boundary got pinned: the producer names nothing missing, the
+        // finding is exposed, and the populated gap opens the gate — the
+        // finding then fails or passes on the remaining (fix-site) gates
+        // exactly like the fixture's strong test surface allows.
+        boundary.activation.missing_discriminators.clear();
+        boundary.missing.clear();
+        boundary.class = crate::domain::ExposureClass::Exposed;
+        let item = GapItem::from_finding(&boundary, Path::new("."))?;
+        if !item.repair_readiness.ready {
+            return Err(format!(
+                "an exposed Rust finding with a populated gap and nothing missing must pass the discriminator gate: {:?}",
+                item.repair_readiness.ineligibility
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn complete_and_incomplete_evidence_stay_distinct() -> Result<(), String> {
         let mut with_gap = finding()?;
@@ -1031,13 +1088,34 @@ mod tests {
         for other in [
             "ripr://workspace/status",
             "ripr://gap/",
-            "ripr://gap/a/b",
             "ripr://snapshot/",
             "https://example.com/gap/x",
         ] {
             assert_eq!(gap_resource_id(other), None, "{other}");
         }
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
+    }
+
+    /// #5268 review: the producer gap id embeds a workspace-relative path,
+    /// so the advertised `ripr://gap/{id}` resource must parse the suffix
+    /// whole — a nested-file Rust (or Python) finding's resource link has to
+    /// resolve to the same id its tool calls address. The snapshot grammar
+    /// stays single-segment.
+    #[test]
+    fn gap_resource_route_reads_a_nested_producer_gap_id_whole() {
+        let nested = "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee";
+        assert_eq!(
+            gap_resource_id(&format!("ripr://gap/{nested}")),
+            Some(nested)
+        );
+        assert_eq!(
+            crate::mcp::repair_card::repair_card_resource_id(&format!(
+                "ripr://repair-card/{nested}"
+            )),
+            Some(nested)
+        );
+        // A snapshot id never carries a path, so its grammar stays strict.
+        assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);
     }
 
     /// #5510: the MCP gap evidence carries the packet-backed Perl rows with

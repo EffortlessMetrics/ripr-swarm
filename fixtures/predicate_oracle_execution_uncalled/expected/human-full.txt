@@ -18,6 +18,7 @@ Probe
   family: predicate
   delta:  control
   owner:  src/lib.rs::discounted_total
+  canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)

@@ -371,6 +371,23 @@ Updated:
 
 Reason:
 RIPR-SPEC-0002: merge of origin/main onto the #5996 workspace-relative location owner — the expected files regenerate with main's triage/wording updates and the shared root-relative location form (issue #5996)
+## Pending — error_variant_boxed_wrapper_downcast_witness (24)
+
+Reason:
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (27)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
 
 Command:
 `cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`

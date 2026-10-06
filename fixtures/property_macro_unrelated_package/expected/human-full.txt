@@ -18,6 +18,7 @@ Probe
   family: predicate
   delta:  control
   owner:  crates/a/src/lib.rs::discounted_total
+  canonical gap: gap:rust:crates/a/src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
 
 Static exposure
   no_static_path (warning, confidence 0.48)

@@ -18,6 +18,7 @@ Probe
   family: match_arm
   delta:  control
   owner:  src/lib.rs::terminalize_proof
+  canonical gap: gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -60,6 +61,7 @@ Probe
   family: match_arm
   delta:  control
   owner:  src/lib.rs::terminalize_proof
+  canonical gap: gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false=>lit726571756573745f6964656e746974795f7631
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)

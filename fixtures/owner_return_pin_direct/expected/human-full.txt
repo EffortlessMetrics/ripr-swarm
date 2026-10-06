@@ -18,6 +18,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::weight
+  canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
 
 Static exposure
   exposed (info, confidence 1.00)

@@ -13,6 +13,7 @@ Start here:
   File: ./src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
   Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
   Related test: src/lib.rs:13 equality_threshold_discounts (has no assertion)

@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: ./src/lib.rs:7
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken
   Changed behavior: return Err(AuthError::RevokedToken);
   Related test: tests/errors.rs:10 empty_token_rejects_with_revoked_token
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

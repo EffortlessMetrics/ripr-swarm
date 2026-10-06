@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:crates_a_src_lib.rs:return_value:94e6eef7",
+      "canonical_gap_id": "gap:rust:crates/a/src/lib.rs:score:return_value:return_value:points+score_bonus",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:crates/a/src/lib.rs:score:return_value:return_value:points+score_bonus",
+        "language": "rust",
+        "file": "crates/a/src/lib.rs",
+        "owner": "score",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "points+score_bonus"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,

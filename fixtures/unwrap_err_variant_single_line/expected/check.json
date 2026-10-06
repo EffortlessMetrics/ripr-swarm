@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:e4b7f445",
+      "canonical_gap_id": "gap:rust:src/lib.rs:validate:error_variant:error_path:err_parseerror_toolong_name.len",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:validate:error_variant:error_path:err_parseerror_toolong_name.len",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "validate",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_parseerror_toolong_name.len"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.66,
@@ -127,6 +139,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:11e230b4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:validate:return_value:return_value:err_parseerror_toolong_name.len",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:validate:return_value:return_value:err_parseerror_toolong_name.len",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "validate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_parseerror_toolong_name.len"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.66,
