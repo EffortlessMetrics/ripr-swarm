@@ -1115,8 +1115,10 @@ fn next_fn_name(text: &str) -> Option<String> {
     let mut i = 0;
     while i + 2 <= bytes.len() {
         let boundary = i == 0 || !is_ascii_ident_byte(bytes[i - 1]);
+        // Compare bytes: `text[i..]` would panic inside a multi-byte
+        // identifier character such as `naïve`.
         if boundary
-            && text[i..].starts_with("fn")
+            && bytes[i..].starts_with(b"fn")
             && bytes.get(i + 2).is_some_and(|b| b.is_ascii_whitespace())
         {
             let start = skip_ascii_whitespace(text, i + 2);
@@ -2956,6 +2958,63 @@ mod tests {
         let index = derive_index("#[derive(Error)]\nstruct E;\n");
 
         assert!(find_transitive_witness("unrelated_owner", &index).is_none());
+    }
+
+    // A non-ASCII identifier between the attribute and its `fn` is skipped
+    // byte-wise instead of slicing inside the character.
+    #[test]
+    fn proc_macro_derive_entries_skip_a_non_ascii_identifier() {
+        let source = "#[proc_macro_derive(Error)]\n#[cfg_attr(any(), naïve)]\n\
+                      pub fn derive_error(input: TokenStream) -> TokenStream { input }\n";
+
+        assert_eq!(
+            proc_macro_derive_entries(source),
+            vec![("Error".to_string(), "derive_error".to_string(), 1)]
+        );
+    }
+
+    // End to end through the real syntax adapter: the proc-macro crate's
+    // facts, including each function's own declaration fact, and a test file
+    // that applies the derive inside its body.
+    #[test]
+    fn derive_witness_through_the_real_syntax_adapter() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let files = [
+            (
+                PathBuf::from("derive/src/lib.rs"),
+                "use proc_macro::TokenStream;\n\
+                 #[proc_macro_derive(Error, attributes(error))]\n\
+                 pub fn derive_error(input: TokenStream) -> TokenStream {\n    expand(input)\n}\n\
+                 fn expand(input: TokenStream) -> TokenStream {\n    fmt_impl(input)\n}\n\
+                 fn fmt_impl(input: TokenStream) -> TokenStream {\n    input\n}\n",
+            ),
+            (
+                PathBuf::from("tests/display.rs"),
+                "use thiserror::Error;\n\
+                 #[test]\nfn display() {\n    #[derive(Error, Debug)]\n    #[error(\"x\")]\n    struct E;\n    \
+                 assert_eq!(E.to_string(), \"x\");\n}\n",
+            ),
+        ];
+        let adapter = RaRustSyntaxAdapter;
+        let mut index = RustIndex::default();
+        for (path, source) in &files {
+            let facts = adapter.summarize_file(path, source)?;
+            let functions = facts.functions.clone();
+            index.insert_file_only(path.clone(), facts);
+            index.extend_functions(functions);
+        }
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness.map(|w| (w.test_name, w.entry_symbol, w.via_derive)),
+            Some((
+                "display".to_string(),
+                "derive_error".to_string(),
+                Some("Error".to_string())
+            ))
+        );
+        Ok(())
     }
 
     #[test]

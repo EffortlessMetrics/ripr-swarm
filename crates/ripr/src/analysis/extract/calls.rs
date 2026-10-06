@@ -86,8 +86,9 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
 }
 
 /// Whether the attribute's arguments are expressions a test runs: rstest's
-/// `#[values(..)]`, `#[with(..)]`, `#[case(..)]` and `#[future(..)]`, and
-/// `#[test_case(..)]`, which can sit inside a test's parameter list.
+/// `#[values(..)]`, `#[with(..)]`, `#[case(..)]` and `#[future(..)]`,
+/// `#[test_case(..)]`, and test-strategy's `#[strategy(..)]`, which can sit
+/// inside a test's parameter list.
 fn runs_its_arguments(attribute: &str) -> bool {
     let inner = attribute.trim_start_matches('#').trim_start();
     let inner = inner.strip_prefix('[').unwrap_or(inner).trim_start();
@@ -95,7 +96,10 @@ fn runs_its_arguments(attribute: &str) -> bool {
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
         .unwrap_or(inner.len());
     let name = inner[..path_end].rsplit("::").next().unwrap_or_default();
-    matches!(name, "values" | "with" | "case" | "future" | "test_case")
+    matches!(
+        name,
+        "values" | "with" | "case" | "future" | "test_case" | "strategy"
+    )
 }
 
 /// Byte ranges of every outer or inner attribute (`#[..]`, `#![..]`) in
