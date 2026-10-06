@@ -108,7 +108,9 @@ calls the owner or a reaching name (a same-named function elsewhere lends it not
 segment and is file-wide, so it ranks after every call witness (rank 2, after corroborated 0 and
 uncorroborated 1). The pointer then reads "the test `t` (file:line) is in a file that applies
 `#[derive(Name)]`, expanded by `fn`" and the last established edge is
-`test -> #[derive(Name)] -> entry fn`. ripr does not check that the test's crate depends on that
+`test (file:line) in a file applying #[derive(Name)] -> entry fn`, since the derive may sit on
+another item in that file. The annotated function is the first same-named function at or after the
+attribute's line, and its own declaration fact is not a call onward. ripr does not check that the test's crate depends on that
 proc-macro crate, or expand the macro; classification stays `no_static_path`.
 
 ### When found

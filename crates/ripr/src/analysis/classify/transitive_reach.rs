@@ -215,11 +215,18 @@ impl<'a> ReachGraph<'a> {
             if !source.contains("proc_macro_derive") {
                 continue;
             }
-            for (derive, function) in proc_macro_derive_entries(source) {
+            for (derive, function, line) in proc_macro_derive_entries(source) {
+                // The annotated item is the first same-named function at or
+                // after the attribute; a nested one sits later inside it.
                 if let Some(annotated) = file
                     .functions
                     .iter()
-                    .find(|f| f.name == function && !f.source_role.is_evidence_role())
+                    .filter(|f| {
+                        f.name == function
+                            && f.start_line >= line
+                            && !f.source_role.is_evidence_role()
+                    })
+                    .min_by_key(|f| f.start_line)
                 {
                     derive_entries.entry(derive).or_default().push(annotated);
                 }
@@ -286,6 +293,7 @@ impl<'a> ReachGraph<'a> {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
                 let reaches = calls_of(function).iter().any(|call| {
                     !is_macro_call(&call.name)
+                        && !is_own_declaration(call, function)
                         && (call.name == owner_name || reaching.contains(call.name.as_str()))
                 });
                 let candidate = (derive.clone(), function.name.as_str());
@@ -907,7 +915,7 @@ pub(in crate::analysis) fn transitive_reach_limitation_detail_lines(
     [
         match &witness.via_derive {
             Some(derive) => format!(
-                "{}test `{}` ({}) -> `#[derive({derive})]` -> entry `{}`",
+                "{}test `{}` ({}) in a file applying `#[derive({derive})]` -> entry `{}`",
                 crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
                 witness.test_name,
                 location,
@@ -1038,9 +1046,11 @@ pub(in crate::analysis) fn macro_reach_limitation_detail_lines(
     ]
 }
 
-/// `(derive name, function name)` for every `#[proc_macro_derive(Name ..)]`
-/// attribute in `source` and the `fn` item it annotates.
-fn proc_macro_derive_entries(source: &str) -> Vec<(String, String)> {
+/// `(derive name, function name, attribute line)` for every
+/// `#[proc_macro_derive(Name ..)]` attribute in `source` and the `fn` item it
+/// annotates; the 1-based line tells the annotated function from a same-named
+/// nested one.
+fn proc_macro_derive_entries(source: &str) -> Vec<(String, String, usize)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let mut entries = Vec::new();
     for range in crate::analysis::extract::attribute_ranges(&masked) {
@@ -1051,7 +1061,8 @@ fn proc_macro_derive_entries(source: &str) -> Vec<(String, String)> {
             continue;
         };
         if let Some(function) = next_fn_name(&masked[range.end..]) {
-            entries.push((derive, function));
+            let line = masked[..range.start].matches('\n').count() + 1;
+            entries.push((derive, function, line));
         }
     }
     entries
@@ -2792,6 +2803,15 @@ mod tests {
         .to_string();
         let mut derive_error = make_fn("derive_error", vec!["expand"]);
         derive_error.file = PathBuf::from("derive/src/lib.rs");
+        // Rust call facts also record the function's own declaration line.
+        derive_error.calls.insert(
+            0,
+            CallFact {
+                line: 2,
+                name: "derive_error".to_string(),
+                text: "pub fn derive_error(input: TokenStream) -> TokenStream {".to_string(),
+            },
+        );
         let mut expand = make_fn("expand", vec!["fmt_impl"]);
         expand.file = PathBuf::from("derive/src/lib.rs");
         let test = make_test_at(
@@ -2888,7 +2908,9 @@ mod tests {
     }
 
     // Negative: a same-named function in another file that reaches the owner
-    // does not lend reach to the annotated derive function, which does not.
+    // does not lend reach to the annotated derive function, which does not,
+    // either by name or through the annotated function's own declaration
+    // fact.
     #[test]
     fn a_same_named_function_elsewhere_does_not_lend_the_derive_reach() {
         let mut other = make_fn("derive_error", vec!["other_owner"]);
@@ -2949,8 +2971,8 @@ mod tests {
         assert_eq!(
             proc_macro_derive_entries(source),
             vec![
-                ("Error".to_string(), "derive_error".to_string()),
-                ("Other".to_string(), "derive_other".to_string()),
+                ("Error".to_string(), "derive_error".to_string(), 1),
+                ("Other".to_string(), "derive_other".to_string(), 4),
             ]
         );
     }
