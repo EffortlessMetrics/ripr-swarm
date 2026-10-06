@@ -11,6 +11,20 @@ are scoped or reviewed.
 
 ### Changed
 
+- LSP scale-degradation disclosures now say what the run actually did at
+  all three surfaces where they previously overclaimed. An opened document
+  whose changed lines sit outside the analyzed partial-diff partition is
+  reported `not_analyzed` with the budget-raise + sidecar-restart recovery
+  by `ripr.collectWorkspaceStatus`, instead of `clean`/`served` (#5998).
+  `ripr/analysisStatus` stops advertising `retry_command: ripr.refresh`
+  for budget-bound `limited_partial_scope` runs — refresh provably re-runs
+  the identical partition — and carries a `retry_recovery` object naming
+  the budget override and the required sidecar restart; the VS Code status
+  renders that route over its canned refresh tail (#5999). The
+  `seam_diagnostics_not_enabled` component outcome carries the concrete
+  enable route (profile, flag, or language switch — following the
+  effective session/repository source) instead of `recovery: null`
+  (#6001).
 - LSP: TypeScript, JavaScript, and Perl preview findings the producer
   admitted (`delivery_eligible`) now publish as advisory diagnostics in both
   diagnostic profiles even while the shared repair-packet validator still

@@ -1675,6 +1675,13 @@ export class RiprClientController {
         this.updateStatus(statusForRunStatus(status.run_status, {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
+          // #5999: the server's budget-bound recovery replaces the canned
+          // refresh tail — refreshing a running sidecar cannot read a raised
+          // process environment.
+          retryRecovery: typeof status.retry_recovery?.detail === 'string'
+            && status.retry_recovery.detail.trim()
+            ? status.retry_recovery.detail
+            : undefined,
           dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
           components: status.components
         }));
@@ -3640,7 +3647,10 @@ interface RiprAnalysisStatusPayload {
   run_status?: string;
   attempt_id?: string | null;
   snapshot_id?: string | null;
-  retry_command?: string;
+  /** #5999: null exactly when refresh cannot lift the run (budget-bound
+   * partial scope); the recovery object then names the actual route. */
+  retry_command?: string | null;
+  retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
   pending?: boolean;
   root_state?: string;
@@ -3798,6 +3808,7 @@ export function statusForRunStatus(
   input: {
     detail?: string;
     retryCommand?: string;
+    retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
   } = {}
@@ -3866,11 +3877,12 @@ export function statusForRunStatus(
       // names the budget remedy, which no component recovery addresses (the
       // scope budget is snapshot-level, not a component outcome), so the
       // recovery is composed after it instead of dropping the budget action.
-      nextStep: recoveries.length === 0
-        ? limited.nextStep
-        : runStatus === 'limited_partial_scope'
-          ? `${limited.nextStep} ${recoveryStep}`
-          : recoveryStep
+      // When the server itself declares the run retry-unlifted (#5999), its
+      // `retry_recovery` replaces the canned tail instead of composing after
+      // it: the canned tail ends in a same-process refresh that provably
+      // re-runs the identical partition, and the server detail names the
+      // raise + restart route that actually widens it.
+      nextStep: composeLimitedNextStep(runStatus ?? '', limited.nextStep, recoveryStep, input.retryRecovery)
     };
   }
   return {
@@ -3879,6 +3891,36 @@ export function statusForRunStatus(
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
   };
+}
+
+/**
+ * Compose the next safe action for a limited-family run (#5004, #5999).
+ * Without a server recovery the canned step stands (component recoveries
+ * compose after the partial-scope budget remedy). With a server
+ * `retry_recovery` on the retry-unlifted partial state, that detail replaces
+ * the canned tail verbatim — it is already a complete sentence naming the
+ * `ripr.refresh` command, so capitalizing it would mangle the command name —
+ * because the server, not the editor, owns which actions can widen the
+ * partition, and its detail names the restart route a same-process refresh
+ * cannot substitute for.
+ */
+function composeLimitedNextStep(
+  runStatus: string,
+  cannedStep: string,
+  componentRecoveryStep: string,
+  retryRecovery?: string
+): string {
+  if (retryRecovery && runStatus === 'limited_partial_scope') {
+    return componentRecoveryStep
+      ? `${retryRecovery}; ${componentRecoveryStep}`
+      : retryRecovery;
+  }
+  if (componentRecoveryStep) {
+    return runStatus === 'limited_partial_scope'
+      ? `${cannedStep} ${componentRecoveryStep}`
+      : componentRecoveryStep;
+  }
+  return cannedStep;
 }
 
 function analysisRootStatusDetail(status: RiprAnalysisStatusPayload): string {
