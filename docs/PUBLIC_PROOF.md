@@ -152,7 +152,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False silent (of not fully discriminated) | 0/97 (0.0%) | 0/14 (0.0%) | 0/83 (0.0%) |
 | Ideal verdict | 80/203 (39.4%) | 6/34 (17.6%) | 74/169 (43.8%) |
 | Abstained (limited or silent where acceptable) | 62/203 (30.5%) | 22/34 (64.7%) | 40/169 (23.7%) |
-| Findings with a contradiction | 2/278 (0.7%) | not split by origin | not split by origin |
+| Findings with a contradiction | 2/273 (0.7%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
