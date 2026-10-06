@@ -160,14 +160,23 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 // The human drill-in lines print the root bound against the
                 // producing directory (#3948); the canonical reports were
                 // captured from the workspace root, so that prefix projects
-                // back to their relative spelling. JSON stays byte-exact.
+                // back to their relative spelling on those lines only, and
+                // a host path anywhere else still fails. JSON stays byte-exact.
                 let bound_prefix = format!(
                     "{}/",
                     workspace_root().display().to_string().replace('\\', "/")
                 );
                 let project = |bytes: &[u8]| {
                     String::from_utf8_lossy(bytes)
-                        .replace(&bound_prefix, "")
+                        .split_inclusive('\n')
+                        .map(|line| {
+                            if line.starts_with("  ripr ") {
+                                line.replace(&bound_prefix, "")
+                            } else {
+                                line.to_string()
+                            }
+                        })
+                        .collect::<String>()
                         .into_bytes()
                 };
                 for (file, actual) in [
