@@ -314,6 +314,7 @@ pub fn resolve_effective_base(
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .or_else(|| unreadable_repository_message(root, &output))
             .unwrap_or_else(|| {
                 let fetch = missing_ref_repair(root, explicit, git_timeout);
                 format!(
@@ -338,6 +339,9 @@ enum GitRootProbe {
     /// Git ran and refused the repository because another user owns it; the
     /// message carries the `safe.directory` repair rendered from Git's stderr.
     DubiousOwnership(String),
+    /// Git ran and could not read the repository (a bad `.git/config`, a
+    /// damaged ref store); the message carries Git's own reason and a repair.
+    Unreadable(String),
     Unanswered,
 }
 
@@ -365,9 +369,44 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
             Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string())
         }
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
-        GitRootProbe::DubiousOwnership(message) => Some(message),
+        GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
+            Some(message)
+        }
         GitRootProbe::Unanswered => None,
     }
+}
+
+/// Git's first `fatal:`/`error:` line, made terminal-safe and bounded: the
+/// text can quote repository content (a `packed-refs` line, a config key).
+fn git_reason_line(stderr: &[u8]) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))?;
+    let line: String = line.chars().take(300).collect();
+    Some(crate::terminal_text::terminal_safe(line))
+}
+
+/// The repair message when Git itself failed (exit 128) for a reason that is
+/// not an absent ref: a damaged repository answers a ref probe with `fatal:`,
+/// where an absent ref answers exit 1 without a message. Without this a
+/// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
+/// "not inside a Git work tree" (#6908).
+fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
+    if output.status.code() != Some(128) {
+        return None;
+    }
+    let reason = git_reason_line(&output.stderr)?;
+    if reason.contains("not a git repository") {
+        return None;
+    }
+    Some(format!(
+        "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
+         Repair the repository (inspect `.git/config` and `.git/packed-refs`, or run \
+         `git fsck`), then re-run.",
+        crate::terminal_text::terminal_safe(root.display().to_string())
+    ))
 }
 
 fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
@@ -388,6 +427,9 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
                 )
             {
                 return GitRootProbe::DubiousOwnership(message);
+            }
+            if !inside && let Some(message) = unreadable_repository_message(root, &output) {
+                return GitRootProbe::Unreadable(message);
             }
             classify_git_root_probe(Ok(inside))
         }
@@ -416,7 +458,9 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     match probe_git_root(root, git_timeout) {
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
-        GitRootProbe::DubiousOwnership(message) => Some(message),
+        GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
+            Some(message)
+        }
         GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
     }
 }
@@ -718,6 +762,7 @@ fn verify_head_revision(
     let commit = format!("{head}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
+            .or_else(|| unreadable_repository_message(root, &output))
             .unwrap_or_else(|| {
                 format!(
                     "the head `{head}` does not resolve to a commit (the analysis did not \
@@ -1167,6 +1212,20 @@ fn run_git_diff_bytes(
         let stderr = stderr.trim();
         let hint = if stderr.contains("no merge base") {
             no_merge_base_hint(root, range, git_timeout)
+        } else if stderr.contains("unknown revision or path not in the working tree") {
+            format!(
+                " The range `{}` names a revision Git cannot resolve: HEAD may be unborn or \
+                 point at a missing branch, or the base is absent. Check `git rev-parse HEAD` \
+                 and the base ref, then re-run.",
+                crate::terminal_text::terminal_safe(range.to_string())
+            )
+        } else if ["unable to unpack", "inflate:", "bad object", "corrupt", "loose object"]
+            .iter()
+            .any(|marker| stderr.contains(marker))
+        {
+            " Git reports a damaged object store; run `git fsck`, restore the missing objects \
+             (for example `git fetch`), then re-run."
+                .to_string()
         } else {
             String::new()
         };

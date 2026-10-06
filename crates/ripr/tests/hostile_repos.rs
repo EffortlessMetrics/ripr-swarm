@@ -638,6 +638,60 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
     Ok(())
 }
 
+/// Damaged Git state is refused in Git's own words with a repair route, not
+/// as a missing remote or a wrong directory (#6908).
+#[test]
+fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
+    type Damage = fn(&Path) -> Result<(), String>;
+    let cases: [(&str, Damage, &[&str]); 3] = [
+        (
+            "bad config",
+            |root| {
+                fs::write(root.join(".git/config"), b"[core\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["bad config line 1", "git fsck"],
+        ),
+        (
+            "corrupt packed-refs",
+            |root| {
+                fs::write(root.join(".git/packed-refs"), b"garbage\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["packed-refs", "git fsck"],
+        ),
+        (
+            "unborn HEAD",
+            |root| {
+                fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["git rev-parse HEAD", "re-run"],
+        ),
+    ];
+    let scratch = Scratch::new("damaged-git")?;
+    for (label, damage, expected) in cases {
+        let root = plain(&scratch, &label.replace(' ', "-"))?;
+        damage(&root)?;
+        let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+        assert_sane(&ran, label)?;
+        if ran.code != Some(2) {
+            return Err(format!("{label}: expected a refusal\n{}", ran.stderr));
+        }
+        for needle in expected {
+            if !ran.stderr.contains(needle) {
+                return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
+            }
+        }
+        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+            if ran.stderr.contains(wrong) {
+                return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A clone of a feature branch has `origin/HEAD` tracking that branch, so the
 /// default base is the checked-out commit and the range is empty by
 /// construction. The run must say so and name `--base`, not read as clean.
