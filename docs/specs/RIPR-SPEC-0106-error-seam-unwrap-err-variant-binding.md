@@ -149,6 +149,11 @@ variant, exactly as for `return Err(Type::Variant)`:
   opened after a macro call on the same head fails closed too. The scan
   masks comments, strings and char literals (`'}'`), keeping lifetimes
   and labels as code.
+- The sink also requires the owner's declared return type to be
+  `Result<_, E>` with `E` naming the variant's enum (final path segment).
+  `?` converts the error through `From` when the owner returns another
+  error type, so a converting owner, a `Result<T>`/`io::Result<T>` alias,
+  an aliased or generic `E`, or an unparsed signature gets no exact sink.
 - The propagation witness takes the owner-checked `ok_or?` sink as an
   established edge only when the line constructs no literal `Err(..)`:
   a line with both forms gets the ordinary, unchecked error text sink and
@@ -161,10 +166,14 @@ variant, exactly as for `return Err(Type::Variant)`:
   owner, `text::changed_error_variant` (`exact_error_variant`, falling
   back to `question_mark_error_variant`). Diff mode: reveal's
   `error_path_variant_path` reads it, so a test pinning a sibling variant
-  (`Err(Type::Other)`) does not confirm the line. Repo mode builds
-  `ErrorPath` seams only from `return` and tail expressions (and calls)
-  (`syntax/ra.rs`), so it covers `return x.ok_or(Type::Variant)?` and a
-  tail `x.ok_or(Type::Variant)?`, not a `let d = ..?;` statement:
+  (`Err(Type::Other)`) does not confirm the line. When the line holds
+  both a literal `Err(..)` and a terminal `ok_or(..)?` naming different
+  variants, the identity is opaque (`None`). Repo mode builds `ErrorPath`
+  seams only from `return` and tail expressions (and calls)
+  (`syntax/ra.rs`); `has_error_path_text` recognises a return/tail
+  `x.ok_or(Type::Variant)?` through the same reader (so a short enum such
+  as `E::Bad` is covered), and a `let d = ..?;` statement is not a repo
+  seam:
   `seam_inventory::required_discriminator_for` stores the variant as the
   `ErrorVariant` seam's identity, and
   `guarded_result_oracle_matches_seam_variant` compares a return-value
@@ -191,8 +200,9 @@ reading `infection_unknown` ("no literal boundary was visible"), which is
 a non-actionable unknown, not a gap, and this part does not change it.
 
 Part B also covers the turbofish constructor: `exact_error_variant`
-reads `Err::<T, E>(Type::Variant)` like `Err(Type::Variant)`, and the
-witness compares error identities with the turbofish removed. Before,
+reads `Err::<T, E>(Type::Variant)` and `Result::Err::<T, E>(..)` like
+`Err(Type::Variant)`, and the witness compares error identities with
+either turbofish removed (nested generics balanced). Before,
 that spelling carried no variant, so a sibling-variant pin from another
 test of the same owner could confirm it and read `exposed`.
 

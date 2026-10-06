@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-06.1. Cases: 204.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 64/203 | 0.3153 |
+| False verdicts (all cases) | 64/204 | 0.3137 |
 | False actionable (of discriminated) | 58/106 | 0.5472 |
-| False exposed (of not fully discriminated) | 6/97 | 0.0619 |
-| False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 81/203 | 0.3990 |
-| Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
-| Findings with a contradiction | 2/278 | 0.0072 |
+| False exposed (of not fully discriminated) | 6/98 | 0.0612 |
+| False silent (of not fully discriminated) | 0/98 | 0.0000 |
+| Ideal verdict | 82/204 | 0.4020 |
+| Abstained (limited or silent where acceptable) | 58/204 | 0.2843 |
+| Findings with a contradiction | 2/280 | 0.0071 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 57/169 | 51/86 | 6/83 | 0/83 | 73/169 | 39/169 |
+| authored | 170 | 57/170 | 51/86 | 6/84 | 0/84 | 74/170 | 39/170 |
 | upstream | 34 | 7/34 | 7/20 | 0/14 | 0/14 | 8/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -224,6 +224,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `sibling-pin-insufficient-matches-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 

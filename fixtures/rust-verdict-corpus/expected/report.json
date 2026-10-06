@@ -1,29 +1,29 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.8",
-  "cases_total": 203,
+  "corpus_version": "2026-10-06.1",
+  "cases_total": 204,
   "by_truth": {
     "discriminated": 106,
-    "not_discriminated": 63,
+    "not_discriminated": 64,
     "partially_discriminated": 34
   },
   "by_outcome": {
     "abstained": 58,
     "false_actionable": 58,
     "false_exposed": 6,
-    "ideal": 81
+    "ideal": 82
   },
   "by_observed_verdict": {
     "credited": 25,
-    "gap": 120,
+    "gap": 121,
     "limited": 57,
     "silent": 1
   },
   "false_verdict_rate": {
     "numerator": 64,
-    "denominator": 203,
-    "rate": "0.3153"
+    "denominator": 204,
+    "rate": "0.3137"
   },
   "false_actionable_rate": {
     "numerator": 58,
@@ -32,45 +32,45 @@
   },
   "false_exposed_rate": {
     "numerator": 6,
-    "denominator": 97,
-    "rate": "0.0619"
+    "denominator": 98,
+    "rate": "0.0612"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 97,
+    "denominator": 98,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 81,
-    "denominator": 203,
-    "rate": "0.3990"
+    "numerator": 82,
+    "denominator": 204,
+    "rate": "0.4020"
   },
   "abstention_rate": {
     "numerator": 58,
-    "denominator": 203,
-    "rate": "0.2857"
+    "denominator": 204,
+    "rate": "0.2843"
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 278,
-    "rate": "0.0072"
+    "denominator": 280,
+    "rate": "0.0071"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "by_origin": {
     "authored": {
-      "cases_total": 169,
+      "cases_total": 170,
       "by_observed_verdict": {
         "credited": 22,
-        "gap": 108,
+        "gap": 109,
         "limited": 38,
         "silent": 1
       },
       "false_verdict_rate": {
         "numerator": 57,
-        "denominator": 169,
-        "rate": "0.3373"
+        "denominator": 170,
+        "rate": "0.3353"
       },
       "false_actionable_rate": {
         "numerator": 51,
@@ -79,23 +79,23 @@
       },
       "false_exposed_rate": {
         "numerator": 6,
-        "denominator": 83,
-        "rate": "0.0723"
+        "denominator": 84,
+        "rate": "0.0714"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 83,
+        "denominator": 84,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 73,
-        "denominator": 169,
-        "rate": "0.4320"
+        "numerator": 74,
+        "denominator": 170,
+        "rate": "0.4353"
       },
       "abstention_rate": {
         "numerator": 39,
-        "denominator": 169,
-        "rate": "0.2308"
+        "denominator": 170,
+        "rate": "0.2294"
       }
     },
     "upstream": {
@@ -4015,6 +4015,25 @@
       "behavior_family": "closure_in_iterator_adaptor",
       "test_shape": "smoke_call_no_assert",
       "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "sibling-pin-insufficient-matches-arm",
+      "subject_id": "authored-sibling-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:14",
+      "behavior_family": "error_path",
+      "test_shape": "match_arm_matches_pins_sibling_variant",
+      "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
