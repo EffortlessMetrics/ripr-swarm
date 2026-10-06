@@ -85,6 +85,16 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                         unresolved_boundary_summary,
                     ),
                 )
+            } else if let Some(reason) = unresolved_boundary {
+                // An operand ripr cannot read is not credited by a test
+                // literal that merely equals the boundary literal: `x.len()
+                // > 3` is not reached by `f(3)` (CodeRabbit review on
+                // #6796). Only the exact observed equality above is.
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    unresolved_boundary_summary(reason),
+                )
             } else if !boundary_input_literals.is_empty() {
                 StageEvidence::new(
                     StageState::Yes,
@@ -93,12 +103,6 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                         "Detected test input literal matching changed boundary: {}",
                         boundary_input_literals.join(", ")
                     ),
-                )
-            } else if let Some(reason) = unresolved_boundary {
-                StageEvidence::new(
-                    StageState::Unknown,
-                    Confidence::Low,
-                    unresolved_boundary_summary(reason),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
                 StageEvidence::new(
@@ -573,6 +577,37 @@ mod tests {
         // reads weak.
         let weak = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
         assert_eq!(weak.state, StageState::Weak);
+    }
+
+    #[test]
+    fn unresolved_boundary_input_is_not_credited_by_a_matching_input_literal() {
+        // CodeRabbit review on #6796: `name.len() > 3` with an owner input
+        // `3` would read `yes` from the literal match, though `3` is not
+        // the length. The unresolved reason wins over that match.
+        let probe = probe(ProbeFamily::Predicate, "name.len() > 3");
+        let test = test_with_literals(&["3"]);
+        let activation = activation_with(&[("3", ValueContext::FunctionArgument)]);
+        let unresolved = infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &activation,
+            Some("boundary operand `name.len()` is a local or computed value"),
+        );
+        assert_eq!(unresolved.state, StageState::Unknown);
+
+        // Negative control: without the reason the literal match credits.
+        let matched = infection_evidence(&probe, &[&test], &activation);
+        assert_eq!(matched.state, StageState::Yes);
+
+        // An exact observed equality still credits with the reason present.
+        let observed = activation_with(&[("name.len() == 3", ValueContext::FunctionArgument)]);
+        let exact = infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &observed,
+            Some("boundary operand `name.len()` is a local or computed value"),
+        );
+        assert_eq!(exact.state, StageState::Yes);
     }
 
     #[test]

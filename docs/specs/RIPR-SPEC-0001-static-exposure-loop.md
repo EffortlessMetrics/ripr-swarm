@@ -257,7 +257,9 @@ rows. A computation over a value RIPR cannot bind (the loop variable in
 yields no input row without unresolving the boundary. RIPR does not name a
 missing equality discriminator for it; `ripr check` reports `infection
 unknown` with `Changed boundary input is unresolved` and the operand or
-parameter it could not read. Exact inputs that all sit off the boundary keep
+parameter it could not read. A test input literal that merely equals a
+literal in the comparison does not credit such a boundary; only an exact
+observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
 
 Named-constant boundary example:
@@ -345,6 +347,7 @@ Fixture coverage:
 - `given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing`
 - `given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing`
 - `free_identifiers_name_only_the_variables_an_expression_reads`
+- `unresolved_boundary_input_is_not_credited_by_a_matching_input_literal`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`

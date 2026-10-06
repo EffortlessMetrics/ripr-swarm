@@ -18,3 +18,6 @@
   decimal literal and otherwise stays unresolved, so ripr no longer names a
   wrong boundary value in the repair hint
   ([#6671](https://github.com/EffortlessMetrics/ripr-swarm/issues/6671)).
+- The human report's "Why unknown" line for `infection_unknown` says the
+  change "reaches a sink" only when the propagation stage is `yes`; otherwise
+  it says no sink the change reaches was established.

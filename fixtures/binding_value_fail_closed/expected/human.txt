@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect the named static limitation before treating this as repair-ready.
   File: ./src/lib.rs:2
   Static exposure: unknown (infection_unknown, warning, confidence 0.66)
-  Why unknown: the change reaches a sink but infection could not be determined statically
+  Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx
   Changed behavior: let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate

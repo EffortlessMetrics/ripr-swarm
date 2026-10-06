@@ -1084,10 +1084,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                 Some("no static path from a related test to this change was found".to_string())
             }
         }
-        ExposureClass::InfectionUnknown => Some(
-            "the change reaches a sink but infection could not be determined statically"
-                .to_string(),
-        ),
+        // "reaches a sink" is a propagation claim: only a `yes` propagation
+        // stage supports it (CodeRabbit review on #6796).
+        ExposureClass::InfectionUnknown => Some(if ripr.propagate.state == StageState::Yes {
+            "the change reaches a sink but infection could not be determined statically".to_string()
+        } else {
+            "infection could not be determined statically, and no sink the change reaches was established"
+                .to_string()
+        }),
         ExposureClass::PropagationUnknown => Some(
             "the path from the changed behavior to an observable sink is not statically clear"
                 .to_string(),
@@ -1194,6 +1198,26 @@ mod classification_hint_tests {
                 .is_some_and(|hint| !hint.contains("no related test")),
             "a reaching test must never be described as absent: {partial:?}"
         );
+    }
+
+    #[test]
+    fn infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes() {
+        let mut evidence = ripr(StageState::Yes, StageState::Yes);
+        evidence.propagate = StageEvidence::new(StageState::Yes, Confidence::Medium, "x");
+        let reached = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+        assert_eq!(
+            reached.as_deref(),
+            Some("the change reaches a sink but infection could not be determined statically")
+        );
+        for state in [StageState::Unknown, StageState::Weak, StageState::No] {
+            evidence.propagate = StageEvidence::new(state.clone(), Confidence::Low, "x");
+            let hint = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+            assert!(
+                hint.as_deref()
+                    .is_some_and(|hint| !hint.contains("reaches a sink")),
+                "{state:?}: {hint:?}"
+            );
+        }
     }
 
     #[test]

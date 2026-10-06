@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect the named static limitation before treating this as repair-ready.
   File: ./src/lib.rs:8
   Static exposure: unknown (infection_unknown, warning, confidence 0.66)
-  Why unknown: the change reaches a sink but infection could not be determined statically
+  Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:check_score_invariants:predicate_boundary:predicate:let_clamped=if_value==0
   Changed behavior: let clamped = if value >= 0 { value } else { 0 };
   Missing discriminator (1 of 3): Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…

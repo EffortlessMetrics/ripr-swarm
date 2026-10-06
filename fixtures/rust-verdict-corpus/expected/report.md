@@ -219,7 +219,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-try-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-try-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `grid-iter-exact` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-iter-exact` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
