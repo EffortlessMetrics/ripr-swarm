@@ -807,6 +807,10 @@ fn missing_discriminator_facts(
     missing
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
+)]
 fn missing_boundary_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
