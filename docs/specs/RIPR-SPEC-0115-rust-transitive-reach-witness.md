@@ -99,6 +99,18 @@ Corroboration only ranks candidates: it never removes one, never changes the cou
 changes classification. Within one test, a corroborated entry symbol is preferred over a bare
 name match before the lexicographic tiebreak.
 
+**Derive entries (#6924).** Attribute arguments are not calls: `#[derive(Error)]` records no call
+to a function named `derive` (parameter attributes that run their arguments, such as rstest's
+`#[values(..)]`, `#[with(..)]`, `#[case(..)]` and `#[test_case(..)]`, still do). A test with no call
+entry instead witnesses through a derive when its file applies `#[derive(Name)]` (not under
+`cfg_attr`) and an in-workspace `#[proc_macro_derive(Name)]` function reaches the owner, either as a
+reaching name or by calling the owner or a reaching name. The derive is matched by its last path
+segment and is file-wide, so it ranks after every call witness (rank 2, after corroborated 0 and
+uncorroborated 1). The pointer then reads "the test `t` (file:line) is in a file that applies
+`#[derive(Name)]`, expanded by `fn`" and the last established edge is
+`test -> #[derive(Name)] -> entry fn`. ripr does not check that the test's crate depends on that
+proc-macro crate, or expand the macro; classification stays `no_static_path`.
+
 ### When found
 
 Unchanged: set `Finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved)`,
@@ -229,6 +241,16 @@ requirements in this spec remain unchanged.
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::derive_applied_in_test_file_witnesses_its_proc_macro_function`,
+  `path_qualified_derive_is_matched_by_its_last_segment`, `unapplied_or_conditional_derive_gives_no_witness`,
+  `derive_whose_function_does_not_reach_the_owner_gives_no_witness`, `a_call_witness_outranks_a_derive_witness`,
+  `proc_macro_derive_entries_pair_each_derive_with_its_function`
+  — derive entries (#6924): positive, path-qualified, negatives, and rank below call witnesses
+- `crates/ripr/src/analysis/extract/calls.rs::tests::attribute_arguments_are_not_calls_but_code_after_them_is`,
+  `parameter_attributes_that_run_their_arguments_stay_calls`
+  — attribute arguments are not call facts, except argument-running parameter attributes
+- `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call`
+  — the grip summary does not say the test calls a derive entry
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured`
   — positive path returns `Some(witness)` naming the test and entry symbol
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none`

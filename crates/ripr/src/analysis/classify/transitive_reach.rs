@@ -566,7 +566,9 @@ impl<'a> TransitiveReachIndex<'a> {
         // type's same-named method cannot win on file order alone (#5481),
         // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
-        let mut witnesses: Vec<(bool, PathBuf, usize, String, String, Option<String>)> = Vec::new();
+        // Rank 0 is a corroborated call entry, 1 an uncorroborated one and 2 a
+        // derive entry, which no call fact backs, so any call witness wins.
+        let mut witnesses: Vec<(u8, PathBuf, usize, String, String, Option<String>)> = Vec::new();
         // The receiver types depend only on the entry and this owner, so
         // they are resolved once per entry rather than once per test.
         let mut receiver_types: HashMap<&str, Option<Vec<String>>> = HashMap::new();
@@ -601,7 +603,7 @@ impl<'a> TransitiveReachIndex<'a> {
             }
             if let Some((uncorroborated, symbol)) = entry {
                 witnesses.push((
-                    uncorroborated,
+                    u8::from(uncorroborated),
                     test.file.clone(),
                     test.start_line,
                     test.name.clone(),
@@ -614,7 +616,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 // `#[derive(Name)]` runs the proc-macro function when the
                 // test target compiles; no call fact records that (#6924).
                 witnesses.push((
-                    false,
+                    2,
                     test.file.clone(),
                     test.start_line,
                     test.name.clone(),
@@ -2772,6 +2774,10 @@ mod tests {
     /// a test file `tests/it.rs` with `test_source` whose test calls nothing
     /// that reaches the owner.
     fn derive_index(test_source: &str) -> RustIndex {
+        derive_index_with(test_source, Vec::new())
+    }
+
+    fn derive_index_with(test_source: &str, extra_tests: Vec<TestFact>) -> RustIndex {
         let proc_macro_source = "#[proc_macro_derive(Error, attributes(error))]\n\
                                  pub fn derive_error(input: TokenStream) -> TokenStream {\n\
                                      expand(input)\n\
@@ -2817,7 +2823,7 @@ mod tests {
         .collect();
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files,
-            tests: vec![test],
+            tests: std::iter::once(test).chain(extra_tests).collect(),
             functions: Vec::new(),
             workspace_authority: None,
             ..Default::default()
@@ -2848,6 +2854,28 @@ mod tests {
             .unwrap_or_default();
         assert!(pointer.contains("applies `#[derive(Error)]`, expanded by `derive_error`"));
         assert!(pointer.contains("may lead here"));
+    }
+
+    // Any call witness outranks a derive witness, even from a test whose file
+    // sorts later: a call fact backs it, while a derive is file-wide.
+    #[test]
+    fn a_call_witness_outranks_a_derive_witness() {
+        let index = derive_index_with(
+            "#[derive(Error)]\nstruct E;\n",
+            vec![make_test_at("test_expand", "tests/z.rs", 1, vec!["expand"])],
+        );
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness.map(|w| (
+                w.test_name,
+                w.entry_symbol,
+                w.via_derive,
+                w.other_test_count
+            )),
+            Some(("test_expand".to_string(), "expand".to_string(), None, 1))
+        );
     }
 
     // Path-qualified derives name the last segment, the macro's own name.

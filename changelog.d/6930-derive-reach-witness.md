@@ -5,4 +5,4 @@
   naming the derive and that function ("applies `#[derive(Error)]`, expanded by
   `derive_error`") instead of a spurious path through `derive`. The verdict
   stays `no_static_path` with the named transitive-reach limitation; ripr does
-  not expand the macro (#6924).
+  not expand the macro (#6924, #6930).

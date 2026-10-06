@@ -10,8 +10,13 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
     let property_macros = super::property_macros::opaque_property_macros(&masked);
     // `#[derive(Error)]`, `#[cfg(test)]` and `#[should_panic(..)]` are
     // attributes, not calls: a parenthesis inside one names no function, so
-    // it must not lend reach to a same-named function (#6924).
-    let attributes = attribute_ranges(&masked);
+    // it must not lend reach to a same-named function (#6924). Parameter
+    // attributes whose arguments the test runs (`#[values(make(1))]`) stay
+    // calls.
+    let attributes: Vec<_> = attribute_ranges(&masked)
+        .into_iter()
+        .filter(|range| !runs_its_arguments(&masked[range.clone()]))
+        .collect();
     let mut attribute_index = 0;
     let mut line_offset = 0;
     let mut property_index = 0;
@@ -78,6 +83,19 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     calls
+}
+
+/// Whether the attribute's arguments are expressions a test runs: rstest's
+/// `#[values(..)]`, `#[with(..)]`, `#[case(..)]` and `#[future(..)]`, and
+/// `#[test_case(..)]`, which can sit inside a test's parameter list.
+fn runs_its_arguments(attribute: &str) -> bool {
+    let inner = attribute.trim_start_matches('#').trim_start();
+    let inner = inner.strip_prefix('[').unwrap_or(inner).trim_start();
+    let path_end = inner
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+        .unwrap_or(inner.len());
+    let name = inner[..path_end].rsplit("::").next().unwrap_or_default();
+    matches!(name, "values" | "with" | "case" | "future" | "test_case")
 }
 
 /// Byte ranges of every outer or inner attribute (`#[..]`, `#![..]`) in
@@ -312,6 +330,25 @@ real_call(E { msg: build(2) });
         assert_eq!(calls[0].line, 45);
     }
 
+    // rstest parameter attributes run their arguments, so those stay calls,
+    // while a sibling `#[allow(..)]` on the same parameter list does not.
+    #[test]
+    fn parameter_attributes_that_run_their_arguments_stay_calls() {
+        let calls = extract_call_facts(
+            "fn t(#[values(score(1), score(2))] x: u8, #[rstest::with(make())] y: u8, #[allow(unused)] z: u8) {\n",
+            1,
+        );
+
+        // Same-line calls are deduplicated; `values`, `with` and `t` keep their
+        // pre-#6924 reading.
+        assert_eq!(
+            call_names(&calls),
+            vec!["make", "score", "t", "values", "with"]
+        );
+    }
+
+    // Malformed source: the scan stops at an unclosed attribute, so it and
+    // every later attribute in the body keep the plain call reading.
     #[test]
     fn an_unclosed_attribute_keeps_the_plain_call_reading() {
         let calls = extract_call_facts("before(1);\n#[derive(Error\n", 1);
