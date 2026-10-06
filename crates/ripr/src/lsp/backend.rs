@@ -11379,6 +11379,7 @@ mod list_actionable_items_tests {
                 "omitted",
                 "omitted_count",
                 "omitted_truncated",
+                "seam_evidence_identity",
                 "selected",
                 "selected_count",
                 "snapshot_id",
