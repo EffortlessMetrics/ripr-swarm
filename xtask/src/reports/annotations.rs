@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[path = "../../../crates/ripr/src/agent/loop_commands.rs"]
-mod loop_commands;
+// The one character policy, included by path (see `operator`).
+use super::operator::loop_commands;
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
