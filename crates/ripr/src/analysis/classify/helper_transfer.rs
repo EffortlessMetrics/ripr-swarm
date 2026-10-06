@@ -523,6 +523,12 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
 /// authority follows the test file's producer, as for seam calls: parser
 /// body facts on parser-backed files, the masked-body lexical scanners on
 /// fallback files or files absent from the index.
+///
+/// #6780 round 5 (fail closed): the call also counts as shadowed when
+/// `callee` names more than one workspace function (a same-named `fn` in
+/// `mod tests` or in another test file), or when the test's file imports
+/// another item under that name: a `use .. as <callee>` rename or a `use`
+/// of `<callee>` from a foreign crate.
 pub(crate) fn test_call_is_shadowed(
     index: &RustIndex,
     test: &crate::analysis::facts::TestSummary,
@@ -530,9 +536,28 @@ pub(crate) fn test_call_is_shadowed(
     call_line: usize,
 ) -> bool {
     use crate::analysis::extract::ShadowAuthority;
-    let parser_backed = index
-        .files()
-        .get(&test.file)
+    if !callee_is_unique(callee, index) {
+        return true;
+    }
+    let files = index.files();
+    let file_facts = files.get(&test.file);
+    let source: &str = match &file_facts {
+        Some(facts) => &facts.source,
+        None => test.body.as_str(),
+    };
+    let renamed_import = super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            import.alias.as_deref() == Some(callee)
+                && import.path.rsplit("::").next() != Some(callee)
+        });
+    if renamed_import
+        || super::reveal::file_imports_foreign_callee_name(source, callee, &index.package_names)
+    {
+        return true;
+    }
+    let parser_backed = file_facts
+        .as_ref()
         .is_some_and(|facts| !facts.used_lexical_fallback);
     let body_line = call_line.saturating_sub(test.start_line);
     if parser_backed {
@@ -599,6 +624,19 @@ pub(crate) fn chain_forwards_to_observed_hops(
         crate::domain::RelationReason,
     )],
 ) -> bool {
+    hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+}
+
+/// The hops a related test observes: up to the highest hop any
+/// `helper_owner_call` test calls directly, or the whole chain when a
+/// test's called hop cannot be determined or none is found (fail closed).
+fn observed_hops<'a>(
+    chain: &'a HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> &'a [HelperHop] {
     let mut highest: Option<usize> = None;
     for (test, reason) in related_tests {
         if *reason != crate::domain::RelationReason::HelperOwnerCall {
@@ -610,14 +648,73 @@ pub(crate) fn chain_forwards_to_observed_hops(
             })
         });
         let Some(called) = called else {
-            return chain_forwards_owner_result(owner_name, chain);
+            return &chain.hops;
         };
         highest = Some(highest.map_or(called, |top| top.max(called)));
     }
-    match highest.and_then(|top| chain.hops.get(..=top)) {
-        Some(observed) => hops_forward_owner_result(owner_name, observed),
-        None => chain_forwards_owner_result(owner_name, chain),
+    highest
+        .and_then(|top| chain.hops.get(..=top))
+        .unwrap_or(&chain.hops)
+}
+
+/// For a side-effect or call-deletion probe reached only through the chain
+/// (#6780 round 5): whether the state the owner's change acts on reaches a
+/// related test's call. The probe expression must name at least one owner
+/// parameter (the effect target, `out` in `out.push(10)`), and every
+/// observed hop must pass each such parameter through from its own
+/// parameter, unchanged and not rebound (`wrapper(out) { record(out) }`).
+/// A fresh temporary (`record(&mut Vec::new())`), a wrapper-local
+/// (`let mut v = ..; record(&mut v)`), a field, a static or any other
+/// argument answers `false`: the caller's test cannot see that state, so
+/// propagation abstains (fail closed).
+pub(crate) fn chain_passes_effect_target_to_observed_hops(
+    owner: &FunctionSummary,
+    probe_expression: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use super::activation::function_parameters;
+    let hops = observed_hops(chain, related_tests);
+    let owner_parameters = function_parameters(owner);
+    let mut tracked: Vec<usize> = owner_parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| {
+            is_identifier(parameter) && parameter.as_str() != "self" && {
+                let masked =
+                    crate::analysis::language::mask_rust_comments_and_strings(probe_expression);
+                contains_word(&masked, parameter)
+            }
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if tracked.is_empty() || hops.is_empty() {
+        return false;
     }
+    for hop in hops {
+        let caller_parameters = function_parameters(&hop.caller);
+        let mut next = Vec::new();
+        for index in &tracked {
+            let Some(argument) = hop.arguments.get(*index).map(|argument| argument.trim()) else {
+                return false;
+            };
+            let Some(position) = caller_parameters
+                .iter()
+                .position(|parameter| parameter == argument)
+            else {
+                return false;
+            };
+            if !is_identifier(argument) || caller_rebinds_parameter(&hop.caller.body, argument) {
+                return false;
+            }
+            next.push(position);
+        }
+        tracked = next;
+    }
+    true
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
@@ -1267,6 +1364,39 @@ mod tests {
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }
+    }
+
+    // #6780 round 5: the lexical fallback path of `test_call_is_shadowed`
+    // (the test's file is absent from the index, so no parser facts exist).
+    #[test]
+    fn test_call_is_shadowed_on_the_lexical_fallback_path() {
+        let wrapper = function("src/lib.rs", "order_discount", &[]);
+        let idx = index(vec![wrapper.clone()]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.start_line = 10;
+        test.end_line = 14;
+        assert!(test.nested_fn_names.is_empty() && test.let_bindings.is_empty());
+        test.body = "{\n    assert_eq!(order_discount(9), 0);\n    let order_discount = |_: u32| 5;\n    assert_eq!(order_discount(10), 5);\n}"
+            .into();
+        assert!(idx.files().get(&test.file).is_none(), "fallback path only");
+        // The binding on body line 2 shadows the call on line 3, not line 1.
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 13));
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A hoisted nested fn shadows every line.
+        test.body = "{\n    assert_eq!(order_discount(10), 5);\n    fn order_discount(_: u32) -> u32 { 5 }\n}"
+            .into();
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A renamed import shadows; a plain body does not.
+        test.body = "{\n    use crate::other::fake as order_discount;\n    assert_eq!(order_discount(10), 5);\n}"
+            .into();
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 12));
+        test.body = "{\n    assert_eq!(order_discount(10), 5);\n}".into();
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A second workspace function of the same name: not unique.
+        let mut twin = wrapper;
+        twin.file = PathBuf::from("src/tests.rs");
+        let twins = index(vec![function("src/lib.rs", "order_discount", &[]), twin]);
+        assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
     }
 
     // #6780 review round 3: the abstention applies only when every

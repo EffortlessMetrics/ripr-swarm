@@ -3,11 +3,11 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_evidence_with_value_facts, body_contains_owner_call, callee_is_unique,
-    chain_forwards_to_observed_hops, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, infection_evidence, local_flow_sinks,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_outcome, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -133,32 +133,43 @@ impl ClassifiedProbeEvidence {
         // result to its caller's return, the owner's
         // change is not shown to reach that result: propagation is unknown
         // (an abstention), never credit or an actionable gap.
-        // #6780 Devin review: only a family whose observation follows the
-        // owner's returned value depends on the hop forwarding it. A side
-        // effect or deleted call acts on state the test can observe without
-        // any returned value (`record(out)` pushing into a `&mut Vec`), so
-        // those keep their owner-local effect-sink propagation.
-        let observes_owner_return = !matches!(
+        // #6780 Devin review and round 5: a side effect or deleted call acts
+        // on state, not on a returned value. It keeps its owner-local
+        // effect-sink propagation only when every observed hop passes the
+        // effect's target through from its own parameter (`wrapper(out) {
+        // record(out) }`), so the test's caller-owned state is what changes.
+        // A fresh temporary or a wrapper-local target is invisible to the
+        // test: those abstain like a dropped result (fail closed).
+        let effect_family = matches!(
             context.probe.family,
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion
         );
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
-                if observes_owner_return
-                    && matches!(propagate.state, StageState::Yes | StageState::Weak)
+                if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
-                    && !chain_forwards_to_observed_hops(
-                        &owner.name,
-                        chain,
-                        &context.related_tests,
-                    ) =>
+                    && if effect_family {
+                        !chain_passes_effect_target_to_observed_hops(
+                            owner,
+                            &context.probe.expression,
+                            chain,
+                            &context.related_tests,
+                        )
+                    } else {
+                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                    } =>
             {
+                let stop = if effect_family {
+                    "a caller that does not pass the changed state through from its own parameter"
+                } else {
+                    "a caller that does not forward its result unchanged"
+                };
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
                     format!(
-                        "Propagation unknown: the related tests reach `{}` only through a caller that does not forward its result unchanged ({HELPER_RESULT_NOT_FORWARDED})",
+                        "Propagation unknown: the related tests reach `{}` only through {stop} ({HELPER_RESULT_NOT_FORWARDED})",
                         owner.name
                     ),
                 )

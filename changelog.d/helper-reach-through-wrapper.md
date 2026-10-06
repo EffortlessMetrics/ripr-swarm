@@ -31,6 +31,10 @@
   relates the test to the helper as `helper_owner_call` or pairs the
   helper's boundary.
 - A helper's side effect (`side_effect`, `call_deletion`) behind a wrapper
-  that discards the helper's unit result keeps its propagation; only
-  families observed through the helper's returned value abstain with
-  `helper_result_not_forwarded`.
+  that discards the helper's unit result keeps its propagation when every
+  wrapper passes the effect's target through from its own parameter
+  (`wrapper(out) { record(out) }`). An effect on a fresh temporary or a
+  wrapper-local target abstains with `helper_result_not_forwarded`.
+- A wrapper name that a test rebinds through a `use .. as` rename, a
+  foreign-crate import, or a same-named `fn` in the test module no longer
+  relates the test to the helper or pairs the helper's boundary.

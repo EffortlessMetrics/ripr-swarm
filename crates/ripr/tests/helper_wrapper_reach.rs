@@ -555,3 +555,83 @@ fn all_findings(source: &str, diff: &str) -> Result<Value, String> {
     serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
         .map_err(|error| error.to_string())
 }
+
+// #6780 round 5: a helper effect on a target the caller's test can never
+// see (a fresh temporary, or a wrapper-local) must not keep the effect's
+// propagation through a wrapper that drops it: it abstains.
+#[test]
+fn helper_effect_on_a_wrapper_owned_target_abstains() -> Result<(), String> {
+    for wrapper in [
+        "pub fn wrapper() -> u32 {\n    record(&mut Vec::new());\n    7\n}",
+        "pub fn wrapper() -> u32 {\n    let mut v = Vec::new();\n    record(&mut v);\n    7\n}",
+    ] {
+        let source = format!(
+            "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\n{wrapper}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn wrapper_returns_seven() {{\n        let out = vec![10];\n        assert_eq!(wrapper(), 7);\n        assert_eq!(out, vec![10]);\n    }}\n}}\n"
+        );
+        let report = all_findings(&source, RECORD_DIFF)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert!(!findings.is_empty(), "{wrapper}: {report}");
+        for finding in findings {
+            assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+            assert_eq!(
+                relation_of(finding, "wrapper_returns_seven"),
+                Some("helper_owner_call"),
+                "{wrapper}: {finding}"
+            );
+            assert_not_forwarded(finding);
+        }
+    }
+    Ok(())
+}
+
+/// The bulk crate with extra items in `mod tests` before the test.
+fn bulk_with_test_items(items: &str, tests: &str) -> String {
+    format!(
+        "fn is_bulk(qty: u32) -> bool {{\n    10 <= qty\n}}\n\npub fn order_discount(qty: u32) -> u32 {{\n{FORWARDING}\n}}\n\npub mod other {{\n    pub fn fake_discount(q: u32) -> u32 {{\n        if q > 10 {{ 5 }} else {{ 0 }}\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{items}\n    #[test]\n    fn ten_items_earn_the_bulk_discount() {{\n{tests}\n    }}\n}}\n"
+    )
+}
+
+// #6780 round 5: an import alias or a same-named fn item in the test module
+// rebinds the wrapper's name, so the call earns neither the chain relation
+// nor the wrapper boundary pairing.
+#[test]
+fn aliased_or_same_named_wrapper_does_not_relate_or_pair() -> Result<(), String> {
+    for (items, tests) in [
+        (
+            "",
+            format!("        use crate::other::fake_discount as order_discount;\n{BOUNDARY_TESTS}"),
+        ),
+        (
+            "    use crate::other::fake_discount as order_discount;\n",
+            BOUNDARY_TESTS.to_string(),
+        ),
+        (
+            "    fn order_discount(q: u32) -> u32 {\n        if q > 10 { 5 } else { 0 }\n    }\n",
+            BOUNDARY_TESTS.to_string(),
+        ),
+    ] {
+        let finding = predicate_finding(&bulk_with_test_items(items, &tests), BULK_DIFF)?;
+        assert_ne!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{items}{tests}: {finding}"
+        );
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{items}{tests}: {finding}"
+        );
+        assert!(
+            !has_boundary_row(&finding, "qty == 10"),
+            "{items}{tests}: {finding}"
+        );
+    }
+    // Control: the same crate with no alias still relates and pairs.
+    let finding = predicate_finding(&bulk_with_test_items("", BOUNDARY_TESTS), BULK_DIFF)?;
+    assert_eq!(
+        relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}

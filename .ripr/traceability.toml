@@ -9867,6 +9867,8 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::shadowed_wrapper_call_does_not_relate_or_pair",
   "crates/ripr/tests/helper_wrapper_reach.rs::helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::shadowed_wrapper_call_earns_no_helper_owner_call",
+  "crates/ripr/tests/helper_wrapper_reach.rs::helper_effect_on_a_wrapper_owned_target_abstains",
+  "crates/ripr/tests/helper_wrapper_reach.rs::aliased_or_same_named_wrapper_does_not_relate_or_pair",
 ]
 fixtures = [
   "fixtures/helper_chain_one_hop",
@@ -10890,7 +10892,8 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper",
   "crates/ripr/tests/helper_wrapper_reach.rs::buried_scalar_in_a_wrapper_argument_does_not_pair",
   "crates/ripr/tests/helper_wrapper_reach.rs::mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper",
-  "crates/ripr/tests/helper_wrapper_reach.rs::shadowed_wrapper_call_does_not_relate_or_pair"
+  "crates/ripr/tests/helper_wrapper_reach.rs::shadowed_wrapper_call_does_not_relate_or_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::aliased_or_same_named_wrapper_does_not_relate_or_pair"
 ]
 fixtures = [
   "fixtures/split_test_boundary_oracle",

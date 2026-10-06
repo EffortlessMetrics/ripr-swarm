@@ -43,7 +43,14 @@ can only hint that a caller "may lead here" without changing anything.
   call of the hop caller: it earns no `HelperOwnerCall` and binds no row
   down the chain. The shadow authority is the seam-call one: parser body
   facts on parser-backed files, the masked-body lexical scanners
-  otherwise.
+  otherwise. The call is also treated as shadowed (fail closed) when the
+  hop caller's name is not unique among workspace functions (a same-named
+  `fn` in `mod tests` or a test file), or when the test's file imports
+  another item under that name: a `use .. as <name>` rename, or a `use`
+  of `<name>` from a foreign crate. Known gap (#3727): the parser path
+  collects only `let` statements, so `if let`/`while let`, match-arm,
+  closure-parameter, `for` and macro-introduced bindings do not shadow on
+  parser-backed files.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
   `call_deletion`), when the related tests reach the owner only
@@ -59,11 +66,20 @@ can only hint that a caller "may lead here" without changing anything.
   `L2` of distinct value. Otherwise the propagation stage is `unknown`
   (`helper_result_not_forwarded`), so the finding abstains instead of
   crediting the entry's oracle or reporting a gap. Arithmetic or
-  let-bound use of the result is not followed in V1. A `side_effect` or
-  `call_deletion` probe acts on state a test can observe without any
-  returned value (a helper pushing into a caller's `&mut Vec`), so it keeps
-  its owner-local effect-sink propagation and is not judged by result
-  forwarding.
+  let-bound use of the result is not followed in V1.
+- Effect propagation (#6780): a `side_effect` or `call_deletion` probe
+  acts on state rather than on a returned value, so it is not judged by
+  result forwarding. Under the same chain-only reach and the same
+  observed-hop bound, it keeps its owner-local effect-sink propagation
+  only when the probe expression names at least one owner parameter (the
+  effect target, `out` in `out.push(10)`) and every observed hop passes
+  each such parameter through as one of its own parameters, by name and
+  not rebound or assigned (`wrapper(out) { record(out) }`). Any other
+  argument at that position — a fresh temporary (`record(&mut
+  Vec::new())`), a wrapper-local (`let mut v = ..; record(&mut v)`), a
+  field, a static or an expression — and a probe that names no owner
+  parameter make propagation `unknown` (`helper_result_not_forwarded`):
+  the caller's test cannot see that state, so the finding abstains.
 - Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
   recomputed from the asserting test, and requires the assertion's
   subject to hold exactly one entry call whose arguments are each a whole

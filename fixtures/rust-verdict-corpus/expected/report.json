@@ -515,7 +515,7 @@
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "propagation_unknown"
+        "no_static_path"
       ],
       "outcome": "abstained",
       "contradictions": []

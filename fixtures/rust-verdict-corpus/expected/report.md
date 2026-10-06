@@ -40,7 +40,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `serde-derive-rename-variant-lower` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
 | `serde-derive-rename-field-upper` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
 | `semver-leading-zero` | upstream | discriminated | credited | limited | no_static_path | abstained | no | none |
-| `semver-op-greater-eq` | upstream | discriminated | credited | limited | propagation_unknown | abstained | yes | none |
+| `semver-op-greater-eq` | upstream | discriminated | credited | limited | no_static_path | abstained | yes | none |
 | `itoa-four-digit-loop` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `semver-digit-upper-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | no | none |
 | `bytesize-format-unit-first-run` | upstream | discriminated | credited | limited | infection_unknown | abstained | no | none |
