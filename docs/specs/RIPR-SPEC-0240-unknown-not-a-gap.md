@@ -169,9 +169,9 @@ moved false actionable on upstream cases from 9/20 to 8/20 through the same
 single case.
 
 serde `format_u8` hundreds moves from `reachable_unrevealed` to
-`static_unknown`. No fixture golden moves. The remaining false gaps are
-`weakly_exposed` (sibling-arm oracles #5432; refused assertions behind a
-credited weak oracle) and semver `op()` (reach with no retained test, #5344).
+`static_unknown`. No existing fixture golden changes class. The remaining false
+gaps are `weakly_exposed` (sibling-arm oracles #5432; refused assertions behind
+a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 
 ## Non-Goals
 

@@ -25,7 +25,7 @@ impl TestDeclarationRoot {
 /// `node:test` and Vitest accept an options object before the callback
 /// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
 /// keeps `test(name, fn, timeout)` working (#4548).
-fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
     let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
         matches!(
             argument,
@@ -60,6 +60,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
                 &ret.program.body,
                 &imports,
             ),
+            admission: TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file),
             ..TestScope::default()
         };
         // One line index per source; every test and assertion line is a
@@ -745,6 +746,11 @@ pub(crate) fn collect_tests_from_statements(
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
+            if let Statement::ExpressionStatement(statement) = stmt
+                && let Expression::CallExpression(call) = &statement.expression
+            {
+                test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
+            }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
             let parameters = statement_callback_parameter_names(stmt)
@@ -781,6 +787,8 @@ pub(crate) struct TestScope {
     /// The file's imported assertion-library bindings (`node:assert`, chai;
     /// #4547), credited in every test body.
     assertion_bindings: TypeScriptAssertionBindings,
+    /// File-wide facts for each test's assertion admission (#5524).
+    admission: TypeScriptAdmissionContext,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1729,6 +1737,9 @@ pub(crate) fn test_from_statement(
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        // Replaced by `collect_tests_from_statements`, which has the file's
+        // admission context; fail-closed until then.
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
     })
 }
 

@@ -357,3 +357,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_t_unknown_method_no_oracle (14)
+
+Reason:
+RIPR-SPEC-0224: record test_assertion_admission evidence for TypeScript related tests without a recognized assertion (#5524)
+
+Command:
+`cargo xtask goldens bless typescript_t_unknown_method_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
