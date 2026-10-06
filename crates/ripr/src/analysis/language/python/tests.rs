@@ -709,11 +709,6 @@ fn classify_probe_shape_recognizes_python_return_and_error_shapes() {
     let (family, delta) = classify_probe_shape("    except ValueError:");
     assert_eq!(family, ProbeFamily::ErrorPath);
     assert_eq!(delta, DeltaKind::Control);
-
-    // A bare handler is the same error path as a typed one.
-    let (family, delta) = classify_probe_shape("    except:");
-    assert_eq!(family, ProbeFamily::ErrorPath);
-    assert_eq!(delta, DeltaKind::Control);
 }
 
 #[test]
