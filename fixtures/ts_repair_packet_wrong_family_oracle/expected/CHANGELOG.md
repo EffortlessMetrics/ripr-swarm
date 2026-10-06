@@ -183,7 +183,7 @@ Updated:
 ## Pending — ts_repair_packet_wrong_family_oracle (16)
 
 Reason:
-RIPR-SPEC-0224: related-test row now shows the family-relevant assertion (#5525); the only assertions are wrong-family for the changed probe, so the row shows no oracle, matching the classifier's existing unknown (rank 0) observe stage; class, stages, actionability category and repair_packet_ready unchanged
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`

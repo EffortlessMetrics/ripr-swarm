@@ -11052,8 +11052,12 @@ mod list_actionable_items_tests {
         let command = packet["witness"]["explain_command"]
             .as_str()
             .ok_or_else(|| format!("packet must embed a witness command: {packet}"))?;
+        // `/workspace` binds through the shared root rule (#3948); on Windows
+        // it is not absolute and gains the current drive.
+        let root = loop_commands::shell_arg(&loop_commands::bound_root("/workspace"));
         assert_eq!(
-            command, "ripr explain --root /workspace --worktree probe:pricing:88:predicate",
+            command,
+            format!("ripr explain --root {root} --worktree probe:pricing:88:predicate"),
             "the packet's own command must replay the session's worktree diff source"
         );
         // The packet location renders through the shared finding-location

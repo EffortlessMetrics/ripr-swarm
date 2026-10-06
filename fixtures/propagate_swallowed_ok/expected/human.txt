@@ -24,8 +24,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/propagate_swallowed_ok/input --diff fixtures/propagate_swallowed_ok/diff.patch --mode fast probe:src_lib.rs:call_deletion:f297c803
-  ripr context --root fixtures/propagate_swallowed_ok/input --diff fixtures/propagate_swallowed_ok/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:f297c803
+  ripr explain --root <cwd>/fixtures/propagate_swallowed_ok/input --diff <cwd>/fixtures/propagate_swallowed_ok/diff.patch --mode fast probe:src_lib.rs:call_deletion:f297c803
+  ripr context --root <cwd>/fixtures/propagate_swallowed_ok/input --diff <cwd>/fixtures/propagate_swallowed_ok/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:f297c803
 
 More:
   Full evidence: rerun with --format human-full

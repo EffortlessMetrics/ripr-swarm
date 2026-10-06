@@ -24,10 +24,10 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/observation_unverified_return_value/input --diff fixtures/observation_unverified_return_value/diff.patch --mode fast probe:src_lib.rs:return_value:63d1fd29
-  ripr context --root fixtures/observation_unverified_return_value/input --diff fixtures/observation_unverified_return_value/diff.patch --mode fast --at probe:src_lib.rs:return_value:63d1fd29
+  ripr explain --root <cwd>/fixtures/observation_unverified_return_value/input --diff <cwd>/fixtures/observation_unverified_return_value/diff.patch --mode fast probe:src_lib.rs:return_value:63d1fd29
+  ripr context --root <cwd>/fixtures/observation_unverified_return_value/input --diff <cwd>/fixtures/observation_unverified_return_value/diff.patch --mode fast --at probe:src_lib.rs:return_value:63d1fd29
 Write a test for it:
-  ripr agent stub --root fixtures/observation_unverified_return_value/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/observation_unverified_return_value/input --at src/lib.rs:2
 
 More:
   Full evidence: rerun with --format human-full
