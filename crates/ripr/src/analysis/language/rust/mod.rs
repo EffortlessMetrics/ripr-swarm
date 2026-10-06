@@ -3703,8 +3703,13 @@ mod tests {
         )?;
         write(&private_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
         let (private_full, _, _) = scoped_findings(&private_root, DependentScopeMode::Full)?;
-        let (private_named, _, _) =
+        let (private_named, private_main, _) =
             scoped_findings(&private_root, DependentScopeMode::NameAdmitted)?;
+        let private_main = slash_paths(&private_main.ok_or("the named mode must narrow")?);
+        assert!(
+            !private_main.contains(&"e/src/lib.rs".to_string()),
+            "the private glob's crate root must stay withheld: {private_main:?}"
+        );
         assert_eq!(
             private_named, private_full,
             "a withheld crate root's private glob must be routed like the full closure's"
@@ -3726,7 +3731,13 @@ mod tests {
         )?;
         write(&path_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
         let (path_full, _, _) = scoped_findings(&path_root, DependentScopeMode::Full)?;
-        let (path_named, _, _) = scoped_findings(&path_root, DependentScopeMode::NameAdmitted)?;
+        let (path_named, path_main, _) =
+            scoped_findings(&path_root, DependentScopeMode::NameAdmitted)?;
+        let path_main = slash_paths(&path_main.ok_or("the named mode must narrow")?);
+        assert!(
+            path_main.contains(&"e/src/lib.rs".to_string()),
+            "a `cfg_attr` path must admit its file: {path_main:?}"
+        );
         assert_ne!(
             rooted(&path_full, &path_root),
             rooted(&plain_full, &plain_root),
