@@ -24,6 +24,20 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     )
 }
 
+/// Activation recomputed from one test alone.
+pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> ActivationEvidence;
+
+/// The helper chain a wrapper-entry pin pairs through (#6694 / #6672), and
+/// activation recomputed from one test alone. The entry path reads only those
+/// per-test rows (#6780 review): `ValueFact` carries no source test, so a row
+/// from the run-wide activation cannot be told apart from a same-line row of
+/// another test in another file.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct WrapperEntryPairing<'a> {
+    pub(in crate::analysis) chain: &'a HelperChain,
+    pub(in crate::analysis) test_activation: TestActivation<'a>,
+}
+
 /// True when some related test both feeds a boundary input to the owner and
 /// holds an admitted discriminating oracle on that call's result.
 ///
@@ -41,19 +55,16 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 /// `assert!(owner(x))` on a bool owner discriminates its whole result even
 /// though the classifier reads a bare `assert!` as a weak relational check.
 ///
-/// `test_activation` recomputes activation from one test alone. The wrapper
-/// entry path reads only those rows (#6780 review): `ValueFact` carries no
-/// source test, so a row from the run-wide `activation` cannot be told apart
-/// from a same-line row of another test in another file.
+/// `wrapper_entry` carries the RIPR-SPEC-0159 chain when the owner is a
+/// helper reached through a wrapper; see [`WrapperEntryPairing`].
 pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
-    helper_chain: Option<&HelperChain>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
-    test_activation: &dyn Fn(&TestSummary) -> ActivationEvidence,
+    wrapper_entry: Option<WrapperEntryPairing<'_>>,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
         return false;
@@ -64,10 +75,15 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
     // caller's return; any other chain shape keeps the pairing missing.
-    let forwarding_entry = helper_chain
-        .filter(|chain| chain_forwards_owner_result(&owner.name, chain))
-        .and_then(|chain| chain.hops.last())
-        .map(|hop| hop.caller.name.as_str());
+    let forwarding_entry = wrapper_entry
+        .filter(|entry| chain_forwards_owner_result(&owner.name, entry.chain))
+        .and_then(|entry| {
+            entry
+                .chain
+                .hops
+                .last()
+                .map(|hop| (hop.caller.name.as_str(), entry.test_activation))
+        });
     related_tests.iter().any(|test| {
         test_pairs_boundary_input_with_oracle(
             probe,
@@ -77,7 +93,6 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             forwarding_entry,
             assertion_admitted,
             owner_pinned,
-            test_activation,
         )
     })
 }
@@ -87,10 +102,9 @@ fn test_pairs_boundary_input_with_oracle(
     owner: &FunctionSummary,
     test: &TestSummary,
     activation: &ActivationEvidence,
-    forwarding_entry: Option<&str>,
+    forwarding_entry: Option<(&str, TestActivation<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
-    test_activation: &dyn Fn(&TestSummary) -> ActivationEvidence,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
     // Computed at most once per test, and only when the entry path is live.
@@ -112,7 +126,7 @@ fn test_pairs_boundary_input_with_oracle(
             // rule: the owner-return pin judges the owner's own call, never
             // a wrapper's.
             || (assertion_is_discriminating(assertion)
-                && forwarding_entry.is_some_and(|entry| {
+                && forwarding_entry.is_some_and(|(entry, test_activation)| {
                     assertion_names_one_entry_call(owner, entry, assertion)
                         && assertion_observes_boundary_entry_call(
                             owner,
@@ -670,6 +684,16 @@ mod tests {
 
     // These units isolate semantic pairing of already-admitted oracle facts.
     // Public API/runtime controls exercise the real parser-backed admission.
+    fn entry<'a>(
+        chain: Option<&'a HelperChain>,
+        rows: TestActivation<'a>,
+    ) -> Option<WrapperEntryPairing<'a>> {
+        chain.map(|chain| WrapperEntryPairing {
+            chain,
+            test_activation: rows,
+        })
+    }
+
     fn pairing_with_admitted_oracles(
         probe: &Probe,
         owner: Option<&FunctionSummary>,
@@ -681,10 +705,9 @@ mod tests {
             owner,
             tests,
             activation,
-            None,
             &|_, _| true,
             &|_, _| false,
-            &|_| activation.clone(),
+            None,
         )
     }
 
@@ -1682,10 +1705,9 @@ mod tests {
                 Some(&owner),
                 &[&test],
                 activation,
-                chain,
                 &|_, _| true,
                 &|_, _| false,
-                &|_| activation.clone(),
+                entry(chain, &|_| activation.clone()),
             )
         };
         assert!(pairs(Some(&chain), &activation));
@@ -1722,10 +1744,10 @@ mod tests {
             Some(&owner),
             &[&test],
             &activation,
-            Some(&wrapper_chain(FORWARDING_WRAPPER)),
             &|_, _| true,
             &|_, _| false,
-            &|_| activation.clone(),
+            entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| activation
+                .clone()),
         ));
     }
 
@@ -1746,10 +1768,9 @@ mod tests {
             Some(&bulk_owner()),
             &[&test],
             activation,
-            Some(&wrapper_chain(wrapper_body)),
             &|_, _| true,
             &|_, _| false,
-            &|_| activation.clone(),
+            entry(Some(&wrapper_chain(wrapper_body)), &|_| activation.clone()),
         )
     }
 
@@ -1772,10 +1793,11 @@ mod tests {
             Some(&bulk_owner()),
             &[&test],
             &transferred_boundary_row(1, line),
-            Some(&wrapper_chain(FORWARDING_WRAPPER)),
             &|_, _| true,
             &|_, _| false,
-            &|_| transferred_boundary_row(1, line),
+            entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| {
+                transferred_boundary_row(1, line)
+            }),
         ));
     }
 
@@ -1848,10 +1870,9 @@ mod tests {
             Some(&owner),
             &[&boundary_test, &far_test],
             &run_wide,
-            Some(&chain),
             &|_, _| true,
             &|_, _| false,
-            &own_rows,
+            entry(Some(&chain), &own_rows),
         ));
         // Control: the same far test pairs when its own rows hold the boundary.
         assert!(has_same_test_boundary_oracle_pairing(
@@ -1859,10 +1880,9 @@ mod tests {
             Some(&owner),
             &[&boundary_test, &far_test],
             &run_wide,
-            Some(&chain),
             &|_, _| true,
             &|_, _| false,
-            &|_| transferred_boundary_row(2, line),
+            entry(Some(&chain), &|_| transferred_boundary_row(2, line)),
         ));
     }
 

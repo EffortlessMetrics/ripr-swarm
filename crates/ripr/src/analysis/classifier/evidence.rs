@@ -1,12 +1,12 @@
 use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ArmSelector, HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax,
     OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    TransitiveReachIndex, activation_evidence_with_value_facts, callee_is_unique,
-    chain_forwards_owner_result, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    TransitiveReachIndex, WrapperEntryPairing, activation_evidence_with_value_facts,
+    callee_is_unique, chain_forwards_owner_result, classify, confidence_score,
+    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
+    helper_only_reach, infection_evidence, local_flow_sinks, owner_may_be_reached_unseen,
+    package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -267,6 +267,20 @@ impl ClassifiedProbeEvidence {
         // the owner call that sits on the boundary. Pairing reuses
         // activation's `==` facts so named constants and helper hops that
         // already infected stay paired when the same test holds the oracle.
+        // The wrapper-entry pairing reads only rows recomputed from the
+        // asserting test (#6780 review): a run-wide row names no test.
+        let one_test_activation = |test: &TestSummary| {
+            activation_evidence_with_value_facts(
+                context.probe,
+                context.owner_fn,
+                &[test],
+                &flow_sinks,
+                context.helper_chain.as_ref(),
+                context.index,
+                context.workspace_complete,
+                context.test_value_facts,
+            )
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -275,7 +289,6 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
-                context.helper_chain.as_ref(),
                 &assertion_admitted,
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
@@ -287,18 +300,13 @@ impl ClassifiedProbeEvidence {
                         })
                         && owner_pin_admits(test, assertion)
                 },
-                &|test: &TestSummary| {
-                    activation_evidence_with_value_facts(
-                        context.probe,
-                        context.owner_fn,
-                        &[test],
-                        &flow_sinks,
-                        context.helper_chain.as_ref(),
-                        context.index,
-                        context.workspace_complete,
-                        context.test_value_facts,
-                    )
-                },
+                context
+                    .helper_chain
+                    .as_ref()
+                    .map(|chain| WrapperEntryPairing {
+                        chain,
+                        test_activation: &one_test_activation,
+                    }),
             ) {
             StageEvidence::new(
                 StageState::Weak,

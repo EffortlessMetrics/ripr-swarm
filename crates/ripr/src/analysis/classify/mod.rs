@@ -25,7 +25,7 @@ pub(in crate::analysis) use activation::{
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
-    has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
