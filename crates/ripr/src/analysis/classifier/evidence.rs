@@ -1,11 +1,11 @@
 use crate::analysis::classify::{
-    ARM_UNSELECTED_REASON_PREFIX, ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
-    activation_evidence_with_value_facts, callee_is_unique, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, activation_evidence_with_value_facts, body_contains_owner_call,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -35,6 +35,19 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// When the reveal is not fully established: where a refused related
+    /// assertion is, why it was refused, and whether its text calls the
+    /// changed owner. Only an owner-calling refusal could have observed
+    /// the change had it been credited, so only that one may be presented
+    /// as a possible static limit.
+    pub(in crate::analysis) assertion_refusal: Option<AssertionRefusalNote>,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) location: String,
+    pub(in crate::analysis) reason: String,
+    pub(in crate::analysis) calls_owner: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -315,7 +328,54 @@ impl ClassifiedProbeEvidence {
                 discriminate: discriminate.clone(),
             },
         };
-        let evidence = evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        let mut evidence =
+            evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // matter: the reveal is not fully established. One whose text calls
+        // the changed owner is preferred, since an unrelated refused
+        // assertion (`if flag { assert_eq!(1, 1) }`) could not observe the
+        // change even if it were credited.
+        let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
+        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            || discriminate.state != StageState::Yes)
+            .then(|| {
+                let mut first = None;
+                for (test, _) in &context.related_tests {
+                    for assertion in &test.assertions {
+                        let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        ) else {
+                            continue;
+                        };
+                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let note = AssertionRefusalNote {
+                            location: format!(
+                                "`assert_eq!` in {} at {}:{}",
+                                test.name,
+                                test.file.display(),
+                                assertion.line
+                            ),
+                            reason: refusal.describe(),
+                            calls_owner,
+                        };
+                        if calls_owner {
+                            return Some(note);
+                        }
+                        first.get_or_insert(note);
+                    }
+                }
+                first
+            })
+            .flatten();
+        if let Some(note) = &assertion_refusal {
+            evidence.push(format!(
+                "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
+                note.location, note.reason
+            ));
+        }
 
         Self {
             ripr,
@@ -331,6 +391,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assertion_refusal,
         }
     }
 

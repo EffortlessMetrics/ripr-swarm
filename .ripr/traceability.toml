@@ -12465,12 +12465,16 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::perl_packet_backed_rows_agree_in_gap_evidence",
   "crates/ripr/src/output/human/explain.rs::tests::an_unconfirmed_observation_is_not_labelled_a_miss",
   "crates/ripr/src/lsp/tests.rs::hover_keeps_oracle_kind_on_a_matched_row_that_still_misses",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
 ]
 code = [
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/perl/mod.rs",
+  "crates/ripr/src/analysis/language/python/admission.rs",
+  "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/output/related_test_miss.rs",
   "crates/ripr/src/output/human/explain.rs",
   "crates/ripr/src/lsp/hover.rs",

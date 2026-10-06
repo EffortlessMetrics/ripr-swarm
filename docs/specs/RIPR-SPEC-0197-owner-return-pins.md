@@ -287,6 +287,45 @@ string literal is not a call or a reference. These rules hold for
   field; its gap witness carries `confidence.value: 0.79` with
   `confidence.basis: static_only`, alongside the same No/No stages,
   zero-oracle relation and guidance. Exposed controls have no gap witness.
+- Each refusal is disclosed with the first gate that failed: an `assertion
+  not credited:` evidence entry and a human `Not credited:` line name the
+  test, the assertion's file and line, and the blocker (a `for`/`while`/`if`
+  construct, a test attribute such as `#[cfg(..)]`, an opaque `name!` call,
+  an `async` test, or the file and line of the macro binding). A refused
+  context does not also claim that no assertion or oracle was detected. The
+  disclosure is computed after admission and never changes what is credited.
+  A refused assertion whose text calls the changed owner is named first.
+  Only that one earns the next step that calls the refusal a possible static
+  limit to confirm with a real mutation run; a refused assertion that does
+  not call the owner (an `Ok`-arm `assert_eq!` beside an error-path change,
+  or `if flag { assert_eq!(1, 1) }`) could not observe the change even if
+  credited, so the next step stays the generic one.
+- Macro-binding ambiguity is scoped to what can bind the name. Any
+  mention of a trusted name in another macro's arguments stays ambiguous,
+  a plain `assert_eq!(..)` included: to that macro it is only tokens, and
+  `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
+  together with the module whose tests then compile against it.
+  `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
+  arguments makes every trusted name ambiguous (stricter than the same
+  attribute written on an item, which a resolved module can admit). A
+  `macro_rules!` confined to an inline module or function body (no
+  `#[macro_use]` on any enclosing module, no out-of-line child module)
+  refuses only tests inside that item; a glob import from a workspace member
+  crate with indexed files is workspace-owned.
+- `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
+  counts as the standard assertion only when the importing file's nearest
+  `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
+  plain registry requirement (version, features, `optional`; through
+  `[workspace.dependencies]` for `workspace = true`), the manifest names no
+  `package.workspace`, no manifest between the file and the root has a
+  `[patch]` entry for it (by key or `package =`) or any `[replace]`, and no
+  `.cargo/config` there mentions it or sets `paths`, `[patch]`, `[source]`
+  or `include`. A `package`, `path`, `git` or `registry` key binds the name
+  to another package that Rust source cannot reveal, so the import then
+  refuses with that reason. Limits: Cargo configuration outside the root
+  (or found from another working directory) is not read, and a file
+  compiled by a package other than its nearest manifest (a target `path`
+  or `#[path]` from a sibling) is judged by the nearest manifest.
 
 ### Matched before/after observations
 
