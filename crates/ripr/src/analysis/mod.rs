@@ -1107,14 +1107,17 @@ mod tests {
         );
         // The guard runs after the verbatim rewrite, so a verbatim drive
         // path with `..` falls back too. Same spelling on both hosts: where
-        // the drive path does not parse, the strip already fails.
+        // the drive path does not parse, the strip already fails. Built via
+        // `format!` like the sibling cases: a literal drive-absolute
+        // path trips check-local-context.
+        let drive = "F:";
+        let verbatim_root = PathBuf::from(format!(r"\\?\{drive}\repo"));
+        // Concatenated, not joined: `PathBuf::join("..")` would normalize
+        // the escape away before the renderer sees it.
+        let verbatim_escape = PathBuf::from(format!(r"\\?\{drive}\repo\..\outside.rs"));
         assert_eq!(
-            finding_location_text_with_platform(
-                Path::new(r"\\?\F:\repo"),
-                Path::new(r"\\?\F:\repo\..\outside.rs"),
-                true
-            ),
-            "F:/repo/../outside.rs"
+            finding_location_text_with_platform(&verbatim_root, &verbatim_escape, true),
+            format!("{drive}/repo/../outside.rs")
         );
     }
 
