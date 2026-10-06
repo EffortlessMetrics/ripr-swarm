@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:static_unknown:49492955",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/infect_wildcard_discard/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let _ = compute_fee(amount * 9);"
        },
@@ -122,7 +122,7 @@
         "id": "probe:src_lib.rs:return_value:d0b06139",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/infect_wildcard_discard/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "amount"
        },

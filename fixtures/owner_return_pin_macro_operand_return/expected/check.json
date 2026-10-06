@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:6ea804bb",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_macro_operand_return/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input * 3"
        },

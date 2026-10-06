@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:fa1d51d0",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/split_test_boundary_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input >= 10"
        },
@@ -168,7 +168,7 @@
         "id": "probe:src_lib.rs:return_value:c71d52af",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/split_test_boundary_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input >= 10"
        },

@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:34000fd8",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/source_role_harness_suppression/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= threshold"
        },

@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:99b06ce7",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/weak_error_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "return Err(AuthError::RevokedToken);"
        },
@@ -124,7 +124,7 @@
         "id": "probe:src_lib.rs:return_value:e21dcccc",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/weak_error_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "return Err(AuthError::RevokedToken);"
        },

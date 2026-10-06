@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:9e71545f",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_proximity_confirmation_not_credited/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 23,
         "expression": "Unit::Fortnight =>"
        },

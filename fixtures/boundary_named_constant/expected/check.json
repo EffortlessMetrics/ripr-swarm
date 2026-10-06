@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:566edf6b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "amount >= DISCOUNT_THRESHOLD"
        },
@@ -196,7 +196,7 @@
         "id": "probe:src_lib.rs:predicate:a6097ff7",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "items >= BULK_ITEMS"
        },
@@ -331,7 +331,7 @@
         "id": "probe:src_lib.rs:predicate:70700926",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 30,
         "expression": "amount >= FREE_SHIPPING"
        },

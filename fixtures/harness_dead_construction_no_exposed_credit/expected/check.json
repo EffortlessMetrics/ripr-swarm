@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:289dd551",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "raw.parse().unwrap_or(1)"
        },
@@ -91,7 +91,7 @@
         "id": "probe:src_lib.rs:call_deletion:3cb7de3e",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "parse_limit(raw) > 1"
        },
@@ -152,7 +152,7 @@
         "id": "probe:src_lib.rs:predicate:f16a58e4",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "parse_limit(raw) > 1"
        },

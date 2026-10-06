@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:a6087841",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_type_token_blind/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "Mode::Frozen => -1,"
        },

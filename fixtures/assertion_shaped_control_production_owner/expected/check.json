@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:e177493b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/assertion_shaped_control_production_owner/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= 100"
        },

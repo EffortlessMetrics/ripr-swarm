@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:d9aa811b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);"
        },
@@ -131,7 +131,7 @@
         "id": "probe:src_lib.rs:predicate:23bb9cc9",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "if end == start {"
        },
@@ -242,7 +242,7 @@
         "id": "probe:src_lib.rs:predicate:276aa001",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 25,
         "expression": "end == start"
        },

@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:static_unknown:da7d7aab",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/enum_variant_declaration_not_call/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "Invalid(std::string::String),"
        },
@@ -67,7 +67,7 @@
         "id": "probe:src_lib.rs:static_unknown:b01976aa",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/enum_variant_declaration_not_call/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "Ambiguous(std::string::String),"
        },
@@ -116,7 +116,7 @@
         "id": "probe:src_lib.rs:static_unknown:e006a3a4",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/enum_variant_declaration_not_call/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 6,
         "expression": "pub struct Wrap(std::string::String);"
        },
@@ -177,7 +177,7 @@
         "id": "probe:src_lib.rs:call_deletion:5804086e",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/enum_variant_declaration_not_call/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "Subject::Invalid(message.clone())"
        },
@@ -238,7 +238,7 @@
         "id": "probe:src_lib.rs:call_deletion:830ca561",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/enum_variant_declaration_not_call/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 13,
         "expression": "record(message.trim())"
        },

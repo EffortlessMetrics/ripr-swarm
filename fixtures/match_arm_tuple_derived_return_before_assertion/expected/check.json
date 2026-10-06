@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:802442a0",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "(true, false) =>"
        },
@@ -190,7 +190,7 @@
         "id": "probe:src_lib.rs:match_arm:210aa0af",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "(true, false) => \"request_identity_v1\","
        },

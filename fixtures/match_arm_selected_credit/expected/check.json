@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:bb59fbfe",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_selected_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "None =>"
        },

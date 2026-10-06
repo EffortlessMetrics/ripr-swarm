@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:94d13aee",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "return Err(ParseError::InvalidData)"
        },
@@ -202,7 +202,7 @@
         "id": "probe:src_lib.rs:return_value:1f4cb0e7",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 9,
         "expression": "return Err(ParseError::InvalidData)"
        },

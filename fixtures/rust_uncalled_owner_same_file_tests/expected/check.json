@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:672a64b9",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_uncalled_owner_same_file_tests/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 6,
         "expression": "(cents + 49) / 100"
        },

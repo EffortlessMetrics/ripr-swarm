@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:fedbf836",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_path_diagnostic_typed_message/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "let n = rdr.read(&mut buf)?;"
        },
@@ -145,7 +145,7 @@
         "id": "probe:src_lib.rs:static_unknown:afc04379",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/error_path_diagnostic_typed_message/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "let n = rdr.read(&mut buf).unwrap_or(0);"
        },

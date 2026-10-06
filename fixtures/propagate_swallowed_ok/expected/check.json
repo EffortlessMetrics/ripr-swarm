@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:f297c803",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/propagate_swallowed_ok/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 11,
         "expression": "self.persist(amount * 9).ok()"
        },

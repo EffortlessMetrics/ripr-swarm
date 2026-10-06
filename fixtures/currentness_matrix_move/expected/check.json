@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:6c1bbc04",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/currentness_matrix_move/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if value > 100 { price(value, 50) } else { price(value, 0) }"
        },
@@ -90,7 +90,7 @@
         "id": "probe:src_lib.rs:static_unknown:bc4e4027",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/currentness_matrix_move/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "fn retired_helper(value: i32) -> i32 {"
        },

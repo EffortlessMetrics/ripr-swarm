@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:e5dad37e",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/currentness_matrix_tail/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 13,
         "expression": "if cost > 0 { cost } else { 0 }"
        },
@@ -91,7 +91,7 @@
         "id": "probe:src_lib.rs:static_unknown:b399449c",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/currentness_matrix_tail/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 13,
         "expression": "fn retired_helper() -> i32 {"
        },
@@ -152,7 +152,7 @@
         "id": "probe:src_lib.rs:static_unknown:1fc3b885",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/currentness_matrix_tail/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 13,
         "expression": "let cost = 5;"
        },

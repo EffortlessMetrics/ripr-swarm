@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:14f80bce",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/infection_expected_value_literal/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 19,
         "expression": "weight_grams >= 2_000"
        },
@@ -143,7 +143,7 @@
         "id": "probe:src_lib.rs:predicate:a97c7c7c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/infection_expected_value_literal/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 28,
         "expression": "volume_litres >= 50"
        },

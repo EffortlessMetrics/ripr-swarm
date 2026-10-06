@@ -30,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:519eff0d",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-original/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "value + 1"
        },
