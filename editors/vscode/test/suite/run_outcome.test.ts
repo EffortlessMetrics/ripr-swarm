@@ -44,6 +44,18 @@ suite('run outcome guard', () => {
     assert.ok(reason?.includes('2 other test(s) failed in this run'), reason);
   });
 
+  test('multiple setup deaths pluralize the hook count', () => {
+    const reason = validateRunOutcome({
+      executed: 0,
+      failures: 2,
+      failedBeforeHooks: [
+        '"before all" hook for "extension is present"',
+        '"before all" hook for "settings roundtrip"'
+      ]
+    });
+    assert.ok(reason?.includes('2 suite setup hooks failed before their remaining tests ran'), reason);
+  });
+
   test('a zero-test run with no failures is not_run', () => {
     const reason = validateRunOutcome({ executed: 0, failures: 0, failedBeforeHooks: [] });
     assert.ok(reason?.includes('executed zero tests'), reason);

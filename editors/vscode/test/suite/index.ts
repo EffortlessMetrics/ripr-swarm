@@ -21,7 +21,7 @@ export function validateRunOutcome({
 }: RunOutcome): string | undefined {
   if (failedBeforeHooks.length > 0) {
     const lines = [
-      `${failedBeforeHooks.length} suite setup hook failed before its remaining tests ran:`,
+      `${failedBeforeHooks.length} suite setup hook${failedBeforeHooks.length === 1 ? '' : 's'} failed before ${failedBeforeHooks.length === 1 ? 'its' : 'their'} remaining tests ran:`,
       ...failedBeforeHooks.map((title) => `- ${title}`)
     ];
     const otherFailures = Math.max(0, failures - failedBeforeHooks.length);
