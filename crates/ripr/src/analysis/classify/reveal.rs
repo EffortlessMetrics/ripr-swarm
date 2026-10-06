@@ -44,11 +44,12 @@ fn reveal_evidence(
     (observe, discriminate, related)
 }
 
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
     reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
 )]
-pub(in crate::analysis) fn reveal_evidence_with_expression(
+fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
@@ -58,21 +59,68 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>, usize) {
+    let outcome = reveal_outcome(
+        probe,
+        analysis_expression,
+        related_tests,
+        owner_local_bindings,
+        same_name_import_defeats,
+        cross_package_name_defeats,
+        return_admission,
+        arm_selector,
+    );
+    (
+        outcome.observe,
+        outcome.discriminate,
+        outcome.related,
+        outcome.related_total,
+    )
+}
+
+/// The reveal stages plus whether the owner pin was credited.
+pub(in crate::analysis) struct RevealOutcome {
+    pub(in crate::analysis) observe: StageEvidence,
+    pub(in crate::analysis) discriminate: StageEvidence,
+    pub(in crate::analysis) related: Vec<RelatedTest>,
+    pub(in crate::analysis) related_total: usize,
+    /// #6692: an assertion credited to this probe pinned the owner's
+    /// return value through `ReturnOracleAdmission::owner_return_pin`
+    /// after every reveal gate (name-only relations next to a
+    /// reach-bearing test, foreign same-name imports, cross-package
+    /// same-name definitions, the exact error variant).
+    pub(in crate::analysis) owner_pin_credited: bool,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
+pub(in crate::analysis) fn reveal_outcome(
+    probe: &Probe,
+    analysis_expression: &str,
+    related_tests: &[(&TestSummary, RelationReason)],
+    owner_local_bindings: &[String],
+    same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
+) -> RevealOutcome {
     if related_tests.is_empty() {
-        return (
-            StageEvidence::new(
+        return RevealOutcome {
+            observe: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
                 "No reachable test oracle found",
             ),
-            StageEvidence::new(
+            discriminate: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
                 "No assertion can discriminate the changed behavior without a reachable test",
             ),
-            Vec::new(),
-            0,
-        );
+            related: Vec::new(),
+            related_total: 0,
+            owner_pin_credited: false,
+        };
     }
 
     let analysis = analyze_related_assertions(
@@ -120,7 +168,13 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         )
     };
 
-    (observe, discriminate, related, related_tests_total)
+    RevealOutcome {
+        observe,
+        discriminate,
+        related,
+        related_total: related_tests_total,
+        owner_pin_credited: analysis.owner_pin_credited,
+    }
 }
 
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
@@ -134,6 +188,8 @@ struct RevealAssertionAnalysis {
     /// oracle, even when both assertions are in the same related test.
     strongest_observation_confirmed: bool,
     matched_any: bool,
+    /// #6692: some credited assertion pinned the owner's return value.
+    owner_pin_credited: bool,
     refused_context: bool,
     /// True when a test related only by file or module matched an assertion
     /// but could not confirm a match arm, because another related test reaches
@@ -382,6 +438,7 @@ fn analyze_related_assertions(
     let mut strongest_kind = OracleKind::Unknown;
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
+    let mut owner_pin_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
@@ -403,15 +460,8 @@ fn analyze_related_assertions(
     // nothing the changed `try_parse` does (#4486). Same-file and same-module
     // tests keep crediting: they commonly exercise a private helper through
     // the module's own entry point, which the relation cannot see.
-    let name_only = |reason: RelationReason| {
-        matches!(
-            reason,
-            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
-        )
-    };
-    let reach_bearing_related = related_tests
-        .iter()
-        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
+    let name_only = is_name_only_relation;
+    let credits = oracle_crediting_relations(related_tests);
     // A seam callee call runs the seam's callee, not the owner (`reach.rs`
     // keeps it out of owner reach), so it cannot be the reaching test that
     // withholds a same-file match-arm confirmation below.
@@ -424,7 +474,7 @@ fn analyze_related_assertions(
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = !(reach_bearing_related && name_only(*reason));
+        let credits_oracle = credits(*reason);
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -506,7 +556,10 @@ fn analyze_related_assertions(
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins.
+            // for return-value exact pins. #6692: a field of a hand-written
+            // `Clone::clone`'s returned literal is pinned by
+            // `assert_eq!(recv.clone(), recv)` under the same gates
+            // (`OwnerReturnPin::establish_clone_field`).
             //
             // A bare `assert!` pins a bool owner's return value the same way
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
@@ -521,6 +574,10 @@ fn analyze_related_assertions(
                         | OracleKind::RelationalCheck
                 ),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
+                ProbeFamily::FieldConstruction => matches!(
+                    assertion.kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                ),
                 _ => false,
             } && (return_admission.owner_return_pin)(test, assertion);
             let bool_owner_pinned =
@@ -533,6 +590,19 @@ fn analyze_related_assertions(
                 cross_package_defeats_owner,
                 owner_pinned,
             );
+            // #6692: the owner pin is credited only through an assertion
+            // that matched, from a test that may supply the oracle, with the
+            // pin surviving the reveal-side defeats. The missing-field
+            // cleanup in `ClassifiedProbeEvidence::gather` reads this.
+            owner_pin_credited |= matched
+                && credits_oracle
+                && owner_return_pin_holds(
+                    &match_context,
+                    assertion,
+                    owner_pinned,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                );
             if matched && !credits_oracle {
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -642,6 +712,7 @@ fn analyze_related_assertions(
         strongest_kind,
         strongest_observation_confirmed,
         matched_any,
+        owner_pin_credited,
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
@@ -1497,11 +1568,13 @@ fn assertion_matches_probe_detail_with_literals(
     // Same defeats as the guarded-match shortcut above: no foreign
     // same-name import, no same-named function in the test's own package,
     // and the exact variant when the changed expression constructs one.
-    let owner_return_pinned = owner_pinned
-        && !import_defeats_owner
-        && !cross_package_defeats_owner
-        && error_construction_variant
-            .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant));
+    let owner_return_pinned = owner_return_pin_holds(
+        context,
+        assertion,
+        owner_pinned,
+        import_defeats_owner,
+        cross_package_defeats_owner,
+    );
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -1579,6 +1652,26 @@ fn assertion_matches_probe_detail_with_literals(
     (matched, has_token_match)
 }
 
+/// #4478: whether an owner-pinned assertion keeps its pin after the
+/// reveal-side defeats: no foreign same-name import, no same-named
+/// function in the test's own package, and the exact variant when the
+/// changed expression constructs one. The one authority for both the
+/// match decision and the credited owner-pin outcome (#6692).
+fn owner_return_pin_holds(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    owner_pinned: bool,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    owner_pinned
+        && !import_defeats_owner
+        && !cross_package_defeats_owner
+        && context
+            .error_construction_variant
+            .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
@@ -1620,7 +1713,7 @@ fn assertion_matches_probe_detail(
 /// its terminating `;` — the callee-independent half of
 /// `use_statements_import_foreign_callee_name`, so one scan of a file serves every
 /// callee and every probe (see `FileUseStatements`).
-fn file_use_statements(source: &str) -> Vec<String> {
+pub(in crate::analysis::classify) fn file_use_statements(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     all_use_statements(&masked)
         .iter()
@@ -1842,7 +1935,7 @@ fn is_ident_byte(byte: u8) -> bool {
 /// The first path segment of a `use` statement (the keyword is still
 /// present): `use crate::x::y;` -> `crate`, `use a::b::{c};` -> `a`. An
 /// empty segment (a brace-rooted `use {..};`) signals no path prefix.
-fn use_statement_first_segment(statement: &str) -> Option<&str> {
+pub(in crate::analysis::classify) fn use_statement_first_segment(statement: &str) -> Option<&str> {
     let rest = statement.trim_start().strip_prefix("use")?;
     // `use ::name::..` roots the path at the extern crate `name`, the same
     // crate `use name::..` names.
@@ -2228,6 +2321,28 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
         Some(RelationConfidence::Low) => 1,
         Some(RelationConfidence::Opaque) | None => 0,
     }
+}
+
+/// Which relations may supply a credited oracle: a name-only relation
+/// (`WeakTokenSubstring`, `OwnerNamedTest`) may not while any related test
+/// bears reach. Shared with the RIPR-SPEC-0240 refusal scope, which must judge
+/// exactly the tests that could have credited the refused assertions.
+pub(in crate::analysis) fn oracle_crediting_relations(
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> impl Fn(RelationReason) -> bool + use<> {
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !is_name_only_relation(*reason) && !is_proximity_only(*reason));
+    move |reason| !(reach_bearing_related && is_name_only_relation(reason))
+}
+
+/// A relation made only by the test's name or path (a changed token, the
+/// owner's name), with no captured call, helper chain or assertion affinity.
+fn is_name_only_relation(reason: RelationReason) -> bool {
+    matches!(
+        reason,
+        RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+    )
 }
 
 pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
@@ -2952,6 +3067,95 @@ mod tests {
         );
         if reveal(&parameter, &parameter_observer).state != StageState::Yes {
             return Err("a receiver that is not an owner local must still confirm".to_string());
+        }
+        Ok(())
+    }
+
+    /// #6773 review: the clone-field missing-field cleanup reads reveal's
+    /// credited owner-pin outcome. A name-only test that holds
+    /// `assert_eq!(w.clone(), w)` next to a reach-bearing test supplies no
+    /// oracle, so the pin is not credited; neither is it through a foreign
+    /// same-name import or a cross-package same-name definition. A
+    /// reach-bearing test holding the same assertion credits it.
+    #[test]
+    fn a_clone_field_owner_pin_is_credited_only_through_reveals_gates() -> Result<(), String> {
+        let mut probe = probe(ProbeFamily::FieldConstruction, "start: self.start,");
+        probe.owner = Some(SymbolId(
+            "src/lib.rs::impl Clone for Window::clone".to_string(),
+        ));
+        let pinned_text = "assert_eq!(w.clone(), w);";
+        let pinned = test_with_assertions(
+            "clone_round_trip",
+            vec![oracle(
+                pinned_text,
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let reach = test_with_assertions(
+            "builds_a_window",
+            vec![oracle(
+                "assert!(w.is_open());",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            )],
+        );
+        let pin = |_: &TestSummary, assertion: &OracleFact| assertion.text == pinned_text;
+        let credited = |related: &[(&TestSummary, RelationReason)],
+                        import: &dyn Fn(&TestSummary, &str) -> bool,
+                        package: &dyn Fn(&TestSummary, &str) -> bool| {
+            reveal_outcome(
+                &probe,
+                &probe.expression,
+                related,
+                &[],
+                import,
+                package,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &pin,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                },
+                None,
+            )
+            .owner_pin_credited
+        };
+        let never = |_: &TestSummary, _: &str| false;
+        let always = |_: &TestSummary, _: &str| true;
+        if !credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &never,
+            &never,
+        ) {
+            return Err("a reach-bearing test's owner pin must be credited".to_string());
+        }
+        for name_only in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+        ] {
+            if credited(
+                &[
+                    (&pinned, name_only),
+                    (&reach, RelationReason::DirectOwnerCall),
+                ],
+                &never,
+                &never,
+            ) {
+                return Err(format!(
+                    "{name_only:?} test credited the owner pin next to a reach-bearing test"
+                ));
+            }
+        }
+        if credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &always,
+            &never,
+        ) || credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &never,
+            &always,
+        ) {
+            return Err("a same-name import or package definition must defeat the pin".to_string());
         }
         Ok(())
     }
@@ -6127,5 +6331,33 @@ return Err(\"typed pin\".into());
             "non-collection effect observers stay on the existing Part C path: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0240: a name-only relation stops counting once a
+    /// reach-bearing relation exists, so its refused assertion cannot decide
+    /// whether a gap is withheld; alone, it still counts.
+    #[test]
+    fn name_only_relations_stop_crediting_beside_a_reach_bearing_one() {
+        let direct = test_with_assertions("direct", Vec::new());
+        let named = test_with_assertions("named", Vec::new());
+        let mixed = [
+            (&direct, RelationReason::DirectOwnerCall),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&mixed);
+        assert!(credits(RelationReason::DirectOwnerCall));
+        assert!(!credits(RelationReason::OwnerNamedTest));
+        assert!(!credits(RelationReason::WeakTokenSubstring));
+
+        let name_only = [(&named, RelationReason::OwnerNamedTest)];
+        let credits = oracle_crediting_relations(&name_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
+
+        let proximity_only = [
+            (&direct, RelationReason::SameTestFile),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&proximity_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
     }
 }

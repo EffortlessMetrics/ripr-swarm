@@ -230,6 +230,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         StopReason::MacroReachUnresolved => {
             "a test may reach this through a macro ripr does not expand"
         }
+        StopReason::GapEvidenceUnresolved => {
+            "a related test asserts, but ripr could not tie that assertion to this change"
+        }
     }
 }
 

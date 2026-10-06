@@ -182,6 +182,14 @@ pub(crate) fn probes_for_file_with_relations(
             if has_matching_added_line(removed, &family, changed) {
                 continue;
             }
+            if family == ProbeFamily::StaticUnknown
+                && has_adjacent_reordered_added_line(removed, changed)
+                && probes
+                    .iter()
+                    .any(|seeded| seeded.probe.before.as_deref() == Some(text))
+            {
+                continue;
+            }
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 removed,
@@ -788,6 +796,79 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// #6675: a removed line whose adjacent added replacement holds exactly the
+/// same non-whitespace characters only reorders them (an operand swap such
+/// as `(hi << 8) | lo` -> `lo | (hi << 8)`). The added line's own probe
+/// already carries the change, with this removed text as its `before`, so
+/// the removed side's catch-all `static_unknown` adds nothing. The caller
+/// suppresses it only when an added-side probe really carries this removed
+/// text as its `before`. Only the static-unknown catch-all is suppressed
+/// this way; a removed line with a concrete family keeps the existing
+/// family-and-token pairing.
+///
+/// The character comparison reads only plain `".."` strings: a line with a
+/// raw string (`r#"a" b"#`) or a `'"'` char literal is never read as a
+/// reorder (fail closed: the removed probe stays).
+fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
+    if has_unpaired_quote_literal(&removed_line.text) {
+        return false;
+    }
+    let removed = sorted_code_characters(&removed_line.text);
+    !removed.is_empty()
+        && changed.added_lines.iter().any(|line| {
+            let run_start = added_run_start(line.new_side_line, changed);
+            (lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
+                || lines_are_adjacent(removed_line.new_side_line, run_start))
+                && !has_unpaired_quote_literal(&line.text)
+                && sorted_code_characters(&line.text) == removed
+        })
+}
+
+/// Whether a line holds a literal whose `"` the plain string scan of
+/// [`sorted_code_characters`] would misread: a raw string (`r".."`,
+/// `r#".."#`, `br".."`, `cr".."`) or a char literal `'"'`.
+fn has_unpaired_quote_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.contains("'\"'")
+        || bytes.iter().enumerate().any(|(offset, byte)| {
+            *byte == b'r'
+                && matches!(bytes.get(offset + 1), Some(b'"' | b'#'))
+                && (offset == 0
+                    || !(bytes[offset - 1].is_ascii_alphanumeric() || bytes[offset - 1] == b'_')
+                    || (matches!(bytes[offset - 1], b'b' | b'c')
+                        && (offset == 1
+                            || !(bytes[offset - 2].is_ascii_alphanumeric()
+                                || bytes[offset - 2] == b'_'))))
+        })
+}
+
+/// The characters of a line in sorted order, without whitespace outside
+/// string literals: `"a b"` and `"ab"` differ, so changing a literal's
+/// spacing is never read as a reorder.
+fn sorted_code_characters(text: &str) -> Vec<char> {
+    let mut characters = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in text.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+        } else if character == '"' {
+            in_string = true;
+        }
+        if in_string || character == '"' || !character.is_whitespace() {
+            characters.push(character);
+        }
+    }
+    characters.sort_unstable();
+    characters
 }
 
 /// The removed line this added line replaced, paired by position inside one
@@ -1922,6 +2003,149 @@ mod tests {
         if let Some(inserted) = inserted {
             assert_eq!(inserted.before, Some("if legacy_flag {".to_string()));
         }
+    }
+
+    /// #6675: an operand-swap rewrite keeps one probe on the added line,
+    /// whose `before` is the removed text; the removed side adds no second
+    /// static-unknown catch-all. A rewrite that changes characters
+    /// (`|` -> `&`) still keeps the removed side's static-unknown probe.
+    #[test]
+    fn reordered_replacement_does_not_repeat_the_removed_static_unknown() {
+        let swap = |removed: &str, added: &str| ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 36,
+                new_side_line: 36,
+                text: added.to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 36,
+                new_side_line: 36,
+                text: removed.to_string(),
+            }],
+        };
+        let removed = "(u16::from(hi) << 8) | u16::from(lo)";
+        assert_eq!(
+            classify_changed_line(removed),
+            vec![ProbeFamily::StaticUnknown],
+            "fixture: the removed line must reach the static-unknown catch-all"
+        );
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &swap(removed, "u16::from(lo) | (u16::from(hi) << 8)"),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != removed),
+            "the reordered removed line must not get its own probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.before.as_deref() == Some(removed)),
+            "the added line's probe must keep the removed text as before: {probes:?}"
+        );
+
+        let changed_operator = probes_for_file(
+            Path::new("workspace"),
+            &swap(removed, "u16::from(lo) & (u16::from(hi) << 8)"),
+            &RustIndex::default(),
+        );
+        assert!(
+            changed_operator
+                .iter()
+                .any(|probe| probe.expression == removed
+                    && probe.family == ProbeFamily::StaticUnknown),
+            "a changed operator keeps the removed static-unknown probe: {changed_operator:?}"
+        );
+        // A raw string's inner `"` flips the plain string scan: `r#"a" b"#`
+        // and `r#"a"b"#` hold different values, yet the plain scan drops the
+        // space it misreads as outside a string, so their sorted characters
+        // agree. The raw-string guard keeps the removed probe.
+        let raw = "f(r#\"a\" b\"#) | y";
+        let raw_changed = "f(r#\"a\"b\"#) | y";
+        assert_eq!(
+            sorted_code_characters(raw),
+            sorted_code_characters(raw_changed),
+            "premise: the plain scan misreads the raw string"
+        );
+        let raw_swapped = swap(raw, raw_changed);
+        assert!(
+            raw_swapped
+                .removed_lines
+                .first()
+                .is_some_and(|line| !has_adjacent_reordered_added_line(line, &raw_swapped)),
+            "a raw-string line is never read as a reorder"
+        );
+        // An adjacent character-equal added line whose probe does not carry
+        // the removed text as `before` (positional pairing gives it the
+        // other removed line) does not suppress the removed probe.
+        let paired_elsewhere = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![
+                ChangedLine {
+                    line: 36,
+                    new_side_line: 36,
+                    text: "u16::from(lo) | (u16::from(hi) << 8)".to_string(),
+                },
+                ChangedLine {
+                    line: 37,
+                    new_side_line: 37,
+                    text: String::new(),
+                },
+            ],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 36,
+                    new_side_line: 36,
+                    text: "let total = base + 1;".to_string(),
+                },
+                ChangedLine {
+                    line: 37,
+                    new_side_line: 36,
+                    text: removed.to_string(),
+                },
+            ],
+        };
+        assert!(
+            paired_elsewhere
+                .removed_lines
+                .get(1)
+                .is_some_and(|line| has_adjacent_reordered_added_line(line, &paired_elsewhere)),
+            "premise: the added line is an adjacent reorder of the removed one"
+        );
+        let paired_probes = probes_for_file(
+            Path::new("workspace"),
+            &paired_elsewhere,
+            &RustIndex::default(),
+        );
+        assert!(
+            paired_probes
+                .iter()
+                .filter(|probe| probe.expression != removed)
+                .all(|probe| probe.before.as_deref() != Some(removed)),
+            "premise: no added probe carries the removed text: {paired_probes:?}"
+        );
+        assert!(
+            paired_probes
+                .iter()
+                .any(|probe| probe.expression == removed
+                    && probe.family == ProbeFamily::StaticUnknown),
+            "without a carrying added probe the removed static-unknown stays: {paired_probes:?}"
+        );
+        assert!(has_unpaired_quote_literal("x == '\"' | y"));
+        assert!(has_unpaired_quote_literal("br\"a\" | y"));
+        assert!(!has_unpaired_quote_literal("bar(\"x\") | y"));
+        // Whitespace inside a string literal is content, not layout.
+        let spaced = "log(\"a b\", x) | y";
+        assert_ne!(
+            sorted_code_characters(spaced),
+            sorted_code_characters("log(\"ab\", x) | y")
+        );
+        assert_eq!(
+            sorted_code_characters(spaced),
+            sorted_code_characters("y | log(\"a b\",x)")
+        );
     }
 
     // Regression: in a multi-line replacement block (`-a -b -c +x +y +z`),
