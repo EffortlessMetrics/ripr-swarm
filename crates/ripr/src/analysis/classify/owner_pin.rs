@@ -1100,7 +1100,7 @@ fn type_compares_by_value(ty: &str, declaring: &str, index: &RustIndex, depth: u
         return false;
     };
     if let Some((root, _)) = path.trim_start_matches("::").split_once("::")
-        && !(STD_ROOTS.contains(&root.trim()) && !workspace_renames_to(index, root.trim()))
+        && (!STD_ROOTS.contains(&root.trim()) || workspace_renames_to(index, root.trim()))
     {
         return false;
     }
