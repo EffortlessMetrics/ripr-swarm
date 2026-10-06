@@ -263,3 +263,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (17)
+
+Reason:
+RIPR-SPEC-0197: re-apply #5359 refusal disclosure (Why unrevealed / Not credited / owner-calling next step) on top of main's workspace-relative locations and canonical gap lines after merging main
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

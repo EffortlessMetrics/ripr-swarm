@@ -91,3 +91,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_refused (8)
+
+Reason:
+RIPR-SPEC-0197: re-apply #5359 refusal disclosure (Why unrevealed / Not credited / owner-calling next step) on top of main's workspace-relative locations and canonical gap lines after merging main
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
