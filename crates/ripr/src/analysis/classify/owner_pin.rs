@@ -247,7 +247,7 @@ fn trusted_macro_ambiguities_in(index: &RustIndex) -> BTreeSet<String> {
     let (likely, rest): (Vec<&str>, Vec<&str>) = index
         .files()
         .values()
-        .map(|facts| facts.data().source.as_str())
+        .map(|facts| facts.data().source.as_ref())
         .partition(|source| may_saturate_macro_ambiguity(source));
     let mut ambiguous = scan(&likely);
     if ambiguous.len() < NON_RETURNING_MACROS.len() {
@@ -469,7 +469,8 @@ impl OwnerReturnPin {
         if test
             .attrs
             .iter()
-            .chain(std::iter::once(&test.body))
+            .map(String::as_str)
+            .chain(std::iter::once(test.body.as_str()))
             .any(|text| text.contains("should_panic"))
         {
             return false;
@@ -542,7 +543,7 @@ impl OwnerReturnPin {
         let test_source = index
             .files()
             .get(&test.file)
-            .map(|facts| facts.data().source.as_str());
+            .map(|facts| facts.data().source.as_ref());
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -1040,7 +1041,7 @@ fn derived_equality<'a>(
             .iter()
             .any(|self_ty| path_base_name(strip_type_arguments(self_ty)) == Some(type_name))
     });
-    (!manual).then_some((facts, declaring_file.data().source.as_str()))
+    (!manual).then_some((facts, &*declaring_file.data().source))
 }
 
 /// Standard types whose `==` compares by value.

@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::run::{CapturedOutput, capture_output_in_dir};
+use crate::run::{CapturedOutput, capture_output_in_dir, capture_output_in_dir_with_envs};
 
 const DEFAULT_OUT: &str = "target/ripr/first-run";
 const SCHEMA_VERSION: &str = "first_run.v1";
@@ -144,8 +144,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let ripr = if options.install_published {
         let root = out.join("install-root");
         // Outside the repository so its rust-toolchain and cargo config do not
-        // decide how the published crate builds.
-        let step = timed(
+        // decide how the published crate builds. A fresh CARGO_HOME keeps the
+        // crates `cargo xtask` already downloaded for xtask out of the timing,
+        // so the sample is a cold install.
+        let cargo_home = out.join("cargo-home").display().to_string();
+        let step = timed_with_envs(
             &std::env::temp_dir(),
             "install_published",
             "cargo",
@@ -156,6 +159,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 "--root".into(),
                 root.display().to_string(),
             ],
+            &[("CARGO_HOME", cargo_home.as_str())],
         )?;
         let failed = step.exit != Some(0);
         if failed {
@@ -272,8 +276,18 @@ impl StepResult {
 }
 
 fn timed(cwd: &Path, name: &str, program: &str, args: &[String]) -> Result<StepResult, String> {
+    timed_with_envs(cwd, name, program, args, &[])
+}
+
+fn timed_with_envs(
+    cwd: &Path,
+    name: &str,
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Result<StepResult, String> {
     let started = Instant::now();
-    let captured = capture_output_in_dir(program, args, cwd, name)?;
+    let captured = capture_output_in_dir_with_envs(program, args, cwd, name, envs, &[])?;
     Ok(step_result(name, program, args, started, captured))
 }
 

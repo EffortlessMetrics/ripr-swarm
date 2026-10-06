@@ -599,14 +599,15 @@ fn has_field_shape(text: &str) -> bool {
 /// declares without an initializer. `None` when the line is not a `let`
 /// statement.
 fn let_binding_initializer(text: &str) -> Option<Option<String>> {
-    let text = text.trim_start();
-    if !text
+    // Masked first: a comment between `let` and the pattern
+    // (`let/* note */value`) separates the tokens like whitespace.
+    let masked = mask_comments_and_strings(text.trim_start());
+    if !masked
         .strip_prefix("let")
         .is_some_and(|rest| rest.starts_with(char::is_whitespace))
     {
         return None;
     }
-    let masked = mask_comments_and_strings(text);
     let span = initializer_span(&masked);
     if span.len() == masked.len() {
         // No top-level `=`: `initializer_span` fell back to the whole line.
@@ -773,6 +774,7 @@ mod tests {
             "let label: &str = \"a: b\"; // note: c",
             "let\tvalue: u8 = 0;",
             "let\n    value: u8 = 0;",
+            "let/* note */value: u8 = 0;",
         ] {
             let families = classify_changed_line(text);
             assert!(

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:d9aa811b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_map_or_else",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "let_end=input.rfind_delim_.map_or_else_1_idx_idx"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:d9aa811b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);"
        },
@@ -100,6 +112,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:23bb9cc9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_shifted_closure:predicate_boundary:predicate:end==start",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_shifted_closure:predicate_boundary:predicate:end==start",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_shifted_closure",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "end==start"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -107,7 +131,7 @@
         "id": "probe:src_lib.rs:predicate:23bb9cc9",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 14,
         "expression": "if end == start {"
        },
@@ -199,6 +223,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:276aa001",
+      "canonical_gap_id": "gap:rust:src/lib.rs:via_dynamic_needle:predicate_boundary:predicate:end==start",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:via_dynamic_needle:predicate_boundary:predicate:end==start",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "via_dynamic_needle",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "end==start"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,
@@ -206,7 +242,7 @@
         "id": "probe:src_lib.rs:predicate:276aa001",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_value_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 25,
         "expression": "end == start"
        },
