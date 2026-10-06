@@ -2,6 +2,7 @@ mod build;
 use build::MissAttribution;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
+pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;

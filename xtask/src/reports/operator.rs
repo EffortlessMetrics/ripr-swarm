@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[path = "../../../crates/ripr/src/agent/loop_commands.rs"]
-mod loop_commands;
+pub(super) mod loop_commands;
 
 const TOP_WEAK_SEAMS_LIMIT: usize = 5;
 const BEFORE_SNAPSHOT_COMMAND: &str = "ripr pilot --out target/ripr/pilot";

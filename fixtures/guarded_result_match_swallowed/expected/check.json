@@ -45,8 +45,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
-      "evidence": ["Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"],
+      "evidence": ["Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin", "assertion not credited: `assert_eq!` in logs_failures_without_discriminating at tests/messages.rs:9: the assertion is inside a `match` arm"],
+      "missing": ["Missing discriminator value: ParseError::InvalidData", "No exact error variant discriminator was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"],
       "assertion_texts": {
         "5": "match expect_ready(\"busy\", 12) {",
         "9": "assert_eq!(value, 12)",
@@ -204,8 +204,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
-      "evidence": ["Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin", "assertion not credited: `assert_eq!` in logs_failures_without_discriminating at tests/messages.rs:9: the assertion is inside a `match` arm"],
+      "missing": ["Missing discriminator value: ParseError::InvalidData", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "match expect_ready(\"busy\", 12) {",
         "9": "assert_eq!(value, 12)",
