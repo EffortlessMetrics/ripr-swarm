@@ -564,17 +564,61 @@ fn strongest_row_matches_the_aggregate_family_result() -> Result<(), String> {
         ),
     ] {
         let finding = classify(line, &bodies)?;
-        let row_rank = finding
+        // Kind and rank together: a rank-only suffix would let a row whose
+        // kind differs from the aggregate's slip through.
+        let strongest_row = finding
             .related_tests
             .iter()
-            .map(|row| row.oracle_strength.rank())
-            .max()
-            .unwrap_or(0);
+            .max_by_key(|row| row.oracle_strength.rank())
+            .ok_or_else(|| "expected a related row".to_string())?;
+        let expected = format!(
+            "`{}` (rank {})",
+            strongest_row.oracle_kind.as_str(),
+            strongest_row.oracle_strength.rank()
+        );
         let summary = &finding.ripr.reveal.observe.summary;
         assert!(
-            summary.ends_with(&format!("(rank {row_rank})")),
-            "aggregate `{summary}` vs strongest row rank {row_rank}"
+            summary.ends_with(&expected),
+            "aggregate `{summary}` vs strongest row {expected}"
         );
     }
+    Ok(())
+}
+
+/// Two equal-strength value assertions on one line: the oracle metadata
+/// names the same assertion the row selected, not the last-listed one, so
+/// the row and the packet facts never describe different assertions.
+#[test]
+fn same_line_equal_assertions_keep_row_and_metadata_together() -> Result<(), String> {
+    let body = "  expect(applyDiscount(100)).toBe(90); expect(applyDiscount(200)).toBe(180);\n";
+    let test = parse_test("", body)?;
+    let row_pick =
+        select_family_relevant_assertion(&test.assertions, Some(&ProbeFamily::ReturnValue))
+            .assertion()
+            .ok_or_else(|| "expected a selected assertion".to_string())?;
+    // The row's tie-break picks the first-listed assertion here, so a
+    // last-max metadata pick over all assertions would name the other one.
+    assert_eq!(
+        row_pick.observed_expression.as_deref(),
+        Some("applyDiscount(100)")
+    );
+    let finding = classify(RETURN_LINE, &[body])?;
+    let metadata = |prefix: &str| {
+        finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(prefix))
+            .map(str::to_string)
+    };
+    assert_eq!(
+        metadata("typescript_oracle_observed: ").as_deref(),
+        Some("applyDiscount(100)"),
+        "evidence: {:?}",
+        finding.evidence
+    );
+    assert_eq!(
+        metadata("typescript_oracle_expected: ").as_deref(),
+        Some("90")
+    );
     Ok(())
 }
