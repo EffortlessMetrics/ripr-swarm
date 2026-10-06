@@ -34,7 +34,8 @@ pub(crate) fn path_is_unplaceable(path: &str) -> bool {
 /// Message prefix naming the location of an annotation that could not be
 /// placed on its file. `line` is the display text of the line number; an empty
 /// or `0` line names the file alone. The path is shown as given: stable path
-/// text keeps its `%XX` notation, which is what keeps distinct names distinct.
+/// text from the check renderer keeps its `%XX` notation, which is what keeps
+/// distinct names distinct; raw `comments.json` paths show as written.
 pub(crate) fn unplaced_location_prefix(path: &str, line: &str) -> String {
     let location = if line.is_empty() || line == "0" {
         path.to_string()
