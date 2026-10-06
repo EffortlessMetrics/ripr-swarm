@@ -17,6 +17,7 @@
 
 mod dependent_scope;
 pub(crate) mod oracles;
+mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
@@ -1790,6 +1791,22 @@ impl RustAdapter {
                     &index,
                     binding_relation.as_ref(),
                 );
+                // #5268: the producer names the canonical gap identity from
+                // the changed-line evidence it already holds, after the
+                // finding's typed static limitation is settled (mirroring the
+                // Python producer's `static_limit.is_none()` gate). A
+                // static-limited finding keeps `canonical_gap: None`, so the
+                // MCP readiness refusal stays `static_limitation`; a finding
+                // without a derivable discriminator keeps the typed refusal
+                // too — no evidence is manufactured here.
+                if finding.static_limit_kind.is_none() {
+                    finding.canonical_gap = probe_shape::canonical_rust_gap_for(
+                        &changed.path,
+                        probe.owner.as_ref(),
+                        &probe.family,
+                        &probe.expression,
+                    );
+                }
                 push_retained_finding(&mut findings, finding);
             }
         }
@@ -2206,6 +2223,16 @@ impl RustAdapter {
                     &transitive_reach,
                 );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
+                // #5268: same producer-owned canonical gap identity as the
+                // diff loop, behind the same typed static-limitation gate.
+                if finding.static_limit_kind.is_none() {
+                    finding.canonical_gap = probe_shape::canonical_rust_gap_for(
+                        path,
+                        probe.owner.as_ref(),
+                        &probe.family,
+                        &probe.expression,
+                    );
+                }
                 push_retained_finding(&mut findings, finding);
             }
         }
@@ -2405,6 +2432,137 @@ mod tests {
                 "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
             )?;
         }
+        Ok(())
+    }
+
+    // #5268: the diff producer names the canonical gap identity from the
+    // changed-line evidence it already holds, behind the finding's typed
+    // static-limitation gate.
+    #[test]
+    fn diff_analysis_populates_the_canonical_gap_identity() -> Result<(), String> {
+        let root = temp_root("canonical-gap-diff")?;
+        write_pricing_crate(&root, true)?;
+        let changed_files = diff::parse_unified_diff(pricing_threshold_diff());
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.owner.is_some() && finding.probe.family == ProbeFamily::Predicate
+            })
+            .ok_or_else(|| format!("missing owned predicate finding: {:?}", result.findings))?;
+        let gap = finding
+            .canonical_gap
+            .as_ref()
+            .ok_or_else(|| "the diff producer must populate the canonical gap".to_string())?;
+        assert_eq!(gap.language, "rust");
+        assert_eq!(gap.file, "src/lib.rs");
+        assert_eq!(gap.owner, "discount");
+        assert_eq!(gap.behavior_kind, "predicate_boundary");
+        assert_eq!(gap.probe_kind, "predicate");
+        // The changed comparison renders its equality boundary: the same
+        // discriminator text the classifier's missing-discriminator
+        // statement renders for the seam.
+        assert_eq!(gap.normalized_discriminator, "total==100");
+        assert_eq!(
+            gap.id,
+            "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100"
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn static_limited_finding_keeps_canonical_gap_none() -> Result<(), String> {
+        // The macro-guarded value-propagation limitation is a typed static
+        // limitation on the finding itself, so the canonical gap stays
+        // withheld exactly like the Python producer withholds it — the MCP
+        // readiness refusal stays `static_limitation`, not a language gap.
+        let (root, result) = binding_value_crate(
+            "canonical-gap-static-limited",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    ensure!(end == start);",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.static_limit_kind.is_some())
+            .ok_or_else(|| format!("missing static-limited finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding
+                .static_limit_kind
+                .as_ref()
+                .map(StaticLimitKind::as_str),
+            Some("rust_value_propagation_unresolved")
+        );
+        assert!(
+            finding.canonical_gap.is_none(),
+            "a static-limited finding must keep canonical_gap None: {:?}",
+            finding.canonical_gap
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_analysis_populates_the_canonical_gap_identity() -> Result<(), String> {
+        let root = temp_root("canonical-gap-repo")?;
+        write_pricing_crate(&root, true)?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.probe.owner.is_some())
+            .ok_or_else(|| format!("missing owned repo finding: {:?}", result.findings))?;
+        let gap = finding
+            .canonical_gap
+            .as_ref()
+            .ok_or_else(|| "the repo producer must populate the canonical gap".to_string())?;
+        assert_eq!(gap.language, "rust");
+        assert_eq!(gap.file, "src/lib.rs");
+        assert_eq!(gap.owner, "discount");
+        assert_eq!(
+            gap.id, "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100",
+            "diff and repo producers must derive the same identity for the same seam"
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 

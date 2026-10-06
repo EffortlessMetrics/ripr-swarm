@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_fragment_checks.rs:predicate:41d9e03a",
+      "canonical_gap_id": "gap:rust:src/fragment_checks.rs:assert_workspace_source_paths_are_stable:predicate_boundary:predicate:fragment.crate_root.is_none",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/fragment_checks.rs:assert_workspace_source_paths_are_stable:predicate_boundary:predicate:fragment.crate_root.is_none",
+        "language": "rust",
+        "file": "src/fragment_checks.rs",
+        "owner": "assert_workspace_source_paths_are_stable",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "fragment.crate_root.is_none"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,

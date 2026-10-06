@@ -82,3 +82,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — match_arm_positive (8)
+
+Reason:
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless match_arm_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_positive (9)
+
+Reason:
+RIPR-SPEC-0045: review fix #5268 - quoted string/char literals are now byte-encoded in the Rust gap discriminator key so distinct predicates never share one identity; golden-drift.json shows zero semantic flips on the re-run
+
+Command:
+`cargo xtask goldens bless match_arm_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

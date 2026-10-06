@@ -13,6 +13,7 @@ Start here:
   File: fixtures/error_path_diagnostic_error/input/src/lib.rs:5
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
   Changed behavior: let n = rdr.read(&mut buf)?;
   Missing discriminator: No exact error variant discriminator was detected
   Related test: src/lib.rs:14 reads_successfully (ripr could not confirm that this assertion observes the changed behavior)

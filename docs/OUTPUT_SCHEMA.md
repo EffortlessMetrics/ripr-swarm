@@ -1720,14 +1720,23 @@ JSON fields:
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
   `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
-  Static-limit findings may omit this field until a non-actionable gap-state
-  projection exists.
+  Rust findings use the same shape with the `gap:rust:` language token, the
+  workspace-relative file, and the module-qualified owner
+  (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
+  #5268): the normalized discriminator is derived from the changed line
+  itself, so a comparison seam names the same equality boundary the
+  classifier's missing-discriminator statement renders. Static-limit
+  findings and probes with no owner identity may omit this field until a
+  non-actionable gap-state projection exists.
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
 - `canonical_gap` is an additive optional object that carries the identity
   parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
-  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
+  `behavior_kind`, `probe_kind`, and `normalized_discriminator`. The
+  normalized discriminator is an identity, not an establishment claim: a
+  producer-named missing discriminator keeps the typed
+  `missing_discriminator` refusal ahead of a populated gap.
 - `probe.owner` is an additive optional stable owner identifier emitted when a
   preview-language adapter populated a changed owner. Python preview owners use
   `python:<path>::<owner>`, for example

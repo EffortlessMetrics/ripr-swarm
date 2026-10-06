@@ -773,6 +773,7 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build",
   "crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation",
   "crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root",
+  "crates/ripr/src/output/doctor.rs::tests::doctor_cargo_toml_check_skips_for_an_unusable_root",
   "crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools",
   "crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing",
   "crates/ripr/src/output/doctor.rs::tests::a_directory_named_like_a_file_still_passes_root_directory",
@@ -791,6 +792,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd",
   "crates/ripr/tests/cli_smoke.rs::doctor_discloses_missing_verification_tools_but_still_checks_manifest",
   "crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing",
+  "crates/ripr/tests/cli_smoke.rs::doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_command",
   "crates/ripr/tests/cli_help_hierarchy.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build"
 ]
 fixtures = []
@@ -4107,6 +4109,17 @@ tests = [
   "xtask/src/main.rs::tests::evidence_quality_trend_reports_finding_alignment_presentation_text_deltas",
   "xtask/src/main.rs::tests::evidence_quality_benchmark_corpus_is_valid",
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_populates_the_canonical_gap_identity",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::repo_analysis_populates_the_canonical_gap_identity",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::static_limited_finding_keeps_canonical_gap_none",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::predicate_comparison_names_the_rendered_equality_boundary",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::distinct_string_literals_never_share_one_gap_identity",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::non_ascii_text_outside_literals_stays_lossless",
+  "crates/ripr/src/mcp/gaps.rs::tests::populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing",
+  "crates/ripr/src/mcp/gaps.rs::tests::gap_resource_route_reads_a_nested_producer_gap_id_whole",
+  "crates/ripr/src/analysis/witness/tests.rs::populated_canonical_gap_is_the_required_discriminator_source",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::rust_producer_gap_does_not_bind_a_seam_witness_by_id_coincidence",
+  "crates/ripr/tests/agentic_bench_mcp.rs::b4_mcp_rust_canonical_gap_reaches_the_repair_transaction",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -4121,6 +4134,14 @@ code = [
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/lsp/state.rs",
   "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/analysis/classify/mod.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs",
+  "crates/ripr/src/analysis/witness/adapters.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/mcp/gaps.rs",
+  "crates/ripr/src/mcp/repair_card.rs",
+  ".allow/spec-system/slices/finding-canonical-gap-rust.v1.toml",
   "xtask/src/main.rs",
 ]
 outputs = [

@@ -13,6 +13,7 @@ Start here:
   File: fixtures/owner_return_pin_shadowed_assertion/input/src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
   Changed behavior: input * 3
   Missing discriminator (1 of 4): No detected assertion observes the changed value, error, field, or effect
   Related test: tests/weight_tests.rs:4 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)

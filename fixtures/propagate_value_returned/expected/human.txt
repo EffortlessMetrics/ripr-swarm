@@ -13,6 +13,7 @@ Start here:
   File: fixtures/propagate_value_returned/input/src/lib.rs:11
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl Ledger::apply:return_value:return_value:self.persist_amount*9
   Changed behavior: return self.persist(amount * 9)
   Missing discriminator: No strong discriminator was detected
   Related test: tests/ledger_tests.rs:4 apply_returns_ok_on_success (assertion too weak to tell the old behavior from the new)

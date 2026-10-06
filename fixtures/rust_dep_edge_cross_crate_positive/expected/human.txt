@@ -12,6 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: fixtures/rust_dep_edge_cross_crate_positive/input/crates/a/src/lib.rs:4
   Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:crates/a/src/lib.rs:score:return_value:return_value:points+score_bonus
   Changed behavior: points + SCORE_BONUS
   Related test: crates/c/tests/it.rs:5 dependent_test_asserts_owner_score_value
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

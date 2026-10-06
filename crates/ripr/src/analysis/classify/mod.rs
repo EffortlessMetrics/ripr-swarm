@@ -20,7 +20,8 @@ mod value_transfer;
 
 pub(in crate::analysis) use activation::{
     ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts,
-    activation_evidence_with_value_facts, literal_operand_value, local_boundary,
+    activation_evidence_with_value_facts, comparison_operands, literal_operand_value,
+    local_boundary,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{

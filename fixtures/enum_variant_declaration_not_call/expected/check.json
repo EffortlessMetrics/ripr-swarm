@@ -158,6 +158,18 @@
     },
     {
       "id": "probe:src_lib.rs:call_deletion:5804086e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:note:call_deletion:call_deletion:subject_invalid_message.clone",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:note:call_deletion:call_deletion:subject_invalid_message.clone",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "note",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "subject_invalid_message.clone"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -207,6 +219,18 @@
     },
     {
       "id": "probe:src_lib.rs:call_deletion:830ca561",
+      "canonical_gap_id": "gap:rust:src/lib.rs:send:call_deletion:call_deletion:record_message.trim",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:send:call_deletion:call_deletion:record_message.trim",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "send",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "record_message.trim"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
