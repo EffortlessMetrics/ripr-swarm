@@ -335,7 +335,33 @@ Updated:
 ## Pending — typescript_t_wrong_receiver_no_oracle (12)
 
 Reason:
-RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_t_wrong_receiver_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_t_wrong_receiver_no_oracle (13)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_t_wrong_receiver_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_t_wrong_receiver_no_oracle (14)
+
+Reason:
+RIPR-SPEC-0224: record test_assertion_admission evidence for TypeScript related tests without a recognized assertion (#5524)
 
 Command:
 `cargo xtask goldens bless typescript_t_wrong_receiver_no_oracle --reason "..."`

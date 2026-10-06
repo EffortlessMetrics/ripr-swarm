@@ -1,8 +1,10 @@
 mod activation;
+mod arm_selection;
 mod boundary_pairing;
 mod context;
 mod decision;
 mod flow;
+mod gap_admission;
 mod helper_transfer;
 mod infection;
 mod match_transfer;
@@ -18,9 +20,11 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, literal_operand_value,
+    ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts,
+    activation_evidence_with_value_facts, comparison_operands, literal_operand_value,
     local_boundary,
 };
+pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
@@ -30,7 +34,10 @@ pub(in crate::analysis) use decision::{
     recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
-pub(in crate::analysis) use helper_transfer::resolve_chain;
+pub(in crate::analysis) use gap_admission::{
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
+};
+pub(in crate::analysis) use helper_transfer::{callee_is_unique, resolve_chain};
 pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
@@ -49,9 +56,11 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, impl_self_type_name,
     method_call_resolves_to_impl_type, package_prefix,
 };
-pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
+pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
-pub(in crate::analysis) use reveal::{ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements};
+pub(in crate::analysis) use reveal::{
+    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+};
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

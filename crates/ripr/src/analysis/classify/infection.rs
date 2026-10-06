@@ -1,6 +1,7 @@
 use super::super::rust_index::{TestSummary, extract_literals};
 use super::activation::{
-    boundary_constant_operand_name, has_observed_boundary_equality, owner_input_values,
+    ARM_UNSELECTED_REASON_PREFIX, boundary_constant_operand_name, has_observed_boundary_equality,
+    owner_input_values,
 };
 use crate::domain::*;
 
@@ -15,6 +16,14 @@ pub(in crate::analysis) fn infection_evidence(
             let test_literals = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                // A number, a char (`'x'`) and a byte (`b'x'`) share no
+                // comparable boundary in this report, so only literals of a
+                // kind the changed boundary uses count.
+                .filter(|literal| {
+                    probe_literals
+                        .iter()
+                        .any(|boundary| literal_kind(boundary) == literal_kind(literal))
+                })
                 .collect::<Vec<_>>();
             // Only a literal that flows into the changed owner's inputs can
             // activate the boundary. The activation authority separates
@@ -99,7 +108,10 @@ pub(in crate::analysis) fn infection_evidence(
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    "Related tests use opaque fixtures; activation/infection is unknown",
+                    format!(
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown",
+                        probe_literals.join(", ")
+                    ),
                 )
             }
         }
@@ -114,6 +126,18 @@ pub(in crate::analysis) fn infection_evidence(
                     StageState::Unknown,
                     Confidence::Low,
                     "No reachable tests were found, so infection cannot be established",
+                )
+            } else if let Some(unselected) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            {
+                // RIPR-SPEC-0229: every related test's owner input selects a
+                // different arm, so none activates this one.
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    unselected.reason.clone(),
                 )
             } else if is_wildcard_discard(&probe.expression) {
                 StageEvidence::new(
@@ -130,6 +154,12 @@ pub(in crate::analysis) fn infection_evidence(
             }
         }
     }
+}
+
+/// Numeric, char or byte: (quoted, byte-prefixed).
+fn literal_kind(literal: &str) -> (bool, bool) {
+    let quoted = literal.ends_with('\'');
+    (quoted, quoted && literal.starts_with("b'"))
 }
 
 /// Why a changed predicate with no literal boundary stays unknown. A
@@ -269,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn predicate_infection_reports_opaque_fixture_when_literals_are_missing() {
+    fn predicate_infection_names_the_boundary_when_tests_pass_no_literals() {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&[]);
         let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
@@ -277,8 +307,27 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests use opaque fixtures; activation/infection is unknown"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown"
         );
+    }
+
+    #[test]
+    fn predicate_infection_does_not_compare_char_literals_with_numeric_boundaries() {
+        let numeric = probe(ProbeFamily::Predicate, "value > 1");
+        let chars = test_with_literals(&["'x'", "b','"]);
+        let evidence = infection_evidence(&numeric, &[&chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence
+                .summary
+                .starts_with("Related tests pass no literal")
+        );
+
+        // A byte boundary counts byte literals only, not the char `'x'`.
+        let byte = probe(ProbeFamily::Predicate, "digit > b'9'");
+        let evidence = infection_evidence(&byte, &[&chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(evidence.summary.contains("[b',']"), "{}", evidence.summary);
     }
 
     #[test]
@@ -397,7 +446,7 @@ mod tests {
             file: PathBuf::from("tests/value.rs"),
             start_line: 1,
             end_line: 3,
-            body: "assert_eq!(score(10), 11);".to_string(),
+            body: "assert_eq!(score(10), 11);".into(),
             calls: Vec::new(),
             assertions: Vec::new(),
             literals: values

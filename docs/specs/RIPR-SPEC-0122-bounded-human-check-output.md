@@ -311,8 +311,11 @@ warning is safe by default. The progress sink writes to the stderr handle
 directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
 text": a control or bidi character in a command argument is spelled as an adjacent
 POSIX `"$(printf '\ooo')"` segment (one octal escape per UTF-8 byte), so the line carries no raw control byte and still names the
-same argument when pasted. PowerShell has no translation for that form, so no
-PowerShell variant is offered for it.
+same argument when pasted. The PowerShell variant rebuilds each such argument
+as one parenthesized string expression (`('' + 'run' + [char]0x1b + ...)`) so
+it also carries no raw control byte. A control argument in program position or
+as a redirect target, and any segment the translation cannot rebuild exactly,
+withholds the PowerShell variant.
 
 ### Repo-scope warnings
 

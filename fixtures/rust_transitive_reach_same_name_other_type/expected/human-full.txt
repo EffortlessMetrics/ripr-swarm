@@ -7,7 +7,7 @@ Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-WARNING fixtures/rust_transitive_reach_same_name_other_type/input/src/queue.rs:11
+WARNING ./src/queue.rs:11
   id: probe:src_queue.rs:predicate:95e16c2d
 
 Changed

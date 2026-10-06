@@ -118,6 +118,16 @@ official SDK transport:
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.
+- Every served file path renders relative to the analyzed workspace
+  root, so a file under the root never appears as an absolute host path
+  and the snapshot identity stays portable across checkouts (#5254
+  item 6). Finding locations (list summaries, gap locations) render
+  through the shared finding-location owner (#5996) with its `./`
+  prefix, matching the check, context, and LSP surfaces; related-test
+  files and fix sites render through the repository-relative renderer,
+  which additionally tolerates producer spelling drift (canonicalized
+  `\\?\` prefixes, mixed separators, Windows case drift). A file the
+  root does not contain keeps its full stable spelling.
 - `ripr_get_gap` and `ripr://gap/{canonical_id}` return one canonical
   item's complete bounded evidence bound to its snapshot identity:
   identity/location, changed behavior (expression, before/after, delta
@@ -191,8 +201,13 @@ official SDK transport:
   producer repair-readiness evaluation that replaced that pin.
 - No custom LSP request expansion; MCP and LSP remain peers over shared
   producers.
-- No provider-specific configuration; project-local `ripr.toml` stays
-  detected-not-loaded.
+- No provider-specific configuration. Analysis configuration is honored
+  from #6825 on: refresh resolves the workspace's own `ripr.toml` through
+  `config::load_for_root` (the same resolution the CLI uses), the status
+  and session profile disclose the posture (`loaded` with its
+  `config_identity`, `built_in_defaults` when none resolves,
+  `detected_not_loaded` when the file cannot be read or parsed), and an
+  unparseable config fails the attempt closed with `config_invalid`.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -227,9 +242,17 @@ official SDK transport:
 ## Test Mapping
 
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
-  failures, identity portability, boundedness, last-known-good retention.
+  failures, identity portability, boundedness, last-known-good retention;
+  `session_profile_resolves_the_workspace_configuration` pins the #6825
+  config postures (loaded with identity, built-in defaults,
+  detected-not-loaded) at the profile level.
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
   — a dangling `ripr.toml` is present, not built-in defaults.
+- `crates/ripr/tests/mcp_workspace_config.rs` — the #6825 wire contract: a
+  python-enabled workspace scores its finding through
+  refresh/list/get_gap with the `loaded` posture, a config-less rust
+  workspace keeps the defaults posture, and an unparseable `ripr.toml`
+  fails the refresh closed with `config_invalid`.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).

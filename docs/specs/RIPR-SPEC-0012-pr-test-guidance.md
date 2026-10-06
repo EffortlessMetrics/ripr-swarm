@@ -419,6 +419,15 @@ TSV: `@tsv` rewrites backslash, tab, CR, and LF before the workflow-command
 escapes run, so the annotation would name a different path and display
 transport text instead of the comment (#4089).
 
+GitHub decodes only `%25`, `%0D`, `%0A`, `%3A`, and `%2C` in a property
+value, so a path holding a control or bidi character (CR and LF excepted)
+cannot be named faithfully in `file=`. Every annotation emitter (`ripr
+annotations`, `ripr reports ci-packet`, the check renderer, and `cargo xtask
+ripr-annotations`) omits `file=` and `line=` for such a path and leads the
+message with `Location (file name has control characters, so not placed):
+<escaped path>:<line>.` The escaped form prints each character as `\u{XX}`
+(#6309).
+
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments
 state, and every other I/O failure (permission denied, directory input,

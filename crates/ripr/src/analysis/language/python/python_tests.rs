@@ -1778,6 +1778,7 @@ fn same_stem_related_handles_missing_stems() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     // An owner with no file stem cannot match by stem.
     assert!(!same_stem_related(&test, &owner));
@@ -2714,10 +2715,10 @@ fn related_test_candidates_break_ties_by_oracle_then_file_then_name() {
 }
 
 #[test]
-fn find_related_tests_marks_parametrized_test_when_no_assertion_extracted() -> Result<(), String> {
-    // A parametrized test whose body calls the owner but contains no
-    // assertion at all should fall through to the parametrize-marker
-    // oracle text in `find_related_tests`.
+fn find_related_tests_never_projects_parametrize_as_an_oracle() -> Result<(), String> {
+    // A parametrized test whose body calls the owner but asserts nothing has
+    // no oracle: the parameters are inputs, and the row says no assertion
+    // rather than naming the decorator as its check (#5571).
     let owner = extract_owners(
         Path::new("src/pricing.py"),
         "def apply_discount(amount):\n    return amount - 10\n",
@@ -2727,6 +2728,7 @@ fn find_related_tests_marks_parametrized_test_when_no_assertion_extracted() -> R
         Path::new("tests/test_pricing.py"),
         r#"
 import pytest
+from src.pricing import apply_discount
 
 @pytest.mark.parametrize("amount", [1, 2])
 def test_apply_discount(amount):
@@ -2740,19 +2742,487 @@ def test_apply_discount(amount):
             related.len()
         ));
     }
-    if related[0].oracle.as_deref() != Some("pytest.mark.parametrize") {
+    if related[0].oracle.is_some() {
         return Err(format!(
-            "expected parametrize-marker oracle text, got {:?}",
+            "parameterization must not be projected as an oracle, got {:?}",
             related[0].oracle
         ));
     }
-    if related[0].oracle_kind != OracleKind::Unknown {
+    if related[0].oracle_kind != OracleKind::Unknown
+        || related[0].oracle_strength != OracleStrength::Unknown
+    {
         return Err(format!(
-            "parametrize fallback should keep Unknown oracle kind, got {:?}",
-            related[0].oracle_kind
+            "an assertion-free row keeps unknown oracle kind and strength, got {:?} {:?}",
+            related[0].oracle_kind, related[0].oracle_strength
+        ));
+    }
+    let admission = tests
+        .first()
+        .map(|test| test.assertion_admission)
+        .ok_or("expected the parametrized test to be extracted")?;
+    if admission != super::admission::PythonAssertionAdmission::NoAssertionLike {
+        return Err(format!(
+            "a parametrized call with no assertion is established assertion-free, got {admission:?}"
         ));
     }
     Ok(())
+}
+
+fn admission_of(source: &str, test_name: &str) -> Result<&'static str, String> {
+    extract_tests(Path::new("tests/test_pricing.py"), source)
+        .into_iter()
+        .find(|test| test.name == test_name)
+        .map(|test| test.assertion_admission.as_str())
+        .ok_or_else(|| format!("expected `{test_name}` to be extracted"))
+}
+
+#[test]
+fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms()
+-> Result<(), String> {
+    use super::admission::PythonAssertionAdmission as A;
+    let recognized = A::Recognized.as_str();
+    let none = A::NoAssertionLike.as_str();
+    let unresolved = A::Unresolved.as_str();
+    let import = "from src.pricing import apply_discount\n";
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "literal assert",
+            "def test_x():\n    assert apply_discount(20) == 10\n",
+            recognized,
+        ),
+        (
+            "call and assignment only",
+            "def test_x():\n    result = apply_discount(20)\n    apply_discount(result)\n",
+            none,
+        ),
+        (
+            "parametrized call only",
+            "import pytest\n@pytest.mark.parametrize('amount', [1, 2])\ndef test_x(amount):\n    apply_discount(amount)\n",
+            none,
+        ),
+        (
+            "builtins, locals and builtin fixtures",
+            "def test_x(tmp_path, monkeypatch):\n    monkeypatch.setenv('A', '1')\n    values = sorted([apply_discount(v) for v in range(3)])\n    path = tmp_path / 'out'\n    path.write_text(str(len(values)))\n",
+            none,
+        ),
+        (
+            "production module import",
+            "import src.pricing as pricing\ndef test_x():\n    pricing.apply_discount(20)\n",
+            none,
+        ),
+        (
+            "plain setup_method",
+            "class TestX:\n    def setup_method(self):\n        self.value = apply_discount(20)\n    def test_x(self):\n        apply_discount(self.value)\n",
+            none,
+        ),
+        (
+            "autouse=False fixture does not run around tests",
+            "import pytest\n@pytest.fixture(autouse=False)\ndef other():\n    return 1\n\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest subTest",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        for v in (1, 2):\n            with self.subTest(v=v):\n                apply_discount(v)\n",
+            none,
+        ),
+        (
+            "skip mark stays an activation fact, not admission",
+            "import pytest\n@pytest.mark.skip(reason='later')\ndef test_x():\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "helper stored in a local",
+            "from tests.helpers import run_case\ndef test_x():\n    runner = run_case\n    runner(apply_discount(1))\n",
+            unresolved,
+        ),
+        (
+            "helper passed to map",
+            "from tests.helpers import run_case\ndef test_x():\n    list(map(run_case, [apply_discount(1)]))\n",
+            unresolved,
+        ),
+        (
+            "exit stored in a local",
+            "import sys\ndef test_x():\n    stop = sys.exit\n    stop(apply_discount(1))\n",
+            unresolved,
+        ),
+        (
+            "exec stored in a local",
+            "def test_x():\n    run = exec\n    run('apply_discount(1)')\n",
+            unresolved,
+        ),
+        (
+            "pytest.warns stored in a local",
+            "import pytest\ndef test_x():\n    w = pytest.warns\n    with w(UserWarning):\n        apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "filterwarnings error mark",
+            "import pytest\n@pytest.mark.filterwarnings('error')\ndef test_x():\n    apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "warnings.simplefilter",
+            "import warnings\ndef test_x():\n    warnings.simplefilter('error')\n    apply_discount(1)\n",
+            unresolved,
+        ),
+        (
+            "module constant passed as a value",
+            "LIMIT = 20\ndef test_x():\n    apply_discount(LIMIT)\n",
+            none,
+        ),
+        (
+            "method on a computed value",
+            "def test_x(tmp_path):\n    (tmp_path / 'out').write_text(str(apply_discount(1)))\n    'a,b'.split(',')\n",
+            none,
+        ),
+        (
+            "pytest.raises",
+            "import pytest\ndef test_x():\n    with pytest.raises(ValueError):\n        apply_discount(-1)\n",
+            recognized,
+        ),
+        (
+            "assertEqual",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(apply_discount(20), 10)\n",
+            recognized,
+        ),
+        (
+            "assert_* custom helper",
+            "def test_x():\n    assert_payload(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "unrecognized unittest assertion",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertIsNone(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "same-module helper with an arbitrary name",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "same-module helper passed as a value",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run = run_case\n    run(20)\n",
+            unresolved,
+        ),
+        (
+            "calling another test",
+            "def test_y():\n    assert apply_discount(20) == 10\n\ndef test_x():\n    test_y()\n",
+            unresolved,
+        ),
+        (
+            "same-module class constructor",
+            "class Harness:\n    def __init__(self, value):\n        assert apply_discount(value) == 10\n\ndef test_x():\n    Harness(20)\n",
+            unresolved,
+        ),
+        (
+            "helper under a module-level if",
+            "import sys\nif sys.version_info > (3,):\n    def run_case(value):\n        assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "self helper method",
+            "class TestX:\n    def _run(self, value):\n        assert apply_discount(value) == 10\n    def test_x(self):\n        self._run(20)\n",
+            unresolved,
+        ),
+        (
+            "self helper registered as cleanup",
+            "import unittest\nclass T(unittest.TestCase):\n    def _verify(self):\n        pass\n    def test_x(self):\n        apply_discount(20)\n        self.addCleanup(self._verify)\n",
+            unresolved,
+        ),
+        (
+            "inherited helper from an imported base",
+            "from tests.base import Base\nclass TestX(Base):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "decorated test class",
+            "def wrap(cls):\n    return cls\n@wrap\nclass TestX:\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "getattr result stored in a local",
+            "import sys\ndef test_x():\n    f = getattr(sys, 'exit')\n    f(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "test-support object held as a class attribute",
+            "from tests.helpers import ApiChecker\nclass TestX:\n    checker = ApiChecker()\n    def test_x(self):\n        self.checker.run(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper reached through type(self)",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        type(self)._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper reached through __class__",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        self.__class__._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "failing callee through __call__",
+            "import sys\ndef test_x():\n    apply_discount(20)\n    sys.exit.__call__(1)\n",
+            unresolved,
+        ),
+        (
+            "method on an imported module object",
+            "import importlib\ndef test_x():\n    apply_discount(20)\n    importlib.import_module('sys').exit(1)\n",
+            unresolved,
+        ),
+        (
+            "local bound from a module registry of helpers",
+            "def _verify_one(value):\n    assert value\nHANDLERS = [_verify_one]\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "local bound from a module list of same-module objects",
+            "class Case:\n    def run(self):\n        assert apply_discount(20)\nCASES = [Case()]\ndef test_x():\n    for case in CASES:\n        case.run()\n",
+            unresolved,
+        ),
+        (
+            "chained module globals",
+            "def _verify_one(value):\n    assert value\nFIRST = _verify_one\nSECOND = (FIRST,)\ndef test_x():\n    for fn in SECOND:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper registered by an attribute decorator",
+            "HANDLERS = []\n@HANDLERS.append\ndef _verify_one(value):\n    assert value\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "helper registered by a module-level call",
+            "HANDLERS = []\ndef _verify_one(value):\n    assert value\nHANDLERS.append(_verify_one)\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "raise_for_status style check",
+            "def test_x():\n    r = apply_discount(20)\n    r.raise_for_status()\n",
+            unresolved,
+        ),
+        (
+            "module constant table",
+            "CASES = [(20, 10), (30, 20)]\ndef test_x():\n    for price, _ in CASES:\n        apply_discount(price)\n",
+            none,
+        ),
+        (
+            "class object bound to a local",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        klass = type(self)\n        klass._check(self, apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "instance bound to a local",
+            "class TestX:\n    def _check(self, value):\n        assert value\n    def test_x(self):\n        t = self\n        t._check(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "nested definition with a star-imported decorator",
+            "from tests.helpers import *\ndef test_x():\n    @harness\n    def inner():\n        apply_discount(20)\n    inner()\n",
+            unresolved,
+        ),
+        (
+            "star-imported helper passed as a value",
+            "from tests.helpers import *\ndef test_x():\n    list(map(runner, [apply_discount(20)]))\n",
+            unresolved,
+        ),
+        (
+            "local named like an assertion",
+            "def test_x():\n    expected = apply_discount(20)\n    print(expected)\n",
+            none,
+        ),
+        (
+            "mock assertion method stored in a local",
+            "from unittest.mock import Mock\ndef test_x():\n    m = Mock()\n    apply_discount(20, m)\n    f = m.assert_called_once_with\n    f(20)\n",
+            unresolved,
+        ),
+        (
+            "validator method passed as a value",
+            "from src.schema import Validator\ndef test_x():\n    v = Validator()\n    list(map(v.validate, [apply_discount(20)]))\n",
+            unresolved,
+        ),
+        (
+            "inherited assertion method passed as a callback",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        d = apply_discount(20)\n        d.addCallback(self.assertEqual, 5)\n        return d\n",
+            unresolved,
+        ),
+        (
+            "inherited fail passed as an errback",
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        d = apply_discount(20)\n        d.addErrback(self.fail)\n",
+            unresolved,
+        ),
+        (
+            "registry filled by a module-level loop",
+            "def _verify_one(value):\n    assert value\nHANDLERS = []\nfor f in (_verify_one,):\n    HANDLERS.append(f)\ndef test_x():\n    for fn in HANDLERS:\n        fn(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "built-in fixture name overridden in the module",
+            "import pytest\n@pytest.fixture\ndef tmp_path():\n    assert apply_discount(20)\n    return 1\ndef test_x(tmp_path):\n    apply_discount(tmp_path)\n",
+            unresolved,
+        ),
+        (
+            "pytestmark through a module alias",
+            "import pytest\nmark = pytest.mark.usefixtures('checked_db')\npytestmark = mark\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "project TestCase imported from test support",
+            "from tests.base import TestCase\nclass TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "TestCase spelled bare without an import",
+            "class TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest TestCase imported by name",
+            "from unittest import TestCase\nclass TestX(TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest module imported under an alias",
+            "import unittest as ut\nclass TestX(ut.TestCase):\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
+            "class attribute that is a plain constant",
+            "class TestX:\n    rate = 20\n    def test_x(self):\n        apply_discount(self.rate)\n",
+            none,
+        ),
+        (
+            "dynamic callee",
+            "CHECKS = {}\ndef test_x():\n    CHECKS['discount'](apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "calling a call result",
+            "from src.factory import make_checker\ndef test_x():\n    make_checker()(apply_discount(20))\n",
+            unresolved,
+        ),
+        (
+            "unknown global",
+            "def test_x():\n    roundtrip(apply_discount)\n",
+            unresolved,
+        ),
+        (
+            "assert inside a nested function",
+            "def test_x():\n    def inner():\n        assert apply_discount(20) == 10\n    inner()\n",
+            unresolved,
+        ),
+        (
+            "assertion-like lambda default",
+            "def test_x():\n    g = lambda x=verify(apply_discount(1)): x\n",
+            unresolved,
+        ),
+        (
+            "explicit raise",
+            "def test_x():\n    if apply_discount(20) != 10:\n        raise AssertionError('bad')\n",
+            unresolved,
+        ),
+        (
+            "assertion-like call nested in an expression",
+            "def test_x():\n    results = [verify(apply_discount(v)) for v in (1, 2)]\n",
+            unresolved,
+        ),
+        (
+            "process exit",
+            "import sys\ndef test_x():\n    if apply_discount(20) != 10:\n        sys.exit(1)\n",
+            unresolved,
+        ),
+        (
+            "pytest.warns",
+            "import pytest\ndef test_x():\n    with pytest.warns(UserWarning):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "warns imported from pytest",
+            "from pytest import deprecated_call\ndef test_x():\n    with deprecated_call():\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "helper imported from a test-support module",
+            "from tests.helpers import run_case\ndef test_x():\n    run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "aliased helper from a test-support module",
+            "from testutil import roundtrip as rt\ndef test_x():\n    rt(apply_discount)\n",
+            unresolved,
+        ),
+        (
+            "helper module imported whole",
+            "import tests.support as support\ndef test_x():\n    support.run_case(20)\n",
+            unresolved,
+        ),
+        (
+            "same-module decorator",
+            "def returns_ok(fn):\n    return fn\n\n@returns_ok\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "opaque fixture",
+            "def test_x(checked_client):\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.getfixturevalue",
+            "def test_x(request):\n    request.getfixturevalue('db')\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "uncertain parametrize leaves its argnames opaque",
+            "import pytest\nVALUES = [1]\n@pytest.mark.parametrize('amount', VALUES, indirect=True)\ndef test_x(amount):\n    apply_discount(amount)\n",
+            unresolved,
+        ),
+        (
+            "usefixtures mark",
+            "import pytest\n@pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "module pytestmark usefixtures",
+            "import pytest\npytestmark = pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "autouse fixture in the module",
+            "import pytest\n@pytest.fixture(autouse=True)\ndef guard():\n    yield\n\ndef test_x():\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "assertion-like setUp",
+            "import unittest\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue(apply_discount(20))\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "assert in a try body",
+            "def test_x():\n    try:\n        verify(apply_discount(20))\n    except ValueError:\n        pass\n",
+            unresolved,
+        ),
+        (
+            "assertion-like while test",
+            "def test_x():\n    while check(apply_discount(20)):\n        break\n",
+            unresolved,
+        ),
+        (
+            "assertion-like match guard",
+            "def test_x():\n    match apply_discount(20):\n        case 10 if verify(10):\n            pass\n",
+            unresolved,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, source, expected) in cases {
+        let actual = admission_of(&format!("{import}{source}"), "test_x")?;
+        if actual != *expected {
+            failures.push(format!("{label}: expected {expected}, got {actual}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[test]
@@ -2774,6 +3244,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
@@ -2791,6 +3262,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
@@ -2808,6 +3280,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(!test_has_mocked_module(&clean));
 }
@@ -3314,6 +3787,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     assert!(strong_oracle_observes_owner(
         &owner,
@@ -3383,6 +3857,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     }
 }
 
@@ -3427,6 +3902,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
+        assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
     };
     let a = classify_sink_alignment(&owner, line, &related, std::slice::from_ref(&alias_test));
     assert_eq!(a.oracle_alignment, "alias");

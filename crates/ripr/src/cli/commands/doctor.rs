@@ -280,9 +280,20 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
         );
         match &recommendation {
-            Ok(_) => println!(
-                "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-            ),
+            Ok(_) => {
+                // The missing-root recommendation is a recovery action, not a
+                // runnable command (#5252 item 3): sending the reader to "run"
+                // it would prescribe the failure doctor just diagnosed.
+                if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
+                    println!(
+                        "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+                    );
+                } else {
+                    println!(
+                        "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
+                    );
+                }
+            }
             Err(error) => println!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
             ),

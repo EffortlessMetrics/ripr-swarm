@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/unwrap_err_generic_is_err/input/src/lib.rs:17
+  File: ./src/lib.rs:17
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative
   Changed behavior: return Err(CalcError::Negative);
   Missing discriminator (1 of 2): CalcError::Negative
   Related test: tests/errors.rs:6 negative_input_returns_some_error (assertion too weak to tell the old behavior from the new)

@@ -7,7 +7,7 @@ Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-WARNING fixtures/predicate_oracle_execution_reached_uncalled/input/src/lib.rs:2
+WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: predicate
   delta:  control
   owner:  src/lib.rs::discounted_total
+  canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
@@ -39,13 +40,11 @@ Evidence
   - source function argument value discount_threshold = 100 at line 15
 
 Weakness
-  - No detected assertion observes the changed value, error, field, or effect
-  - No relevant oracle was detected
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected
 
 Next step
-  Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
+  ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
 Drill in:
   ripr explain --root <cwd>/fixtures/predicate_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/predicate_oracle_execution_reached_uncalled/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/predicate_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/predicate_oracle_execution_reached_uncalled/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
