@@ -756,10 +756,16 @@ impl<'c> Scan<'c> {
 
     // ---- setup ---------------------------------------------------------
 
-    /// File-level and `describe`-level statements. Their declarations are
-    /// the context's helpers and enclosing names, so no scope is pushed;
-    /// helper bodies run only when called and are judged where referenced.
+    /// The program body: setup statements, marking which declarations
+    /// `extract_imports_from_statements` reads as file imports.
     fn setup_program(&mut self, statements: &[Statement<'_>]) {
+        // A name bound by two different imports (`var` redeclaration, or an
+        // `import` plus a `require`) resolves to whichever entry is found
+        // first, while its runtime value depends on execution order.
+        if has_conflicting_import_binding(&self.context.imports) {
+            self.flag();
+            return;
+        }
         for statement in statements {
             if self.assertion_like {
                 return;
@@ -770,6 +776,9 @@ impl<'c> Scan<'c> {
         }
     }
 
+    /// File-level and `describe`-level statements. Their declarations are
+    /// the context's helpers and enclosing names, so no scope is pushed;
+    /// helper bodies run only when called and are judged where referenced.
     fn setup_statements(&mut self, statements: &[Statement<'_>]) {
         for statement in statements {
             if self.assertion_like {
@@ -2047,7 +2056,17 @@ fn is_function_like(expression: &Expression<'_>) -> bool {
     )
 }
 
-/// `require("<literal>")`.
+/// Two import entries binding the same local name to different modules or
+/// exports.
+fn has_conflicting_import_binding(imports: &[TypeScriptImport]) -> bool {
+    imports.iter().enumerate().any(|(index, import)| {
+        imports.iter().skip(index + 1).any(|other| {
+            other.local == import.local
+                && (other.source != import.source || other.imported != import.imported)
+        })
+    })
+}
+
 /// A program-level `require()` declarator that `extract_imports_from_statements`
 /// records as an import for every name it binds: an unwrapped literal
 /// `require` call bound to a plain identifier, or to an object pattern of
@@ -2069,6 +2088,7 @@ fn require_is_file_import(pattern: &BindingPattern<'_>, init: &Expression<'_>) -
     }
 }
 
+/// `require("<literal>")`.
 fn require_source<'a>(expression: &'a Expression<'_>) -> Option<&'a str> {
     let Expression::CallExpression(call) = expression.get_inner_expression() else {
         return None;

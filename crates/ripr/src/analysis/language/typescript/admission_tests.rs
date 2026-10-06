@@ -214,6 +214,36 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "destructured program-level package require",
+            "const { same } = require('tap');\ntest('x', () => { same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "program-level runner require with a throwing member",
+            "const { vi } = require('vitest');\nit('x', async () => { await vi.waitUntil(() => checkout(1)); });",
+            unresolved,
+        ),
+        (
+            "var redeclares a production require as a package",
+            "var tap = require('../src/cart');\nvar tap = require('tap');\ntest('x', () => { tap.same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "var redeclares a destructured production require as a package",
+            "var { same } = require('../src/cart');\nvar { same } = require('tap');\ntest('x', () => { same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "one declaration binds a name to production then a package",
+            "var tap = require('../src/cart'), tap = require('tap');\ntest('x', () => { tap.same(checkout(1), 2); });",
+            unresolved,
+        ),
+        (
+            "var redeclares a production require as a runner",
+            "var { vi } = require('../src/cart');\nvar { vi } = require('vitest');\nit('x', async () => { await vi.waitUntil(() => checkout(1)); });",
+            unresolved,
+        ),
+        (
             "require of a package inside the test",
             "test('x', () => { const { same } = require('tap'); same(checkout(1), 2); });",
             unresolved,
