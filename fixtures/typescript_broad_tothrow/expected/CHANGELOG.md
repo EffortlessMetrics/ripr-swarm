@@ -597,3 +597,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_broad_tothrow (16)
+
+Reason:
+RIPR-SPEC-0224: related-test row now shows the family-relevant assertion (#5525); class, stages and actionability unchanged
+
+Command:
+`cargo xtask goldens bless typescript_broad_tothrow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

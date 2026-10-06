@@ -335,3 +335,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (15)
+
+Reason:
+RIPR-SPEC-0224: related-test row now shows the family-relevant assertion (#5525); class, stages and actionability unchanged
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

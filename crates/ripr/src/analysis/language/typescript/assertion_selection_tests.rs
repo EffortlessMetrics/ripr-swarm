@@ -565,11 +565,18 @@ fn strongest_row_matches_the_aggregate_family_result() -> Result<(), String> {
     ] {
         let finding = classify(line, &bodies)?;
         // Kind and rank together: a rank-only suffix would let a row whose
-        // kind differs from the aggregate's slip through.
+        // kind differs from the aggregate's slip through. The aggregate keeps
+        // the first maximum on ties, so the first strongest row is compared.
+        let best_rank = finding
+            .related_tests
+            .iter()
+            .map(|row| row.oracle_strength.rank())
+            .max()
+            .unwrap_or(0);
         let strongest_row = finding
             .related_tests
             .iter()
-            .max_by_key(|row| row.oracle_strength.rank())
+            .find(|row| row.oracle_strength.rank() == best_rank)
             .ok_or_else(|| "expected a related row".to_string())?;
         let expected = format!(
             "`{}` (rank {})",
