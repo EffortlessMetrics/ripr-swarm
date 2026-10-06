@@ -10206,19 +10206,36 @@ fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Resul
             human.contains(&format!("~ Unanalyzed languages: Go ({count} file(s))")),
             "the screen must print the same Go count the JSON carries: {human}"
         );
-        // Preview enablement gap.
-        let gaps = json_array(&report, "preview_language_gaps")?;
-        let gap = gaps
-            .iter()
-            .find(|entry| entry["config_entry"] == "python")
-            .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
-        if gap["detected_language"] != "python" {
-            return Err(format!("the gap must name its detected source: {gap}"));
+        // Preview enablement gap. A gap is suggested only for a preview
+        // language whose adapter is compiled in: telling a rust-only binary's
+        // user to enable python would mislead, since nothing could analyze
+        // it. Parity therefore means presence in python builds and agreed
+        // absence otherwise.
+        if cfg!(feature = "lang-python") {
+            let gaps = json_array(&report, "preview_language_gaps")?;
+            let gap = gaps
+                .iter()
+                .find(|entry| entry["config_entry"] == "python")
+                .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
+            if gap["detected_language"] != "python" {
+                return Err(format!("the gap must name its detected source: {gap}"));
+            }
+            assert!(
+                human.contains("- Tip: python files detected but not enabled"),
+                "the screen must print the enablement tip: {human}"
+            );
+        } else {
+            assert!(
+                report
+                    .get("preview_language_gaps")
+                    .is_none_or(serde_json::Value::is_null),
+                "without the python adapter no gap may be suggested: {report}"
+            );
+            assert!(
+                !human.contains("files detected but not enabled"),
+                "without the python adapter no enablement tip may print: {human}"
+            );
         }
-        assert!(
-            human.contains("- Tip: python files detected but not enabled"),
-            "the screen must print the enablement tip: {human}"
-        );
         // Cache state.
         let cache = &report["cache"];
         let cache_dir = cache["cache_dir"].as_str().unwrap_or_default();

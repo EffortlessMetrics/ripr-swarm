@@ -304,7 +304,6 @@ fn doctor_json_conforms_to_the_published_schema() -> Result<(), String> {
     for field in [
         "detected_languages",
         "unanalyzed_source_languages",
-        "preview_language_gaps",
         "config_defaults",
         "cache",
         "test_surfaces",
@@ -316,6 +315,25 @@ fn doctor_json_conforms_to_the_published_schema() -> Result<(), String> {
                 "the fixture root must exercise `{field}`, or this contract proves nothing: {document}"
             ));
         }
+    }
+    // Gaps are suggested only for preview languages whose adapter is compiled
+    // in, so a rust-only binary must omit the field rather than an empty tip.
+    if cfg!(feature = "lang-python") {
+        if document
+            .get("preview_language_gaps")
+            .is_none_or(Value::is_null)
+        {
+            return Err(format!(
+                "the fixture root must exercise `preview_language_gaps`, or this contract proves nothing: {document}"
+            ));
+        }
+    } else if document
+        .get("preview_language_gaps")
+        .is_some_and(|gaps| !gaps.is_null())
+    {
+        return Err(format!(
+            "without the python adapter no gap may be suggested: {document}"
+        ));
     }
     Ok(())
 }
