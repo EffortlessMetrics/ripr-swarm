@@ -30,6 +30,12 @@
 //! v1 paired a mutant with a seam when its original operator token appeared
 //! in the seam's expression on the same line. v2 keeps that check only as the
 //! `operator_token_diagnostic`, which never overrides the canonical join.
+//!
+//! The report also scores `ripr pilot`'s top recommendations against the same
+//! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
+//! developer meets first.
+
+mod pilot;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
@@ -302,6 +308,9 @@ struct RepoRun {
     mutant_set_sha256: String,
     metrics: Value,
     records: Vec<Record>,
+    /// Judged pilot recommendations, or why pilot produced none. A pilot
+    /// failure does not discard the repo's validated mutation outcomes.
+    pilot: Result<Vec<Value>, String>,
 }
 
 fn spot_check_repo(
@@ -367,6 +376,7 @@ fn spot_check_repo(
     let outcomes = read_mutants_out("outcomes.json")?;
     let mutant_records = read_mutants_out("mutants.json")?;
     let diffs_checked = require_mutants_match_checkout(name, checkout, &revision, &mutant_records)?;
+    let pilot_top = pilot::pilot_top_seams(binary, scratch, name, checkout);
 
     let calibration = run_text(
         &path_arg(binary),
@@ -412,6 +422,22 @@ fn spot_check_repo(
             &mutant_genres(&mutant_records),
         )
         .map_err(|err| format!("`{name}`: {err}"))?,
+        pilot: pilot_top.map(|top| {
+            pilot::judge_recommendations(
+                &top,
+                &mutant_records,
+                &outcomes,
+                &seam_expressions(&exposure_json),
+                &|file, line| {
+                    let index = usize::try_from(line).ok()?.checked_sub(1)?;
+                    std::fs::read_to_string(checkout.join(file))
+                        .ok()?
+                        .lines()
+                        .nth(index)
+                        .map(str::to_string)
+                },
+            )
+        }),
     })
 }
 
@@ -682,6 +708,22 @@ struct Record {
     expression: Option<String>,
     mutant: String,
     operator_token: &'static str,
+}
+
+/// Seam id to source expression, from the repo exposure JSON.
+fn seam_expressions(exposure: &Value) -> BTreeMap<&str, &str> {
+    exposure
+        .get("seams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|seam| {
+            Some((
+                seam.get("seam_id")?.as_str()?,
+                seam.get("expression").and_then(Value::as_str).unwrap_or(""),
+            ))
+        })
+        .collect()
 }
 
 /// cargo-mutants genre per mutant name, from `mutants.out/mutants.json`.
@@ -1030,6 +1072,12 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
             "counts": operator_tokens,
             "absent_examples": operator_token_absent,
         },
+        "pilot_top_recommendations": pilot::summarize(
+            &repos
+                .iter()
+                .map(|repo| (repo.name.clone(), repo.pilot.clone()))
+                .collect::<Vec<_>>(),
+        ),
     })
 }
 
@@ -1245,6 +1293,7 @@ fn spot_check_markdown(report: &Value) -> String {
     {
         out.push_str(&format!("- **absent** {}\n", example_line(row)));
     }
+    out.push_str(&pilot::markdown(report));
     out
 }
 
@@ -1707,6 +1756,7 @@ mod tests {
             mutant_set_sha256: "0".repeat(64),
             metrics: Value::Null,
             records,
+            pilot: Ok(Vec::new()),
         }
     }
 
@@ -1768,7 +1818,11 @@ mod tests {
         .into_iter()
         .collect();
         let records = classify_records(&calibration, &exposure, &genres)?;
-        let report = build_report(&[repo_run(records)], 5);
+        let mut run = repo_run(records);
+        run.pilot = Ok(vec![
+            json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
+        ]);
+        let report = build_report(&[run], 5);
 
         let pairings = &report["repos"][0]["pairings"];
         assert_eq!(pairings["records_total"], 8);
@@ -1828,6 +1882,8 @@ mod tests {
             spot_check_markdown(&report)
                 .contains("demo ran cargo-mutants with `--re=decode` `--workspace`.")
         );
+        assert_eq!(report["pilot_top_recommendations"]["counts"]["refuted"], 1);
+        assert!(spot_check_markdown(&report).contains("## Pilot top recommendations"));
         Ok(())
     }
 
