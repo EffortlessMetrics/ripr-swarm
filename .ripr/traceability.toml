@@ -922,6 +922,10 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_repo_badge_plus_json_emits_repo_scope_metadata",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_admits_gap_classes_only",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_summary_with_only_limitations_is_not_a_clean_result",
+  "crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes",
   "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first",
   "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines",
@@ -4556,6 +4560,7 @@ tests = [
   "crates/ripr/src/cli/mod.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings",
   "crates/ripr/src/output/first_pr.rs::tests::write_first_pr_records_producing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_missing_ripr_version",
   "crates/ripr/src/output/first_pr.rs::tests::check_first_pr_rejects_other_ripr_version",
@@ -12605,6 +12610,58 @@ metrics = [
   "unit_test_pass_rate",
 ]
 
+[[behavior]]
+id = "RIPR-SPEC-0234"
+name = "Read-only deterministic multi-campaign work-portfolio compiler"
+spec = "docs/specs/RIPR-SPEC-0234-work-portfolio-compiler.md"
+tests = [
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_multiple_campaigns_and_independent_lanes_one_snapshot",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_no_global_default_campaign_required_or_synthesized",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_every_candidate_explains_stage_blockers_conflicts_capacity_evidence_ranking",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_existing_prs_and_claims_become_resume_states_not_new_builds",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_blockers_collisions_duplicate_family_and_shared_contracts_visible",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_partial_and_unavailable_inputs_lower_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_filters_do_not_change_authority_or_candidate_identity",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_commands_mutate_nothing_mutation_negative",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_deterministic_fixture_and_root_portable_output",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_bounded_wave_retrievable_without_reading_every_body",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_blocked_complete_or_low_ranked_campaign_never_hides_eligible_work",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_explain_view_matches_snapshot_and_fails_closed",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_merge_ready_requires_fresh_evidence_and_clear_claims",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_missing_ownership_sources_lower_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_completed_issue_with_open_pr_stays_in_flight",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_slice_requires_requirement_membership",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_cross_issue_branch_claim_stays_conflict_visible",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_candidate_metadata_arrays_are_canonical",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_timestamp_freshness_parses_instants",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_memberships_derive_from_campaign_records",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_collision_subjects_match_exact_issue_identity",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_retrieval_commands_escape_arguments",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_multiple_open_prs_never_merge_ready",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_stale_campaign_source_lowers_confidence",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_readiness_requires_captured_acceptance",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_observations_retain_request_ids",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_packet_entrypoint_preserves_captured_corpus",
+]
+fixtures = [
+  "fixtures/work_portfolio",
+]
+code = [
+  "xtask/src/work_portfolio.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0234-work-portfolio-compiler.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
 [[behavior]]
 id = "RIPR-SPEC-0225"
 name = "Whole-value equality credit for constructed fields"

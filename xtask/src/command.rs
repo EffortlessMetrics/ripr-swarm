@@ -168,6 +168,9 @@ pub(crate) enum XtaskCommand {
     PublishDryRun,
     Help(Vec<String>),
     IssueIntake(Vec<String>),
+    WorkPortfolio(Vec<String>),
+    WorkCandidates(Vec<String>),
+    WorkExplain(Vec<String>),
     Unknown(String),
 }
 
@@ -351,6 +354,15 @@ impl XtaskCommand {
             "package" => Self::Package,
             "publish-dry-run" => Self::PublishDryRun,
             "issue-intake" => Self::IssueIntake(rest),
+            "work" => match rest.first().map(|arg| arg.as_str()) {
+                Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
+                Some("candidates") => Self::WorkCandidates(rest[1..].to_vec()),
+                Some("explain") => Self::WorkExplain(rest[1..].to_vec()),
+                _ => Self::Unknown(format!(
+                    "work {}",
+                    rest.first().map(|arg| arg.as_str()).unwrap_or("")
+                )),
+            },
             "help" => Self::Help(rest),
             other => Self::Unknown(other.to_string()),
         }
@@ -595,6 +607,9 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "package",
         "publish-dry-run",
         "issue-intake --issue <number>",
+        "work portfolio [--captured <dir>] [--json]",
+        "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+        "work explain --candidate <id> [--captured <dir>] [--json]",
     ]
 }
 
@@ -2201,6 +2216,30 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Fetches a live GitHub issue and emits a typed intake packet.",
+        ),
+        command_entry(
+            "work portfolio [--captured <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-portfolio.{json,md}",
+            false,
+            false,
+            "Compiles immutable captured inputs into the read-only deterministic multi-campaign work-portfolio snapshot (#1704, RIPR-SPEC-0234); selects no work, synthesizes no default campaign, and mutates no GitHub, branch, worktree, claim, spec, campaign or source state.",
+        ),
+        command_entry(
+            "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-candidates.{json,md}",
+            false,
+            false,
+            "Renders the ranked work-candidate array from the same portfolio compilation under neutral campaign/surface filters with a bounded limit; filters never change candidate identity or authority.",
+        ),
+        command_entry(
+            "work explain --candidate <id> [--captured <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-explain.{json,md}",
+            false,
+            false,
+            "Renders exactly one work candidate by stable id with its lifecycle stage, next durable transition, blockers, conflicts, capacity, costs, confidence and the eight explicit ordered ranking factors; unknown ids fail closed.",
         ),
     ]
 }
