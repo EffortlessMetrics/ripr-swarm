@@ -49,7 +49,8 @@ developer who disagreed had to re-derive the analysis.
   `assertion_not_credited` and the name-only `no_call_path` while matching
   assertions; these are facts about the test and can appear under any class.
   The finding builder sets `no_call_path` for `no_static_path`, and
-  `weak_assertion`, `missing_input` (predicate boundary facts only),
+  `weak_assertion`, `missing_input` (predicate boundary facts and
+  RIPR-SPEC-0229 unselected-arm facts),
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
   `exposed` findings and the unknown classes get no class-level miss.
