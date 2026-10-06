@@ -124,10 +124,14 @@ pub(crate) fn bind_snapshot_card_producers(
     let mut bindings = Vec::new();
     if !snapshot.items.is_empty() {
         let config = RiprConfig::default();
+        // Item files are root-relative on the wire (#5254 item 6);
+        // re-anchor them for the inventory's absolute corpus. `join` replaces
+        // the root when the item is already absolute (the out-of-root
+        // fallback spelling), so both shapes resolve.
         let changed_files = snapshot
             .items
             .iter()
-            .map(|item| std::path::PathBuf::from(item.file.as_str()))
+            .map(|item| root.join(item.file.as_str()))
             .collect::<Vec<_>>();
         let changed_owner_names = snapshot
             .findings

@@ -27,6 +27,136 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
     displayed
 }
 
+/// Render a finding's file root-relative for machine consumers, tolerating
+/// producer spelling drift: a canonicalized `\\?\X:` file still matches a
+/// plain `--root`, and drive-letter case drift matches on Windows, so
+/// committed-history reads and worktree reads render the same relative path
+/// (#5254 item 6). A file that is not under the root (or a relative root,
+/// which keeps its spelling per [`repository_relative_path`]) falls back to
+/// the full stable spelling rather than inventing a location.
+pub(crate) fn repository_relative_path_text(root: &Path, file: &Path) -> String {
+    repository_relative_path_text_on(root, file, cfg!(windows))
+}
+
+/// [`repository_relative_path_text`] with the host made explicit so both
+/// answers are testable anywhere (#4378).
+pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows: bool) -> String {
+    // Fast path: host-native exact prefix. A relative root keeps its spelling
+    // (it already names a path under the invoking directory), and an empty
+    // remainder (file == root) falls through to the full spelling. Rootedness
+    // is host-explicit like the rest of this function: `Path::is_absolute`
+    // would call `/repo` relative on Windows. On Unix this path is also
+    // byte-exact for non-UTF-8 paths, which never reach the lossy Windows
+    // slow path below.
+    if is_absolute_on(&root.to_string_lossy(), windows)
+        && let Ok(relative) = file.strip_prefix(root)
+        && !relative.as_os_str().is_empty()
+    {
+        return display_path(relative);
+    }
+    if windows
+        && let Some(relative) =
+            strip_windows_root_prefix_text(&root.to_string_lossy(), &file.to_string_lossy())
+    {
+        // Re-encode through the shared stable renderer so `%` escaping
+        // matches every other path rendering.
+        return display_path(&PathBuf::from(relative));
+    }
+    display_path(file)
+}
+
+/// Strip a Windows absolute root from a file across the spelling drift a
+/// plain `strip_prefix` rejects: verbatim `\\?\X:` / `\\?\UNC\` prefixes in
+/// either operand, mixed separators, and ASCII-case drift. String-level on
+/// purpose: `Path::components` parses Windows prefixes only on Windows, so a
+/// component implementation would be untestable in the Linux matrix, and the
+/// non-Unix `stable_path_text` branch this feeds is itself lossy. Comparison
+/// is segment-wise so `C:/repo` never matches `C:/repo2/f`. `None` when the
+/// file is not under the root, the root is not absolute, or the remainder is
+/// empty.
+fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<String> {
+    let root_segments = windows_root_segments(root_text)?;
+    let file_segments = windows_path_segments(file_text);
+    if root_segments.len() >= file_segments.len() {
+        return None;
+    }
+    for (root_segment, file_segment) in root_segments.iter().zip(file_segments.iter()) {
+        if !root_segment.eq_ignore_ascii_case(file_segment) {
+            return None;
+        }
+    }
+    Some(file_segments[root_segments.len()..].join("/"))
+}
+
+/// Split a Windows path into comparable segments: separators unified,
+/// verbatim drive/UNC prefixes reduced to their plain form. Returns `None`
+/// for anything that is not an absolute drive-letter or `//` path, so
+/// relative roots keep the fallback spelling. Other `//?/` forms keep their
+/// spelling and can only match byte-identically.
+fn windows_root_segments(path_text: &str) -> Option<Vec<String>> {
+    let unified = path_text.replace('\\', "/");
+    let plain = strip_windows_verbatim_prefix(&unified).unwrap_or(unified);
+    let absolute = is_windows_drive_path(&plain) || plain.starts_with("//");
+    if !absolute {
+        return None;
+    }
+    Some(
+        plain
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Split the file side with the same normalization; rootedness is decided by
+/// the segment comparison against the root, not here.
+fn windows_path_segments(path_text: &str) -> Vec<String> {
+    let unified = path_text.replace('\\', "/");
+    let plain = strip_windows_verbatim_prefix(&unified).unwrap_or(unified);
+    plain
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Reduce a verbatim prefix to its plain form: `//?/X:` becomes `X:`,
+/// `//?/UNC/server/share` becomes `//server/share`. Any other `//?/` form
+/// (and non-verbatim text) is returned unchanged.
+fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
+    let rest = unified.strip_prefix("//?/")?;
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return Some(rest.to_string());
+    }
+    // Byte-level compare: `rest[..4]` could split a UTF-8 sequence. A
+    // successful match means the first four bytes are ASCII, so `rest[4..]`
+    // is a char boundary.
+    if bytes.len() > 4 && bytes[..4].eq_ignore_ascii_case(b"UNC/") {
+        return Some(format!("//{}", &rest[4..]));
+    }
+    None
+}
+
+/// Whether the path text is absolute on the named host. Lossy conversion is
+/// safe here: rootedness depends on ASCII separators and drive letters only.
+fn is_absolute_on(root_text: &str, windows: bool) -> bool {
+    if !windows {
+        return root_text.starts_with('/');
+    }
+    let unified = root_text.replace('\\', "/");
+    let plain = strip_windows_verbatim_prefix(&unified).unwrap_or(unified);
+    is_windows_drive_path(&plain) || plain.starts_with("//")
+}
+
+/// Whether the unified text starts with a drive-letter root (`X:`).
+fn is_windows_drive_path(unified: &str) -> bool {
+    unified.len() >= 2
+        && unified.as_bytes()[0].is_ascii_alphabetic()
+        && unified.as_bytes()[1] == b':'
+}
+
 /// Render path-like text with stable slash separators for JSON and Markdown output.
 pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
@@ -114,7 +244,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        display_path, display_path_text, human_path_text, repository_display_path, same_output_leaf,
+        display_path, display_path_text, human_path_text, repository_display_path,
+        repository_relative_path_text_on, same_output_leaf,
     };
 
     #[test]
@@ -211,5 +342,111 @@ mod tests {
             Path::new("ledger.json"),
             Path::new("ledger.jsonl")
         ));
+    }
+
+    #[test]
+    fn relative_path_text_strips_an_exact_unix_prefix() {
+        assert_eq!(
+            repository_relative_path_text_on(
+                Path::new("/repo"),
+                Path::new("/repo/src/lib.rs"),
+                false
+            ),
+            "src/lib.rs"
+        );
+        // A relative file is already root-relative: identity.
+        assert_eq!(
+            repository_relative_path_text_on(Path::new("/repo"), Path::new("src/lib.rs"), false),
+            "src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn relative_path_text_tolerates_verbatim_and_case_drift_on_windows() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shapes are assembled from parts.
+        let drive = "F:";
+        let root_text = format!(r"{drive}\repo");
+        let root = Path::new(&root_text);
+        // The observed #5254 shape: canonicalized file, plain root.
+        let verbatim_text = format!(r"\\?\{drive}\repo\src\lib.rs");
+        let verbatim = Path::new(&verbatim_text);
+        assert_eq!(
+            repository_relative_path_text_on(root, verbatim, true),
+            "src/lib.rs"
+        );
+        // Drift in either direction, with mixed separators.
+        let verbatim_root_text = format!(r"\\?\{drive}\repo");
+        let verbatim_root = Path::new(&verbatim_root_text);
+        let plain_text = format!(r"{drive}/repo/src/lib.rs");
+        let plain = Path::new(&plain_text);
+        assert_eq!(
+            repository_relative_path_text_on(verbatim_root, plain, true),
+            "src/lib.rs"
+        );
+        // Identical spellings strip on every host (fast path where the
+        // host parses prefixes, slow path elsewhere).
+        let same_text = format!(r"{drive}\repo\src\lib.rs");
+        assert_eq!(
+            repository_relative_path_text_on(root, Path::new(&same_text), true),
+            "src/lib.rs"
+        );
+        // Case drift matches, and the remainder keeps the file's spelling.
+        let upper_text = format!(r"{drive}\REPO\SRC\lib.rs");
+        let upper_file = Path::new(&upper_text);
+        assert_eq!(
+            repository_relative_path_text_on(root, upper_file, true),
+            "SRC/lib.rs"
+        );
+        // Verbatim UNC matches plain UNC.
+        assert_eq!(
+            repository_relative_path_text_on(
+                Path::new(r"\\server\share\dir"),
+                Path::new(r"\\?\UNC\server\share\dir\f.rs"),
+                true
+            ),
+            "f.rs"
+        );
+        // `%` in the remainder keeps the shared stable escaping.
+        let percent_text = format!(r"{drive}\repo\100%.rs");
+        assert_eq!(
+            repository_relative_path_text_on(root, Path::new(&percent_text), true),
+            "100%25.rs"
+        );
+    }
+
+    #[test]
+    fn relative_path_text_falls_back_to_the_full_spelling() {
+        let drive = "F:";
+        let root_text = format!(r"{drive}\repo");
+        let root = Path::new(&root_text);
+        // Segment-wise: `repo` never matches `repo2`.
+        let sibling_text = format!(r"{drive}\repo2\f.rs");
+        assert_eq!(
+            repository_relative_path_text_on(root, Path::new(&sibling_text), true),
+            format!(r"{drive}/repo2/f.rs")
+        );
+        // A different drive is not under the root.
+        let other = "G:";
+        let other_text = format!(r"{other}\repo\f.rs");
+        assert_eq!(
+            repository_relative_path_text_on(root, Path::new(&other_text), true),
+            format!(r"{other}/repo/f.rs")
+        );
+        // A relative root keeps the file's spelling.
+        assert_eq!(
+            repository_relative_path_text_on(Path::new("repo"), Path::new("repo/f.rs"), true),
+            "repo/f.rs"
+        );
+        // No empty remainder: file == root keeps the full spelling.
+        assert_eq!(
+            repository_relative_path_text_on(root, root, true),
+            format!(r"{drive}/repo")
+        );
+        // Case drift is significant off Windows.
+        assert_eq!(
+            repository_relative_path_text_on(Path::new("/repo"), Path::new("/REPO/f.rs"), false),
+            "/REPO/f.rs"
+        );
     }
 }

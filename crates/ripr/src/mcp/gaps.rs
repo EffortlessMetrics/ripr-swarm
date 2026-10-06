@@ -10,6 +10,7 @@
 use crate::domain::Finding;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::path::Path;
 
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
@@ -60,7 +61,7 @@ pub(crate) struct RepairReadiness {
 }
 
 impl RepairReadiness {
-    pub(crate) fn from_finding(finding: &Finding) -> Self {
+    pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Self {
         if !finding.is_candidate_actionable() {
             return Self {
                 ready: false,
@@ -115,7 +116,7 @@ impl RepairReadiness {
             })
             .map(|test| RepairFixSite {
                 test_name: test.name.clone(),
-                file: crate::analysis::stable_path_text(&test.file),
+                file: crate::output::path::repository_relative_path_text(root, &test.file),
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
@@ -200,13 +201,18 @@ pub(crate) struct GapItem {
 }
 
 impl GapItem {
-    pub(crate) fn from_finding(finding: &Finding) -> Result<Self, String> {
+    /// Project one finding, rendering every served file path relative to the
+    /// analyzed workspace root so gap documents never leak absolute host
+    /// paths (#5254 item 6). A file the root does not contain keeps its
+    /// stable spelling rather than an invented location.
+    pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
         let canonical_id = finding
             .canonical_gap
             .as_ref()
             .map(|gap| gap.id.clone())
             .unwrap_or_else(|| finding.id.clone());
-        let file = crate::analysis::stable_path_text(&finding.probe.location.file);
+        let file =
+            crate::output::path::repository_relative_path_text(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding
             .language
@@ -223,9 +229,9 @@ impl GapItem {
         });
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
-        let evidence_core = gap_evidence_core(finding, &canonical_id)?;
+        let evidence_core = gap_evidence_core(finding, &canonical_id, root)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
-        let repair_readiness = RepairReadiness::from_finding(finding);
+        let repair_readiness = RepairReadiness::from_finding(finding, root);
         Ok(Self {
             canonical_id,
             finding_id: finding.id.clone(),
@@ -280,8 +286,8 @@ impl GapItem {
 /// Producer-owned evidence fields, projected once per finding. Fields the
 /// producer does not populate stay typed `null`/`absent` states in the
 /// serialized finding values rather than being back-filled here.
-fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, String> {
-    let readiness = RepairReadiness::from_finding(finding);
+fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Result<Value, String> {
+    let readiness = RepairReadiness::from_finding(finding, root);
     let activation = serde_json::to_value(&finding.activation)
         .map_err(|error| format!("serialize activation evidence: {error}"))?;
     let related_tests = finding
@@ -290,7 +296,7 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
         .map(|test| {
             json!({
                 "name": test.name,
-                "file": crate::analysis::stable_path_text(&test.file),
+                "file": crate::output::path::repository_relative_path_text(root, &test.file),
                 "line": test.line,
                 "oracle": test.oracle,
                 "oracle_kind": test.oracle_kind.as_str(),
@@ -334,7 +340,10 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
         "class": finding.class.as_str(),
         "language": finding.language.as_ref().map(|language| language.as_str()),
         "location": {
-            "file": crate::analysis::stable_path_text(&finding.probe.location.file),
+            "file": crate::output::path::repository_relative_path_text(
+                root,
+                &finding.probe.location.file,
+            ),
             "line": finding.probe.location.line,
             "column": finding.probe.location.column,
         },
@@ -564,7 +573,7 @@ mod tests {
             }
         }
 
-        let item = GapItem::from_finding(&finding()?)?;
+        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
         let values = [
             Value::Null,
             json!({}),
@@ -613,7 +622,7 @@ mod tests {
     fn gap_projection_preserves_evidence_length_and_digest() -> Result<(), String> {
         let mut finding = finding()?;
         finding.recommended_next_step = Some("assert \"é😀\"\nwith a \\ escape".to_string());
-        let item = GapItem::from_finding(&finding)?;
+        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         let bytes = serde_json::to_vec(&item.evidence_core).map_err(|error| error.to_string())?;
         assert_eq!(item.evidence_bytes, bytes.len());
         assert_eq!(item.evidence_sha256, format!("{:x}", Sha256::digest(bytes)));
@@ -622,7 +631,7 @@ mod tests {
 
     #[test]
     fn canonical_id_prefers_the_producer_gap_identity() -> Result<(), String> {
-        let item = GapItem::from_finding(&finding()?)?;
+        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
         if item.canonical_id != "gap:test:1" || item.finding_id != "finding:test:1" {
             return Err(format!(
                 "canonical identity must prefer the producer gap id: {item:?}",
@@ -650,7 +659,7 @@ mod tests {
     fn fallback_identity_uses_the_finding_id() -> Result<(), String> {
         let mut finding = finding()?;
         finding.canonical_gap = None;
-        let item = GapItem::from_finding(&finding)?;
+        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         if item.canonical_id != "finding:test:1" {
             return Err(format!(
                 "without a canonical gap the finding id must be the item identity: {}",
@@ -663,7 +672,8 @@ mod tests {
     #[test]
     fn eligibility_follows_the_producer_actionability_predicate() -> Result<(), String> {
         use crate::lsp::diagnostic_budget::DiagnosticBudgetEligibility;
-        let actionable = budget_items(&[GapItem::from_finding(&finding()?)?]);
+        let actionable =
+            budget_items(&[GapItem::from_finding(&finding()?, Path::new("/test-root"))?]);
         let Some(actionable_item) = actionable.first() else {
             return Err("budget items must not be empty".to_string());
         };
@@ -672,7 +682,10 @@ mod tests {
         }
         let mut base_deleted = finding()?;
         base_deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
-        let filtered = budget_items(&[GapItem::from_finding(&base_deleted)?]);
+        let filtered = budget_items(&[GapItem::from_finding(
+            &base_deleted,
+            Path::new("/test-root"),
+        )?]);
         let Some(filtered_item) = filtered.first() else {
             return Err("budget items must not be empty".to_string());
         };
@@ -687,7 +700,7 @@ mod tests {
 
     #[test]
     fn evidence_document_reports_producer_repair_readiness() -> Result<(), String> {
-        let item = GapItem::from_finding(&finding()?)?;
+        let item = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
         let document = item.document("snapshot:sha256:abc");
         let readiness = document
             .pointer("/item/readiness/repair_packet_ready")
@@ -733,7 +746,7 @@ mod tests {
     fn readiness_stays_fail_closed_on_missing_producer_facts() -> Result<(), String> {
         let mut no_discriminator = finding()?;
         no_discriminator.canonical_gap = None;
-        let item = GapItem::from_finding(&no_discriminator)?;
+        let item = GapItem::from_finding(&no_discriminator, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility
                 != Some("discriminator_not_populated_for_language")
@@ -752,7 +765,7 @@ mod tests {
                 flow_sink: None,
             },
         );
-        let item = GapItem::from_finding(&named_missing)?;
+        let item = GapItem::from_finding(&named_missing, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("missing_discriminator")
         {
@@ -764,7 +777,7 @@ mod tests {
 
         let mut base_deleted = finding()?;
         base_deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
-        let item = GapItem::from_finding(&base_deleted)?;
+        let item = GapItem::from_finding(&base_deleted, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("not_candidate_actionable")
         {
@@ -778,7 +791,7 @@ mod tests {
         for test in &mut weak_grip.related_tests {
             test.oracle_strength = crate::domain::OracleStrength::Weak;
         }
-        let item = GapItem::from_finding(&weak_grip)?;
+        let item = GapItem::from_finding(&weak_grip, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("fix_site_not_established")
         {
@@ -827,7 +840,7 @@ mod tests {
         unpopulated.canonical_gap = None;
         unpopulated.missing = Vec::new();
         unpopulated.class = crate::domain::ExposureClass::Exposed;
-        let item = GapItem::from_finding(&unpopulated)?;
+        let item = GapItem::from_finding(&unpopulated, Path::new("/test-root"))?;
         let document = item.document("snapshot:sha256:abc");
         let reason = document
             .pointer("/item/readiness/reason")
@@ -878,7 +891,7 @@ mod tests {
         limited.missing = Vec::new();
         limited.language = Some(crate::domain::LanguageId::Python);
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
-        let item = GapItem::from_finding(&limited)?;
+        let item = GapItem::from_finding(&limited, Path::new("/test-root"))?;
         if item.repair_readiness.ready
             || item.repair_readiness.ineligibility != Some("static_limitation")
         {
@@ -904,8 +917,8 @@ mod tests {
     fn complete_and_incomplete_evidence_stay_distinct() -> Result<(), String> {
         let mut with_gap = finding()?;
         with_gap.missing = Vec::new();
-        let complete = GapItem::from_finding(&with_gap)?;
-        let incomplete = GapItem::from_finding(&finding()?)?;
+        let complete = GapItem::from_finding(&with_gap, Path::new("/test-root"))?;
+        let incomplete = GapItem::from_finding(&finding()?, Path::new("/test-root"))?;
         if complete.evidence_bytes == incomplete.evidence_bytes {
             return Err(
                 "missing-evidence and complete-evidence items must not project identically"
@@ -946,7 +959,7 @@ mod tests {
         };
         let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
             .ok_or("the direct row should have a reason")?;
-        let item = GapItem::from_finding(&finding)?;
+        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         let rows = item.evidence_core["related_tests"]
             .as_array()
             .ok_or("expected related_tests in gap evidence")?;
@@ -958,6 +971,74 @@ mod tests {
         assert_eq!(rows[0]["miss"], "observation_unconfirmed");
         assert_eq!(rows[0]["why"], why.as_str());
         assert!(rows[1]["miss"].is_null() && rows[1]["why"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn gap_projection_renders_every_served_file_root_relative() -> Result<(), String> {
+        // #5254 item 6: the observed wire leak was a canonicalized finding
+        // file served verbatim. Every served file — the item, the list
+        // summary, the evidence location, related tests, and the fix site —
+        // renders relative to the analyzed root. Host-native absolute roots
+        // (no filesystem touch) so the test pins the threading on every
+        // host; the verbatim/case spelling matrix lives portably with the
+        // shared renderer in `output::path`.
+        let root = std::env::temp_dir().join("ripr-gap-path-root");
+        let mut finding = finding()?;
+        finding.probe.location.file = root.join("src/lib.rs");
+        finding.related_tests[0].file = root.join("tests/checkout.rs");
+
+        let item = GapItem::from_finding(&finding, &root)?;
+        assert_eq!(item.file, "src/lib.rs");
+        assert_eq!(
+            item.list_summary.pointer("/file").and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            item.evidence_core
+                .pointer("/location/file")
+                .and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            item.evidence_core
+                .pointer("/related_tests/0/file")
+                .and_then(Value::as_str),
+            Some("tests/checkout.rs")
+        );
+        let fix_site = item
+            .repair_readiness
+            .fix_site
+            .as_ref()
+            .ok_or("the strong related test should establish a fix site")?;
+        assert_eq!(fix_site.file, "tests/checkout.rs");
+        // Belt and braces: the root's unique marker appears nowhere in the
+        // served documents.
+        for document in [&item.list_summary, &item.evidence_core] {
+            let text = serde_json::to_string(document).map_err(|error| error.to_string())?;
+            assert!(
+                !text.contains("ripr-gap-path-root"),
+                "served documents must not leak host paths: {text}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_projection_keeps_an_out_of_root_file_stable() -> Result<(), String> {
+        // A file the root does not contain cannot be expressed relatively;
+        // it keeps its full stable spelling rather than an invented location.
+        let root = std::env::temp_dir().join("ripr-gap-path-root");
+        let elsewhere = std::env::temp_dir().join("ripr-gap-path-elsewhere");
+        let mut finding = finding()?;
+        finding.probe.location.file = elsewhere.join("lib.rs");
+
+        let item = GapItem::from_finding(&finding, &root)?;
+        assert!(
+            item.file.contains("ripr-gap-path-elsewhere") && item.file.ends_with("lib.rs"),
+            "an out-of-root file must keep its full stable spelling, got: {}",
+            item.file
+        );
         Ok(())
     }
 }
