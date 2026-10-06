@@ -102,16 +102,16 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
 /// Changed-file scope for the card inventory, in the inventory's own
 /// spelling. The discovery corpus is bare workspace-relative (`discover`
 /// strips the root before pushing), while item files render through the
-/// shared finding-location owner with its `./` prefix (#5996), so the
-/// prefix is normalized away and the changed-file intersection matches.
-/// Joining the root would absolutize them and lose every changed seam;
-/// an out-of-root item keeps its absolute fallback spelling and simply
-/// matches nothing.
+/// shared finding-location owner with its `./` prefix (#5996) and
+/// stable-path `%` escaping, so the prefix is normalized away, the escaping
+/// is decoded, and the changed-file intersection matches. Joining the root
+/// would absolutize them and lose every changed seam; an out-of-root item
+/// keeps its absolute fallback spelling and simply matches nothing.
 fn inventory_changed_files(items: &[GapItem]) -> Vec<PathBuf> {
     items
         .iter()
         .map(|item| {
-            PathBuf::from(
+            crate::analysis::decode_stable_path_text(
                 item.file
                     .as_str()
                     .strip_prefix("./")
@@ -619,6 +619,28 @@ mod tests {
         }
         if changed.get(1).is_none_or(|path| !path.is_absolute()) {
             return Err(format!("out-of-root scope must stay absolute: {changed:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_changed_files_decode_the_stable_wire_escaping() -> Result<(), String> {
+        // GapItem.file carries stable-path encoding (`%` as `%25`), while
+        // the inventory corpus holds raw workspace-relative spellings: the
+        // scope boundary must decode, or the %-named seam drops out of card
+        // scope (#6874). The wire spelling itself stays encoded.
+        let root = temp_root()?;
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.probe.location.file = root.join("pricing_%FF.rs");
+        let item = GapItem::from_finding(&finding, &root)?;
+        if item.file != "./pricing_%25FF.rs" {
+            return Err(format!("wire spelling must stay encoded: {}", item.file));
+        }
+        let changed = inventory_changed_files(std::slice::from_ref(&item));
+        if changed.first().map(PathBuf::as_path) != Some(Path::new("pricing_%FF.rs")) {
+            return Err(format!(
+                "scope must decode to the corpus spelling: {changed:?}"
+            ));
         }
         Ok(())
     }

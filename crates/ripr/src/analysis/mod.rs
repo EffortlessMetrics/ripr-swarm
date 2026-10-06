@@ -506,6 +506,53 @@ fn push_stable_path_text(output: &mut String, text: &str) {
     }
 }
 
+/// The inverse of [`stable_path_text`]'s `%` layer: `%XX` with uppercase hex
+/// — the only spelling the encoder emits — decodes to its byte, so `%25`
+/// recovers a literal `%` and `%FF` a non-UTF-8 `0xFF` byte. Anything else
+/// (lowercase hex, a stray `%`, plain text) stays literal, so input the
+/// encoder never emitted cannot manufacture a separator or merge two
+/// distinct names (#6874). This is not URI decoding: the stable scheme is
+/// its own, and only its own spellings decode.
+pub(crate) fn decode_stable_path_text(text: &str) -> PathBuf {
+    let bytes = text.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest[0] == b'%'
+            && rest.len() >= 3
+            && let Some(high) = uppercase_hex_value(rest[1])
+            && let Some(low) = uppercase_hex_value(rest[2])
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+        } else {
+            decoded.push(rest[0]);
+            index += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(decoded))
+    }
+    #[cfg(not(unix))]
+    {
+        // The same-host encoder output is always valid UTF-8 (a lossy
+        // source plus ASCII escapes), so honest input always decodes;
+        // foreign text keeps its literal spelling and matches only itself.
+        String::from_utf8(decoded).map_or_else(|_| PathBuf::from(text), PathBuf::from)
+    }
+}
+
+fn uppercase_hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// The one renderer for a finding's file location across every surface
 /// (#5996): workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
@@ -1010,6 +1057,46 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    /// The decoder inverts the encoder's `%` layer on every platform: a
+    /// literal `%` round-trips, while lowercase hex and stray `%` — spellings
+    /// the encoder never emits — stay literal instead of manufacturing bytes
+    /// (#6874).
+    #[test]
+    fn decode_stable_path_text_inverts_the_encoder_percent_layer() {
+        assert_eq!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            PathBuf::from("pricing_%FF.rs")
+        );
+        assert_eq!(
+            decode_stable_path_text(&stable_path_text(Path::new("100% sure.rs"))),
+            PathBuf::from("100% sure.rs")
+        );
+        // Not URI decoding: only the encoder's own uppercase spellings decode.
+        assert_eq!(decode_stable_path_text("a%2fb"), PathBuf::from("a%2fb"));
+        assert_eq!(
+            decode_stable_path_text("100% sure.rs"),
+            PathBuf::from("100% sure.rs")
+        );
+        assert_eq!(decode_stable_path_text("%"), PathBuf::from("%"));
+    }
+
+    /// Non-UTF-8 bytes round-trip exactly, and the literal-`%` name never
+    /// merges with the invalid-byte name it resembles (#6874).
+    #[cfg(unix)]
+    #[test]
+    fn decode_stable_path_text_keeps_invalid_bytes_distinct() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = PathBuf::from(OsString::from_vec(b"pricing_\xff.rs".to_vec()));
+        assert_eq!(stable_path_text(&invalid), "pricing_%FF.rs");
+        assert_eq!(decode_stable_path_text("pricing_%FF.rs"), invalid);
+        assert_ne!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            decode_stable_path_text("pricing_%FF.rs")
         );
     }
 
