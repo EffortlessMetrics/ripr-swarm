@@ -96,8 +96,18 @@ const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pi
 /// from the shared constants so the family cannot drift from the `next`
 /// block.
 pub(crate) fn workflow_snapshot_verify_command() -> String {
-    format!(
-        "ripr agent verify --root . --before {WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT} --after {WORKFLOW_AFTER_SNAPSHOT_ARTIFACT} --json"
+    workflow_snapshot_verify_command_for(crate::agent::command_specs::PORTABLE_ROOT)
+}
+
+/// [`workflow_snapshot_verify_command`] naming `root`, rendered by the same
+/// builder as the packet's `next.verify`, so a standalone packet's embedded
+/// verify replays against the repository it was produced for (#3948).
+pub(crate) fn workflow_snapshot_verify_command_for(root: &str) -> String {
+    crate::agent::loop_commands::agent_verify_command(
+        root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
     )
 }
 
@@ -366,6 +376,25 @@ pub(crate) fn evidence_record_with_verify_command(
     canonical_gap: Option<&CanonicalGapIdentity>,
     verify_command: Option<&str>,
 ) -> EvidenceRecord {
+    evidence_record_with_bound_verify_command(
+        entry,
+        canonical_gap,
+        verify_command,
+        std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+    )
+}
+
+/// [`evidence_record_with_verify_command`] for a verify display bound to a
+/// selected root (#3948, #3999). The display names the concrete root so it
+/// replays from any directory; typed recovery binds that same root, so the
+/// parsed `command_specs.verify` keeps the portable argv and a display whose
+/// root was substituted afterwards still fails closed.
+pub(crate) fn evidence_record_with_bound_verify_command(
+    entry: &ClassifiedSeam,
+    canonical_gap: Option<&CanonicalGapIdentity>,
+    verify_command: Option<&str>,
+    verify_root: &std::path::Path,
+) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
     let recommended_test = recommended_test_for(entry);
     let actionability = actionability_for(entry, &missing_records);
@@ -386,6 +415,7 @@ pub(crate) fn evidence_record_with_verify_command(
         &actionability,
         &static_limitations,
         &raw_findings,
+        verify_root,
     );
 
     EvidenceRecord {
@@ -628,6 +658,7 @@ fn canonical_item_for(
     actionability: &EvidenceRecordActionability,
     static_limitations: &[EvidenceRecordStaticLimitation],
     raw_findings: &[EvidenceRecordRawFinding],
+    verify_root: &std::path::Path,
 ) -> EvidenceRecordCanonicalItem {
     let evidence_state = evidence_state_for(entry, actionability);
     let gap_state = evidence_state.as_str();
@@ -681,13 +712,11 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The canonical verify display is the portable `--root .` shape,
-            // so recovery needs no concrete selected root.
+            // The verify display is the portable `--root .` shape or one
+            // bound to `verify_root`; recovery binds the same root, so either
+            // yields the portable argv.
             .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(
-                    display,
-                    std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
-                )
+                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
             }),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(

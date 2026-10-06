@@ -1043,6 +1043,29 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
             observe_selected_boundary(&selected)?;
         }
     }
+    if !prepared_repair {
+        // #3948: the embedded evidence-record verify names the selected root
+        // like `next` does, and keeps its typed spec. Pasted from the decoy,
+        // it verifies the selected repository's snapshots.
+        let item = packet
+            .pointer("/packets/0/evidence_record/canonical_item")
+            .ok_or_else(|| format!("packet omitted the canonical item: {packet}"))?;
+        let verify = item
+            .get("verify_command")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("canonical item omitted verify_command: {item}"))?;
+        if item
+            .pointer("/command_specs/verify")
+            .is_none_or(Value::is_null)
+        {
+            return Err(format!("bound verify display lost its typed spec: {item}"));
+        }
+        let output = run_in_shell(&journey, verify)?;
+        assert_success(&output, "embedded evidence_record verify_command")?;
+        if journey.launch_dir.join("target").exists() {
+            return Err("embedded verify wrote into foreign decoy root".to_string());
+        }
+    }
     let receipt = read_json(&selected.join("target/ripr/reports/agent-receipt.json"))?;
     if receipt.get("status").and_then(Value::as_str) != Some("advisory")
         || receipt

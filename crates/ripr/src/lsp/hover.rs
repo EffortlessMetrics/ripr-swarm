@@ -491,7 +491,17 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push("## Canonical Gap".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
-    if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+    if let Some(mut witness) = DiagnosticWitness::from_finding(finding) {
+        // The diagnostic carries the session-bound drill-in (#3948); the
+        // hover shows the same command rather than the portable domain one.
+        if let Some(command) = diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("explain_command"))
+            .and_then(Value::as_str)
+        {
+            witness.explain_command = command.to_string();
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
         lines.push(format!(
