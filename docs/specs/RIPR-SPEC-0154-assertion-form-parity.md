@@ -28,9 +28,14 @@ owner's source role.
   assertion classifier, so the guard carries exactly the oracle kind and
   strength its `assert!` form would — parity by construction, not a
   parallel strength table.
-- Conditions without a structural negation (opaque predicates, method
-  calls, `matches!` shapes) produce no oracle: exactness is never
-  inferred from messages or names.
+- Conditions without a supported structural negation (an unnegated opaque
+  predicate, method call or `matches!` expression) produce no oracle:
+  exactness is never inferred from messages or names. A negated expression
+  such as `!matches!(result, Expected::Good(_))` has the supported
+  `assert!(matches!(result, Expected::Good(_)))` twin; its classification
+  comes from that assertion operand, without importing the failure body's
+  `Err` constructor or diagnostics. A discarded matcher computation has
+  no twin and remains outside assertion admission (RIPR-SPEC-0001, #5713).
 - Repo-mode probe seeding filters shapes whose owning function carries
   the test/evidence role (`FunctionFact::source_role`, the typed
   function source role), mirroring the diff
@@ -61,14 +66,28 @@ owner's source role.
   `assertion_form_parity_assert_msg` fixtures: the same owner, boundary
   value, and observable under the two equivalent forms, with identical
   oracle kind/strength, classification, and gap accounting.
-- In-crate parity pins: the guard's oracle equals its assert twin's
-  (kind and strength); opaque guards stay unrecognized.
+- In-crate parity pins: comparison and negated matcher guards equal their
+  assert twins in kind and strength, including an explicit exact/strong
+  constructor-pattern control. Opaque guards contribute zero facts, including
+  diagnostic-only assertion/matcher text and unnegated matcher controls.
+- One-line and multiline literal-2 and whole-wildcard twins retain their
+  kind/strength through lexical, parsed, inline Trial and resolved helper
+  routes (#5713). Named subjects and owner calls are required; condition
+  continuation rows belong to the guard, while body and sibling assertions
+  keep their distinct coordinates. Discarded computations stay non-crediting.
 - The repo-mode leak reproduction (cfg(test) helper shapes seeded repo
   probes on main; none after the owner filter) with the production
   shapes still seeding.
 - The `cfg(all(test, ..))` role pin with the `cfg(not(test))` control.
 - Existing exact-vs-broad oracle fixtures remain green (the classifier
   is unchanged for recognized forms).
+
+Negated block Err guards retain their real body boundary. Wrapped discarded
+matcher statements cannot borrow sibling assertions; known pure blocks retain
+actual scrutinee observers and coordinates. The shared classifier keeps a whole
+wildcard inside a pure block Weak. Cloned collection leaves nonmatcher blocks
+on their original row traversal. These controls, and explicit unresolved/no-op
+panic and bail refusals, are mapped in `.ripr/traceability.toml` (#5713).
 
 ## Required guards
 
@@ -84,6 +103,9 @@ owner's source role.
 
 - Accept: `if actual != expected { return Err(format!(...)) }` credits
   the same oracle as `assert!(actual == expected, ...)`.
+- Accept: `if !matches!(value, 2) { return Err(()) }`
+  credits `ExactValue`/`Strong`, equal to its assertion twin; the Err-return
+  body does not make it an `ExactErrorVariant` oracle.
 - Accept: a cfg(test) helper's `if result != expected { panic!(...) }`
   seeds no repo probe while the production predicate still does.
 - Reject: a guard with an opaque condition becoming an oracle; a broad
@@ -97,8 +119,19 @@ opaque rejection); `analysis/probes/repo.rs` `cfg_test_leak_tests` (repo
 leak + production control); `analysis/syntax/ra.rs`
 `cfg_all_test_tests` (role pin); fixtures `assertion_form_parity_*`.
 
+`analysis/extract/oracles/discarded_matches_tests.rs` pins lexical/parsed
+layout parity and condition ownership; `analysis/facts/harness_registry/tests.rs`
+pins inline/helper twins, discarded/opaque controls and inert macro input.
+
 ## Non-Goals
 
+- No expansion of terminal panic/bail macros in this bounded Err-return grammar.
+  Their names alone do not establish divergence: locally shadowed/no-op macros
+  can return success for a wrong value. Actual unshadowed macro authority is a
+  separate capability followup; authored compiled controls contrast consuming
+  assertions, a specifically declared diverging bail and same-name no-op bail. Static
+  controls also pin shadowed/no-op panic refusal.
+  These declarations grant no generic name-only oracle admission.
 - No recognition of `match`-arm Err returns in this spec's bounded twin
   grammar; the guarded Result match is a separate, owner-bound producer
   (RIPR-SPEC-0175, #3709), not an assertion twin.

@@ -9,7 +9,8 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    is_structural_delimiter_line, parser_probe_shapes_for_changed_line, should_ignore_changed_line,
+    is_structural_delimiter_line, parser_probe_shapes_for_changed_line_against,
+    should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
@@ -77,8 +78,14 @@ pub(crate) fn probes_for_file_with_relations(
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
             continue;
         }
-        let parser_shapes =
-            parser_probe_shapes_for_changed_line(index, &changed.path, added.new_side_line, text);
+        let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
+        let parser_shapes = parser_probe_shapes_for_changed_line_against(
+            index,
+            &changed.path,
+            added.new_side_line,
+            text,
+            removed_counterpart.as_deref(),
+        );
         let parser_shapes = parser_shapes
             .into_iter()
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
@@ -111,7 +118,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(shape.start_line, &canonical_text, changed),
+                    removed_before(shape.start_line, &canonical_text, changed),
                     Some(canonical_text.clone()),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
@@ -124,7 +131,7 @@ pub(crate) fn probes_for_file_with_relations(
                     &build_context,
                     added,
                     shape.family,
-                    nearby_removed_line(added.new_side_line, text, changed),
+                    removed_before(added.new_side_line, text, changed),
                     Some(text.to_string()),
                 )));
             }
@@ -149,7 +156,7 @@ pub(crate) fn probes_for_file_with_relations(
                 &build_context,
                 added,
                 family,
-                nearby_removed_line(added.new_side_line, text, changed),
+                removed_before(added.new_side_line, text, changed),
                 Some(text.to_string()),
             )));
         }
@@ -783,6 +790,49 @@ fn has_matching_added_line(
         })
 }
 
+/// The removed line this added line replaced, paired by position inside one
+/// replacement block. The diff parser gives every removed line of a block
+/// the new-side coordinate where the block's added run starts, so the k-th
+/// added line pairs with the k-th removed line when both runs have the same
+/// length. Unequal runs pair nothing: shape selection treats a removed line
+/// as proof that a field was left unchanged, and a guessed pairing (such as
+/// the first removed line sharing a type name with every added line) would
+/// turn that proof against the edited field.
+fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) -> Option<String> {
+    let run_start = added_run_start(added_new_side_line, changed);
+    let mut run_len = 0usize;
+    while changed
+        .added_lines
+        .iter()
+        .any(|line| line.new_side_line == run_start + run_len)
+    {
+        run_len += 1;
+    }
+    let removed = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if removed.len() != run_len {
+        return None;
+    }
+    removed
+        .get(added_new_side_line.checked_sub(run_start)?)
+        .map(|line| line.text.trim().to_string())
+}
+
+/// A probe's `before` text: the positional counterpart when the replacement
+/// block pairs one, so it names the same old line that shape selection
+/// compared against, else the nearest token-sharing removed line.
+fn removed_before(
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+) -> Option<String> {
+    replaced_line_counterpart(added_new_side_line, changed)
+        .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
+}
+
 fn nearby_removed_line(
     added_new_side_line: usize,
     added: &str,
@@ -805,14 +855,28 @@ fn nearby_removed_line(
                 || lines_are_adjacent(line.new_side_line, run_start)
         })
         .collect::<Vec<_>>();
-    nearby
-        .iter()
-        .find(|line| {
-            let removed_tokens = extract_identifier_tokens(&line.text);
-            !added_tokens.is_empty()
-                && added_tokens
-                    .iter()
-                    .any(|token| removed_tokens.iter().any(|other| other == token))
+    // A match arm whose pattern stands unchanged on a removed line is that
+    // arm's original: a qualified enum name is shared by every arm of a
+    // multi-line hunk, so the token rule alone pairs later arms with the
+    // first removed arm.
+    let arm_pattern = |text: &str| {
+        text.split_once("=>")
+            .map(|(pattern, _)| pattern.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let same_arm = arm_pattern(added).and_then(|pattern| {
+        nearby
+            .iter()
+            .find(|line| arm_pattern(&line.text).as_ref() == Some(&pattern))
+    });
+    same_arm
+        .or_else(|| {
+            nearby.iter().find(|line| {
+                let removed_tokens = extract_identifier_tokens(&line.text);
+                !added_tokens.is_empty()
+                    && added_tokens
+                        .iter()
+                        .any(|token| removed_tokens.iter().any(|other| other == token))
+            })
         })
         .or_else(|| nearby.first())
         .map(|line| line.text.trim().to_string())
@@ -859,7 +923,7 @@ mod tests {
                         file: path.clone(),
                         start_line: 1,
                         end_line: 5,
-                        body: "fn discounted_total() { if amount >= threshold {} }".to_string(),
+                        body: "fn discounted_total() { if amount >= threshold {} }".into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -877,7 +941,7 @@ mod tests {
                         start_byte: 20,
                         end_byte: 44,
                         kind: ProbeShapeKind::Predicate,
-                        text: "if amount >= threshold {".to_string(),
+                        text: "if amount >= threshold {".into(),
                     }],
                     ..FileFacts::default()
                 },
@@ -973,14 +1037,14 @@ mod tests {
                 path.clone(),
                 FileFacts {
                     path: path.clone(),
-                    source: source.to_string(),
+                    source: source.into(),
                     functions: vec![FunctionFact {
                         id: SymbolId("price".to_string()),
                         name: "price".to_string(),
                         file: path.clone(),
                         start_line: 1,
                         end_line: 3,
-                        body: source.to_string(),
+                        body: source.into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -998,7 +1062,7 @@ mod tests {
                         start_byte: producer,
                         end_byte: producer + PREDICATE.len(),
                         kind: ProbeShapeKind::Predicate,
-                        text: PREDICATE.to_string(),
+                        text: PREDICATE.into(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1078,14 +1142,14 @@ mod tests {
                 path.clone(),
                 FileFacts {
                     path: path.clone(),
-                    source: format!("{expression};"),
+                    source: format!("{expression};").into(),
                     functions: vec![FunctionFact {
                         id: SymbolId("gate_watchdog::classify".to_string()),
                         name: "classify".to_string(),
                         file: path.clone(),
                         start_line: 1,
                         end_line: 20,
-                        body: expression.to_string(),
+                        body: expression.into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -1103,7 +1167,7 @@ mod tests {
                         start_byte: 0,
                         end_byte: expression.len(),
                         kind: ProbeShapeKind::CallDeletion,
-                        text: expression.to_string(),
+                        text: expression.into(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1149,7 +1213,7 @@ mod tests {
                         start_byte: 100,
                         end_byte: 133,
                         kind: ProbeShapeKind::ReturnValue,
-                        text: "HirLet {\n    name,\n    storage,\n}".to_string(),
+                        text: "HirLet {\n    name,\n    storage,\n}".into(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1254,7 +1318,7 @@ mod tests {
                         start_byte: 40,
                         end_byte: 63,
                         kind: ProbeShapeKind::CallDeletion,
-                        text: "compute_fee(amount * 9)".to_string(),
+                        text: "compute_fee(amount * 9)".into(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1296,7 +1360,7 @@ mod tests {
                             file: path.clone(),
                             start_line: 1,
                             end_line: 5,
-                            body: "fn parses() { let config = toml::from_str(text)?; }".to_string(),
+                            body: "fn parses() { let config = toml::from_str(text)?; }".into(),
                             calls: vec![],
                             returns: vec![],
                             literals: vec![],
@@ -1711,7 +1775,7 @@ mod tests {
                         file: path.clone(),
                         start_line: 1,
                         end_line: 6,
-                        body: "fn record_invoice() { }".to_string(),
+                        body: "fn record_invoice() { }".into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -1788,6 +1852,39 @@ mod tests {
     // Regression: an added line adjacent to a removed line that shares no
     // identifier token must still fall back to that *nearby* removed line
     // (not `None`, and not an unrelated line from elsewhere in the file).
+    #[test]
+    fn match_arm_body_change_pairs_with_its_own_removed_arm() {
+        let line = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![
+                line(3, "        Kind::Alpha => 4,"),
+                line(4, "        Kind::Beta => 5,"),
+                line(5, "        Kind::Gamma => 6,"),
+            ],
+            removed_lines: vec![
+                line(3, "        Kind::Alpha => 1,"),
+                line(3, "        Kind::Beta  =>  2,"),
+                line(3, "        Kind::Gamma => 3,"),
+            ],
+        };
+        // Every removed arm shares `Kind`; the arm with the same pattern is
+        // the original, whatever its position or spacing.
+        assert_eq!(
+            nearby_removed_line(4, "        Kind::Beta => 5,", &changed),
+            Some("Kind::Beta  =>  2,".to_string())
+        );
+        // A changed pattern keeps the token rule.
+        assert_eq!(
+            nearby_removed_line(4, "        Kind::Delta => 5,", &changed),
+            Some("Kind::Alpha => 1,".to_string())
+        );
+    }
+
     #[test]
     fn probes_for_file_falls_back_to_nearby_removed_line_without_token_match() {
         let changed = ChangedFile {
@@ -1987,7 +2084,7 @@ mod tests {
                         file: path.clone(),
                         start_line: 1,
                         end_line: 9,
-                        body: body.to_string(),
+                        body: body.into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -2063,7 +2160,7 @@ mod tests {
                         file: PathBuf::from("src/lib.rs"),
                         start_line: 1,
                         end_line: 8,
-                        body: body.to_string(),
+                        body: body.into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
@@ -2127,7 +2224,7 @@ mod tests {
                         file: PathBuf::from("src/lib.rs"),
                         start_line: 1,
                         end_line: 8,
-                        body: body.to_string(),
+                        body: body.into(),
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],

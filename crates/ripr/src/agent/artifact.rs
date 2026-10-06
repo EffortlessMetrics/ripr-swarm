@@ -32,6 +32,17 @@ pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placehold
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+/// `analysis.format` / `analysis.command` token of the repo-exposure identity
+/// envelope. The repo-exposure producer command is part of the validated
+/// identity contract (`validate_repo_exposure_artifact`).
+const REPO_EXPOSURE_ANALYSIS_FORMAT: &str = "repo-exposure-json";
+const REPO_EXPOSURE_PRODUCER_COMMAND: &str = "ripr check --format repo-exposure-json";
+
+/// `analysis.format` / `analysis.command` token of the repo seam inventory
+/// identity envelope (#6609).
+const REPO_SEAMS_ANALYSIS_FORMAT: &str = "repo-seams-json";
+const REPO_SEAMS_PRODUCER_COMMAND: &str = "ripr check --format repo-seams-json";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RepoExposureArtifactContext {
     pub(crate) root: PathBuf,
@@ -60,6 +71,41 @@ impl RepoExposureArtifactContext {
         base_revision: Option<String>,
         config: &crate::config::RiprConfig,
     ) -> Result<Self, String> {
+        Self::for_analysis_format(
+            root,
+            mode,
+            base_revision,
+            config,
+            REPO_EXPOSURE_ANALYSIS_FORMAT,
+        )
+    }
+
+    /// Build the same portable identity for one repo seam inventory run
+    /// (#6609). The analysis format is part of the canonical identity, so a
+    /// `repo-seams-json` artifact never shares an input identity with a
+    /// `repo-exposure-json` artifact even on the same tree.
+    pub(crate) fn for_repo_seams(
+        root: PathBuf,
+        mode: String,
+        base_revision: Option<String>,
+        config: &crate::config::RiprConfig,
+    ) -> Result<Self, String> {
+        Self::for_analysis_format(
+            root,
+            mode,
+            base_revision,
+            config,
+            REPO_SEAMS_ANALYSIS_FORMAT,
+        )
+    }
+
+    fn for_analysis_format(
+        root: PathBuf,
+        mode: String,
+        base_revision: Option<String>,
+        config: &crate::config::RiprConfig,
+        analysis_format: &str,
+    ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
             crate::analysis::seam_cache::workspace_named_file_identities_relative(
@@ -67,11 +113,12 @@ impl RepoExposureArtifactContext {
                 |lockfiles| git_tracked_lockfiles(&canonical_root, lockfiles),
             );
         let input_canonical = format!(
-            "identity_version={};mode={};profile={};base={:?};format=repo-exposure-json;manifest={:?};lockfile={:?};config={};analyzer={}",
+            "identity_version={};mode={};profile={};base={:?};format={};manifest={:?};lockfile={:?};config={};analyzer={}",
             INPUT_IDENTITY_VERSION,
             mode,
             mode,
             base_revision,
+            analysis_format,
             manifest_identity,
             lockfile_identity,
             crate::config::repo_exposure_config_identity_hash(config),
@@ -161,6 +208,42 @@ pub(crate) fn repo_exposure_artifact_metadata(
     context: &RepoExposureArtifactContext,
     content_sha256: &str,
 ) -> Result<Value, String> {
+    analysis_artifact_metadata(
+        context,
+        "repo_exposure",
+        REPO_EXPOSURE_ANALYSIS_FORMAT,
+        REPO_EXPOSURE_PRODUCER_COMMAND,
+        content_sha256,
+    )
+}
+
+/// Producer-owned identity envelope for a `repo-seams-json` artifact (#6609).
+/// The same shared projection `repo-exposure-json` carries (ADR 0019): the
+/// only differences are the artifact kind and the analysis format/command
+/// tokens, which also move the input identity.
+pub(crate) fn repo_seams_artifact_metadata(
+    context: &RepoExposureArtifactContext,
+    content_sha256: &str,
+) -> Result<Value, String> {
+    analysis_artifact_metadata(
+        context,
+        "repo_seams",
+        REPO_SEAMS_ANALYSIS_FORMAT,
+        REPO_SEAMS_PRODUCER_COMMAND,
+        content_sha256,
+    )
+}
+
+/// The shared producer identity projection (ADR 0019). `analysis.command` and
+/// `analysis.profile` state the producing operation; `content_sha256` commits
+/// the exact rendered bytes via the fixed placeholder canonicalization.
+fn analysis_artifact_metadata(
+    context: &RepoExposureArtifactContext,
+    artifact_kind: &str,
+    analysis_format: &str,
+    producer_command: &str,
+    content_sha256: &str,
+) -> Result<Value, String> {
     let root = canonical_root(&context.root)?;
     let head = git_output(&root, &["rev-parse", "HEAD"])
         .ok()
@@ -178,7 +261,7 @@ pub(crate) fn repo_exposure_artifact_metadata(
         })
         .unwrap_or("unavailable");
     Ok(json!({
-        "kind": "repo_exposure",
+        "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
         "canonicalization": CONTENT_COMMITMENT_CANONICALIZATION,
         "producer": {
@@ -190,11 +273,11 @@ pub(crate) fn repo_exposure_artifact_metadata(
             "head": head,
         },
             "analysis": {
-                "format": "repo-exposure-json",
+                "format": analysis_format,
                 "mode": context.mode,
                 "base_revision": context.base_revision,
                 "input_identity": context.input_identity,
-                "command": "ripr check --format repo-exposure-json",
+                "command": producer_command,
                 "profile": context.mode,
                 "worktree": status,
             },
@@ -692,6 +775,58 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// A HEAD read that also detects an A-B-A swap between two reads (#5930).
+/// The `head` is the commit `current_git_head` reports; `reflog_top` is the
+/// newest reflog entries' fingerprint and `reflog_len` is the total HEAD
+/// reflog entry count. Two snapshots are equal only when all three match,
+/// so a swap that returns HEAD to the same commit still shows as movement.
+/// The count is the append-sensitive position: every HEAD update appends
+/// exactly one reflog entry, so a repeated A-B-A cycle advances the count
+/// even when the newest entries read identically at both snapshots (the
+/// window alone collides there because `%ct` is the commit timestamp, not
+/// the update time). An unreadable or missing reflog degrades to an empty
+/// fingerprint with count zero (HEAD-only comparison, the previous
+/// behavior) rather than failing flows in repositories without reflogs;
+/// that residual is documented, not silent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HeadIdentity {
+    pub(crate) head: String,
+    pub(crate) reflog_top: String,
+    pub(crate) reflog_len: usize,
+}
+
+pub(crate) fn current_git_head_identity(root: &Path) -> Result<HeadIdentity, String> {
+    let head = current_git_head(root)?;
+    // Lenient by design (see struct docs): only the HEAD read is strict.
+    // One spawn reads the whole HEAD reflog so the count and the window
+    // are one consistent snapshot; the newest three formatted entries keep
+    // single-cycle detection independent of the count.
+    let (reflog_len, reflog_top) =
+        match git_spawn(root, &["log", "-g", "--format=%H %ct %gs", "HEAD"]) {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let entries: Vec<&str> = text
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                let top = entries
+                    .iter()
+                    .take(3)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (entries.len(), top)
+            }
+            _ => (0, String::new()),
+        };
+    Ok(HeadIdentity {
+        head,
+        reflog_top,
+        reflog_len,
+    })
+}
+
 /// The object type Git reports for a well-formed revision, or `None` when the
 /// object is absent. Callers must establish repository liveness first: any
 /// non-zero `git cat-file` exit is read as absence, not as an infrastructure
@@ -995,6 +1130,17 @@ fn governed_commitment_span(raw: &str) -> Result<(usize, usize), ContentCommitme
     }
 }
 
+/// Recompute the governed content commitment of artifact bytes without any
+/// repository access. Terminal-receipt readers bind a verify document to the
+/// retained before snapshot through this alone: the retained bytes are
+/// already commitment-anchored, so binding needs the recomputed digest, not
+/// full artifact validation (which requires git liveness and would make
+/// issued receipts unreadable at an unknown HEAD). The typed rejection stays
+/// private; callers get the same rendered reasons validation reports.
+pub(crate) fn recompute_content_commitment(raw: &str) -> Result<String, String> {
+    content_sha256_with_placeholder(raw).map_err(|error| error.to_string())
+}
+
 fn content_sha256_with_placeholder(raw: &str) -> Result<String, ContentCommitmentRejection> {
     let (value_start, value_end) = governed_commitment_span(raw)?;
     let declared = &raw[value_start..value_end];
@@ -1166,6 +1312,85 @@ mod tests {
             return Err(error);
         }
         Ok(root)
+    }
+
+    fn commit_file(root: &Path, name: &str, body: &str) -> Result<(), String> {
+        std::fs::write(root.join(name), body)
+            .map_err(|error| format!("write fixture file: {error}"))?;
+        run_git(root, &["add", "--", name])?;
+        run_git(root, &["commit", "--quiet", "-m", name])?;
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_detects_an_a_b_a_swap_between_reads() -> Result<(), String> {
+        // Issue #5930: a HEAD swap that returns to the same commit inside
+        // an evaluation window is invisible to commit comparison, so the
+        // after-phase `current` check must compare head identities. The
+        // swap is sequenced between the two reads (the deterministic
+        // equivalent of a mid-evaluation interleave): no timing involved.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let before = current_git_head_identity(&root)?;
+        // A quiet re-read with no movement must stay equal: no false positive.
+        let steady = current_git_head_identity(&root)?;
+        assert_eq!(before, steady);
+        // A -> B -> A: HEAD ends where it started, but the reflog grew.
+        commit_file(&root, "b.txt", "b")?;
+        run_git(&root, &["reset", "--quiet", "--soft", "HEAD~1"])?;
+        let after = current_git_head_identity(&root)?;
+        assert_eq!(
+            before.head, after.head,
+            "the old commit-only check would pass this swap"
+        );
+        assert_ne!(
+            before, after,
+            "head identity must detect the A-B-A swap: {before:?} vs {after:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_counts_repeated_a_b_a_cycles_apart() -> Result<(), String> {
+        // #6827 review: the newest-entries window alone collides across a
+        // repeated A-B-A cycle (reset messages and `%ct` commit timestamps
+        // repeat), so the reflog length must discriminate. The first
+        // snapshot is taken after three alternating resets (the window
+        // reads A, B, A); another B-to-A cycle reproduces that window
+        // byte-identically while the count advances.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let a = current_git_head(&root)?;
+        commit_file(&root, "b.txt", "b")?;
+        let b = current_git_head(&root)?;
+        for target in [&a, &b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let first = current_git_head_identity(&root)?;
+        for target in [&b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let second = current_git_head_identity(&root)?;
+        assert_eq!(
+            first.head, second.head,
+            "the window-collision setup must return HEAD to the same commit"
+        );
+        assert_eq!(
+            first.reflog_top, second.reflog_top,
+            "the window must collide here or this test proves nothing about the count"
+        );
+        assert_eq!(
+            second.reflog_len,
+            first.reflog_len + 2,
+            "two more HEAD updates must advance the reflog count by two"
+        );
+        assert_ne!(
+            first, second,
+            "head identity must detect the repeated A-B-A cycle: {first:?} vs {second:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

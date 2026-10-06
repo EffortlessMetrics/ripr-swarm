@@ -16,11 +16,11 @@
 //!   This check only sets `static_limit_kind` to name the limitation.
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
-use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex, TestFact};
+use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Maximum call-hop depth for the transitive walk.
 pub(in crate::analysis) const MAX_TRANSITIVE_DEPTH: usize = 5;
@@ -123,6 +123,15 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
 
 struct ReachGraph<'a> {
     all_tests: Vec<&'a TestFact>,
+    /// Each test body with comments and strings masked, aligned with
+    /// `all_tests` and filled on first use. Witness corroboration reads a
+    /// test's body for every reaching callee of every owner, and masking it
+    /// each time made rust-analyzer's cold pilot 3.5x slower (#6009).
+    masked_test_bodies: Vec<OnceLock<String>>,
+    /// Per test: `(method, impl type)` to whether the test calls the method
+    /// on that type. The answer depends only on the test, and every owner
+    /// whose reaching set holds the method asks again.
+    receiver_checks: Vec<Mutex<HashMap<(String, String), bool>>>,
     /// Every production function with a given name. Name-only facts cannot
     /// tell `StringDecoder::decode` from `StringDecoderRange::decode`, so the
     /// walk follows all of them rather than whichever one was indexed first.
@@ -134,6 +143,20 @@ struct ReachGraph<'a> {
     /// needs a definition whose body names the owner, so an owner no body
     /// names cannot have one.
     macro_bodies: Vec<&'a str>,
+    /// Built on the first macro sweep; see [`Self::macro_invocations`].
+    macro_invocations: OnceLock<MacroInvocations<'a>>,
+    /// Per macro name: one entry per `macro_rules!` definition of that name,
+    /// holding its body when it has one, as [`macro_definitions_named`]
+    /// would find them. Built in one pass over every source, instead of one
+    /// pass per owner and invoked macro name.
+    macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>>,
+}
+
+struct MacroInvocations<'a> {
+    /// Per test, in `ReachGraph::all_tests` order.
+    tests: Vec<Vec<MacroInvocation>>,
+    /// Per production function, aligned with `ReachGraph::by_name`.
+    by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>>,
 }
 
 impl<'a> ReachGraph<'a> {
@@ -163,17 +186,63 @@ impl<'a> ReachGraph<'a> {
             names.sort_unstable();
             names.dedup();
         }
-        let macro_bodies = index
-            .files()
-            .values()
-            .flat_map(|file| macro_definition_bodies(&file.data().source))
-            .collect();
+        let mut macro_bodies = Vec::new();
+        let mut macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>> = HashMap::new();
+        for file in index.files().values() {
+            add_macro_definitions(
+                &file.data().source,
+                &mut macro_bodies,
+                &mut macro_definitions,
+            );
+        }
+        let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
+        let receiver_checks = all_tests.iter().map(|_| Mutex::default()).collect();
         Self {
             all_tests,
+            masked_test_bodies,
+            receiver_checks,
             by_name,
             callers,
             macro_bodies,
+            macro_invocations: OnceLock::new(),
+            macro_definitions,
         }
+    }
+
+    /// Macro invocations in every test and production function body. Every
+    /// macro sweep reads them and they depend only on the bodies, so they are
+    /// built once, on the first sweep; a run that never reaches the macro
+    /// fallback does not pay for them.
+    fn macro_invocations(&self) -> &MacroInvocations<'a> {
+        self.macro_invocations.get_or_init(|| MacroInvocations {
+            tests: self
+                .all_tests
+                .iter()
+                .map(|test| macro_invocations_in_text(&test.body, test.start_line))
+                .collect(),
+            by_name: self
+                .by_name
+                .iter()
+                .map(|(&name, functions)| {
+                    let invocations = functions
+                        .iter()
+                        .map(|function| {
+                            macro_invocations_in_text(&function.body, function.start_line)
+                        })
+                        .collect();
+                    (name, invocations)
+                })
+                .collect(),
+        })
+    }
+
+    /// Whether `macro_name` has exactly one `macro_rules!` definition in the
+    /// index and its body names `owner_name` as an identifier.
+    fn macro_definition_mentions_owner(&self, macro_name: &str, owner_name: &str) -> bool {
+        matches!(
+            self.macro_definitions.get(macro_name).map(Vec::as_slice),
+            Some([Some(body)]) if contains_identifier(body, owner_name)
+        )
     }
 
     /// Names from which the forward walk reaches `owner_name`: every name
@@ -206,7 +275,7 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
-    /// Whether `test` gives a name-only reason to believe its call to
+    /// Whether a test gives a name-only reason to believe its call to
     /// `entry` lands on a function that reaches the owner, rather than on an
     /// unrelated function that shares the name (#5481: a unit test calling
     /// `Cache::build` while the path runs through `Site::build`).
@@ -220,14 +289,18 @@ impl<'a> ReachGraph<'a> {
     /// impl segments, or a depth edge), the entry counts as corroborated,
     /// which keeps the plain file-order selection. This only ranks witnesses;
     /// it never removes one or changes the classification.
-    fn entry_is_corroborated(
+    ///
+    /// The entry is corroborated for a test exactly when this returns `None`
+    /// or the test calls the entry on one of the returned self types
+    /// (`test_calls_on_type`). Only the second half depends on the test, so
+    /// `transitive_witness` resolves this once per entry.
+    fn entry_receiver_types(
         &self,
         entry: &str,
-        test: &TestFact,
         reaching: &HashSet<&str>,
         owner_name: &str,
-    ) -> bool {
-        let mut saw_reaching_function = false;
+    ) -> Option<Vec<String>> {
+        let mut self_types = Vec::new();
         for function in self.by_name.get(entry).into_iter().flatten() {
             let reaches = calls_of(function).iter().any(|call| {
                 !is_macro_call(&call.name)
@@ -237,20 +310,140 @@ impl<'a> ReachGraph<'a> {
             if !reaches {
                 continue;
             }
-            saw_reaching_function = true;
-            match super::related_tests::impl_self_type_name(&function.id.0) {
-                None => return true,
-                Some(self_type)
-                    if super::related_tests::method_call_resolves_to_impl_type(
-                        test, entry, &self_type,
-                    ) =>
-                {
-                    return true;
-                }
-                Some(_) => {}
-            }
+            self_types.push(super::related_tests::impl_self_type_name(&function.id.0)?);
         }
-        !saw_reaching_function
+        if self_types.is_empty() {
+            None
+        } else {
+            Some(self_types)
+        }
+    }
+
+    /// Whether test `test_index` calls `method` on a receiver resolved to
+    /// `impl_type`; see `method_call_resolves_to_impl_type`.
+    fn test_calls_on_type(&self, test_index: usize, method: &str, impl_type: &str) -> bool {
+        let (Some(test), Some(masked), Some(checks)) = (
+            self.all_tests.get(test_index),
+            self.masked_test_bodies.get(test_index),
+            self.receiver_checks.get(test_index),
+        ) else {
+            return false;
+        };
+        let key = (method.to_string(), impl_type.to_string());
+        let lock = || checks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(&known) = lock().get(&key) {
+            return known;
+        }
+        let masked_body =
+            masked.get_or_init(|| crate::analysis::extract::mask_comments_and_strings(&test.body));
+        let calls = super::related_tests::method_call_resolves_to_impl_type_in(
+            test,
+            masked_body,
+            method,
+            impl_type,
+        );
+        lock().insert(key, calls);
+        calls
+    }
+}
+
+/// Trait methods Rust calls through syntax, macros or scope rather than by
+/// name, so a test reaches them with no call fact (#6297 review).
+const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
+    "fmt",
+    "eq",
+    "ne",
+    "partial_cmp",
+    "cmp",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "rem",
+    "neg",
+    "not",
+    "bitand",
+    "bitor",
+    "bitxor",
+    "shl",
+    "shr",
+    "add_assign",
+    "sub_assign",
+    "mul_assign",
+    "div_assign",
+    "rem_assign",
+    "bitand_assign",
+    "bitor_assign",
+    "bitxor_assign",
+    "shl_assign",
+    "shr_assign",
+    "index",
+    "index_mut",
+    "deref",
+    "deref_mut",
+    "next",
+    "into_iter",
+    "drop",
+    "hash",
+    "clone",
+    "from",
+    "into",
+    "try_from",
+    "try_into",
+    "from_iter",
+    "as_ref",
+    "as_mut",
+    "borrow",
+    "borrow_mut",
+    "default",
+    "call",
+    "call_mut",
+    "call_once",
+    "branch",
+    "from_residual",
+    "from_output",
+];
+
+/// The reverse name walk from one owner, for asking whether a test may run
+/// it ([`TransitiveReachIndex::owner_reach`]).
+pub(in crate::analysis) struct OwnerReach<'g, 'a> {
+    graph: &'g ReachGraph<'a>,
+    owner_name: String,
+    reaching: HashSet<&'a str>,
+    /// The owner is, or is reached from, a trait method the language calls
+    /// without naming it, so any test may run it.
+    implicit_dispatch: bool,
+}
+
+impl OwnerReach<'_, '_> {
+    /// Whether `test` may run the owner, by name only (#6297). It may when
+    /// it calls the owner, calls a production function that reaches the
+    /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
+    /// with no indexed function: a std or trait method such as `parse` or
+    /// `to_string` can dispatch into the owner unseen. Only constructors and
+    /// indexed functions with no name path to the owner rule it out. Macro
+    /// bodies are the caller's concern.
+    pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact) -> bool {
+        if self.implicit_dispatch {
+            return true;
+        }
+        test.calls.iter().any(|call| {
+            let name = call.name.as_str();
+            // The test's own `fn` line is recorded under its name.
+            let own_declaration = name == test.name
+                && contains_identifier(&call.text, "fn")
+                && call.text.contains(&format!("fn {name}"));
+            !is_macro_call(name)
+                && !own_declaration
+                && (name == self.owner_name
+                    || self.reaching.contains(name)
+                    || (!self.graph.by_name.contains_key(name)
+                        && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
+        })
     }
 }
 
@@ -282,14 +475,17 @@ impl<'a> TransitiveReachIndex<'a> {
 
         // One witness per test: its best entry symbol that reaches the owner,
         // where an entry the test body corroborates (see
-        // `ReachGraph::entry_is_corroborated`) beats a bare name match, then
+        // `ReachGraph::entry_receiver_types`) beats a bare name match, then
         // the lexicographically-smallest name. Collected as a sortable tuple
         // with the corroboration rank first, so a test calling an unrelated
         // type's same-named method cannot win on file order alone (#5481),
         // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
         let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
-        for test in &graph.all_tests {
+        // The receiver types depend only on the entry and this owner, so
+        // they are resolved once per entry rather than once per test.
+        let mut receiver_types: HashMap<&str, Option<Vec<String>>> = HashMap::new();
+        for (test_index, test) in graph.all_tests.iter().enumerate() {
             let mut entry: Option<(bool, &str)> = None;
             for callee in &test.calls {
                 // Skip macro invocations.
@@ -302,12 +498,15 @@ impl<'a> TransitiveReachIndex<'a> {
                     continue;
                 }
                 if reaching.contains(callee.name.as_str()) {
-                    let uncorroborated = !graph.entry_is_corroborated(
-                        callee.name.as_str(),
-                        test,
-                        &reaching,
-                        owner_name,
-                    );
+                    let name = callee.name.as_str();
+                    let self_types = receiver_types
+                        .entry(name)
+                        .or_insert_with(|| graph.entry_receiver_types(name, &reaching, owner_name));
+                    let uncorroborated = self_types.as_ref().is_some_and(|self_types| {
+                        !self_types
+                            .iter()
+                            .any(|self_type| graph.test_calls_on_type(test_index, name, self_type))
+                    });
                     let candidate = (uncorroborated, callee.name.as_str());
                     match entry {
                         Some(current) if current <= candidate => {}
@@ -405,6 +604,40 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
+    /// The names that may lead to `owner_name`, computed once so every
+    /// same-file test of one probe reuses the reverse walk (#6297).
+    pub(in crate::analysis) fn owner_reach(&self, owner_name: &str) -> OwnerReach<'_, 'a> {
+        let graph = self.graph();
+        let reaching = graph.names_reaching(owner_name);
+        // A trait method the language calls without naming it (`format!`
+        // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
+        // leaves no call fact, so an owner that is one, or is reached from
+        // one, may run under any test. Only a trait method dispatches that
+        // way: a free or inherent `fn clone` is reached by name only. An
+        // unknown container (lexical fallback) fails open.
+        let implicit_dispatch = std::iter::once(owner_name)
+            .chain(reaching.iter().copied())
+            .filter(|name| IMPLICIT_DISPATCH_METHODS.contains(name))
+            .any(|name| {
+                graph.by_name.get(name).is_none_or(|functions| {
+                    functions.iter().any(|function| {
+                        matches!(
+                            function.item.container,
+                            FunctionContainer::TraitImpl { .. }
+                                | FunctionContainer::Trait { .. }
+                                | FunctionContainer::Unknown
+                        )
+                    })
+                })
+            });
+        OwnerReach {
+            graph,
+            owner_name: owner_name.to_string(),
+            reaching,
+            implicit_dispatch,
+        }
+    }
+
     /// Every production function, for checks that scan impl owners.
     pub(in crate::analysis) fn production_functions(
         &self,
@@ -435,7 +668,6 @@ impl TransitiveReachIndex<'_> {
         if owner_name.is_empty() {
             return None;
         }
-        let index = self.index;
         let graph = self.graph();
         if !graph
             .macro_bodies
@@ -444,29 +676,28 @@ impl TransitiveReachIndex<'_> {
         {
             return None;
         }
-        let mut sweep = ReachSweep::new(&graph.by_name, owner_name);
-        macro_reach_witness_with(&graph.all_tests, &mut sweep, owner_name, index)
+        let mut sweep = ReachSweep::new(graph, owner_name);
+        macro_reach_witness_with(graph, &mut sweep, owner_name)
     }
 }
 
 fn macro_reach_witness_with(
-    all_tests: &[&TestFact],
+    graph: &ReachGraph<'_>,
     sweep: &mut ReachSweep<'_, '_>,
     owner_name: &str,
-    index: &RustIndex,
 ) -> Option<MacroReachWitness> {
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
-    for test in all_tests {
+    for (test, invocations) in graph.all_tests.iter().zip(&graph.macro_invocations().tests) {
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
-        for macro_invocation in macro_invocations_in_text(&test.body, test.start_line) {
+        for macro_invocation in invocations {
             if let Some(edge) = ReachSweep::macro_edge_for_invocation(
                 &mut sweep.macro_mention_memo,
-                &macro_invocation,
+                macro_invocation,
                 &test.file,
                 MACRO_WITNESS_TEST_BODY_HOST,
                 owner_name,
-                index,
+                graph,
             ) {
                 found.push((format!("{}!", macro_invocation.name), edge));
             }
@@ -476,7 +707,7 @@ fn macro_reach_witness_with(
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
-            if let Some(edge) = sweep.macro_edge(&callee.name, index) {
+            if let Some(edge) = sweep.macro_edge(&callee.name) {
                 found.push((callee.name.clone(), edge));
             }
         }
@@ -711,16 +942,16 @@ fn collect_all_tests(index: &RustIndex) -> Vec<&TestFact> {
 /// without changing any traversal order, first-match resolution, or witness
 /// selection (goldens depend on all three).
 struct ReachSweep<'g, 'a> {
-    by_name: &'g HashMap<&'a str, Vec<&'a FunctionSummary>>,
+    graph: &'g ReachGraph<'a>,
     owner_name: String,
     macro_edge_memo: HashMap<String, Option<MacroReachEdge>>,
     macro_mention_memo: HashMap<String, bool>,
 }
 
 impl<'g, 'a> ReachSweep<'g, 'a> {
-    fn new(by_name: &'g HashMap<&'a str, Vec<&'a FunctionSummary>>, owner_name: &str) -> Self {
+    fn new(graph: &'g ReachGraph<'a>, owner_name: &str) -> Self {
         Self {
-            by_name,
+            graph,
             owner_name: owner_name.to_string(),
             macro_edge_memo: HashMap::new(),
             macro_mention_memo: HashMap::new(),
@@ -728,24 +959,20 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
     }
 
     fn resolve(&self, name: &str) -> &'g [&'a FunctionSummary] {
-        self.by_name.get(name).map_or(&[], Vec::as_slice)
+        self.graph.by_name.get(name).map_or(&[], Vec::as_slice)
     }
 
-    fn macro_edge(&mut self, start_name: &str, index: &RustIndex) -> Option<MacroReachEdge> {
+    fn macro_edge(&mut self, start_name: &str) -> Option<MacroReachEdge> {
         if let Some(cached) = self.macro_edge_memo.get(start_name) {
             return cached.clone();
         }
-        let edge = self.bfs_hits_owner_macro_uncached(start_name, index);
+        let edge = self.bfs_hits_owner_macro_uncached(start_name);
         self.macro_edge_memo
             .insert(start_name.to_string(), edge.clone());
         edge
     }
 
-    fn bfs_hits_owner_macro_uncached(
-        &mut self,
-        start_name: &str,
-        index: &RustIndex,
-    ) -> Option<MacroReachEdge> {
+    fn bfs_hits_owner_macro_uncached(&mut self, start_name: &str) -> Option<MacroReachEdge> {
         let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
         let mut visited: HashSet<&str> = HashSet::new();
 
@@ -756,18 +983,21 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
             if depth > MAX_TRANSITIVE_DEPTH {
                 continue;
             }
-            let candidates: Vec<&'a FunctionSummary> = self.resolve(current_name).to_vec();
-            for current_fn in candidates {
-                for macro_invocation in
-                    macro_invocations_in_text(&current_fn.body, current_fn.start_line)
-                {
+            let graph = self.graph;
+            let invocations = graph
+                .macro_invocations()
+                .by_name
+                .get(current_name)
+                .map_or(&[][..], Vec::as_slice);
+            for (current_fn, fn_invocations) in self.resolve(current_name).iter().zip(invocations) {
+                for macro_invocation in fn_invocations {
                     if let Some(edge) = Self::macro_edge_for_invocation(
                         &mut self.macro_mention_memo,
-                        &macro_invocation,
+                        macro_invocation,
                         &current_fn.file,
                         &current_fn.name,
                         &self.owner_name,
-                        index,
+                        self.graph,
                     ) {
                         return Some(edge);
                     }
@@ -792,14 +1022,14 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
         invocation_file: &std::path::Path,
         host: &str,
         owner_name: &str,
-        index: &RustIndex,
+        graph: &ReachGraph<'_>,
     ) -> Option<MacroReachEdge> {
         if let Some(cached) = memo.get(invocation.name.as_str()) {
             if !*cached {
                 return None;
             }
         } else {
-            let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
+            let mentions = graph.macro_definition_mentions_owner(&invocation.name, owner_name);
             memo.insert(invocation.name.clone(), mentions);
             if !mentions {
                 return None;
@@ -864,18 +1094,6 @@ fn next_non_ws_is_macro_delimiter(bytes: &[u8], start: usize) -> bool {
     matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{'))
 }
 
-fn macro_definition_mentions_owner(index: &RustIndex, macro_name: &str, owner_name: &str) -> bool {
-    let mut same_name_count = 0usize;
-    let mut owner_mention_count = 0usize;
-    for file in index.files().values() {
-        let scan = scan_macro_definitions(&file.source, macro_name, owner_name);
-        same_name_count = same_name_count.saturating_add(scan.same_name_count);
-        owner_mention_count = owner_mention_count.saturating_add(scan.owner_mention_count);
-    }
-
-    same_name_count == 1 && owner_mention_count == 1
-}
-
 #[cfg(test)]
 fn source_macro_definition_mentions_owner(
     source: &str,
@@ -886,15 +1104,34 @@ fn source_macro_definition_mentions_owner(
     scan.same_name_count == 1 && scan.owner_mention_count == 1
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct MacroDefinitionScan {
     same_name_count: usize,
     owner_mention_count: usize,
 }
 
+#[cfg(test)]
 fn scan_macro_definitions(source: &str, macro_name: &str, owner_name: &str) -> MacroDefinitionScan {
+    let definitions = macro_definitions_named(source, macro_name);
+    MacroDefinitionScan {
+        same_name_count: definitions.len(),
+        owner_mention_count: definitions
+            .iter()
+            .flatten()
+            .filter(|body| contains_identifier(body, owner_name))
+            .count(),
+    }
+}
+
+/// One entry per `macro_rules! macro_name` definition in `source`, holding
+/// its body when it has one. A definition nested inside a counted body of
+/// the same name is skipped; definitions inside other macros' bodies count.
+/// The per-name scan the one-pass table in [`ReachGraph::build`] reproduces.
+#[cfg(test)]
+fn macro_definitions_named<'s>(source: &'s str, macro_name: &str) -> Vec<Option<&'s str>> {
     let marker = "macro_rules!";
-    let mut scan = MacroDefinitionScan::default();
+    let mut definitions = Vec::new();
     let mut cursor = 0usize;
 
     while let Some(relative_start) = source.get(cursor..).and_then(|tail| tail.find(marker)) {
@@ -910,48 +1147,85 @@ fn scan_macro_definitions(source: &str, macro_name: &str, owner_name: &str) -> M
         }
 
         if found_name == macro_name {
-            scan.same_name_count = scan.same_name_count.saturating_add(1);
             if let Some((body_start, body_end)) = macro_body_range(source, name_end) {
-                if source
-                    .get(body_start..body_end)
-                    .is_some_and(|body| contains_identifier(body, owner_name))
-                {
-                    scan.owner_mention_count = scan.owner_mention_count.saturating_add(1);
-                }
+                definitions.push(source.get(body_start..body_end));
                 cursor = body_end;
                 continue;
             }
+            definitions.push(None);
         }
 
         cursor = name_end;
     }
 
-    scan
+    definitions
 }
 
-/// Every `macro_rules!` body in `source`, visiting each definition marker
-/// (including ones nested in another body), so any body
-/// [`scan_macro_definitions`] reads for a single name is among them.
-fn macro_definition_bodies(source: &str) -> Vec<&str> {
+/// Add `source`'s `macro_rules!` bodies to `bodies`, and its definitions to
+/// the per-name `definitions` table exactly as [`macro_definitions_named`]
+/// would count them for each name.
+fn add_macro_definitions<'s>(
+    source: &'s str,
+    bodies: &mut Vec<&'s str>,
+    definitions: &mut HashMap<&'s str, Vec<Option<&'s str>>>,
+) {
+    // The per-name scan resumes after a counted body, so a same-name
+    // definition nested in it is not counted again.
+    let mut counted_until: HashMap<&str, usize> = HashMap::new();
+    for definition in macro_definition_markers(source) {
+        let body = definition.body.map(|(_, body)| body);
+        bodies.extend(body);
+        if counted_until
+            .get(definition.name)
+            .is_some_and(|&end| definition.marker_start < end)
+        {
+            continue;
+        }
+        if let Some((body_end, _)) = definition.body {
+            counted_until.insert(definition.name, body_end);
+        }
+        definitions.entry(definition.name).or_default().push(body);
+    }
+}
+
+struct MacroDefinitionMarker<'s> {
+    marker_start: usize,
+    name: &'s str,
+    /// The body's end offset and text, when the name is followed by one.
+    body: Option<(usize, &'s str)>,
+}
+
+/// Every named `macro_rules!` definition in `source`, in order, visiting each
+/// marker (including ones nested in another body), so every definition
+/// [`macro_definitions_named`] reads for any one name is among them.
+fn macro_definition_markers(source: &str) -> Vec<MacroDefinitionMarker<'_>> {
     let marker = "macro_rules!";
-    let mut bodies = Vec::new();
+    let mut definitions = Vec::new();
     let mut cursor = 0usize;
     while let Some(relative_start) = source.get(cursor..).and_then(|tail| tail.find(marker)) {
         let marker_start = cursor.saturating_add(relative_start);
         let name_start = skip_ascii_whitespace(source, marker_start.saturating_add(marker.len()));
         let name_end = ascii_ident_end(source, name_start);
-        if source.get(name_start..name_end).is_none_or(str::is_empty) {
+        let Some(name) = source
+            .get(name_start..name_end)
+            .filter(|name| !name.is_empty())
+        else {
             cursor = marker_start.saturating_add(marker.len());
             continue;
-        }
-        if let Some(body) = macro_body_range(source, name_end)
-            .and_then(|(body_start, body_end)| source.get(body_start..body_end))
-        {
-            bodies.push(body);
-        }
+        };
+        let body = macro_body_range(source, name_end).and_then(|(body_start, body_end)| {
+            source
+                .get(body_start..body_end)
+                .map(|body| (body_end, body))
+        });
+        definitions.push(MacroDefinitionMarker {
+            marker_start,
+            name,
+            body,
+        });
         cursor = name_end;
     }
-    bodies
+    definitions
 }
 
 fn skip_ascii_whitespace(source: &str, start: usize) -> usize {
@@ -1106,7 +1380,7 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FileFacts, FunctionSummary, RustIndex, TestFact};
     use crate::domain::SymbolId;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
     fn make_fn(name: &str, calls: Vec<&str>) -> FunctionSummary {
@@ -1120,7 +1394,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 10,
-            body,
+            body: body.into(),
             calls: calls
                 .into_iter()
                 .map(|c| CallFact {
@@ -1151,7 +1425,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line,
             end_line: start_line + 4,
-            body: String::new(),
+            body: String::new().into(),
             calls: calls
                 .into_iter()
                 .map(|c| CallFact {
@@ -1185,7 +1459,6 @@ mod tests {
                 path,
                 functions: fns,
                 tests: Vec::new(),
-                calls: Vec::new(),
                 returns: Vec::new(),
                 literals: Vec::new(),
                 probe_shapes: Vec::new(),
@@ -1193,7 +1466,7 @@ mod tests {
                 module_declarations: Vec::new(),
                 unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
-                source,
+                source: source.into(),
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -1332,7 +1605,7 @@ mod tests {
     }
 
     fn with_body(mut test: TestFact, body: &str) -> TestFact {
-        test.body = body.to_string();
+        test.body = body.into();
         test
     }
 
@@ -1389,6 +1662,46 @@ mod tests {
                 .map(|w| w.test_name.as_str()),
             Some("cache_builds")
         );
+    }
+
+    // The per-test receiver memo is shared by every owner queried on one
+    // index. `full_build` is reached through `Site::build` and `render_cache`
+    // through `Cache::build`, so the same test answers differently for each
+    // owner; a memo keyed on the method alone would carry the first owner's
+    // answer into the second query and name `atom_written` for both.
+    #[test]
+    fn receiver_memo_answers_each_owner_as_a_fresh_index_does() {
+        let index = index_with(
+            vec![
+                make_method("Site", "build", vec!["full_build"]),
+                make_method("Cache", "build", vec!["render_cache"]),
+            ],
+            vec![
+                with_body(
+                    make_test_at("cache_builds", "src/render.rs", 24, vec!["new", "build"]),
+                    "let mut c = Cache::new(); c.build(); assert!(c.is_built());",
+                ),
+                with_body(
+                    make_test_at("atom_written", "tests/site.rs", 6, vec!["build"]),
+                    "let site = Site { langs: Vec::new() }; assert!(site.build().is_empty());",
+                ),
+            ],
+        );
+        let witness_name = |reach: &TransitiveReachIndex<'_>, owner: &str| {
+            reach.transitive_witness(owner).map(|w| w.test_name)
+        };
+
+        let shared = TransitiveReachIndex::new(&index);
+        for (owner, expected) in [
+            ("full_build", "atom_written"),
+            ("render_cache", "cache_builds"),
+        ] {
+            assert_eq!(witness_name(&shared, owner).as_deref(), Some(expected));
+            assert_eq!(
+                witness_name(&shared, owner),
+                witness_name(&TransitiveReachIndex::new(&index), owner)
+            );
+        }
     }
 
     // (#5481 review) A test that names the reaching type away from the call
@@ -1704,7 +2017,7 @@ mod tests {
             .to_string();
         let mut index = index_with_source(vec![outer], Vec::new(), source);
         let test = TestFact {
-            body: "fn test_macro_entry() {\n    beta_inner!();\n}".to_string(),
+            body: "fn test_macro_entry() {\n    beta_inner!();\n}".into(),
             ..make_test_at("test_file_local", "tests/file_local.rs", 7, vec!["outer"])
         };
         let path = PathBuf::from("src/lib.rs");
@@ -1810,7 +2123,7 @@ mod tests {
         let source = "macro_rules! call_inner {\n    ($a:expr, $b:expr) => { inner($a, $b) };\n}"
             .to_string();
         let test = TestFact {
-            body: "fn test_macro_entry() {\n    call_inner!(10, 3);\n}".to_string(),
+            body: "fn test_macro_entry() {\n    call_inner!(10, 3);\n}".into(),
             ..make_test("test_macro_entry", vec![])
         };
         let index = index_with_source(Vec::new(), vec![test], source);
@@ -1997,6 +2310,51 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn one_pass_macro_table_matches_the_per_name_scan() {
+        let sources = [
+            // A same-name definition nested in a counted body is skipped.
+            "macro_rules! outer { () => { macro_rules! outer { () => { inner() } } } }",
+            // Other macros' bodies are entered.
+            "macro_rules! host { () => { macro_rules! guest { () => { inner() } } } }\n\
+             macro_rules! guest { () => {} }",
+            // A definition with no body is counted but stops nothing.
+            "macro_rules! bare;\nmacro_rules! bare { () => { inner() } }",
+            // A name that ends in the marker text, and an empty name.
+            "macro_rules! xmacro_rules! { () => {} }\nmacro_rules! (oops)\n\
+             macro_rules! after { [] => [ inner() ] }",
+            // Unbalanced body, then a nested same name after a closed one.
+            "macro_rules! a { () => { macro_rules! a ( ) } }\nmacro_rules! a { ",
+            // A nested same name with no body, and a nested one whose `(`
+            // range runs past the outer body's end.
+            "macro_rules! b { macro_rules! b; }\nmacro_rules! b { inner() }",
+            "macro_rules! c { macro_rules! c ( } ) }\nmacro_rules! c { inner() }",
+            "",
+        ];
+        for source in sources {
+            let mut bodies = Vec::new();
+            let mut table: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
+            add_macro_definitions(source, &mut bodies, &mut table);
+            let names: BTreeSet<&str> = macro_definition_markers(source)
+                .iter()
+                .map(|definition| definition.name)
+                .chain(["inner", "missing"])
+                .collect();
+            for name in names {
+                assert_eq!(
+                    table.get(name).cloned().unwrap_or_default(),
+                    macro_definitions_named(source, name),
+                    "{name} in {source:?}"
+                );
+            }
+        }
+        // The nested same-name case really is one entry, so a table that
+        // counts every marker fails above.
+        let mut table = HashMap::new();
+        add_macro_definitions(sources[0], &mut Vec::new(), &mut table);
+        assert_eq!(table.get("outer").map(Vec::len), Some(1));
+    }
+
     /// The removed per-callee forward walk, kept as the reference the reverse
     /// sweep must match.
     fn forward_reaches(index: &RustIndex, start: &str, owner: &str) -> bool {
@@ -2034,6 +2392,92 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch() {
+        // #6297: `from_str` has no path to `seconds`, so a test calling only
+        // it and a constructor cannot run the owner; a wrapper, an unindexed
+        // lower-case call, or an owner behind `Display::fmt` (reached through
+        // `format!` with no call fact) may.
+        let plain = index_with(
+            vec![
+                make_fn("seconds", vec![]),
+                make_fn("seconds_bridge", vec!["seconds"]),
+                make_fn("from_str", vec![]),
+            ],
+            Vec::new(),
+        );
+        let plain_reach = TransitiveReachIndex::new(&plain);
+        let reach = plain_reach.owner_reach("seconds");
+        assert!(!reach.test_may_reach(&make_test("t", vec!["from_str", "Ok"])));
+        assert!(!reach.test_may_reach(&make_test("t", Vec::new())));
+        assert!(reach.test_may_reach(&make_test("t", vec!["seconds_bridge"])));
+        assert!(reach.test_may_reach(&make_test("t", vec!["seconds"])));
+        assert!(reach.test_may_reach(&make_test("t", vec!["to_string"])));
+        // The test's own `fn` line is not a call.
+        let mut own = make_test("from_str_fortnight", vec!["from_str"]);
+        own.calls.push(CallFact {
+            line: 1,
+            name: "from_str_fortnight".to_string(),
+            text: "fn from_str_fortnight() {".to_string(),
+        });
+        assert!(!reach.test_may_reach(&own));
+
+        let display = index_with(
+            vec![
+                make_fn("seconds", vec![]),
+                make_fn("fmt", vec!["seconds"]),
+                make_fn("from_str", vec![]),
+            ],
+            Vec::new(),
+        );
+        let display_reach = TransitiveReachIndex::new(&display);
+        assert!(
+            display_reach
+                .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        // The changed arm sits inside `fmt` itself.
+        assert!(
+            display_reach
+                .owner_reach("fmt")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        assert!(
+            !display_reach
+                .owner_reach("from_str")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+
+        // A free or inherent `fmt`/`clone` is not implicitly dispatched.
+        let mut free_fmt = make_fn("fmt", vec!["seconds"]);
+        free_fmt.item.container = FunctionContainer::Free;
+        let mut inherent_clone = make_fn("clone", vec!["seconds"]);
+        inherent_clone.item.container = FunctionContainer::Inherent {
+            self_ty: "Unit".to_string(),
+        };
+        let named_only = index_with(
+            vec![make_fn("seconds", vec![]), free_fmt, inherent_clone],
+            Vec::new(),
+        );
+        let named_reach = TransitiveReachIndex::new(&named_only);
+        assert!(
+            !named_reach
+                .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
+        let mut trait_fmt = make_fn("fmt", vec!["seconds"]);
+        trait_fmt.item.container = FunctionContainer::TraitImpl {
+            trait_path: "fmt::Display".to_string(),
+            self_ty: "Unit".to_string(),
+        };
+        let trait_only = index_with(vec![make_fn("seconds", vec![]), trait_fmt], Vec::new());
+        assert!(
+            TransitiveReachIndex::new(&trait_only)
+                .owner_reach("seconds")
+                .test_may_reach(&make_test("t", Vec::new()))
+        );
     }
 
     #[test]

@@ -17,13 +17,16 @@ pub(crate) use super::extract::{
     is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
-pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
 pub use super::facts::{
     FileFactsView, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, ProbeShapeKind,
-    RustIndex, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
+    RustIndex, SourceText, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
+};
+pub(crate) use super::facts::{
+    build_analysis_index_from_loaded_files,
+    build_index_from_loaded_files_with_cache_and_test_harnesses,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -70,7 +73,9 @@ fn escaped_path_display(path: &Path) -> String {
             character => displayed.push(character),
         }
     }
-    displayed
+    // Bidi and other invisible formatting characters pass the control check
+    // above but still reorder what the reader sees.
+    crate::terminal_text::terminal_safe(displayed)
 }
 
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
@@ -742,7 +747,7 @@ pub fn parse(input: &str) -> Result<i32, Error> {
         assert_eq!(file.path, PathBuf::from("src/lib.rs"));
         assert_eq!(file.functions.len(), 1);
         assert_eq!(file.functions[0].name, "parse");
-        assert!(file.calls.iter().any(|call| call.name == "Ok"));
+        assert!(file.file_calls().iter().any(|call| call.name == "Ok"));
         assert!(file.returns.iter().any(|fact| fact.text.contains("Ok(42)")));
         assert!(file.literals.iter().any(|fact| fact.value == "42"));
         assert!(
@@ -1139,6 +1144,18 @@ fn feature_gated_test() {}
                 "ripr: lexical fallback was used for 2 Rust file(s): src/line\\nreturn\\r\\t\\x1b[31m.rs, src/unit\\u{0007}.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
             )
         );
+    }
+
+    #[test]
+    fn lexical_fallback_disclosure_escapes_bidi_characters() {
+        let files = vec![PathBuf::from("src/gnis\u{202e}rs.rs")];
+
+        let disclosure = lexical_fallback_disclosure_for_files(&files).unwrap_or_default();
+        assert!(
+            disclosure.contains("src/gnis\\u{202e}rs.rs"),
+            "{disclosure}"
+        );
+        assert!(!disclosure.contains('\u{202e}'), "{disclosure}");
     }
 
     #[test]
