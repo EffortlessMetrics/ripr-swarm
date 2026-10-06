@@ -21,6 +21,22 @@ extension normally downloads and caches its matching native server, so you do
 not need to build that server with `cargo install ripr`. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
+ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
+languages: the editor routes their files to ripr, but the server analyzes them
+only when the language is enabled in a `ripr.toml` file at the workspace root:
+
+```toml
+[languages]
+enabled = ["rust", "typescript"]
+```
+
+After changing `enabled`, run **ripr: Restart Server** (or reload the window).
+With no `ripr.toml`, Python auto-enables on Python project markers or
+detectable `.py` files under root `src/` or `tests/`, while
+TypeScript/JavaScript stay off.
+[Support tiers](https://github.com/EffortlessMetrics/ripr/blob/main/docs/status/SUPPORT_TIERS.md)
+lists per-language conditions.
+
 Open Problems and hover a diagnostic labeled `ripr`. Inspect the changed
 behavior, the missing case or assertion, and the related test. Use the available
 code actions to open that test or copy a brief, then make the test edit in your

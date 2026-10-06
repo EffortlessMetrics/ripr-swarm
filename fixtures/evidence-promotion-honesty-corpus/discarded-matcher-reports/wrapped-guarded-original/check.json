@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:519eff0d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:score:return_value:return_value:value+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:score:return_value:return_value:value+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "score",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value+1"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:519eff0d",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "value + 1"
        },

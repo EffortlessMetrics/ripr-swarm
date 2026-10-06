@@ -10023,6 +10023,18 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
         if binary["version"].as_str() != Some(expected_version_line().trim_end()) {
             return Err(format!("doctor must report the --version line: {binary}"));
         }
+        // #5252 item 5: the serialized executable spellings must match the
+        // human lines (#4378): no verbatim prefix, one separator convention.
+        // (On Unix a backslash is a filename character, so only the
+        // verbatim-prefix half applies there.)
+        for field in ["executable", "path_ripr"] {
+            let spelling = binary[field].as_str().unwrap_or_default();
+            if spelling.contains(r"\\?\") || (cfg!(windows) && spelling.contains('\\')) {
+                return Err(format!(
+                    "doctor --json {field} must use the human path spelling: {spelling}"
+                ));
+            }
+        }
 
         let (workspace_ok, report) =
             doctor_json_with_path_prefix(&installed, &workspace, &[built_dir, &installed_dir])?;
@@ -10932,8 +10944,8 @@ fn doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd() -> Result<(
 }
 
 #[test]
-fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -> Result<(), String>
-{
+fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_command()
+-> Result<(), String> {
     // #4531: doctor named the non-Git root, then recommended `ripr check`
     // (which cannot run there) after a raw `git status` failure on stderr.
     // A missing root also blamed cargo and rustc for the failed spawn.
@@ -10974,19 +10986,20 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     assert_failure(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // #5010 keeps a runnable recovery command for a missing root, naming its
-    // lossless physical spelling; #4531's residual is that cargo and rustc
-    // are skipped instead of blamed, and no raw work-tree probe failure is
-    // printed on stderr.
-    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
+    // #5252 item 3: no check command can run against a missing root, so the
+    // recovery action is the recommendation -- not the old `ripr check --root
+    // <missing>` template, which failed the same way doctor just did -- and
+    // the manifest check skips like the tool checks instead of restating the
+    // root failure. #4531's residual (skipped tools, no raw probe failure) is
+    // unchanged, and #5010's lossless spelling still serves the routes that
+    // render one.
     if !stdout.contains("- cargo check skipped: the root directory does not exist")
         || !stdout.contains("- rustc check skipped: the root directory does not exist")
+        || !stdout.contains("- Cargo.toml check skipped: the root directory does not exist")
         || stdout.contains("not available")
-        || !stdout.contains(&format!(
-            "- Recommended first command: {}",
-            first_command_at(&physical, "")
-        ))
-        || !stdout.contains("- The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
+        || !stdout.contains("- Recommended first command: The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
+        || !stdout.contains("- Safe next action: fix the selected root first (see below); no check command can run until it exists")
+        || stdout.contains("Recommended first command: ripr check --root")
         || stderr.contains("working-tree change probe failed")
     {
         return Err(format!(
@@ -11035,27 +11048,20 @@ fn doctor_file_root_is_not_reported_as_missing() -> Result<(), String> {
     assert_failure(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let resolved = file
-        .canonicalize()
-        .map_err(|err| format!("canonicalize file root: {err}"))?;
-    let resolved_display = resolved.display().to_string();
-    let physical = resolved_display
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&resolved_display)
-        .to_string();
+    // #5252 item 3: a file root gets the same recovery-action recommendation
+    // as a missing path (no check command can run against either), plus the
+    // manifest skip.
     let human_ok = stdout.contains("is not a directory")
         && !stdout.contains("root directory does not exist")
         && stdout.contains("- cargo check skipped: the root is not a directory")
         && stdout.contains("- rustc check skipped: the root is not a directory")
         && stdout.contains("- Git work tree check skipped: the root is not a directory")
-        && stdout.contains(&format!(
-            "- Recommended first command: {}",
-            first_command_at(&physical, "")
-        ))
+        && stdout.contains("- Cargo.toml check skipped: the root is not a directory")
         && stdout.contains(
-            "- The selected root exists but is not a directory; rerun with `--root <path>` naming the repository directory, not a file inside it",
+            "- Recommended first command: The selected root exists but is not a directory; rerun with `--root <path>` naming the repository directory, not a file inside it",
         )
         && !stdout.contains("- The selected root does not exist;")
+        && !stdout.contains("Recommended first command: ripr check --root")
         && !stderr.contains("working-tree change probe failed");
 
     let json_output = run_ripr(&["doctor", "--root", &root, "--json"]);
@@ -23718,6 +23724,136 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
         );
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #5252 item 8: missing-base advice must not assume an `origin` remote.
+/// In a remote-less repo the repair names the add-remote step instead of a
+/// `git fetch` that would exit without fetching anything.
+#[test]
+fn check_missing_base_advice_does_not_assume_origin_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-no-origin");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let remotes = run_command("git", Some(&root), &["remote"])?;
+    assert!(
+        remotes.status.success() && String::from_utf8_lossy(&remotes.stdout).trim().is_empty(),
+        "fixture must carry no remotes: {remotes:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-ref-5252"),
+        "the failure must name the ref: {stderr}"
+    );
+    assert!(
+        stderr.contains("No git remote is configured") && stderr.contains("git remote add"),
+        "a remote-less repo must get the add-remote step: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: with exactly one remote the missing-base advice names that
+/// remote instead of prescribing `origin`.
+#[test]
+fn check_missing_base_advice_names_the_single_configured_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-one-remote");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // `remote add` touches config only: no network.
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "fork", "https://example.test/fork.git"],
+    )?;
+    assert!(
+        add.status.success(),
+        "fixture must gain a `fork` remote: {add:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch fork`)"),
+        "one configured remote is read, not assumed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: a remote-qualified missing ref names its own configured
+/// remote even when several remotes exist, so a branch tracking `fork` with
+/// a missing `origin/main` is told to fetch `origin`, not a bare fetch that
+/// would follow the branch upstream to `fork`.
+#[test]
+fn check_missing_base_advice_names_a_configured_remote_qualifier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-qualified");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    for (name, url) in [
+        ("fork", "https://example.test/fork.git"),
+        ("origin", "https://example.test/origin.git"),
+    ] {
+        let add = run_command("git", Some(&root), &["remote", "add", name, url])?;
+        assert!(
+            add.status.success(),
+            "fixture must gain a `{name}` remote: {add:?}"
+        );
+    }
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "origin/main",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch origin`)"),
+        "a configured qualifier names its own remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
     Ok(())
 }
 

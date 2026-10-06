@@ -2567,7 +2567,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
 
-    let context_packet = crate::output::json::render_context_packet(&finding, 5);
+    let context_packet = crate::output::json::render_context_packet(&finding, 5, Path::new("."));
     let context_packet: serde_json::Value =
         serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
     assert_eq!(context_packet["witness"], witness);
@@ -14595,11 +14595,22 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
             .iter()
             .map(|reason| reason.as_str().to_string())
             .collect();
-        let expected_context_packet = crate::domain::context_packet::ContextPacket::from_finding(
-            &expected_finding,
-            crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
-            expected_stop_reasons,
-        );
+        let mut expected_context_packet =
+            crate::domain::context_packet::ContextPacket::from_finding(
+                &expected_finding,
+                crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
+                expected_stop_reasons,
+                Path::new("/workspace"),
+            );
+        // #5994: the session analyzed the saved worktree (staged and
+        // unstaged tracked edits), so the packet's witness command replays
+        // that diff source with the session root — re-running it re-selects
+        // the finding the packet ships with, instead of exiting 2 with "no
+        // finding matched" against the committed default-branch diff.
+        if let Some(witness) = expected_context_packet.witness.as_mut() {
+            witness.explain_command =
+                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+        }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);
         let expected_packet: serde_json::Value = serde_json::from_str(&expected_json)
@@ -19550,6 +19561,317 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
         != Some("served")
     {
         return Err(format!("expected served line-local diagnostics: {entry}"));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Outside-partition disclosure (#5998) and the budget-bound retry recovery
+// (#5999): a document beyond the partial-diff budget is never clean/served,
+// and the retry pointer never advertises a refresh that cannot widen the
+// partition.
+// ---------------------------------------------------------------------------
+
+const PARTITION_TEXTS: [&str; 3] = [
+    "fn selected() -> bool { true }\n",
+    "fn beyond() -> bool { true }\n",
+    "fn unchanged() -> bool { true }\n",
+];
+
+struct PartitionFixture {
+    _temp: TempLspRoot,
+    root: PathBuf,
+    uris: Vec<tower_lsp_server::ls_types::Uri>,
+}
+
+fn partition_fixture(name: &str) -> Result<PartitionFixture, String> {
+    let temp = unique_lsp_test_root(name)?;
+    let root = temp.path().to_path_buf();
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
+    let mut uris = Vec::new();
+    for (index, text) in PARTITION_TEXTS.iter().enumerate() {
+        let path = root.join(format!("src/file{index}.rs"));
+        std::fs::write(&path, text).map_err(|err| format!("write file{index}.rs failed: {err}"))?;
+        uris.push(
+            file_uri_for_path(&path).map_err(|err| format!("file{index}.rs URI failed: {err}"))?,
+        );
+    }
+    Ok(PartitionFixture {
+        _temp: temp,
+        root,
+        uris,
+    })
+}
+
+/// The bounded partition the fixture's snapshot pretends the selector built:
+/// `file0.rs` was analyzed, `file1.rs` is a changed file beyond the file
+/// budget, and `file2.rs` is not part of the diff at all.
+fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
+    crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/file0.rs".to_string()],
+        unselected_files: vec!["src/file1.rs".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        partition_identity: "sha256:partition".to_string(),
+    }
+}
+
+fn partition_workspace_diagnostics(
+    fixture: &PartitionFixture,
+    seams_deferred: bool,
+    partial_scope: Option<crate::analysis::PartialDiffScope>,
+) -> WorkspaceDiagnostics {
+    // The selected document carries the only finding, exactly as a bounded
+    // partition would produce: the beyond-budget document was never probed.
+    let finding = quarantine_finding("probe:selected:1:predicate", "src/file0.rs");
+    let mut diagnostic = diagnostic_for_finding(&fixture.root, &finding);
+    if let Some(data) = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        data.insert("headline_eligible".to_string(), serde_json::json!(true));
+    }
+    let mut diagnostics_by_uri = BTreeMap::new();
+    diagnostics_by_uri.insert(fixture.uris[0].clone(), vec![diagnostic.clone()]);
+    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
+        fixture.root.clone(),
+        1,
+        &LspAnalysisConfig::default(),
+    );
+    // Open saved documents are index inputs, so the producer commits their
+    // bytes even outside the changed-line partition; the partition facts
+    // above are what decide changed-line coverage.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    for (index, text) in PARTITION_TEXTS.iter().enumerate() {
+        rust_consumed_sources.record(
+            Path::new(&format!("src/file{index}.rs")),
+            Some(text.as_bytes()),
+        );
+    }
+    let snapshot = AnalysisSnapshot {
+        root: fixture.root.clone(),
+        rust_consumed_sources,
+        input_identity: Some(input_identity),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: vec![finding],
+        analysis_outcome: None,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri,
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred,
+        partial_scope,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+    };
+    WorkspaceDiagnostics {
+        snapshot,
+        batches: vec![DiagnosticBatch {
+            uri: fixture.uris[0].clone(),
+            diagnostics: vec![diagnostic],
+        }],
+    }
+}
+
+/// #5998: an opened changed document beyond the partial-diff budget was
+/// never analyzed, so the workspace status must NOT report it `clean` /
+/// `served`. It carries the typed `not_analyzed` state with the partition
+/// reason and the budget-raise + restart recovery, while the selected and
+/// unchanged documents keep their exact prior projections.
+#[tokio::test]
+async fn workspace_status_reports_outside_partition_document_not_analyzed() -> Result<(), String> {
+    let fixture = partition_fixture("outside-partition-status")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    for (uri, text) in fixture.uris.iter().zip(PARTITION_TEXTS.iter()) {
+        backend.did_open(quarantine_open_params(uri, text)).await;
+    }
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    if status["run_status"].as_str() != Some("limited_partial_scope") {
+        return Err(format!(
+            "fixture must reproduce the partial-scope run: {status}"
+        ));
+    }
+
+    // The analyzed document keeps the prior projection.
+    let selected = open_document_entry(&status, fixture.uris[0].as_str())?;
+    if selected["state"].as_str() != Some("clean")
+        || selected["line_local_diagnostics"].as_str() != Some("served")
+        || !selected["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "analyzed document must stay clean/served: {selected}"
+        ));
+    }
+
+    // The beyond-budget document must NOT read as analyzed-and-clean.
+    let beyond = open_document_entry(&status, fixture.uris[1].as_str())?;
+    if beyond["line_local_diagnostics"].as_str() == Some("served") {
+        return Err(format!(
+            "a document outside the analyzed partition must not claim served: {beyond}"
+        ));
+    }
+    if beyond["state"].as_str() == Some("clean") {
+        return Err(format!(
+            "a document outside the analyzed partition must not claim clean: {beyond}"
+        ));
+    }
+    if beyond["state"].as_str() != Some("not_analyzed")
+        || beyond["line_local_diagnostics"].as_str() != Some("not_analyzed")
+    {
+        return Err(format!("unexpected outside-partition state: {beyond}"));
+    }
+    if beyond["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "the outside-partition state must name its reason: {beyond}"
+        ));
+    }
+    let recovery = beyond["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("outside-partition state must carry a recovery: {beyond}"))?;
+    // The selector minimum admits the next excluded file, not necessarily
+    // every unselected document, so the route must say to raise further
+    // when the document is still reported not_analyzed (#6853 review).
+    for needle in ["RIPR_PARTIAL_DIFF_FILE_BUDGET", "restart", "raise further"] {
+        if !recovery.contains(needle) {
+            return Err(format!("recovery must name {needle:?}: {recovery}"));
+        }
+    }
+
+    // A changed-file partition never covers an unchanged opened document:
+    // it legitimately has no line-local findings and stays clean/served.
+    let unchanged = open_document_entry(&status, fixture.uris[2].as_str())?;
+    if unchanged["state"].as_str() != Some("clean")
+        || unchanged["line_local_diagnostics"].as_str() != Some("served")
+        || !unchanged["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "an opened unchanged document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #5999: for a budget-bound `limited_partial_scope` run the status must not
+/// advertise `ripr.refresh` as the retry — refresh provably re-runs the
+/// identical partition. The recovery must name the budget override and the
+/// sidecar restart. A refresh-liftable state (`seams_deferred`) keeps the
+/// command pointer and no recovery object.
+#[tokio::test]
+async fn analysis_status_retry_names_budget_restart_for_limited_partial_scope() -> Result<(), String>
+{
+    let fixture = partition_fixture("partial-retry-recovery")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let decision = backend.refresh_scheduler_for_test().request(
+        fixture.root.clone(),
+        LspAnalysisConfig::default(),
+        1,
+        0,
+        RefreshScope::Interactive,
+        RefreshReason::DidSave,
+    );
+    let request = started_request(&decision)?;
+    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+    let status = backend.analysis_status_payload();
+    if status["run_status"].as_str() != Some("limited_partial_scope") {
+        return Err(format!(
+            "fixture must reproduce the partial-scope run: {status}"
+        ));
+    }
+    if !status["retry_command"].is_null() {
+        return Err(format!(
+            "retry_command must not advertise refresh for a budget-bound partial run: {status}"
+        ));
+    }
+    let recovery = &status["retry_recovery"];
+    if recovery["kind"].as_str() != Some("increase_configured_limit") {
+        return Err(format!("retry_recovery must be typed: {status}"));
+    }
+    let detail = recovery["detail"]
+        .as_str()
+        .ok_or_else(|| format!("retry_recovery must carry a detail: {status}"))?;
+    for needle in [
+        "ripr.refresh",
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+        "restart the language server",
+    ] {
+        if !detail.contains(needle) {
+            return Err(format!("recovery detail must name {needle:?}: {detail}"));
+        }
+    }
+    if backend
+        .refresh_scheduler_for_test()
+        .finish(&request, false)
+        .is_some()
+    {
+        return Err("the finished partial attempt should leave no pending request".to_string());
+    }
+
+    // Contrast control: refresh genuinely lifts a seams_deferred snapshot to
+    // full, so that state keeps retry_command and carries no recovery object.
+    backend
+        .refresh_plan(partition_workspace_diagnostics(&fixture, true, None))
+        .ok_or_else(|| "expected committed seams_deferred snapshot".to_string())?;
+    let decision = backend.refresh_scheduler_for_test().request(
+        fixture.root.clone(),
+        LspAnalysisConfig::default(),
+        2,
+        0,
+        RefreshScope::Interactive,
+        RefreshReason::ExplicitRefresh,
+    );
+    let request = started_request(&decision)?;
+    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+    let status = backend.analysis_status_payload();
+    if status["run_status"].as_str() != Some("seams_deferred") {
+        return Err(format!(
+            "fixture must reproduce the seams_deferred run: {status}"
+        ));
+    }
+    if status["retry_command"].as_str() != Some("ripr.refresh") {
+        return Err(format!(
+            "a refresh-liftable state must keep the refresh retry pointer: {status}"
+        ));
+    }
+    if !status["retry_recovery"].is_null() {
+        return Err(format!(
+            "a refresh-liftable state must not carry a budget recovery: {status}"
+        ));
     }
     Ok(())
 }

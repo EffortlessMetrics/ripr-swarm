@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:cbbe6663",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_conditional_failure/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 18,
         "expression": "return Err(ParseError::InvalidData);"
        },
@@ -77,7 +77,7 @@
         "id": "probe:src_lib.rs:return_value:a2154631",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/guarded_result_match_conditional_failure/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 18,
         "expression": "return Err(ParseError::InvalidData);"
        },

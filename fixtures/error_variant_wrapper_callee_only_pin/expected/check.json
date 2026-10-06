@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:07741fa8",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse_summary",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "try_parse_summary_raw_.map_err_into_into"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:07741fa8",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/error_variant_wrapper_callee_only_pin/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 26,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },
@@ -90,7 +102,7 @@
         "id": "probe:src_lib.rs:error_path:edac60ec",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_wrapper_callee_only_pin/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 26,
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },

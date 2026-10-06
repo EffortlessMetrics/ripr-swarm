@@ -130,6 +130,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
+## Pending — guarded_result_match_owner_observation (12)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (13)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
 ## Pending - #5713 reviewed discarded-matcher calibration
 
 Reason:
@@ -140,6 +159,34 @@ Hosted required run37242804945 at613e800282fbf542435831660e4d23a8fa3a4b5a; immut
 
 Transfer:
 Exact guarded producer-byte replacement after complete semantic review. No local build, rerun, normalization, or blanket blessing.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (14)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main onto the #5996 workspace-relative location owner — the expected files regenerate with main's triage/wording updates and the shared root-relative location form (issue #5996)
+## Pending — guarded_result_match_owner_observation (12)
+
+Reason:
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — guarded_result_match_owner_observation (15)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless guarded_result_match_owner_observation --reason "..."`
 
 Updated:
 - `expected/check.json`

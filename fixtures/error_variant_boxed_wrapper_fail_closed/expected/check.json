@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:51fc5156",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 29,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -109,7 +109,7 @@
         "id": "probe:src_lib.rs:return_value:588b0f56",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 29,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -200,7 +200,7 @@
         "id": "probe:src_lib.rs:error_path:ad27ed37",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 43,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },
@@ -291,7 +291,7 @@
         "id": "probe:src_lib.rs:return_value:1224f837",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 43,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },

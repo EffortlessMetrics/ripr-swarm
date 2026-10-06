@@ -268,6 +268,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_variant_boxed_wrapper_fail_closed (20)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
 ## Pending - #5713 reviewed discarded-matcher calibration
 
 Reason:
@@ -284,6 +291,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_variant_boxed_wrapper_fail_closed (21)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
 ## #5713 incoming-main observation wording
 
 Reason:
@@ -297,6 +311,19 @@ Exact b5af748229100b48bb327bcca813af963d6861c9 actual output from
 run37252849648, artifact11322143395 (wildcard-calibration-1), ZIP SHA256
 b59ea1caa1d210a1c667b7e9fc34011943e169ef35358575ae5ef206645d47d9.
 Guarded producer-byte transfer after semantic review; no local cargo bless ran.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (22)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main onto the #5996 workspace-relative location owner — the expected files regenerate with main's triage/wording updates and the shared root-relative location form (issue #5996)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
 
 Updated:
 - `expected/check.json`

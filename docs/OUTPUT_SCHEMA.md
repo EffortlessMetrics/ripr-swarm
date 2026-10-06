@@ -1720,14 +1720,23 @@ JSON fields:
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
   `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
-  Static-limit findings may omit this field until a non-actionable gap-state
-  projection exists.
+  Rust findings use the same shape with the `gap:rust:` language token, the
+  workspace-relative file, and the module-qualified owner
+  (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
+  #5268): the normalized discriminator is derived from the changed line
+  itself, so a comparison seam names the same equality boundary the
+  classifier's missing-discriminator statement renders. Static-limit
+  findings and probes with no owner identity may omit this field until a
+  non-actionable gap-state projection exists.
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
 - `canonical_gap` is an additive optional object that carries the identity
   parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
-  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
+  `behavior_kind`, `probe_kind`, and `normalized_discriminator`. The
+  normalized discriminator is an identity, not an establishment claim: a
+  producer-named missing discriminator keeps the typed
+  `missing_discriminator` refusal ahead of a populated gap.
 - `probe.owner` is an additive optional stable owner identifier emitted when a
   preview-language adapter populated a changed owner. Python preview owners use
   `python:<path>::<owner>`, for example
@@ -7092,7 +7101,10 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_discriminate_state": "yes",
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged": [],
@@ -7259,6 +7271,18 @@ Field contract:
 - `related_test_delta` — count movement for related-test evidence.
 - `no_movement_reason` — explicit static reason for unchanged seams with no
   rendered evidence movement.
+- `after_missing_discriminators` — the after-side missing-discriminator list,
+  so consumers can tell a satisfied discriminator from a still-open one when
+  the class did not move. `null` when the after snapshot never recorded the
+  field: only an explicitly present list can establish satisfaction.
+- `after_discriminate_state` — the after-side discriminate leg state, or
+  `null` when the after side never recorded it. An empty missing list alone
+  never establishes satisfaction, because several seam kinds never name
+  missing discriminators while their discriminate leg stays weak.
+- `after_open_legs` — the after-side RIPR legs that are not `yes`, each with
+  its recorded state (for example `discriminate (weak)`); a leg absent from
+  the after record renders as `stage (not recorded)` — an unknown gate, not
+  a satisfied one.
 - `new[]` / `removed[]` — seam identity and grip class for seam IDs present in
   only one input.
 - `review_receipt` — an additive reviewer packet derived from the same
@@ -7362,7 +7386,10 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_discriminate_state": "yes",
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged_seams": [],
@@ -7429,8 +7456,9 @@ Field contract:
 - `changed_seams[]` / `unchanged_seams[]` carry the same additive
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, `gap_movement`, and
-  `no_movement_reason`.
+  movement, related-test count movement, `gap_movement`,
+  `no_movement_reason`, `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -7730,7 +7758,8 @@ JSON shape:
     "change": "improved",
     "evidence_delta": [
       "missing discriminator no longer reported: discount_threshold (equality boundary)"
-    ]
+    ],
+    "guidance_note": null
   },
   "test_changed": "discounted_total_boundary_discriminator",
   "verification": {
@@ -7818,6 +7847,15 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
+- `seam.guidance_note` - refined guidance for an `unchanged` seam whose
+  evidence moved, read from the verify row's `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`. Satisfaction needs both
+  an explicitly empty missing list and a `yes` discriminate leg; a recorded
+  weaker leg keeps targeted strengthen-the-oracle guidance, an unrecorded
+  discriminate state says satisfaction is unknown, and a still-missing list
+  names the first missing discriminator. The note is `null` for other
+  buckets, for true no-movement, and for verify documents that predate the
+  after-side signals.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
   takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
@@ -7836,7 +7874,13 @@ Field contract:
   guidance derived from the verify bucket. It does not claim runtime
   confirmation. When `status` is not `advisory`, `next_recommendation` instead
   states that the receipt is not review evidence, with the status, the
-  analysis-outcome reason, and the recovery.
+  analysis-outcome reason, and the recovery. For an `advisory` receipt over
+  an `unchanged` seam whose discriminators are satisfied but whose class
+  did not move, both `next_recommendation` and `next_action.recommended_action`
+  carry the refined `seam.guidance_note` plus an investigate-the-gate step
+  instead of the static add-discriminator lines; a still-weak discriminate
+  leg likewise replaces both lines with the note plus a strengthen-the-oracle
+  step.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,

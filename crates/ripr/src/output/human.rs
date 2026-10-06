@@ -3,6 +3,7 @@ use crate::config::RiprConfig;
 use crate::domain::Finding;
 pub(crate) use crate::terminal_text::terminal_safe;
 use std::collections::BTreeSet;
+use std::path::Path;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
 /// or the resolved default base) read every source and test file as committed
@@ -183,7 +184,7 @@ pub(crate) fn render_full_with_config_and_navigation(
             continue;
         }
         findings_rendered += 1;
-        out.push_str(&render_finding_with_config(finding, config));
+        out.push_str(&render_finding_with_config(finding, config, &output.root));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             for command in [
@@ -387,7 +388,7 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (selector: {})\n",
-                finding.probe.location.file.display(),
+                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 entry.selector
@@ -775,7 +776,11 @@ fn capitalize_first(s: &str) -> String {
 
 /// Render one finding section for the human-readable CLI output.
 pub fn render_finding(finding: &Finding) -> String {
-    terminal_safe(render_finding_with_config(finding, &RiprConfig::default()))
+    terminal_safe(render_finding_with_config(
+        finding,
+        &RiprConfig::default(),
+        Path::new("."),
+    ))
 }
 
 /// Render one finding with the bounded context follow-up for the selected
@@ -784,8 +789,9 @@ pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
     context_command: &str,
+    root: &Path,
 ) -> String {
-    let mut out = render_finding_with_config(finding, config);
+    let mut out = render_finding_with_config(finding, config, root);
     out.push_str(&explain::render_verdict_explanation(finding));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -821,7 +827,7 @@ mod tests {
         Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
         StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs() {
@@ -2287,6 +2293,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2321,6 +2328,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         if !digest.contains(
             "Why unknown: the path from the changed behavior to an observable sink is not statically clear",
@@ -2352,6 +2360,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         if !digest
             .contains("  Missing discriminator (1 of 2): No strong discriminator was detected")
@@ -2379,6 +2388,7 @@ mod tests {
             let digest = super::sections::render_finding_digest_with_config(
                 &finding,
                 &crate::config::RiprConfig::default(),
+                Path::new("."),
             );
 
             assert!(
@@ -2409,6 +2419,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2432,6 +2443,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2451,6 +2463,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(digest.contains("  Language: python\n"), "digest:\n{digest}");
@@ -2469,6 +2482,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(!digest.contains("  Language:"), "digest:\n{digest}");
@@ -2921,6 +2935,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'it'\\''s repo' --at probe:x",
+            Path::new("."),
         );
         assert!(
             apostrophe.contains(
@@ -2932,6 +2947,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'Steven’s repo' --at probe:x",
+            Path::new("."),
         );
         assert!(
             typographic
@@ -2942,6 +2958,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'café repo' --at probe:x",
+            Path::new("."),
         );
         assert!(!plain.contains("(PowerShell)"), "{plain}");
     }
@@ -3358,6 +3375,7 @@ mod tests {
                 line_budget: 100,
                 budget_disclosures: vec!["clamped budget disclosure".to_string()],
                 selected_files: vec!["src/a.rs".to_string()],
+                unselected_files: vec!["src/b.rs".to_string()],
                 selected_changed_lines: 60,
                 uninspected_files_lower_bound: 3,
                 uninspected_changed_lines_lower_bound: 180,
@@ -3444,6 +3462,7 @@ mod tests {
                 line_budget: 40,
                 budget_disclosures: Vec::new(),
                 selected_files: vec!["src/a.rs".to_string()],
+                unselected_files: vec!["src/b.rs".to_string()],
                 selected_changed_lines,
                 uninspected_files_lower_bound: uninspected_files,
                 uninspected_changed_lines_lower_bound: uninspected_lines,
@@ -3551,6 +3570,7 @@ mod tests {
                 line_budget: 100,
                 budget_disclosures: Vec::new(),
                 selected_files: vec!["src/evil\u{1b}[2K.rs".to_string()],
+                unselected_files: vec!["src/beyond.rs".to_string()],
                 selected_changed_lines: 1,
                 uninspected_files_lower_bound: 1,
                 uninspected_changed_lines_lower_bound: 1,
@@ -3722,6 +3742,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -3733,6 +3754,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &single,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         assert!(
             digest.contains("  Related test: tests/sample.rs:22 test_handles_disabled\n"),
@@ -3761,6 +3783,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4224,6 +4247,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4245,6 +4269,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         // The field is its first line plus the four-space continuation lines.
         let mut lines = digest
@@ -4289,6 +4314,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4329,6 +4355,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4346,6 +4373,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         assert!(
             digest.contains("· discriminator not established\n"),

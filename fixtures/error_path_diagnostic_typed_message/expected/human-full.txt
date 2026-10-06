@@ -7,7 +7,7 @@ Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-WARNING fixtures/error_path_diagnostic_typed_message/input/src/lib.rs:5
+WARNING ./src/lib.rs:5
   id: probe:src_lib.rs:error_path:fedbf836
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -44,7 +45,7 @@ Drill in:
   ripr explain --root fixtures/error_path_diagnostic_typed_message/input --diff fixtures/error_path_diagnostic_typed_message/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root fixtures/error_path_diagnostic_typed_message/input --diff fixtures/error_path_diagnostic_typed_message/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
-NOTE fixtures/error_path_diagnostic_typed_message/input/src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
 
 Changed
@@ -56,6 +57,7 @@ Probe
   family: static_unknown
   delta:  unknown
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0
 
 Static exposure
   static_unknown (note, confidence 0.50)

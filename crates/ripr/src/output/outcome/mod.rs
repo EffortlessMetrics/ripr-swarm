@@ -76,6 +76,11 @@ pub(crate) struct StaticSeamRecord {
     /// may still be present and value-level deltas are not established.
     observed_values_complete: bool,
     missing_discriminators: Vec<String>,
+    /// Whether the source recorded a `missing_discriminators` field at all.
+    /// An absent field parses to the same empty list as an explicitly empty
+    /// one, but only the explicit form can establish satisfaction (#5250
+    /// review: receipt guidance must not promote unrecorded to satisfied).
+    missing_discriminators_present: bool,
     evidence_source: String,
     evidence_path: BTreeMap<String, StaticEvidenceStage>,
     related_tests_total: usize,
@@ -189,6 +194,21 @@ pub(crate) struct TargetedTestOutcomeMovement {
     oracle_strength_delta: Option<String>,
     related_test_delta: isize,
     no_movement_reason: Option<String>,
+    /// #5250: the after-side signals receipt guidance needs so it can name
+    /// the remaining gate instead of repeating a satisfied discriminator
+    /// instruction when the class did not move but the evidence did.
+    /// `after_missing_discriminators` is `None` when the after snapshot did
+    /// not record the field: only an explicitly present (possibly empty)
+    /// list can establish satisfaction. `after_discriminate_state` carries
+    /// the after-side discriminate leg separately because an empty missing
+    /// list does not imply a strong oracle: several seam kinds never name
+    /// missing discriminators while their discriminate leg stays weak.
+    /// `None` means the leg was not recorded. Legs absent from the after
+    /// record render as `stage (not recorded)` in `after_open_legs` rather
+    /// than being silently dropped.
+    after_missing_discriminators: Option<Vec<String>>,
+    after_discriminate_state: Option<String>,
+    after_open_legs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -257,6 +277,8 @@ pub(crate) fn targeted_rerun_movement_from_json(
             observed_values: Vec::new(),
             observed_values_complete: true,
             missing_discriminators: Vec::new(),
+            // Synthetic current facts carry no source list: never present.
+            missing_discriminators_present: false,
             evidence_source: "targeted_rerun_current".to_string(),
             evidence_path: BTreeMap::new(),
             related_tests_total: 0,
@@ -361,6 +383,8 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
                     observed_values: Vec::new(),
                     observed_values_complete: true,
                     missing_discriminators: Vec::new(),
+                    // The minimal rerun shape records no missing list.
+                    missing_discriminators_present: false,
                     evidence_source: "targeted_rerun_before".to_string(),
                     evidence_path: BTreeMap::new(),
                     related_tests_total: 0,
@@ -429,12 +453,17 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
                 observed_value_strings,
             ),
             observed_values_complete: true,
-            missing_discriminators: evidence_record_values_or_legacy(
-                evidence_record,
-                seam,
-                "missing_discriminators",
-                missing_discriminator_strings,
-            ),
+            // The consulted source wins for both the list and presence (and
+            // presence additionally requires a well-formed string array):
+            // the evidence record when it names the key, else the seam.
+            missing_discriminators: {
+                let consulted = consulted_missing_discriminators_source(evidence_record, seam);
+                missing_discriminator_strings(consulted)
+            },
+            missing_discriminators_present: {
+                let consulted = consulted_missing_discriminators_source(evidence_record, seam);
+                missing_discriminators_well_formed(consulted)
+            },
             evidence_source: if evidence_record.is_some() {
                 "evidence_record".to_string()
             } else {
@@ -509,6 +538,9 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
     let related_tests_total = related_tests_total(None, finding);
     let observed_values = observed_value_strings(finding);
     let missing_discriminators = missing_discriminator_strings(finding);
+    // A well-formed empty array is recorded (and satisfiable); a missing key
+    // or a malformed value is unrecorded, never `[]` promoted to satisfied.
+    let missing_discriminators_present = missing_discriminators_well_formed(finding);
 
     Some(StaticSeamRecord {
         seam_id: canonical_gap_id,
@@ -523,6 +555,7 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
         observed_values,
         observed_values_complete: finding.get("observed_values_total").is_none(),
         missing_discriminators,
+        missing_discriminators_present,
         evidence_source: "check_output_finding".to_string(),
         evidence_path,
         related_tests_total,
@@ -726,6 +759,14 @@ fn targeted_test_outcome_movement(
         missing_discriminators_reopened,
         oracle_strength_delta,
         related_test_delta,
+        after_missing_discriminators: after
+            .missing_discriminators_present
+            .then(|| after.missing_discriminators.clone()),
+        after_discriminate_state: after
+            .evidence_path
+            .get("discriminate")
+            .map(|entry| entry.state.clone()),
+        after_open_legs: after_open_legs(after),
         no_movement_reason,
     }
 }
@@ -993,6 +1034,38 @@ fn missing_discriminator_strings(seam: &Value) -> Vec<String> {
     }
 }
 
+/// Mirrors the evidence-record-first selection in
+/// [`evidence_record_values_or_legacy`] for the missing-discriminators key:
+/// the evidence record wins when it names the key, otherwise the seam.
+fn consulted_missing_discriminators_source<'a>(
+    evidence_record: Option<&'a Value>,
+    seam: &'a Value,
+) -> &'a Value {
+    evidence_record
+        .filter(|record| record.get("missing_discriminators").is_some())
+        .unwrap_or(seam)
+}
+
+/// Presence means recorded *and* well-formed: a string array whose items all
+/// render through the [`missing_discriminator_strings`] rules. A well-formed
+/// empty array is recorded (satisfiable); a missing key or a malformed value
+/// (scalar, object, or an array with an unrenderable item) is unrecorded, so
+/// it can never surface downstream as a satisfied empty list.
+fn missing_discriminators_well_formed(source: &Value) -> bool {
+    match source
+        .get("missing_discriminators")
+        .and_then(Value::as_array)
+    {
+        Some(items) => items.iter().all(|item| {
+            if json_scalar_as_string(item).is_some() {
+                return true;
+            }
+            item.get("value").and_then(json_scalar_as_string).is_some()
+        }),
+        None => false,
+    }
+}
+
 fn related_tests_total(evidence_record: Option<&Value>, seam: &Value) -> usize {
     let source = match evidence_record {
         Some(record) if record.get("related_tests_total").is_some() => record,
@@ -1157,6 +1230,21 @@ fn related_test_delta(before: &StaticSeamRecord, after: &StaticSeamRecord) -> is
         (Ok(after_total), Ok(before_total)) => after_total - before_total,
         _ => 0,
     }
+}
+
+/// #5250: the after-side RIPR legs that are not `yes`, in canonical order,
+/// each with its recorded state. A leg absent from the after record is an
+/// unknown gate, not a satisfied one, so it renders as `stage (not
+/// recorded)` instead of being dropped.
+fn after_open_legs(after: &StaticSeamRecord) -> Vec<String> {
+    EVIDENCE_STAGES
+        .iter()
+        .filter_map(|stage| match after.evidence_path.get(*stage) {
+            Some(entry) if entry.state == "yes" => None,
+            Some(entry) => Some(format!("{stage} ({})", entry.state)),
+            None => Some(format!("{stage} (not recorded)")),
+        })
+        .collect()
 }
 
 fn no_movement_reason(
@@ -2488,6 +2576,241 @@ mod tests {
         );
     }
 
+    fn evidence_stage(state: &str) -> StaticEvidenceStage {
+        StaticEvidenceStage {
+            state: state.to_string(),
+            confidence: "high".to_string(),
+            summary: format!("{state} leg"),
+        }
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_carries_after_side_signals() {
+        // #5250: the receipt's refined guidance reads these fields; an
+        // unchanged class with satisfied discriminators must still name
+        // the gating after-side leg.
+        let mut before = targeted_static_seam("same", "weakly_gripped");
+        before.missing_discriminators = vec!["threshold equality".to_string()];
+        before.missing_discriminators_present = true;
+        let mut after = targeted_static_seam("same", "weakly_gripped");
+        after.missing_discriminators_present = true;
+        for stage in ["reach", "activate", "propagate", "observe"] {
+            after
+                .evidence_path
+                .insert(stage.to_string(), evidence_stage("yes"));
+        }
+        after
+            .evidence_path
+            .insert("discriminate".to_string(), evidence_stage("weak"));
+
+        let movement = targeted_test_outcome_movement(&before, &after);
+
+        assert_eq!(movement.direction, "unchanged");
+        assert_eq!(movement.after_missing_discriminators, Some(Vec::new()));
+        assert_eq!(movement.after_discriminate_state, Some("weak".to_string()));
+        assert_eq!(
+            movement.after_open_legs,
+            vec!["discriminate (weak)".to_string()]
+        );
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_marks_unrecorded_after_legs_unknown() {
+        // #5250: a leg absent from the after record is an unknown gate,
+        // not a satisfied one.
+        let before = targeted_static_seam("same", "weakly_gripped");
+        let mut after = targeted_static_seam("same", "weakly_gripped");
+        after.missing_discriminators = vec!["threshold equality".to_string()];
+        after.missing_discriminators_present = true;
+
+        let movement = targeted_test_outcome_movement(&before, &after);
+
+        assert_eq!(
+            movement.after_missing_discriminators,
+            Some(vec!["threshold equality".to_string()])
+        );
+        assert_eq!(movement.after_discriminate_state, None);
+        assert_eq!(
+            movement.after_open_legs,
+            vec![
+                "reach (not recorded)".to_string(),
+                "activate (not recorded)".to_string(),
+                "propagate (not recorded)".to_string(),
+                "observe (not recorded)".to_string(),
+                "discriminate (not recorded)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_marks_an_unrecorded_missing_list_unknown()
+    -> Result<(), String> {
+        // #5250 review: an after snapshot without the field must not read
+        // as an explicitly satisfied (empty) list downstream.
+        let before = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [],
+      "missing_discriminators": ["threshold equality"]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [{"oracle_kind": "exact_value", "oracle_strength": "weak"}]
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+
+        assert_eq!(report.unchanged.len(), 1);
+        let movement = &report.unchanged[0];
+        assert_eq!(movement.after_missing_discriminators, None);
+        assert_eq!(movement.after_discriminate_state, None);
+
+        let json = render_targeted_test_outcome_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("targeted-test outcome JSON should parse: {err}"))?;
+        assert!(value["unchanged"][0]["after_missing_discriminators"].is_null());
+        assert!(value["unchanged"][0]["after_discriminate_state"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_outcome_movement_marks_malformed_after_missing_list_unknown()
+    -> Result<(), String> {
+        // #6869 review: a malformed after value parses to an empty list, but
+        // that `[]` must not read as an explicitly satisfied list downstream.
+        let before = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [],
+      "missing_discriminators": ["threshold equality"]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [{"oracle_kind": "exact_value", "oracle_strength": "weak"}],
+      "missing_discriminators": "threshold equality"
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+
+        assert_eq!(report.unchanged.len(), 1);
+        let movement = &report.unchanged[0];
+        assert_eq!(movement.after_missing_discriminators, None);
+        assert_eq!(movement.after_discriminate_state, None);
+
+        let json = render_targeted_test_outcome_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("targeted-test outcome JSON should parse: {err}"))?;
+        assert!(value["unchanged"][0]["after_missing_discriminators"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn static_seam_record_from_check_finding_marks_malformed_missing_list_unrecorded()
+    -> Result<(), String> {
+        // #6869 review: the check-output producer must apply the same
+        // well-formedness rule as the repo-exposure producer.
+        let finding = serde_json::json!({
+            "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary",
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "file": "src/discount.py", "line": 2},
+            "missing_discriminators": {"value": "amount == threshold"},
+        });
+        let record = static_seam_record_from_check_finding(&finding)
+            .ok_or_else(|| "finding with a canonical gap id should parse".to_string())?;
+        assert!(record.missing_discriminators.is_empty());
+        assert!(!record.missing_discriminators_present);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_discriminators_well_formed_requires_a_renderable_string_array() {
+        // A well-formed empty array stays recorded (satisfiable); every other
+        // shape is unrecorded.
+        let cases = [
+            (serde_json::json!({}), false),
+            (serde_json::json!({"missing_discriminators": []}), true),
+            (
+                serde_json::json!({"missing_discriminators": ["threshold equality"]}),
+                true,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": [{"value": "x", "reason": "r"}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": "threshold equality"}),
+                false,
+            ),
+            (serde_json::json!({"missing_discriminators": 7}), false),
+            (
+                serde_json::json!({"missing_discriminators": {"value": "x"}}),
+                false,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": [{"reason": "r"}]}),
+                false,
+            ),
+            (
+                serde_json::json!({"missing_discriminators": ["x", {"reason": "r"}]}),
+                false,
+            ),
+            (serde_json::json!({"missing_discriminators": [null]}), false),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                missing_discriminators_well_formed(&source),
+                expected,
+                "well-formedness of {source}"
+            );
+        }
+    }
+
     #[test]
     fn targeted_test_outcome_rejects_duplicate_seam_ids() {
         let seam = targeted_static_seam("same", "weakly_gripped");
@@ -2721,6 +3044,7 @@ mod tests {
             observed_values: Vec::new(),
             observed_values_complete: true,
             missing_discriminators: Vec::new(),
+            missing_discriminators_present: false,
             evidence_source: "legacy_fields".to_string(),
             evidence_path: BTreeMap::new(),
             related_tests_total: 0,
