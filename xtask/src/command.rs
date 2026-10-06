@@ -168,6 +168,9 @@ pub(crate) enum XtaskCommand {
     PublishDryRun,
     Help(Vec<String>),
     IssueIntake(Vec<String>),
+    WorkPortfolio(Vec<String>),
+    WorkCandidates(Vec<String>),
+    WorkExplain(Vec<String>),
     Unknown(String),
 }
 
@@ -351,6 +354,15 @@ impl XtaskCommand {
             "package" => Self::Package,
             "publish-dry-run" => Self::PublishDryRun,
             "issue-intake" => Self::IssueIntake(rest),
+            "work" => match rest.first().map(|arg| arg.as_str()) {
+                Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
+                Some("candidates") => Self::WorkCandidates(rest[1..].to_vec()),
+                Some("explain") => Self::WorkExplain(rest[1..].to_vec()),
+                _ => Self::Unknown(format!(
+                    "work {}",
+                    rest.first().map(|arg| arg.as_str()).unwrap_or("")
+                )),
+            },
             "help" => Self::Help(rest),
             other => Self::Unknown(other.to_string()),
         }
@@ -451,6 +463,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "verdict-corpus validate",
         "verdict-corpus check [--out <dir>]",
         "verdict-corpus report [--out <dir>]",
+        "verdict-corpus relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>] [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]",
         "test-oracle-report",
         "check-test-oracles",
         "test-efficiency-report",
@@ -594,6 +607,9 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "package",
         "publish-dry-run",
         "issue-intake --issue <number>",
+        "work portfolio [--captured <dir>] [--json]",
+        "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+        "work explain --candidate <id> [--captured <dir>] [--json]",
     ]
 }
 
@@ -1040,6 +1056,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Same scoring as verdict-corpus check without the expected-report comparison. Writes depending on --out: by default under target/ripr/reports/verdict-corpus; --out fixtures/rust-verdict-corpus/expected refreshes the reviewed expected report.",
+        ),
+        command_entry(
+            "verdict-corpus relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>] [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]",
+            "report_only",
+            "target/ripr/reports/verdict-corpus/relabel.json or --out <dir>; run-owned trees under the system temp dir or --work-dir <dir>",
+            false,
+            false,
+            "Re-derives runtime truth for a deterministic sample of labeled cases: in a run-owned copy of each subject it runs the case's own `cargo test` command on the unedited tree, on the edit, and on every mutant's mutated_line, each --repeat times, and fails when an outcome, failing test, or derived truth drifts from the label, a mutant does not compile or changes nothing, repeated runs disagree, or the toolchain differs from the labeled one. Authored subjects replay offline; upstream excerpts replay only from full checkouts at the pinned commit under --checkouts. Never clones, fetches, or edits the corpus.",
         ),
         command_entry(
             "test-oracle-report",
@@ -1838,7 +1862,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "external_state_read",
             "target/ripr/first-run/first-run.{json,md} plus per-case clones under the same directory",
             false,
-            false,
+            true,
             "Replays a new developer's first run (doctor, check, pilot, the printed explain command, init --ci github) on pinned third-party crates fetched through cargo, times each step and records friction; observes only and asserts no verdict.",
         ),
         command_entry(
@@ -1846,8 +1870,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "argument_dependent",
             "docs/PUBLIC_PROOF.md (written without --check); --refresh-receipts also rewrites metrics/public-proof/dx-scoreboard.json, verdict-corpus.json and corpus-manifest.json from their canonical sources",
             false,
-            false,
-            "Renders the public proof page from the committed receipts under metrics/public-proof/; --check fails when the page differs from its receipts or a receipt has drifted from its canonical in-repo source. The xtask unit test checks only the page against its receipts, so source drift is advisory.",
+            true,
+            "Renders the public proof page from the committed receipts under metrics/public-proof/; --check fails when the page differs from its receipts or a receipt has drifted from its canonical in-repo source. The xtask unit test checks only the page against its receipts, so source drift is advisory: it fails only the Public Proof Drift workflow, a non-required lane that runs --check nightly and on source changes, and a drifted --check lists the page lines a refresh would change.",
         ),
         command_entry(
             "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
@@ -2192,6 +2216,30 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Fetches a live GitHub issue and emits a typed intake packet.",
+        ),
+        command_entry(
+            "work portfolio [--captured <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-portfolio.{json,md}",
+            false,
+            false,
+            "Compiles immutable captured inputs into the read-only deterministic multi-campaign work-portfolio snapshot (#1704, RIPR-SPEC-0234); selects no work, synthesizes no default campaign, and mutates no GitHub, branch, worktree, claim, spec, campaign or source state.",
+        ),
+        command_entry(
+            "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-candidates.{json,md}",
+            false,
+            false,
+            "Renders the ranked work-candidate array from the same portfolio compilation under neutral campaign/surface filters with a bounded limit; filters never change candidate identity or authority.",
+        ),
+        command_entry(
+            "work explain --candidate <id> [--captured <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-explain.{json,md}",
+            false,
+            false,
+            "Renders exactly one work candidate by stable id with its lifecycle stage, next durable transition, blockers, conflicts, capacity, costs, confidence and the eight explicit ordered ranking factors; unknown ids fail closed.",
         ),
     ]
 }

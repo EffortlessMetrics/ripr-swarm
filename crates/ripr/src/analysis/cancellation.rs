@@ -19,6 +19,11 @@ const SUPERSEDED: u8 = 1;
 const CANCELLED: u8 = 2;
 const DEADLINE_EXCEEDED: u8 = 3;
 
+/// What the most recent error-path event of the attempt was (#4860, #6721).
+const OUTCOME_NONE: u8 = 0;
+const OUTCOME_ABORT_OBSERVED: u8 = 1;
+const OUTCOME_FAILURE_PROPAGATED: u8 = 2;
+
 pub(crate) type AnalysisClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 struct AnalysisBudget {
@@ -29,6 +34,12 @@ struct AnalysisBudget {
 
 struct CancellationState {
     reason: AtomicU8,
+    /// The latest error-path event: a checkpoint returning the abort to
+    /// running work (#4860), or a parallel batch propagating an ordinary
+    /// worker failure in preference to a sibling's abort (#6721). A recorded
+    /// reason alone does not mean the work stopped because of it: work that
+    /// failed or finished before its next checkpoint never saw it.
+    outcome: AtomicU8,
     budget: Option<AnalysisBudget>,
 }
 
@@ -75,6 +86,7 @@ impl AnalysisCancellationToken {
     pub(crate) fn new() -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
             budget: None,
         }))
     }
@@ -84,6 +96,7 @@ impl AnalysisCancellationToken {
     pub(crate) fn with_budget(started: Instant, limit: Duration, now: AnalysisClock) -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
             budget: Some(AnalysisBudget {
                 started,
                 limit,
@@ -129,9 +142,94 @@ impl AnalysisCancellationToken {
             self.cancel(AnalysisAbortKind::DeadlineExceeded);
         }
         // Re-read the winner after CAS, including a concurrent earlier reason.
-        self.abort_kind()
-            .map_or(Ok(()), |kind| Err(AnalysisCancellation { kind }))
+        match self.abort_kind() {
+            None => Ok(()),
+            Some(kind) => {
+                self.0
+                    .outcome
+                    .store(OUTCOME_ABORT_OBSERVED, Ordering::Release);
+                Err(AnalysisCancellation { kind })
+            }
+        }
     }
+
+    /// The typed outcome of an attempt that ended in an error (#4860): the
+    /// recorded abort, but only once a checkpoint handed it to the work.
+    /// Consumers decide cancellation here instead of parsing the error's
+    /// rendered text, so a wrapped cancellation stays a cancellation and an
+    /// ordinary failure that merely reads like one stays a failure. A few
+    /// best-effort walks swallow a checkpoint error and stop early; that still
+    /// counts as observed, so a later failure in the same attempt is named by
+    /// the abort that truncated it. A parallel batch that propagates an
+    /// ordinary worker failure over a sibling's abort records that it did
+    /// (#6721), so the attempt is that failure until a later checkpoint hands
+    /// the abort to work again. Pure: it never expires a budget.
+    pub(crate) fn observed_abort(&self) -> Option<AnalysisAbortKind> {
+        if self.0.outcome.load(Ordering::Acquire) == OUTCOME_ABORT_OBSERVED {
+            self.abort_kind()
+        } else {
+            None
+        }
+    }
+
+    /// Record that the error now propagating is an ordinary failure chosen
+    /// over an abort a sibling worker observed (#6721).
+    fn record_propagated_failure(&self) {
+        self.0
+            .outcome
+            .store(OUTCOME_FAILURE_PROPAGATED, Ordering::Release);
+    }
+}
+
+/// One parallel worker's error, typed at the worker so the batch never has to
+/// read a rendered message to tell an abort from an ordinary failure (#6721).
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum WorkerError {
+    Aborted(AnalysisCancellation),
+    Failed(String),
+}
+
+impl WorkerError {
+    /// The error's existing wording, for the String-typed caller.
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Aborted(cancellation) => cancellation.to_string(),
+            Self::Failed(message) => message,
+        }
+    }
+}
+
+impl From<AnalysisCancellation> for WorkerError {
+    fn from(cancellation: AnalysisCancellation) -> Self {
+        Self::Aborted(cancellation)
+    }
+}
+
+/// The error a parallel batch propagates, or `None` when every worker
+/// succeeded. The first ordinary failure in input order wins over any abort,
+/// so a real source failure is never hidden by whichever sibling happened to
+/// reach a checkpoint after the abort; it is recorded on `token` so the
+/// attempt is classified as that failure. With no ordinary failure, the first
+/// abort in input order is returned with its existing wording.
+pub(crate) fn select_batch_error<'a>(
+    token: Option<&AnalysisCancellationToken>,
+    errors: impl IntoIterator<Item = &'a WorkerError>,
+) -> Option<String> {
+    let mut first_abort = None;
+    for error in errors {
+        match error {
+            WorkerError::Failed(message) => {
+                if let Some(token) = token {
+                    token.record_propagated_failure();
+                }
+                return Some(message.clone());
+            }
+            WorkerError::Aborted(cancellation) => {
+                first_abort.get_or_insert(*cancellation);
+            }
+        }
+    }
+    first_abort.map(|cancellation| cancellation.to_string())
 }
 
 thread_local! {
@@ -170,10 +268,16 @@ pub(crate) fn with_optional_token<T>(
 }
 
 pub(crate) fn checkpoint() -> Result<(), String> {
+    checkpoint_typed().map_err(|error| error.to_string())
+}
+
+/// [`checkpoint`] for callers that carry [`crate::core_error::CoreError`]:
+/// the abort stays typed instead of becoming rendered text.
+pub(crate) fn checkpoint_typed() -> Result<(), AnalysisCancellation> {
     CURRENT_TOKEN.with(|slot| {
-        slot.borrow().as_ref().map_or(Ok(()), |token| {
-            token.checkpoint().map_err(|error| error.to_string())
-        })
+        slot.borrow()
+            .as_ref()
+            .map_or(Ok(()), AnalysisCancellationToken::checkpoint)
     })
 }
 
@@ -191,6 +295,10 @@ pub(crate) fn current_abort_kind() -> Option<AnalysisAbortKind> {
     CURRENT_TOKEN.with(|slot| slot.borrow().as_ref().and_then(|token| token.abort_kind()))
 }
 
+/// Rendered-wording assertion for tests only (#4860). Production decides
+/// cancellation from [`AnalysisCancellationToken::observed_abort`] or
+/// [`crate::core_error::CoreError::is_analysis_cancelled`], never from text.
+#[cfg(test)]
 pub(crate) fn is_cancellation_error(error: &str) -> bool {
     error.starts_with("analysis cancelled:")
 }
@@ -389,5 +497,117 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_batch_propagates_its_first_ordinary_failure_over_any_abort() {
+        // #6721: in either input order, an ordinary worker failure wins over a
+        // sibling's abort, and the token then names the attempt as that
+        // failure. A later checkpoint that hands the abort to work again makes
+        // the abort the attempt's outcome once more.
+        let failed = || WorkerError::Failed("failed to read src/a.rs".to_string());
+        let aborted = || {
+            WorkerError::Aborted(AnalysisCancellation {
+                kind: AnalysisAbortKind::DeadlineExceeded,
+            })
+        };
+        for errors in [vec![aborted(), failed()], vec![failed(), aborted()]] {
+            let token = AnalysisCancellationToken::new();
+            assert!(token.cancel(AnalysisAbortKind::DeadlineExceeded));
+            assert!(token.checkpoint().is_err());
+            assert_eq!(
+                token.observed_abort(),
+                Some(AnalysisAbortKind::DeadlineExceeded)
+            );
+            assert_eq!(
+                select_batch_error(Some(&token), &errors),
+                Some("failed to read src/a.rs".to_string())
+            );
+            assert_eq!(token.observed_abort(), None, "{errors:?}");
+            assert!(token.checkpoint().is_err());
+            assert_eq!(
+                token.observed_abort(),
+                Some(AnalysisAbortKind::DeadlineExceeded)
+            );
+        }
+
+        // Two ordinary failures: the first in input order wins.
+        let two = [
+            WorkerError::Failed("first".to_string()),
+            WorkerError::Failed("second".to_string()),
+        ];
+        assert_eq!(select_batch_error(None, &two), Some("first".to_string()));
+
+        // Only aborts: the first abort's existing wording, still observed.
+        let token = AnalysisCancellationToken::new();
+        assert!(token.cancel(AnalysisAbortKind::Superseded));
+        assert!(token.checkpoint().is_err());
+        let aborts = [
+            WorkerError::Aborted(AnalysisCancellation {
+                kind: AnalysisAbortKind::Superseded,
+            }),
+            aborted(),
+        ];
+        assert_eq!(
+            select_batch_error(Some(&token), &aborts),
+            Some("analysis cancelled: Superseded".to_string())
+        );
+        assert_eq!(token.observed_abort(), Some(AnalysisAbortKind::Superseded));
+
+        // No errors: nothing to propagate, and the token is untouched.
+        let clean = AnalysisCancellationToken::new();
+        assert_eq!(select_batch_error(Some(&clean), std::iter::empty()), None);
+        assert_eq!(clean.observed_abort(), None);
+    }
+
+    #[test]
+    fn observed_abort_requires_a_checkpoint_to_hand_the_abort_to_work() {
+        // #4860: a recorded reason alone does not name the attempt's outcome.
+        let token = AnalysisCancellationToken::new();
+        assert_eq!(token.observed_abort(), None);
+        assert!(token.cancel(AnalysisAbortKind::Superseded));
+        assert_eq!(token.abort_kind(), Some(AnalysisAbortKind::Superseded));
+        assert_eq!(
+            token.observed_abort(),
+            None,
+            "work that never reached a checkpoint was not stopped by the abort"
+        );
+        assert_eq!(
+            token.checkpoint(),
+            Err(AnalysisCancellation {
+                kind: AnalysisAbortKind::Superseded
+            })
+        );
+        assert_eq!(token.observed_abort(), Some(AnalysisAbortKind::Superseded));
+        // First-cancel-wins: a later deadline cannot relabel the outcome.
+        assert!(!token.cancel(AnalysisAbortKind::DeadlineExceeded));
+        assert_eq!(token.observed_abort(), Some(AnalysisAbortKind::Superseded));
+    }
+
+    #[test]
+    fn budget_expiry_is_observed_as_the_deadline_kind_through_the_free_checkpoint() {
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::ZERO,
+            Arc::new(move || started),
+        );
+        assert_eq!(token.observed_abort(), None);
+        let typed = with_token(&token, checkpoint_typed);
+        assert_eq!(
+            typed,
+            Err(AnalysisCancellation {
+                kind: AnalysisAbortKind::DeadlineExceeded
+            })
+        );
+        assert_eq!(
+            token.observed_abort(),
+            Some(AnalysisAbortKind::DeadlineExceeded)
+        );
+        // The String checkpoint keeps the public wording.
+        assert_eq!(
+            with_token(&token, checkpoint).err().as_deref(),
+            Some("analysis cancelled: DeadlineExceeded")
+        );
     }
 }

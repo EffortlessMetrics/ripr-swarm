@@ -73,8 +73,12 @@ result and then passed `None` to `render_agent_seam_packets_json`, leaving
 A new constant `DEFAULT_PILOT_SEAM_BUDGET = 2_000` is introduced in
 `analysis::seam_inventory`. After the workspace inventory completes, any
 classified seam list longer than the budget is truncated to the budget length
-before rendering. The truncation preserves the highest-ranked seams (the front
-of the sorted slice as produced by the existing inventory).
+before rendering. The truncation keeps every actionable seam on a line changed
+in the current change (#5324), then fills the remaining budget from the front of
+the inventory order; the kept set stays in inventory order. When the current
+change has more actionable seams than the budget, the first budget-many of them
+in inventory order are kept. The disclosure still reports the budget as the
+analyzed count.
 
 ### Environment variable control
 

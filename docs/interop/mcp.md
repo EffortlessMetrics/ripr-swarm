@@ -80,12 +80,16 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the `ripr-workspace-status-v1` workspace block (resolved once at startup,
   never re-resolved): root validation state, discovery source, repository
   markers, a root `error_code` when unavailable, and a hashed host-local
-  `identity` — the absolute path is never returned; configuration presence
-  (`ripr.toml` is detected, not loaded); `trust` and `authority` facts with
+  `identity` — the absolute path is never returned; the configuration
+  posture (`loaded` with its `project_config_identity` when the root's
+  `ripr.toml` resolves, `detected_not_loaded` when one is present but
+  cannot be read or parsed, `built_in_defaults_only` when none does);
+  `trust` and `authority` facts with
   source edit, verification execution, mutation execution, and model provider
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
-  diff against the default branch, draft mode, built-in defaults), the current
+  diff against the default branch, draft mode, the workspace's own
+  configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
   the last completed refresh (`current_at_last_refresh`, or
@@ -110,8 +114,13 @@ An attempt runs to a terminal state; cancelling the MCP request never rolls
 an attempt back or manufactures a snapshot. A cancelled attempt still commits
 as a completed snapshot when it finishes and only transport teardown abandons
 one before it commits, while a superseded attempt is never committed.
-Project-local `ripr.toml` stays
-detected-not-loaded: refresh runs with built-in defaults.
+The workspace's own `ripr.toml` is honored (#6825): refresh resolves it
+through the same `load_for_root` the CLI uses — a loaded config runs (the
+session profile discloses `loaded` with its `config_identity` and enabled
+languages), a config-less root runs built-in defaults including the
+zero-config language auto-enable, and a present-but-unreadable or unparseable
+config fails the attempt closed with `config_invalid`. Provider
+configuration stays unloaded.
 
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
 `total` / `eligible` / `selected` / `omitted` counts, selected and complete

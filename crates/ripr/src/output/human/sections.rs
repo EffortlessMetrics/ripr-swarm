@@ -19,16 +19,21 @@ use crate::output::typescript_preview_card::{
     TypeScriptPreviewCard, bun_cross_language_advisory_packet, stable_byte_proof_mode,
     typescript_preview_card,
 };
+use std::path::Path;
 
 use super::evidence_lines::{evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
-pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &RiprConfig) -> String {
+pub(crate) fn render_finding_digest_with_config(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
     out.push_str(&format!(
         "  File: {}:{}\n",
-        display_path(&finding.probe.location.file),
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     if should_render_language_metadata(finding) {
@@ -298,13 +303,19 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     out
 }
 
-pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig) -> String {
+pub(crate) fn render_finding_with_config(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
     out.push_str(&format!(
         "{} {}:{}\n",
         severity.to_ascii_uppercase(),
-        display_path(&finding.probe.location.file),
+        // The shared finding-location owner (#5996): the header line an
+        // agent joins against check JSON, MCP items and LSP packets.
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     // #4321: name the finding this block carries, so a reader routed here by

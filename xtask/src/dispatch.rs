@@ -247,6 +247,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
         }
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
+        XtaskCommand::WorkPortfolio(args) => super::work_portfolio::work_portfolio_command(&args),
+        XtaskCommand::WorkCandidates(args) => super::work_portfolio::work_candidates_command(&args),
+        XtaskCommand::WorkExplain(args) => super::work_portfolio::work_explain_command(&args),
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

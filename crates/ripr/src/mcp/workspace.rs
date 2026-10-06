@@ -32,6 +32,11 @@ pub(crate) const SNAPSHOT_SCHEMA_VERSION: &str = "ripr-mcp-snapshot-v1";
 pub(crate) const CODE_WORKSPACE_UNAVAILABLE: &str = "workspace_unavailable";
 pub(crate) const CODE_ANALYSIS_FAILED: &str = "analysis_failed";
 pub(crate) const CODE_UNSUPPORTED_PROFILE: &str = "unsupported_profile";
+/// The workspace `ripr.toml` is present but cannot be read or parsed
+/// (#6825): the refresh attempt fails closed instead of silently analyzing
+/// with built-in defaults. Promoted from the reserved vocabulary when the
+/// config path landed.
+pub(crate) const CODE_CONFIG_INVALID: &str = "config_invalid";
 pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
@@ -41,7 +46,6 @@ pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// closed before any of these states can occur; they are named so the wire
 /// contract stays stable when the owning slice lands.
 pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
-    "config_invalid",
     "workspace_ambiguous",
     "static_limitation",
     "cancelled",
@@ -125,6 +129,39 @@ pub(crate) struct Snapshot {
     pub(crate) card_producers: Option<super::repair_card::SnapshotCardProducers>,
     pub(crate) budget: DiagnosticBudget,
     pub(crate) selection: DiagnosticBudgetResult,
+    /// The producer's RIPR-SPEC-0112 working-tree facts bound at commit time
+    /// (#5995): the analyzed committed default-branch diff ran while routed
+    /// source or test files carried uncommitted edits, so those edits are
+    /// outside this snapshot's scope. `uncommitted_edits` includes untracked
+    /// files (the overlay keeps them in its dirty set); `untracked` names the
+    /// subset neither the committed diff nor `--worktree` can analyze
+    /// (#5258), so the served disclosure can name the real remedy. The facts
+    /// ride the snapshot identity: two otherwise identical snapshots with
+    /// different exclusions are different snapshots.
+    pub(crate) scope: ScopeFacts,
+}
+
+/// The scope-relevant working-tree facts one snapshot was analyzed against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeFacts {
+    pub(crate) uncommitted_edits: bool,
+    pub(crate) untracked: Vec<String>,
+}
+
+impl ScopeFacts {
+    fn from_output(output: &crate::app::CheckOutput) -> Self {
+        Self {
+            uncommitted_edits: output.unanalyzed_working_tree,
+            untracked: output.untracked_working_tree_source_paths.clone(),
+        }
+    }
+
+    fn identity_key(&self) -> Value {
+        json!({
+            "uncommitted_edits": self.uncommitted_edits,
+            "untracked": self.untracked,
+        })
+    }
 }
 
 impl Snapshot {
@@ -176,7 +213,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(GapItem::from_finding)
+            .map(|finding| GapItem::from_finding(finding, &output.root))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -187,7 +224,8 @@ impl Snapshot {
             })?;
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
-        let snapshot_id = snapshot_identity(&outcome, &items).map_err(|error| {
+        let scope = ScopeFacts::from_output(output);
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
         })?;
         let profile_identity = format!(
@@ -220,6 +258,7 @@ impl Snapshot {
             card_producers: None,
             budget,
             selection,
+            scope,
         })
     }
 
@@ -239,7 +278,11 @@ fn limitation_summary(outcome: &AnalysisOutcome) -> String {
         .join(", ")
 }
 
-fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<String, String> {
+fn snapshot_identity(
+    outcome: &AnalysisOutcome,
+    items: &[GapItem],
+    scope: &ScopeFacts,
+) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -253,6 +296,10 @@ fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<Str
         "outcome_digest": outcome_digest,
         "items": item_ids,
         "evidence": evidence_digests,
+        // The scope facts change what the served documents disclose, so two
+        // otherwise identical snapshots with different exclusions must not
+        // share an identity (#5995 review).
+        "scope": scope.identity_key(),
     });
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -540,16 +587,24 @@ impl WorkspaceSession {
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
+            "scope": self
+                .last_good
+                .as_ref()
+                .and_then(|snapshot| scope_disclosure(snapshot))
+                .unwrap_or(Value::Null),
             "freshness": {
                 "state": freshness_state(self),
                 "note": "the server does not watch the worktree; the snapshot is current as of its last completed ripr_refresh, a later failed attempt leaves it unverified for that attempt, so refresh again after edits",
             },
             "analysis_outcome": analysis_outcome,
             "profile": profile.document(),
-            "limitations": [
-                "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
-                "project-local ripr.toml stays detected-not-loaded; refresh runs with built-in defaults",
-            ],
+            "limitations": profile
+                .session_limitation()
+                .into_iter()
+                .chain([
+                    "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
+                ])
+                .collect::<Vec<_>>(),
         })
     }
 }
@@ -600,6 +655,56 @@ impl Drop for InFlightAttempt {
     }
 }
 
+/// The typed scope disclosure for one committed snapshot (#5995), mirroring
+/// the LSP session's limits-note wording family: the refresh analyzes only
+/// the committed default-branch diff, so when routed source or test files
+/// carried uncommitted edits at analysis time (RIPR-SPEC-0112's producer
+/// fact), those edits are outside every served document — a dirty-tree
+/// `no_scope` with zero findings must never read as all-clear. When
+/// untracked files exist, the note never offers bare `--worktree` as the
+/// remedy: they are invisible to both the committed diff and `--worktree`
+/// (#5258), so the disclosure names staging or an explicit diff instead,
+/// the same contract as the human note. `ripr_refresh` takes no diff-source
+/// argument, so there is no in-protocol expansion to promise.
+fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let scope = &snapshot.scope;
+    if !scope.uncommitted_edits {
+        return None;
+    }
+    const NAMED_PATHS: usize = 3;
+    let named = scope
+        .untracked
+        .iter()
+        .take(NAMED_PATHS)
+        .cloned()
+        .collect::<Vec<_>>();
+    let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
+    if scope.untracked.is_empty() {
+        return Some(json!({
+            "analyzed": "committed default-branch diff",
+            "uncommitted_edits": "outside this analysis",
+            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+        }));
+    }
+    let listing = if more > 0 {
+        format!("{} and {more} more", named.join(", "))
+    } else {
+        named.join(", ")
+    };
+    Some(json!({
+        "analyzed": "committed default-branch diff",
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
+        "untracked_edits": {
+            "files": named,
+            "total": scope.untracked.len(),
+            "more": more,
+            "listing_example": listing,
+            "remedy": "stage them (`git add <paths>`, or `git add -N <paths>`) and rerun `ripr check --worktree`, or pass an explicit diff",
+        },
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -623,6 +728,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
                 .unwrap_or(Value::Null),
         },
         "snapshot": snapshot,
+        "scope": session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| scope_disclosure(snapshot))
+            .unwrap_or(Value::Null),
         "last_known_good": session
             .last_good
             .as_ref()
@@ -635,14 +745,74 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     })
 }
 
-/// Built-in-default analysis profile facts for the session block.
+/// The resolved analysis-configuration posture of the session (#6825): which
+/// configuration `ripr_refresh` will run under. The read-only boundary
+/// (ADR 0022) is untouched — the server still edits nothing and loads no
+/// *provider* configuration; honoring the workspace's analysis
+/// configuration is the same `load_for_root` resolution the CLI uses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionConfigPosture {
+    /// A workspace `ripr.toml` was read and parsed; `identity` is the
+    /// fingerprint of its exact text.
+    Loaded { identity: String },
+    /// A `ripr.toml` entry is present but could not be read or parsed;
+    /// refresh fails closed with `config_invalid`.
+    DetectedNotLoaded,
+    /// No config resolved; refresh runs on built-in defaults (marker-based
+    /// language auto-enable is disclosed through `languages`).
+    BuiltInDefaults,
+}
+
+/// The analysis profile facts for the session block, resolved from the
+/// workspace's own configuration (#6825).
+#[derive(Clone, Debug)]
 pub(crate) struct SessionProfile {
     mode: &'static str,
     languages: Vec<String>,
+    posture: SessionConfigPosture,
 }
 
 impl SessionProfile {
-    pub(crate) fn built_in() -> Self {
+    /// Resolve the profile from the analyzed root. `None` (an unavailable
+    /// root) keeps the built-in-default profile.
+    pub(crate) fn resolve(root: Option<&Path>) -> Self {
+        let Some(root) = root else {
+            return Self::built_in();
+        };
+        match crate::config::load_for_root(root) {
+            Ok(config) => {
+                let languages = config
+                    .languages()
+                    .enabled()
+                    .iter()
+                    .map(|language| language.as_str().to_string())
+                    .collect();
+                let posture = match crate::config::loaded_config_identity(&config) {
+                    Some(identity) => SessionConfigPosture::Loaded { identity },
+                    None => SessionConfigPosture::BuiltInDefaults,
+                };
+                Self {
+                    mode: "draft",
+                    languages,
+                    posture,
+                }
+            }
+            // A load failure with no config entry anywhere (for example the
+            // marker-based language auto-enable refusing an unavailable
+            // language on a feature-restricted build) is a defaults
+            // posture; only a present-but-unloadable entry is
+            // detected-not-loaded (#6825).
+            Err(_) if crate::config::config_discovered_for_root(root) => Self {
+                posture: SessionConfigPosture::DetectedNotLoaded,
+                ..Self::built_in()
+            },
+            Err(_) => Self::built_in(),
+        }
+    }
+
+    /// The built-in-default profile (an unavailable root, or the defaults
+    /// fallback when the workspace config cannot load).
+    fn built_in() -> Self {
         let languages = crate::config::RiprConfig::default()
             .languages()
             .enabled()
@@ -652,33 +822,70 @@ impl SessionProfile {
         Self {
             mode: "draft",
             languages,
+            posture: SessionConfigPosture::BuiltInDefaults,
         }
     }
 
     fn document(&self) -> Value {
-        json!({
+        let (project_config, support) = match &self.posture {
+            SessionConfigPosture::Loaded { .. } => ("loaded", "project_config"),
+            SessionConfigPosture::DetectedNotLoaded => ("detected_not_loaded", "built_in_defaults"),
+            SessionConfigPosture::BuiltInDefaults => ("built_in_defaults", "built_in_defaults"),
+        };
+        let mut document = json!({
             "mode": self.mode,
             "languages": self.languages,
-            "project_config": "detected_not_loaded",
-            "support": "built_in_defaults",
-        })
+            "project_config": project_config,
+            "support": support,
+        });
+        if let SessionConfigPosture::Loaded { identity } = &self.posture {
+            document["config_identity"] = Value::from(identity.clone());
+        }
+        document
+    }
+
+    /// The session-block limitation naming the configuration posture, so a
+    /// zero finding count is never mistaken for a language gate (#6825).
+    fn session_limitation(&self) -> Option<&'static str> {
+        match self.posture {
+            SessionConfigPosture::Loaded { .. } => Some(
+                "this profile resolved ripr.toml at server startup; each ripr_refresh re-resolves it and binds the config identity it used in the snapshot outcome, so a post-startup ripr.toml edit is visible to the next refresh before it is visible here",
+            ),
+            SessionConfigPosture::DetectedNotLoaded => Some(
+                "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
+            ),
+            SessionConfigPosture::BuiltInDefaults => {
+                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
+            }
+        }
     }
 }
 
 /// Run one bounded analysis through the shared check authority and bind it
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
-/// the LSP run in-process.
+/// the LSP run in-process. The workspace's own configuration is honored
+/// through the same `load_for_root` resolution the CLI uses (#6825): a
+/// config file is loaded, and a config-less root keeps built-in defaults
+/// (with the zero-config marker-based language auto-enable), so a
+/// Python-enabled workspace analyzes identically over MCP and CLI.
 pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
+    let config = crate::config::load_for_root(root).map_err(|error| {
+        AttemptFailure::new(
+            CODE_CONFIG_INVALID,
+            format!("the workspace configuration could not be loaded: {error}"),
+            "address the configuration error above (the detail names the cause), then retry with ripr_refresh",
+        )
+    })?;
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace(input).map_err(|error| {
+    let output = crate::app::check_workspace_with_config(input, &config).map_err(|error| {
         AttemptFailure::new(
             CODE_ANALYSIS_FAILED,
             format!("shared check authority failed: {error}"),
@@ -689,7 +896,10 @@ pub(crate) fn run_check(
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    super::repair_card::bind_snapshot_card_producers(root, &mut snapshot)?;
+    // The card producers consume the same resolved workspace configuration
+    // as the findings (#6825 review), so one committed snapshot cannot
+    // disagree with itself across the two producers.
+    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
     Ok(snapshot)
 }
 
@@ -811,6 +1021,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
         })
@@ -1016,9 +1227,27 @@ mod tests {
         if document
             .pointer("/profile/project_config")
             .and_then(Value::as_str)
-            != Some("detected_not_loaded")
+            != Some("built_in_defaults")
         {
-            return Err("session profile must stay detected-not-loaded".to_string());
+            return Err(format!(
+                "built-in profile must disclose its defaults posture: {document}"
+            ));
+        }
+        if document.pointer("/profile/support").and_then(Value::as_str) != Some("built_in_defaults")
+        {
+            return Err(format!(
+                "built-in profile lost its support fact: {document}"
+            ));
+        }
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!(
+                "a defaults session must disclose the missing config: {text}"
+            ));
         }
         if document
             .pointer("/last_completed_snapshot/snapshot_id")
@@ -1033,6 +1262,111 @@ mod tests {
         if profile.languages.is_empty() {
             return Err("built-in profile must name at least one language".to_string());
         }
+        Ok(())
+    }
+
+    /// #6825: the session profile resolves the workspace's own
+    /// configuration, so a Python-enabled workspace discloses `loaded` with
+    /// its config identity and the enabled language — never a rust-only
+    /// built-in default.
+    #[test]
+    fn session_profile_resolves_the_workspace_configuration() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-mcp-profile-resolve-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+
+        // No config: built-in defaults (no python markers in an empty root).
+        let defaults = SessionProfile::resolve(Some(&root));
+        if defaults.languages != vec!["rust".to_string()]
+            || defaults.posture != SessionConfigPosture::BuiltInDefaults
+        {
+            return Err(format!(
+                "a config-less empty root must keep built-in defaults: {defaults:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&defaults);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!("defaults posture must be disclosed: {text}"));
+        }
+
+        // A python-enabled workspace: loaded posture with the config
+        // identity and the enabled language. Python-only (#4252): a build
+        // without `lang-python` refuses the enabled language at load, so
+        // the loaded posture is not observable there.
+        #[cfg(feature = "lang-python")]
+        {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[languages]\nenabled = [\"python\"]\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let loaded = SessionProfile::resolve(Some(&root));
+            match &loaded.posture {
+                SessionConfigPosture::Loaded { identity }
+                    if identity.starts_with("fnv1a64:") && loaded.languages == vec!["python"] => {}
+                other => {
+                    return Err(format!(
+                        "a python-enabled workspace must project loaded with its language: {other:?}"
+                    ));
+                }
+            }
+            let document =
+                crate::mcp::workspace::WorkspaceSession::default().session_document(&loaded);
+            if document.pointer("/profile/config_identity").is_none() {
+                return Err(format!(
+                    "a loaded profile must publish its config identity: {document}"
+                ));
+            }
+            let limitations = document
+                .pointer("/limitations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "session lost its limitations".to_string())?;
+            let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+            if text.contains("could not be loaded") || !text.contains("re-resolves") {
+                return Err(format!(
+                    "a loaded profile must carry only the startup-freshness disclosure: {text}"
+                ));
+            }
+        }
+
+        // A present but unparseable config: detected-not-loaded, refresh
+        // fails closed with config_invalid.
+        std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+            .map_err(|error| error.to_string())?;
+        let detected = SessionProfile::resolve(Some(&root));
+        if detected.posture != SessionConfigPosture::DetectedNotLoaded
+            || detected.languages != vec!["rust".to_string()]
+        {
+            return Err(format!(
+                "an unparseable ripr.toml must project detected-not-loaded: {detected:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&detected);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("config_invalid") {
+            return Err(format!(
+                "detected-not-loaded must name the refresh failure: {text}"
+            ));
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -1105,6 +1439,178 @@ mod tests {
         Ok(())
     }
 
+    /// #5995: the refresh analyzes only the committed default-branch diff.
+    /// On a dirty tracked file it reports `no_scope` with zero findings
+    /// while `ripr check --worktree` and an LSP session both report the
+    /// finding — so the refresh result and the workspace status must carry
+    /// the producer's unanalyzed-working-tree fact as a typed scope
+    /// disclosure naming the `--worktree` route, and must stay silent on a
+    /// clean tracked tree. Without it, `no_scope` reads as all-clear.
+    #[test]
+    fn dirty_tree_refresh_and_status_disclose_the_committed_diff_scope() -> Result<(), String> {
+        let mut dirty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        // The issue's shape verbatim: `no_scope` with every count zero.
+        dirty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        dirty.unanalyzed_working_tree = true;
+        let snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert!(
+            snapshot.scope.uncommitted_edits,
+            "the producer fact must bind onto the snapshot"
+        );
+        let session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+
+        let refresh = refresh_document(&session);
+        if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!(
+                "refresh must disclose the analyzed scope: {refresh}"
+            ));
+        }
+        if refresh
+            .pointer("/scope/uncommitted_edits")
+            .and_then(Value::as_str)
+            != Some("outside this analysis")
+        {
+            return Err(format!(
+                "refresh must disclose the excluded edits: {refresh}"
+            ));
+        }
+        let note = refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("scope disclosure must name the repair route: {refresh}"))?;
+        if !note.contains("--worktree") {
+            return Err(format!(
+                "scope note must name `ripr check --worktree`: {note}"
+            ));
+        }
+
+        let status = session.session_document(&SessionProfile::built_in());
+        if status.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!("status must disclose the analyzed scope: {status}"));
+        }
+        if !status
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .is_some_and(|note| note.contains("--worktree"))
+        {
+            return Err(format!(
+                "status scope note must name the worktree route: {status}"
+            ));
+        }
+
+        // A clean tracked tree carries no exclusion to disclose.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        if !refresh_document(&clean)["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+        if !clean.session_document(&SessionProfile::built_in())["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+
+        // #5995 review: an untracked-only tree must not receive the bare
+        // `--worktree` remedy — untracked files are invisible to it (#5258).
+        // The disclosure names staging or an explicit diff instead.
+        let mut untracked_only = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        untracked_only.analysis_outcome = dirty.analysis_outcome.clone();
+        untracked_only.unanalyzed_working_tree = true;
+        untracked_only.untracked_working_tree_source_paths =
+            vec!["src/new.rs".to_string(), "src/other_new.rs".to_string()];
+        let untracked_snapshot = Snapshot::from_output(&untracked_only, Some("root:sha256:test"))
+            .map_err(|f| f.detail)?;
+        let untracked_session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(untracked_snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+        let untracked_refresh = refresh_document(&untracked_session);
+        let note = untracked_refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("untracked disclosure must carry a note: {untracked_refresh}")
+            })?;
+        if !note.contains("staged and unstaged tracked edits only") {
+            return Err(format!(
+                "an untracked tree must bound the worktree remedy: {note}"
+            ));
+        }
+        if !note.contains("stage them") {
+            return Err(format!(
+                "an untracked tree must name the staging remedy: {note}"
+            ));
+        }
+        let files = untracked_refresh
+            .pointer("/scope/untracked_edits/files")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("untracked disclosure must name the files: {untracked_refresh}")
+            })?;
+        if files.len() != 2 {
+            return Err(format!(
+                "the disclosure must name both untracked files: {files:?}"
+            ));
+        }
+        if untracked_refresh
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(2)
+        {
+            return Err(format!(
+                "untracked disclosure must carry the total: {untracked_refresh}"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// #5995 review: the scope facts change what the served documents
+    /// disclose, so two otherwise identical snapshots with different
+    /// exclusions must not share a snapshot identity.
+    #[test]
+    fn snapshot_identity_distinguishes_excluded_edit_facts() -> Result<(), String> {
+        let no_scope_outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let mut clean = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        clean.analysis_outcome = Some(no_scope_outcome.clone());
+        let mut dirty = clean.clone();
+        dirty.unanalyzed_working_tree = true;
+        let clean_snapshot =
+            Snapshot::from_output(&clean, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let dirty_snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        if clean_snapshot.snapshot_id == dirty_snapshot.snapshot_id {
+            return Err(
+                "two snapshots differing only in the excluded-edit facts must not share an id"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_ignores_the_concrete_root() -> Result<(), String> {
         let first = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
@@ -1148,7 +1654,7 @@ mod tests {
             let mut original_items = snapshot
                 .findings
                 .iter()
-                .map(GapItem::from_finding)
+                .map(|finding| GapItem::from_finding(finding, Path::new(".")))
                 .collect::<Result<Vec<_>, _>>()?;
             for item in &mut original_items {
                 let bytes = serde_json::to_vec(&item.evidence_core).map_err(|e| e.to_string())?;
@@ -1156,7 +1662,8 @@ mod tests {
                 item.evidence_sha256 = sha256_hex(&bytes);
                 lengths.push(bytes.len());
             }
-            let original_id = snapshot_identity(&snapshot.outcome, &original_items)?;
+            let original_id =
+                snapshot_identity(&snapshot.outcome, &original_items, &snapshot.scope)?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
             let session = WorkspaceSession {
