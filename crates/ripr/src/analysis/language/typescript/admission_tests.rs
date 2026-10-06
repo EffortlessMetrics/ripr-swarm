@@ -163,6 +163,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             none,
         ),
         (
+            "unused top-level package require",
+            "const lodash = require('lodash');\ntest('x', () => { checkout(1); });",
+            none,
+        ),
+        (
             "commonjs require of a runner",
             "const { test } = require('vitest');\ntest('x', () => { checkout(1); });",
             none,
@@ -186,6 +191,26 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
         (
             "chai assert destructured from a require inside describe",
             "describe('d', () => {\n  const { assert } = require('chai');\n  it('x', () => { assert.equal(checkout(1), 2); });\n});",
+            unresolved,
+        ),
+        (
+            "runner expect required inside describe",
+            "describe('d', () => {\n  const { expect } = require('@jest/globals');\n  it('x', () => { expect.hasAssertions(); checkout(1); });\n});",
+            unresolved,
+        ),
+        (
+            "runner vi required inside describe",
+            "describe('d', () => {\n  const { vi } = require('vitest');\n  it('x', async () => { await vi.waitUntil(() => checkout(1)); });\n});",
+            unresolved,
+        ),
+        (
+            "runner required in a top-level block",
+            "{ var nt = require('vitest'); }\nit('x', async () => { await nt.vi.waitUntil(() => checkout(1)); });",
+            unresolved,
+        ),
+        (
+            "parenthesized top-level package require",
+            "const tap = (require('tap'));\ntest('x', () => { tap.same(checkout(1), 2); });",
             unresolved,
         ),
         (

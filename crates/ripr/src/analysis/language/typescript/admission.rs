@@ -144,7 +144,7 @@ impl TypeScriptAdmissionContext {
         context.enclosing = enclosing;
         // Names are complete only after the whole file is seen.
         let mut scan = Scan::new(&context, false);
-        scan.setup_statements(statements);
+        scan.setup_program(statements);
         context.setup_assertion_like = scan.assertion_like;
         context
     }
@@ -560,6 +560,10 @@ struct Scan<'c> {
     /// Scanning a test callback (a nested registration then fails the test)
     /// rather than setup (where other tests' callbacks are skipped).
     in_test: bool,
+    /// Set while dispatching a statement that sits directly in the program
+    /// body, so `setup_variables` knows its `require()` bindings are file
+    /// imports (see `extract_imports_from_statements`).
+    program_statement: bool,
     depth: usize,
     assertion_like: bool,
 }
@@ -570,6 +574,7 @@ impl<'c> Scan<'c> {
             context,
             scopes: Vec::new(),
             in_test,
+            program_statement: false,
             depth: 0,
             assertion_like: false,
         }
@@ -754,6 +759,17 @@ impl<'c> Scan<'c> {
     /// File-level and `describe`-level statements. Their declarations are
     /// the context's helpers and enclosing names, so no scope is pushed;
     /// helper bodies run only when called and are judged where referenced.
+    fn setup_program(&mut self, statements: &[Statement<'_>]) {
+        for statement in statements {
+            if self.assertion_like {
+                return;
+            }
+            self.program_statement = matches!(statement, Statement::VariableDeclaration(_));
+            self.setup_statement(statement);
+            self.program_statement = false;
+        }
+    }
+
     fn setup_statements(&mut self, statements: &[Statement<'_>]) {
         for statement in statements {
             if self.assertion_like {
@@ -901,6 +917,7 @@ impl<'c> Scan<'c> {
     }
 
     fn setup_variables(&mut self, declaration: &VariableDeclaration<'_>) {
+        let program_statement = std::mem::take(&mut self.program_statement);
         for declarator in &declaration.declarations {
             self.pattern(&declarator.id);
             let Some(init) = &declarator.init else {
@@ -910,17 +927,20 @@ impl<'c> Scan<'c> {
                 continue;
             }
             if let Some(source) = require_source(init) {
-                // A required package or test-support module binds a receiver
-                // whose members can assert under any name, so it is flagged as
-                // its `import` uses would be. Production and Node built-in
-                // modules are inert receivers; a required runner binds the
-                // test registrar, whose assertion-like members are still
-                // flagged by name inside each test.
-                if matches!(
-                    classify_source(source, &self.context.test_dir),
-                    ImportClass::TestSupport | ImportClass::Package
-                ) {
-                    self.flag();
+                // A test-support module's top level can register hooks, as its
+                // `import` can. A package or runner bound by a program-level
+                // `require` is a file import, judged where its members are
+                // used; bound anywhere else it is an enclosing name whose
+                // members read as inert, so it is flagged here. Production
+                // and Node built-in modules are inert receivers.
+                match classify_source(source, &self.context.test_dir) {
+                    ImportClass::TestSupport => self.flag(),
+                    ImportClass::Package | ImportClass::Runner
+                        if !(program_statement && require_is_file_import(&declarator.id, init)) =>
+                    {
+                        self.flag();
+                    }
+                    _ => {}
                 }
                 continue;
             }
@@ -2028,6 +2048,27 @@ fn is_function_like(expression: &Expression<'_>) -> bool {
 }
 
 /// `require("<literal>")`.
+/// A program-level `require()` declarator that `extract_imports_from_statements`
+/// records as an import for every name it binds: an unwrapped literal
+/// `require` call bound to a plain identifier, or to an object pattern of
+/// static keys and identifier values with no rest element.
+fn require_is_file_import(pattern: &BindingPattern<'_>, init: &Expression<'_>) -> bool {
+    if super::owners::require_string_literal_source(init).is_none() {
+        return false;
+    }
+    match pattern {
+        BindingPattern::BindingIdentifier(_) => true,
+        BindingPattern::ObjectPattern(object) => {
+            object.rest.is_none()
+                && object.properties.iter().all(|property| {
+                    super::owners::object_binding_key_name(property).is_some()
+                        && matches!(property.value, BindingPattern::BindingIdentifier(_))
+                })
+        }
+        _ => false,
+    }
+}
+
 fn require_source<'a>(expression: &'a Expression<'_>) -> Option<&'a str> {
     let Expression::CallExpression(call) = expression.get_inner_expression() else {
         return None;
