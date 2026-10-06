@@ -438,7 +438,13 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
     }
     // The whole stderr, not the displayed line: an `error:` line about a ref
     // can precede the `fatal:` line that names the object damage.
-    let repair = if git_stderr_names_object_damage(&String::from_utf8_lossy(&output.stderr)) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let repair = if stderr.contains("GIT_CONFIG") {
+        // Git rejected configuration inherited from the environment, before
+        // reading any repository file.
+        "Git rejected configuration from the environment (`GIT_CONFIG_*`); correct or unset \
+         it, then re-run."
+    } else if git_stderr_names_object_damage(&stderr) {
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {

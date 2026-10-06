@@ -707,6 +707,27 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
+/// Configuration Git inherits from the environment is not repository damage:
+/// the repair names the variable, not `.git/config`.
+#[test]
+fn malformed_git_environment_config_is_not_blamed_on_the_repository() -> Result<(), String> {
+    let scratch = Scratch::new("git-env-config")?;
+    let root = plain(&scratch, "repo")?;
+    let ran = ripr(
+        &root,
+        &["check", "--base", "main"],
+        &[("GIT_CONFIG_COUNT", "xyz")],
+    )?;
+    assert_sane(&ran, "malformed GIT_CONFIG_COUNT")?;
+    if ran.code != Some(2) || !ran.stderr.contains("GIT_CONFIG_*") {
+        return Err(format!("expected the environment remedy\n{}", ran.stderr));
+    }
+    if ran.stderr.contains("`.git/config`") {
+        return Err(format!("blamed the repository\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
 /// A clone of a feature branch has `origin/HEAD` tracking that branch, so the
 /// default base is the checked-out commit and the range is empty by
 /// construction. The run must say so and name `--base`, not read as clean.
