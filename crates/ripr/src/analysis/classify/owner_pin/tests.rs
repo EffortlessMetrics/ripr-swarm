@@ -1609,3 +1609,66 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
         );
     }
 }
+
+#[test]
+fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
+    // The test file defines its own `assert_eq!`, a real rebinding that can
+    // keep the assertion from checking anything. An unresolved `#[macro_use]`
+    // elsewhere in the workspace only may rebind the name, so reporting that
+    // site would turn a real rebinding into an analyzer limit (RIPR-SPEC-0240).
+    let tests = "macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\nuse demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let macro_use = "fn a() {}\n#[macro_use]\nextern crate other;\n";
+    let refusal_with = |files: &[(&str, &str)]| {
+        let index = index(files);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .cloned();
+        assert!(test.is_some(), "the fixture test must be indexed");
+        let test = test?;
+        let probe = return_probe(owner(&index, "weight"), "x * 3");
+        OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            &test,
+            &test.assertions[0],
+            &index,
+        )
+    };
+    let site_kind = |refusal: &Option<AssertionRefusal>| match refusal {
+        Some(AssertionRefusal::MacroBinding {
+            site: Some((path, site)),
+            ..
+        }) => Some((path.clone(), site.kind.clone())),
+        _ => None,
+    };
+
+    let both = refusal_with(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        ("src/other.rs", macro_use),
+    ]);
+    assert_eq!(
+        site_kind(&both),
+        Some((PathBuf::from(TESTS), MacroBindingKind::Definition)),
+        "{both:?}"
+    );
+    assert!(both.is_some_and(|refusal| !refusal.is_analyzer_limit()));
+
+    // Control: without the local definition the workspace site is reported,
+    // and it is an analyzer limit.
+    let plain = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let only_macro_use = refusal_with(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/other.rs", macro_use),
+    ]);
+    assert_eq!(
+        site_kind(&only_macro_use),
+        Some((
+            PathBuf::from("src/other.rs"),
+            MacroBindingKind::MacroUse("extern crate other;".to_string())
+        ))
+    );
+    assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
+}

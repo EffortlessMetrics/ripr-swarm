@@ -192,8 +192,16 @@ impl OwnerPinSyntax {
                             .or_else(|| self.withheld.sites.get(&name).cloned())
                     })
                     .clone();
-                let site =
-                    workspace.or_else(|| test_macro_binding_site(&name, test, index, &resolved));
+                // A definition or `use` covering the test is a real
+                // rebinding; it outranks a workspace site that only may
+                // rebind the name, or the refusal would read as an analyzer
+                // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+                let local = test_macro_binding_site(&name, test, index, &resolved);
+                let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
+                    local
+                } else {
+                    workspace.or(local)
+                };
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -409,12 +417,9 @@ impl AssertionRefusal {
             // A definition or `use` of the name in reach is a real rebinding;
             // a foreign glob, unresolved `#[macro_use]`, macro argument, or an
             // unparsed file only may rebind it.
-            Self::MacroBinding { site, .. } => !site.as_ref().is_some_and(|(_, site)| {
-                matches!(
-                    site.kind,
-                    MacroBindingKind::Definition | MacroBindingKind::Import
-                )
-            }),
+            Self::MacroBinding { site, .. } => {
+                !site.as_ref().is_some_and(|(_, site)| rebinds(site))
+            }
         }
     }
 
@@ -529,8 +534,11 @@ impl AssertionRefusal {
     }
 }
 
-/// The first workspace file, in path order, whose scan makes `name`
-/// ambiguous everywhere. Disclosure only: the admission decision uses the set.
+/// A workspace site, in path order, whose scan makes `name` ambiguous
+/// everywhere. The admission decision uses the set; the site decides only
+/// whether the refusal is an analyzer limit (RIPR-SPEC-0240). A definition or
+/// `use` of the name is a real rebinding, so it outranks a site that only may
+/// rebind the name, wherever each sits.
 fn workspace_macro_binding_site(
     name: &str,
     index: &RustIndex,
@@ -539,12 +547,28 @@ fn workspace_macro_binding_site(
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
-    index.files().iter().find_map(|(path, facts)| {
-        macro_binding_sites(name, path, &facts.source, index, module_resolved)
-            .into_iter()
-            .find(|(_, site)| site.scope.is_none())
-            .map(|(_, site)| (path.clone(), site))
-    })
+    let mut first = None;
+    for (path, facts) in index.files().iter() {
+        for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved) {
+            if site.scope.is_some() {
+                continue;
+            }
+            if rebinds(&site) {
+                return Some((path.clone(), site));
+            }
+            first.get_or_insert_with(|| (path.clone(), site));
+        }
+    }
+    first
+}
+
+/// A definition or `use` of the name: a real rebinding, not one that only
+/// may rebind it.
+fn rebinds(site: &MacroBindingSite) -> bool {
+    matches!(
+        site.kind,
+        MacroBindingKind::Definition | MacroBindingKind::Import
+    )
 }
 
 /// The scoped site in the test's own file that covers the test.
