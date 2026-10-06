@@ -156,7 +156,8 @@ fn is_absolute_on(root_text: &str, windows: bool) -> bool {
 }
 
 /// Whether the unified text starts with an absolute drive-letter root
-/// (`X:/`). A bare `X:` prefix is drive-relative on Windows, not rooted.
+/// (a drive letter, a colon, and a slash). A bare `X:` prefix is
+/// drive-relative on Windows, not rooted.
 fn is_windows_drive_path(unified: &str) -> bool {
     unified.len() >= 3
         && unified.as_bytes()[0].is_ascii_alphabetic()
